@@ -1,0 +1,476 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - ipc/chromium/src/base/waitable_event_posix.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">ipc/chromium/src/base</a> - waitable_event_posix.cc<span style="font-size: 80%;"> (source / <a href="waitable_event_posix.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">81</td>
+            <td class="headerCovTableEntry">153</td>
+            <td class="headerCovTableEntryLo">52.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">13</td>
+            <td class="headerCovTableEntry">20</td>
+            <td class="headerCovTableEntryLo">65.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : // Copyright (c) 2006-2008 The Chromium Authors. All rights reserved.
+<span class="lineNum">       4 </span>            : // Use of this source code is governed by a BSD-style license that can be
+<span class="lineNum">       5 </span>            : // found in the LICENSE file.
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;base/waitable_event.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;base/condition_variable.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;base/lock.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;base/message_loop.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">      14 </span>            : // A WaitableEvent on POSIX is implemented as a wait-list. Currently we don't
+<span class="lineNum">      15 </span>            : // support cross-process events (where one process can signal an event which
+<span class="lineNum">      16 </span>            : // others are waiting on). Because of this, we can avoid having one thread per
+<span class="lineNum">      17 </span>            : // listener in several cases.
+<span class="lineNum">      18 </span>            : //
+<span class="lineNum">      19 </span>            : // The WaitableEvent maintains a list of waiters, protected by a lock. Each
+<span class="lineNum">      20 </span>            : // waiter is either an async wait, in which case we have a Task and the
+<span class="lineNum">      21 </span>            : // MessageLoop to run it on, or a blocking wait, in which case we have the
+<span class="lineNum">      22 </span>            : // condition variable to signal.
+<span class="lineNum">      23 </span>            : //
+<span class="lineNum">      24 </span>            : // Waiting involves grabbing the lock and adding oneself to the wait list. Async
+<span class="lineNum">      25 </span>            : // waits can be canceled, which means grabbing the lock and removing oneself
+<span class="lineNum">      26 </span>            : // from the list.
+<span class="lineNum">      27 </span>            : //
+<span class="lineNum">      28 </span>            : // Waiting on multiple events is handled by adding a single, synchronous wait to
+<span class="lineNum">      29 </span>            : // the wait-list of many events. An event passes a pointer to itself when
+<span class="lineNum">      30 </span>            : // firing a waiter and so we can store that pointer to find out which event
+<span class="lineNum">      31 </span>            : // triggered.
+<span class="lineNum">      32 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">      33 </span>            : 
+<span class="lineNum">      34 </span>            : namespace base {
+<span class="lineNum">      35 </span>            : 
+<span class="lineNum">      36 </span>            : // -----------------------------------------------------------------------------
+<a name="37"><span class="lineNum">      37 </span>            : // This is just an abstract base class for waking the two types of waiters</a>
+<span class="lineNum">      38 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">      39 </span><span class="lineCov">         72 : WaitableEvent::WaitableEvent(bool manual_reset, bool initially_signaled)</span>
+<span class="lineNum">      40 </span><span class="lineCov">         72 :     : kernel_(new WaitableEventKernel(manual_reset, initially_signaled)) {</span>
+<a name="41"><span class="lineNum">      41 </span><span class="lineCov">         72 : }</span></a>
+<span class="lineNum">      42 </span>            : 
+<span class="lineNum">      43 </span><span class="lineCov">          9 : WaitableEvent::~WaitableEvent() {</span>
+<a name="44"><span class="lineNum">      44 </span><span class="lineCov">          9 : }</span></a>
+<span class="lineNum">      45 </span>            : 
+<span class="lineNum">      46 </span><span class="lineNoCov">          0 : void WaitableEvent::Reset() {</span>
+<span class="lineNum">      47 </span><span class="lineNoCov">          0 :   AutoLock locked(kernel_-&gt;lock_);</span>
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 :   kernel_-&gt;signaled_ = false;</span>
+<a name="49"><span class="lineNum">      49 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      50 </span>            : 
+<span class="lineNum">      51 </span><span class="lineCov">        853 : void WaitableEvent::Signal() {</span>
+<span class="lineNum">      52 </span><span class="lineCov">       1663 :   AutoLock locked(kernel_-&gt;lock_);</span>
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span><span class="lineCov">        853 :   if (kernel_-&gt;signaled_)</span>
+<span class="lineNum">      55 </span><span class="lineCov">         43 :     return;</span>
+<span class="lineNum">      56 </span>            : 
+<span class="lineNum">      57 </span><span class="lineCov">        810 :   if (kernel_-&gt;manual_reset_) {</span>
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 :     SignalAll();</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :     kernel_-&gt;signaled_ = true;</span>
+<span class="lineNum">      60 </span>            :   } else {
+<span class="lineNum">      61 </span>            :     // In the case of auto reset, if no waiters were woken, we remain
+<span class="lineNum">      62 </span>            :     // signaled.
+<span class="lineNum">      63 </span><span class="lineCov">        810 :     if (!SignalOne())</span>
+<span class="lineNum">      64 </span><span class="lineCov">        557 :       kernel_-&gt;signaled_ = true;</span>
+<span class="lineNum">      65 </span>            :   }
+<a name="66"><span class="lineNum">      66 </span>            : }</a>
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 : bool WaitableEvent::IsSignaled() {</span>
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :   AutoLock locked(kernel_-&gt;lock_);</span>
+<span class="lineNum">      70 </span>            : 
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :   const bool result = kernel_-&gt;signaled_;</span>
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :   if (result &amp;&amp; !kernel_-&gt;manual_reset_)</span>
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :     kernel_-&gt;signaled_ = false;</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :   return result;</span>
+<span class="lineNum">      75 </span>            : }
+<span class="lineNum">      76 </span>            : 
+<span class="lineNum">      77 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">      78 </span>            : // Synchronous waits
+<span class="lineNum">      79 </span>            : 
+<span class="lineNum">      80 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">      81 </span>            : // This is an synchronous waiter. The thread is waiting on the given condition
+<span class="lineNum">      82 </span>            : // variable and the fired flag in this object.
+<span class="lineNum">      83 </span>            : // -----------------------------------------------------------------------------
+<a name="84"><span class="lineNum">      84 </span>            : class SyncWaiter : public WaitableEvent::Waiter {</a>
+<span class="lineNum">      85 </span>            :  public:
+<span class="lineNum">      86 </span><span class="lineCov">        777 :   SyncWaiter(ConditionVariable* cv, Lock* lock)</span>
+<span class="lineNum">      87 </span><span class="lineCov">        777 :       : fired_(false),</span>
+<span class="lineNum">      88 </span>            :         cv_(cv),
+<span class="lineNum">      89 </span>            :         lock_(lock),
+<span class="lineNum">      90 </span><span class="lineCov">        777 :         signaling_event_(NULL) {</span>
+<a name="91"><span class="lineNum">      91 </span><span class="lineCov">        777 :   }</span></a>
+<span class="lineNum">      92 </span>            : 
+<span class="lineNum">      93 </span><span class="lineCov">        253 :   bool Fire(WaitableEvent *signaling_event) {</span>
+<span class="lineNum">      94 </span><span class="lineCov">        253 :     lock_-&gt;Acquire();</span>
+<span class="lineNum">      95 </span><span class="lineCov">        253 :       const bool previous_value = fired_;</span>
+<span class="lineNum">      96 </span><span class="lineCov">        253 :       fired_ = true;</span>
+<span class="lineNum">      97 </span><span class="lineCov">        253 :       if (!previous_value)</span>
+<span class="lineNum">      98 </span><span class="lineCov">        253 :         signaling_event_ = signaling_event;</span>
+<span class="lineNum">      99 </span><span class="lineCov">        253 :     lock_-&gt;Release();</span>
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span><span class="lineCov">        253 :     if (previous_value)</span>
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     103 </span>            : 
+<span class="lineNum">     104 </span><span class="lineCov">        253 :     cv_-&gt;Broadcast();</span>
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span>            :     // SyncWaiters are stack allocated on the stack of the blocking thread.
+<span class="lineNum">     107 </span><span class="lineCov">        253 :     return true;</span>
+<a name="108"><span class="lineNum">     108 </span>            :   }</a>
+<span class="lineNum">     109 </span>            : 
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :   WaitableEvent* signaled_event() const {</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :     return signaling_event_;</span>
+<span class="lineNum">     112 </span>            :   }
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span>            :   // ---------------------------------------------------------------------------
+<span class="lineNum">     115 </span>            :   // These waiters are always stack allocated and don't delete themselves. Thus
+<a name="116"><span class="lineNum">     116 </span>            :   // there's no problem and the ABA tag is the same as the object pointer.</a>
+<span class="lineNum">     117 </span>            :   // ---------------------------------------------------------------------------
+<span class="lineNum">     118 </span><span class="lineCov">        523 :   bool Compare(void* tag) {</span>
+<span class="lineNum">     119 </span><span class="lineCov">        523 :     return this == tag;</span>
+<span class="lineNum">     120 </span>            :   }
+<span class="lineNum">     121 </span>            : 
+<span class="lineNum">     122 </span>            :   // ---------------------------------------------------------------------------
+<a name="123"><span class="lineNum">     123 </span>            :   // Called with lock held.</a>
+<span class="lineNum">     124 </span>            :   // ---------------------------------------------------------------------------
+<span class="lineNum">     125 </span><span class="lineCov">       2333 :   bool fired() const {</span>
+<span class="lineNum">     126 </span><span class="lineCov">       2333 :     return fired_;</span>
+<span class="lineNum">     127 </span>            :   }
+<span class="lineNum">     128 </span>            : 
+<span class="lineNum">     129 </span>            :   // ---------------------------------------------------------------------------
+<span class="lineNum">     130 </span>            :   // During a TimedWait, we need a way to make sure that an auto-reset
+<span class="lineNum">     131 </span>            :   // WaitableEvent doesn't think that this event has been signaled between
+<a name="132"><span class="lineNum">     132 </span>            :   // unlocking it and removing it from the wait-list. Called with lock held.</a>
+<span class="lineNum">     133 </span>            :   // ---------------------------------------------------------------------------
+<span class="lineNum">     134 </span><span class="lineCov">        776 :   void Disable() {</span>
+<span class="lineNum">     135 </span><span class="lineCov">        776 :     fired_ = true;</span>
+<span class="lineNum">     136 </span><span class="lineCov">        776 :   }</span>
+<span class="lineNum">     137 </span>            : 
+<span class="lineNum">     138 </span>            :  private:
+<span class="lineNum">     139 </span>            :   bool fired_;
+<span class="lineNum">     140 </span>            :   ConditionVariable *const cv_;
+<span class="lineNum">     141 </span>            :   Lock *const lock_;
+<span class="lineNum">     142 </span>            :   WaitableEvent* signaling_event_;  // The WaitableEvent which woke us
+<a name="143"><span class="lineNum">     143 </span>            : };</a>
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span><span class="lineCov">       1338 : bool WaitableEvent::TimedWait(const TimeDelta&amp; max_time) {</span>
+<span class="lineNum">     146 </span><span class="lineCov">       1338 :   const TimeTicks end_time(TimeTicks::Now() + max_time);</span>
+<span class="lineNum">     147 </span><span class="lineCov">       1338 :   const bool finite_time = max_time.ToInternalValue() &gt;= 0;</span>
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span><span class="lineCov">       1338 :   kernel_-&gt;lock_.Acquire();</span>
+<span class="lineNum">     150 </span><span class="lineCov">       1338 :     if (kernel_-&gt;signaled_) {</span>
+<span class="lineNum">     151 </span><span class="lineCov">        557 :       if (!kernel_-&gt;manual_reset_) {</span>
+<span class="lineNum">     152 </span>            :         // In this case we were signaled when we had no waiters. Now that
+<span class="lineNum">     153 </span>            :         // someone has waited upon us, we can automatically reset.
+<span class="lineNum">     154 </span><span class="lineCov">        557 :         kernel_-&gt;signaled_ = false;</span>
+<span class="lineNum">     155 </span>            :       }
+<span class="lineNum">     156 </span>            : 
+<span class="lineNum">     157 </span><span class="lineCov">        557 :       kernel_-&gt;lock_.Release();</span>
+<span class="lineNum">     158 </span><span class="lineCov">        557 :       return true;</span>
+<span class="lineNum">     159 </span>            :     }
+<span class="lineNum">     160 </span>            : 
+<span class="lineNum">     161 </span><span class="lineCov">       1557 :     Lock lock;</span>
+<span class="lineNum">     162 </span><span class="lineCov">        781 :     lock.Acquire();</span>
+<span class="lineNum">     163 </span><span class="lineCov">       1557 :     ConditionVariable cv(&amp;lock);</span>
+<span class="lineNum">     164 </span><span class="lineCov">        778 :     SyncWaiter sw(&amp;cv, &amp;lock);</span>
+<span class="lineNum">     165 </span>            : 
+<span class="lineNum">     166 </span><span class="lineCov">        778 :     Enqueue(&amp;sw);</span>
+<span class="lineNum">     167 </span><span class="lineCov">        781 :   kernel_-&gt;lock_.Release();</span>
+<span class="lineNum">     168 </span>            :   // We are violating locking order here by holding the SyncWaiter lock but not
+<span class="lineNum">     169 </span>            :   // the WaitableEvent lock. However, this is safe because we don't lock @lock_
+<span class="lineNum">     170 </span>            :   // again before unlocking it.
+<span class="lineNum">     171 </span>            : 
+<span class="lineNum">     172 </span>            :   for (;;) {
+<span class="lineNum">     173 </span><span class="lineCov">       1557 :     const TimeTicks current_time(TimeTicks::Now());</span>
+<span class="lineNum">     174 </span>            : 
+<span class="lineNum">     175 </span><span class="lineCov">       1557 :     if (sw.fired() || (finite_time &amp;&amp; current_time &gt;= end_time)) {</span>
+<span class="lineNum">     176 </span><span class="lineCov">        776 :       const bool return_value = sw.fired();</span>
+<span class="lineNum">     177 </span>            : 
+<span class="lineNum">     178 </span>            :       // We can't acquire @lock_ before releasing @lock (because of locking
+<span class="lineNum">     179 </span>            :       // order), however, inbetween the two a signal could be fired and @sw
+<span class="lineNum">     180 </span>            :       // would accept it, however we will still return false, so the signal
+<span class="lineNum">     181 </span>            :       // would be lost on an auto-reset WaitableEvent. Thus we call Disable
+<span class="lineNum">     182 </span>            :       // which makes sw::Fire return false.
+<span class="lineNum">     183 </span><span class="lineCov">        776 :       sw.Disable();</span>
+<span class="lineNum">     184 </span><span class="lineCov">        776 :       lock.Release();</span>
+<span class="lineNum">     185 </span>            : 
+<span class="lineNum">     186 </span><span class="lineCov">        776 :       kernel_-&gt;lock_.Acquire();</span>
+<span class="lineNum">     187 </span><span class="lineCov">        776 :         kernel_-&gt;Dequeue(&amp;sw, &amp;sw);</span>
+<span class="lineNum">     188 </span><span class="lineCov">        776 :       kernel_-&gt;lock_.Release();</span>
+<span class="lineNum">     189 </span>            : 
+<span class="lineNum">     190 </span><span class="lineCov">        776 :       return return_value;</span>
+<span class="lineNum">     191 </span>            :     }
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span><span class="lineCov">        781 :     if (finite_time) {</span>
+<span class="lineNum">     194 </span><span class="lineCov">        527 :       const TimeDelta max_wait(end_time - current_time);</span>
+<span class="lineNum">     195 </span><span class="lineCov">        527 :       cv.TimedWait(max_wait);</span>
+<span class="lineNum">     196 </span>            :     } else {
+<span class="lineNum">     197 </span><span class="lineCov">        254 :       cv.Wait();</span>
+<span class="lineNum">     198 </span>            :     }
+<span class="lineNum">     199 </span><span class="lineCov">        776 :   }</span>
+<a name="200"><span class="lineNum">     200 </span>            : }</a>
+<span class="lineNum">     201 </span>            : 
+<span class="lineNum">     202 </span><span class="lineCov">        288 : bool WaitableEvent::Wait() {</span>
+<span class="lineNum">     203 </span><span class="lineCov">        288 :   return TimedWait(TimeDelta::FromSeconds(-1));</span>
+<span class="lineNum">     204 </span>            : }
+<span class="lineNum">     205 </span>            : 
+<span class="lineNum">     206 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">     207 </span>            : 
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">     210 </span>            : // Synchronous waiting on multiple objects.
+<a name="211"><span class="lineNum">     211 </span>            : </a>
+<span class="lineNum">     212 </span>            : static bool  // StrictWeakOrdering
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 : cmp_fst_addr(const std::pair&lt;WaitableEvent*, unsigned&gt; &amp;a,</span>
+<span class="lineNum">     214 </span>            :              const std::pair&lt;WaitableEvent*, unsigned&gt; &amp;b) {
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :   return a.first &lt; b.first;</span>
+<span class="lineNum">     216 </span>            : }
+<a name="217"><span class="lineNum">     217 </span>            : </a>
+<span class="lineNum">     218 </span>            : // static
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 : size_t WaitableEvent::WaitMany(WaitableEvent** raw_waitables,</span>
+<span class="lineNum">     220 </span>            :                                size_t count) {
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :   DCHECK(count) &lt;&lt; &quot;Cannot wait on no events&quot;;</span>
+<span class="lineNum">     222 </span>            : 
+<span class="lineNum">     223 </span>            :   // We need to acquire the locks in a globally consistent order. Thus we sort
+<span class="lineNum">     224 </span>            :   // the array of waitables by address. We actually sort a pairs so that we can
+<span class="lineNum">     225 </span>            :   // map back to the original index values later.
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :   std::vector&lt;std::pair&lt;WaitableEvent*, size_t&gt; &gt; waitables;</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :   waitables.reserve(count);</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; count; ++i)</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     waitables.push_back(std::make_pair(raw_waitables[i], i));</span>
+<span class="lineNum">     230 </span>            : 
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :   DCHECK_EQ(count, waitables.size());</span>
+<span class="lineNum">     232 </span>            : 
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :   sort(waitables.begin(), waitables.end(), cmp_fst_addr);</span>
+<span class="lineNum">     234 </span>            : 
+<span class="lineNum">     235 </span>            :   // The set of waitables must be distinct. Since we have just sorted by
+<span class="lineNum">     236 </span>            :   // address, we can check this cheaply by comparing pairs of consecutive
+<span class="lineNum">     237 </span>            :   // elements.
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; waitables.size() - 1; ++i) {</span>
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :     DCHECK(waitables[i].first != waitables[i+1].first);</span>
+<span class="lineNum">     240 </span>            :   }
+<span class="lineNum">     241 </span>            : 
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :   Lock lock;</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   ConditionVariable cv(&amp;lock);</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   SyncWaiter sw(&amp;cv, &amp;lock);</span>
+<span class="lineNum">     245 </span>            : 
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   const size_t r = EnqueueMany(&amp;waitables[0], count, &amp;sw);</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   if (r) {</span>
+<span class="lineNum">     248 </span>            :     // One of the events is already signaled. The SyncWaiter has not been
+<span class="lineNum">     249 </span>            :     // enqueued anywhere. EnqueueMany returns the count of remaining waitables
+<span class="lineNum">     250 </span>            :     // when the signaled one was seen, so the index of the signaled event is
+<span class="lineNum">     251 </span>            :     // @count - @r.
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     return waitables[count - r].second;</span>
+<span class="lineNum">     253 </span>            :   }
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span>            :   // At this point, we hold the locks on all the WaitableEvents and we have
+<span class="lineNum">     256 </span>            :   // enqueued our waiter in them all.
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :   lock.Acquire();</span>
+<span class="lineNum">     258 </span>            :     // Release the WaitableEvent locks in the reverse order
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :     for (size_t i = 0; i &lt; count; ++i) {</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :       waitables[count - (1 + i)].first-&gt;kernel_-&gt;lock_.Release();</span>
+<span class="lineNum">     261 </span>            :     }
+<span class="lineNum">     262 </span>            : 
+<span class="lineNum">     263 </span>            :     for (;;) {
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :       if (sw.fired())</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     266 </span>            : 
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :       cv.Wait();</span>
+<span class="lineNum">     268 </span>            :     }
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :   lock.Release();</span>
+<span class="lineNum">     270 </span>            : 
+<span class="lineNum">     271 </span>            :   // The address of the WaitableEvent which fired is stored in the SyncWaiter.
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :   WaitableEvent *const signaled_event = sw.signaled_event();</span>
+<span class="lineNum">     273 </span>            :   // This will store the index of the raw_waitables which fired.
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :   size_t signaled_index = 0;</span>
+<span class="lineNum">     275 </span>            : 
+<span class="lineNum">     276 </span>            :   // Take the locks of each WaitableEvent in turn (except the signaled one) and
+<span class="lineNum">     277 </span>            :   // remove our SyncWaiter from the wait-list
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; count; ++i) {</span>
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :     if (raw_waitables[i] != signaled_event) {</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :       raw_waitables[i]-&gt;kernel_-&gt;lock_.Acquire();</span>
+<span class="lineNum">     281 </span>            :         // There's no possible ABA issue with the address of the SyncWaiter here
+<span class="lineNum">     282 </span>            :         // because it lives on the stack. Thus the tag value is just the pointer
+<span class="lineNum">     283 </span>            :         // value again.
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :         raw_waitables[i]-&gt;kernel_-&gt;Dequeue(&amp;sw, &amp;sw);</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :       raw_waitables[i]-&gt;kernel_-&gt;lock_.Release();</span>
+<span class="lineNum">     286 </span>            :     } else {
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :       signaled_index = i;</span>
+<span class="lineNum">     288 </span>            :     }
+<span class="lineNum">     289 </span>            :   }
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   return signaled_index;</span>
+<span class="lineNum">     292 </span>            : }
+<span class="lineNum">     293 </span>            : 
+<span class="lineNum">     294 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">     295 </span>            : // If return value == 0:
+<span class="lineNum">     296 </span>            : //   The locks of the WaitableEvents have been taken in order and the Waiter has
+<span class="lineNum">     297 </span>            : //   been enqueued in the wait-list of each. None of the WaitableEvents are
+<span class="lineNum">     298 </span>            : //   currently signaled
+<span class="lineNum">     299 </span>            : // else:
+<span class="lineNum">     300 </span>            : //   None of the WaitableEvent locks are held. The Waiter has not been enqueued
+<span class="lineNum">     301 </span>            : //   in any of them and the return value is the index of the first WaitableEvent
+<span class="lineNum">     302 </span>            : //   which was signaled, from the end of the array.
+<a name="303"><span class="lineNum">     303 </span>            : // -----------------------------------------------------------------------------</a>
+<span class="lineNum">     304 </span>            : // static
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 : size_t WaitableEvent::EnqueueMany</span>
+<span class="lineNum">     306 </span>            :     (std::pair&lt;WaitableEvent*, size_t&gt;* waitables,
+<span class="lineNum">     307 </span>            :      size_t count, Waiter* waiter) {
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :   if (!count)</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     310 </span>            : 
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :   waitables[0].first-&gt;kernel_-&gt;lock_.Acquire();</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :     if (waitables[0].first-&gt;kernel_-&gt;signaled_) {</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :       if (!waitables[0].first-&gt;kernel_-&gt;manual_reset_)</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :         waitables[0].first-&gt;kernel_-&gt;signaled_ = false;</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :       waitables[0].first-&gt;kernel_-&gt;lock_.Release();</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :       return count;</span>
+<span class="lineNum">     317 </span>            :     }
+<span class="lineNum">     318 </span>            : 
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     const size_t r = EnqueueMany(waitables + 1, count - 1, waiter);</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     if (r) {</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :       waitables[0].first-&gt;kernel_-&gt;lock_.Release();</span>
+<span class="lineNum">     322 </span>            :     } else {
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :       waitables[0].first-&gt;Enqueue(waiter);</span>
+<span class="lineNum">     324 </span>            :     }
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :     return r;</span>
+<span class="lineNum">     327 </span>            : }
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">     330 </span>            : 
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">     333 </span>            : // Private functions...
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span>            : // -----------------------------------------------------------------------------
+<a name="336"><span class="lineNum">     336 </span>            : // Wake all waiting waiters. Called with lock held.</a>
+<span class="lineNum">     337 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 : bool WaitableEvent::SignalAll() {</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :   bool signaled_at_least_one = false;</span>
+<span class="lineNum">     340 </span>            : 
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :   for (std::list&lt;Waiter*&gt;::iterator</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :        i = kernel_-&gt;waiters_.begin(); i != kernel_-&gt;waiters_.end(); ++i) {</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :     if ((*i)-&gt;Fire(this))</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :       signaled_at_least_one = true;</span>
+<span class="lineNum">     345 </span>            :   }
+<span class="lineNum">     346 </span>            : 
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :   kernel_-&gt;waiters_.clear();</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :   return signaled_at_least_one;</span>
+<span class="lineNum">     349 </span>            : }
+<span class="lineNum">     350 </span>            : 
+<span class="lineNum">     351 </span>            : // ---------------------------------------------------------------------------
+<span class="lineNum">     352 </span>            : // Try to wake a single waiter. Return true if one was woken. Called with lock
+<a name="353"><span class="lineNum">     353 </span>            : // held.</a>
+<span class="lineNum">     354 </span>            : // ---------------------------------------------------------------------------
+<span class="lineNum">     355 </span><span class="lineCov">        810 : bool WaitableEvent::SignalOne() {</span>
+<span class="lineNum">     356 </span>            :   for (;;) {
+<span class="lineNum">     357 </span><span class="lineCov">        810 :     if (kernel_-&gt;waiters_.empty())</span>
+<span class="lineNum">     358 </span><span class="lineCov">        557 :       return false;</span>
+<span class="lineNum">     359 </span>            : 
+<span class="lineNum">     360 </span><span class="lineCov">        253 :     const bool r = (*kernel_-&gt;waiters_.begin())-&gt;Fire(this);</span>
+<span class="lineNum">     361 </span><span class="lineCov">        253 :     kernel_-&gt;waiters_.pop_front();</span>
+<span class="lineNum">     362 </span><span class="lineCov">        253 :     if (r)</span>
+<span class="lineNum">     363 </span><span class="lineCov">        253 :       return true;</span>
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     365 </span>            : }
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span>            : // -----------------------------------------------------------------------------
+<a name="368"><span class="lineNum">     368 </span>            : // Add a waiter to the list of those waiting. Called with lock held.</a>
+<span class="lineNum">     369 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">     370 </span><span class="lineCov">        778 : void WaitableEvent::Enqueue(Waiter* waiter) {</span>
+<span class="lineNum">     371 </span><span class="lineCov">        778 :   kernel_-&gt;waiters_.push_back(waiter);</span>
+<span class="lineNum">     372 </span><span class="lineCov">        781 : }</span>
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">     375 </span>            : // Remove a waiter from the list of those waiting. Return true if the waiter was
+<a name="376"><span class="lineNum">     376 </span>            : // actually removed. Called with lock held.</a>
+<span class="lineNum">     377 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">     378 </span><span class="lineCov">        776 : bool WaitableEvent::WaitableEventKernel::Dequeue(Waiter* waiter, void* tag) {</span>
+<span class="lineNum">     379 </span><span class="lineCov">       1552 :   for (std::list&lt;Waiter*&gt;::iterator</span>
+<span class="lineNum">     380 </span><span class="lineCov">       1552 :        i = waiters_.begin(); i != waiters_.end(); ++i) {</span>
+<span class="lineNum">     381 </span><span class="lineCov">        523 :     if (*i == waiter &amp;&amp; (*i)-&gt;Compare(tag)) {</span>
+<span class="lineNum">     382 </span><span class="lineCov">        523 :       waiters_.erase(i);</span>
+<span class="lineNum">     383 </span><span class="lineCov">        523 :       return true;</span>
+<span class="lineNum">     384 </span>            :     }
+<span class="lineNum">     385 </span>            :   }
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span><span class="lineCov">        253 :   return false;</span>
+<span class="lineNum">     388 </span>            : }
+<span class="lineNum">     389 </span>            : 
+<span class="lineNum">     390 </span>            : // -----------------------------------------------------------------------------
+<span class="lineNum">     391 </span>            : 
+<span class="lineNum">     392 </span>            : }  // namespace base
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

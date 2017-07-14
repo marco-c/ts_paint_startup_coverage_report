@@ -1,0 +1,541 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - dom/base/nsTextFragment.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">dom/base</a> - nsTextFragment.cpp<span style="font-size: 80%;"> (source / <a href="nsTextFragment.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">126</td>
+            <td class="headerCovTableEntry">214</td>
+            <td class="headerCovTableEntryLo">58.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntry">12</td>
+            <td class="headerCovTableEntryMed">75.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : /*
+<span class="lineNum">       8 </span>            :  * A class which represents a fragment of text (eg inside a text
+<span class="lineNum">       9 </span>            :  * node); if only codepoints below 256 are used, the text is stored as
+<span class="lineNum">      10 </span>            :  * a char*; otherwise the text is stored as a char16_t*
+<span class="lineNum">      11 </span>            :  */
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &quot;nsTextFragment.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nsCRT.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsReadableUtils.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;nsMemory.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;nsBidiUtils.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;nsUnicharUtils.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;nsUTF8Utils.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;mozilla/CheckedInt.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;mozilla/MemoryReporting.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;mozilla/SSE.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;nsTextFragmentImpl.h&quot;
+<span class="lineNum">      24 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : #define TEXTFRAG_WHITE_AFTER_NEWLINE 50
+<span class="lineNum">      27 </span>            : #define TEXTFRAG_MAX_NEWLINES 7
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : // Static buffer used for common fragments
+<span class="lineNum">      30 </span>            : static char* sSpaceSharedString[TEXTFRAG_MAX_NEWLINES + 1];
+<span class="lineNum">      31 </span>            : static char* sTabSharedString[TEXTFRAG_MAX_NEWLINES + 1];
+<span class="lineNum">      32 </span>            : static char sSingleCharSharedString[256];
+<span class="lineNum">      33 </span>            : 
+<span class="lineNum">      34 </span>            : using mozilla::CheckedUint32;
+<span class="lineNum">      35 </span>            : 
+<a name="36"><span class="lineNum">      36 </span>            : // static</a>
+<span class="lineNum">      37 </span>            : nsresult
+<span class="lineNum">      38 </span><span class="lineCov">          3 : nsTextFragment::Init()</span>
+<span class="lineNum">      39 </span>            : {
+<span class="lineNum">      40 </span>            :   // Create whitespace strings
+<span class="lineNum">      41 </span>            :   uint32_t i;
+<span class="lineNum">      42 </span><span class="lineCov">         27 :   for (i = 0; i &lt;= TEXTFRAG_MAX_NEWLINES; ++i) {</span>
+<span class="lineNum">      43 </span><span class="lineCov">         48 :     sSpaceSharedString[i] = new char[1 + i + TEXTFRAG_WHITE_AFTER_NEWLINE];</span>
+<span class="lineNum">      44 </span><span class="lineCov">         48 :     sTabSharedString[i] = new char[1 + i + TEXTFRAG_WHITE_AFTER_NEWLINE];</span>
+<span class="lineNum">      45 </span><span class="lineCov">         24 :     sSpaceSharedString[i][0] = ' ';</span>
+<span class="lineNum">      46 </span><span class="lineCov">         24 :     sTabSharedString[i][0] = ' ';</span>
+<span class="lineNum">      47 </span>            :     uint32_t j;
+<span class="lineNum">      48 </span><span class="lineCov">        108 :     for (j = 1; j &lt; 1 + i; ++j) {</span>
+<span class="lineNum">      49 </span><span class="lineCov">         84 :       sSpaceSharedString[i][j] = '\n';</span>
+<span class="lineNum">      50 </span><span class="lineCov">         84 :       sTabSharedString[i][j] = '\n';</span>
+<span class="lineNum">      51 </span>            :     }
+<span class="lineNum">      52 </span><span class="lineCov">       2424 :     for (; j &lt; (1 + i + TEXTFRAG_WHITE_AFTER_NEWLINE); ++j) {</span>
+<span class="lineNum">      53 </span><span class="lineCov">       1200 :       sSpaceSharedString[i][j] = ' ';</span>
+<span class="lineNum">      54 </span><span class="lineCov">       1200 :       sTabSharedString[i][j] = '\t';</span>
+<span class="lineNum">      55 </span>            :     }
+<span class="lineNum">      56 </span>            :   }
+<span class="lineNum">      57 </span>            : 
+<span class="lineNum">      58 </span>            :   // Create single-char strings
+<span class="lineNum">      59 </span><span class="lineCov">        771 :   for (i = 0; i &lt; 256; ++i) {</span>
+<span class="lineNum">      60 </span><span class="lineCov">        768 :     sSingleCharSharedString[i] = i;</span>
+<span class="lineNum">      61 </span>            :   }
+<span class="lineNum">      62 </span>            : 
+<span class="lineNum">      63 </span><span class="lineCov">          3 :   return NS_OK;</span>
+<span class="lineNum">      64 </span>            : }
+<span class="lineNum">      65 </span>            : 
+<a name="66"><span class="lineNum">      66 </span>            : // static</a>
+<span class="lineNum">      67 </span>            : void
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 : nsTextFragment::Shutdown()</span>
+<span class="lineNum">      69 </span>            : {
+<span class="lineNum">      70 </span>            :   uint32_t  i;
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt;= TEXTFRAG_MAX_NEWLINES; ++i) {</span>
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :     delete [] sSpaceSharedString[i];</span>
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :     delete [] sTabSharedString[i];</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :     sSpaceSharedString[i] = nullptr;</span>
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 :     sTabSharedString[i] = nullptr;</span>
+<span class="lineNum">      76 </span>            :   }
+<a name="77"><span class="lineNum">      77 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      78 </span>            : 
+<span class="lineNum">      79 </span><span class="lineCov">          6 : nsTextFragment::~nsTextFragment()</span>
+<span class="lineNum">      80 </span>            : {
+<span class="lineNum">      81 </span><span class="lineCov">          3 :   ReleaseText();</span>
+<span class="lineNum">      82 </span><span class="lineCov">          3 :   MOZ_COUNT_DTOR(nsTextFragment);</span>
+<span class="lineNum">      83 </span><span class="lineCov">          3 : }</span>
+<a name="84"><span class="lineNum">      84 </span>            : </a>
+<span class="lineNum">      85 </span>            : void
+<span class="lineNum">      86 </span><span class="lineCov">        406 : nsTextFragment::ReleaseText()</span>
+<span class="lineNum">      87 </span>            : {
+<span class="lineNum">      88 </span><span class="lineCov">        406 :   if (mState.mLength &amp;&amp; m1b &amp;&amp; mState.mInHeap) {</span>
+<span class="lineNum">      89 </span><span class="lineCov">          1 :     free(m2b); // m1b == m2b as far as free is concerned</span>
+<span class="lineNum">      90 </span>            :   }
+<span class="lineNum">      91 </span>            : 
+<span class="lineNum">      92 </span><span class="lineCov">        406 :   m1b = nullptr;</span>
+<span class="lineNum">      93 </span><span class="lineCov">        406 :   mState.mIsBidi = false;</span>
+<span class="lineNum">      94 </span>            : 
+<span class="lineNum">      95 </span>            :   // Set mState.mIs2b, mState.mInHeap, and mState.mLength = 0 with mAllBits;
+<span class="lineNum">      96 </span><span class="lineCov">        406 :   mAllBits = 0;</span>
+<span class="lineNum">      97 </span><span class="lineCov">        406 : }</span>
+<a name="98"><span class="lineNum">      98 </span>            : </a>
+<span class="lineNum">      99 </span>            : nsTextFragment&amp;
+<span class="lineNum">     100 </span><span class="lineCov">         23 : nsTextFragment::operator=(const nsTextFragment&amp; aOther)</span>
+<span class="lineNum">     101 </span>            : {
+<span class="lineNum">     102 </span><span class="lineCov">         23 :   ReleaseText();</span>
+<span class="lineNum">     103 </span>            : 
+<span class="lineNum">     104 </span><span class="lineCov">         23 :   if (aOther.mState.mLength) {</span>
+<span class="lineNum">     105 </span><span class="lineCov">         23 :     if (!aOther.mState.mInHeap) {</span>
+<span class="lineNum">     106 </span><span class="lineCov">          5 :       m1b = aOther.m1b; // This will work even if aOther is using m2b</span>
+<span class="lineNum">     107 </span>            :     }
+<span class="lineNum">     108 </span>            :     else {
+<span class="lineNum">     109 </span><span class="lineCov">         18 :       CheckedUint32 m2bSize = aOther.mState.mLength;</span>
+<span class="lineNum">     110 </span><span class="lineCov">         18 :       m2bSize *= (aOther.mState.mIs2b ? sizeof(char16_t) : sizeof(char));</span>
+<span class="lineNum">     111 </span><span class="lineCov">         18 :       m2b = nullptr;</span>
+<span class="lineNum">     112 </span><span class="lineCov">         18 :       if (m2bSize.isValid()) {</span>
+<span class="lineNum">     113 </span><span class="lineCov">         18 :         m2b = static_cast&lt;char16_t*&gt;(malloc(m2bSize.value()));</span>
+<span class="lineNum">     114 </span>            :       }
+<span class="lineNum">     115 </span>            : 
+<span class="lineNum">     116 </span><span class="lineCov">         18 :       if (m2b) {</span>
+<span class="lineNum">     117 </span><span class="lineCov">         18 :         memcpy(m2b, aOther.m2b, m2bSize.value());</span>
+<span class="lineNum">     118 </span>            :       } else {
+<span class="lineNum">     119 </span>            :         // allocate a buffer for a single REPLACEMENT CHARACTER
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :         m2b = static_cast&lt;char16_t*&gt;(moz_xmalloc(sizeof(char16_t)));</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :         m2b[0] = 0xFFFD; // REPLACEMENT CHARACTER</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :         mState.mIs2b = true;</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :         mState.mInHeap = true;</span>
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :         mState.mLength = 1;</span>
+<span class="lineNum">     125 </span>            :       }
+<span class="lineNum">     126 </span>            :     }
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span><span class="lineCov">         23 :     if (m1b) {</span>
+<span class="lineNum">     129 </span><span class="lineCov">         23 :       mAllBits = aOther.mAllBits;</span>
+<span class="lineNum">     130 </span>            :     }
+<span class="lineNum">     131 </span>            :   }
+<span class="lineNum">     132 </span>            : 
+<span class="lineNum">     133 </span><span class="lineCov">         23 :   return *this;</span>
+<span class="lineNum">     134 </span>            : }
+<a name="135"><span class="lineNum">     135 </span>            : </a>
+<span class="lineNum">     136 </span>            : static inline int32_t
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 : FirstNon8BitUnvectorized(const char16_t *str, const char16_t *end)</span>
+<span class="lineNum">     138 </span>            : {
+<span class="lineNum">     139 </span>            :   typedef Non8BitParameters&lt;sizeof(size_t)&gt; p;
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :   const size_t mask = p::mask();</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :   const uint32_t alignMask = p::alignMask();</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   const uint32_t numUnicharsPerWord = p::numUnicharsPerWord();</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :   const int32_t len = end - str;</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :   int32_t i = 0;</span>
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span>            :   // Align ourselves to a word boundary.
+<span class="lineNum">     147 </span>            :   int32_t alignLen =
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :     std::min(len, int32_t(((-NS_PTR_TO_INT32(str)) &amp; alignMask) / sizeof(char16_t)));</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :   for (; i &lt; alignLen; i++) {</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :     if (str[i] &gt; 255)</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :       return i;</span>
+<span class="lineNum">     152 </span>            :   }
+<span class="lineNum">     153 </span>            : 
+<span class="lineNum">     154 </span>            :   // Check one word at a time.
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :   const int32_t wordWalkEnd = ((len - i) / numUnicharsPerWord) * numUnicharsPerWord;</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :   for (; i &lt; wordWalkEnd; i += numUnicharsPerWord) {</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :     const size_t word = *reinterpret_cast&lt;const size_t*&gt;(str + i);</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     if (word &amp; mask)</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :       return i;</span>
+<span class="lineNum">     160 </span>            :   }
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span>            :   // Take care of the remainder one character at a time.
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :   for (; i &lt; len; i++) {</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :     if (str[i] &gt; 255)</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :       return i;</span>
+<span class="lineNum">     166 </span>            :   }
+<span class="lineNum">     167 </span>            : 
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :   return -1;</span>
+<span class="lineNum">     169 </span>            : }
+<span class="lineNum">     170 </span>            : 
+<span class="lineNum">     171 </span>            : #ifdef MOZILLA_MAY_SUPPORT_SSE2
+<span class="lineNum">     172 </span>            : namespace mozilla {
+<span class="lineNum">     173 </span>            :   namespace SSE2 {
+<span class="lineNum">     174 </span>            :     int32_t FirstNon8Bit(const char16_t *str, const char16_t *end);
+<span class="lineNum">     175 </span>            :   } // namespace SSE2
+<span class="lineNum">     176 </span>            : } // namespace mozilla
+<span class="lineNum">     177 </span>            : #endif
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span>            : /*
+<span class="lineNum">     180 </span>            :  * This function returns -1 if all characters in str are 8 bit characters.
+<span class="lineNum">     181 </span>            :  * Otherwise, it returns a value less than or equal to the index of the first
+<span class="lineNum">     182 </span>            :  * non-8bit character in str. For example, if first non-8bit character is at
+<span class="lineNum">     183 </span>            :  * position 25, it may return 25, or for example 24, or 16. But it guarantees
+<span class="lineNum">     184 </span>            :  * there is no non-8bit character before returned value.
+<a name="185"><span class="lineNum">     185 </span>            :  */</a>
+<span class="lineNum">     186 </span>            : static inline int32_t
+<span class="lineNum">     187 </span><span class="lineCov">        151 : FirstNon8Bit(const char16_t *str, const char16_t *end)</span>
+<span class="lineNum">     188 </span>            : {
+<span class="lineNum">     189 </span>            : #ifdef MOZILLA_MAY_SUPPORT_SSE2
+<span class="lineNum">     190 </span><span class="lineCov">        151 :   if (mozilla::supports_sse2()) {</span>
+<span class="lineNum">     191 </span><span class="lineCov">        151 :     return mozilla::SSE2::FirstNon8Bit(str, end);</span>
+<span class="lineNum">     192 </span>            :   }
+<span class="lineNum">     193 </span>            : #endif
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :   return FirstNon8BitUnvectorized(str, end);</span>
+<span class="lineNum">     196 </span>            : }
+<a name="197"><span class="lineNum">     197 </span>            : </a>
+<span class="lineNum">     198 </span>            : bool
+<span class="lineNum">     199 </span><span class="lineCov">        380 : nsTextFragment::SetTo(const char16_t* aBuffer, int32_t aLength, bool aUpdateBidi)</span>
+<span class="lineNum">     200 </span>            : {
+<span class="lineNum">     201 </span><span class="lineCov">        380 :   ReleaseText();</span>
+<span class="lineNum">     202 </span>            : 
+<span class="lineNum">     203 </span><span class="lineCov">        380 :   if (aLength == 0) {</span>
+<span class="lineNum">     204 </span><span class="lineCov">         14 :     return true;</span>
+<span class="lineNum">     205 </span>            :   }
+<span class="lineNum">     206 </span>            : 
+<span class="lineNum">     207 </span><span class="lineCov">        366 :   char16_t firstChar = *aBuffer;</span>
+<span class="lineNum">     208 </span><span class="lineCov">        366 :   if (aLength == 1 &amp;&amp; firstChar &lt; 256) {</span>
+<span class="lineNum">     209 </span><span class="lineCov">         41 :     m1b = sSingleCharSharedString + firstChar;</span>
+<span class="lineNum">     210 </span><span class="lineCov">         41 :     mState.mInHeap = false;</span>
+<span class="lineNum">     211 </span><span class="lineCov">         41 :     mState.mIs2b = false;</span>
+<span class="lineNum">     212 </span><span class="lineCov">         41 :     mState.mLength = 1;</span>
+<span class="lineNum">     213 </span>            : 
+<span class="lineNum">     214 </span><span class="lineCov">         41 :     return true;</span>
+<span class="lineNum">     215 </span>            :   }
+<span class="lineNum">     216 </span>            : 
+<span class="lineNum">     217 </span><span class="lineCov">        325 :   const char16_t *ucp = aBuffer;</span>
+<span class="lineNum">     218 </span><span class="lineCov">        325 :   const char16_t *uend = aBuffer + aLength;</span>
+<span class="lineNum">     219 </span>            : 
+<span class="lineNum">     220 </span>            :   // Check if we can use a shared string
+<span class="lineNum">     221 </span><span class="lineCov">        325 :   if (aLength &lt;= 1 + TEXTFRAG_WHITE_AFTER_NEWLINE + TEXTFRAG_MAX_NEWLINES &amp;&amp;</span>
+<span class="lineNum">     222 </span><span class="lineCov">        255 :      (firstChar == ' ' || firstChar == '\n' || firstChar == '\t')) {</span>
+<span class="lineNum">     223 </span><span class="lineCov">        188 :     if (firstChar == ' ') {</span>
+<span class="lineNum">     224 </span><span class="lineCov">          5 :       ++ucp;</span>
+<span class="lineNum">     225 </span>            :     }
+<span class="lineNum">     226 </span>            : 
+<span class="lineNum">     227 </span><span class="lineCov">        188 :     const char16_t* start = ucp;</span>
+<span class="lineNum">     228 </span><span class="lineCov">        578 :     while (ucp &lt; uend &amp;&amp; *ucp == '\n') {</span>
+<span class="lineNum">     229 </span><span class="lineCov">        195 :       ++ucp;</span>
+<span class="lineNum">     230 </span>            :     }
+<span class="lineNum">     231 </span><span class="lineCov">        188 :     const char16_t* endNewLine = ucp;</span>
+<span class="lineNum">     232 </span>            : 
+<span class="lineNum">     233 </span><span class="lineCov">        188 :     char16_t space = ucp &lt; uend &amp;&amp; *ucp == '\t' ? '\t' : ' ';</span>
+<span class="lineNum">     234 </span><span class="lineCov">       1764 :     while (ucp &lt; uend &amp;&amp; *ucp == space) {</span>
+<span class="lineNum">     235 </span><span class="lineCov">        788 :       ++ucp;</span>
+<span class="lineNum">     236 </span>            :     }
+<span class="lineNum">     237 </span>            : 
+<span class="lineNum">     238 </span><span class="lineCov">        363 :     if (ucp == uend &amp;&amp;</span>
+<span class="lineNum">     239 </span><span class="lineCov">        350 :         endNewLine - start &lt;= TEXTFRAG_MAX_NEWLINES &amp;&amp;</span>
+<span class="lineNum">     240 </span><span class="lineCov">        175 :         ucp - endNewLine &lt;= TEXTFRAG_WHITE_AFTER_NEWLINE) {</span>
+<span class="lineNum">     241 </span><span class="lineCov">        175 :       char** strings = space == ' ' ? sSpaceSharedString : sTabSharedString;</span>
+<span class="lineNum">     242 </span><span class="lineCov">        175 :       m1b = strings[endNewLine - start];</span>
+<span class="lineNum">     243 </span>            : 
+<span class="lineNum">     244 </span>            :       // If we didn't find a space in the beginning, skip it now.
+<span class="lineNum">     245 </span><span class="lineCov">        175 :       if (firstChar != ' ') {</span>
+<span class="lineNum">     246 </span><span class="lineCov">        175 :         ++m1b;</span>
+<span class="lineNum">     247 </span>            :       }
+<span class="lineNum">     248 </span>            : 
+<span class="lineNum">     249 </span><span class="lineCov">        175 :       mState.mInHeap = false;</span>
+<span class="lineNum">     250 </span><span class="lineCov">        175 :       mState.mIs2b = false;</span>
+<span class="lineNum">     251 </span><span class="lineCov">        175 :       mState.mLength = aLength;</span>
+<span class="lineNum">     252 </span>            : 
+<span class="lineNum">     253 </span><span class="lineCov">        175 :       return true;</span>
+<span class="lineNum">     254 </span>            :     }
+<span class="lineNum">     255 </span>            :   }
+<span class="lineNum">     256 </span>            : 
+<span class="lineNum">     257 </span>            :   // See if we need to store the data in ucs2 or not
+<span class="lineNum">     258 </span><span class="lineCov">        150 :   int32_t first16bit = FirstNon8Bit(ucp, uend);</span>
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span><span class="lineCov">        150 :   if (first16bit != -1) { // aBuffer contains no non-8bit character</span>
+<span class="lineNum">     261 </span>            :     // Use ucs2 storage because we have to
+<span class="lineNum">     262 </span><span class="lineCov">          8 :     CheckedUint32 m2bSize = aLength;</span>
+<span class="lineNum">     263 </span><span class="lineCov">          8 :     m2bSize *= sizeof(char16_t);</span>
+<span class="lineNum">     264 </span><span class="lineCov">          8 :     if (!m2bSize.isValid()) {</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     266 </span>            :     }
+<span class="lineNum">     267 </span>            : 
+<span class="lineNum">     268 </span><span class="lineCov">          8 :     m2b = static_cast&lt;char16_t*&gt;(malloc(m2bSize.value()));</span>
+<span class="lineNum">     269 </span><span class="lineCov">          8 :     if (!m2b) {</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     271 </span>            :     }
+<span class="lineNum">     272 </span><span class="lineCov">          8 :     memcpy(m2b, aBuffer, m2bSize.value());</span>
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span><span class="lineCov">          8 :     mState.mIs2b = true;</span>
+<span class="lineNum">     275 </span><span class="lineCov">          8 :     if (aUpdateBidi) {</span>
+<span class="lineNum">     276 </span><span class="lineCov">          8 :       UpdateBidiFlag(aBuffer + first16bit, aLength - first16bit);</span>
+<span class="lineNum">     277 </span>            :     }
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span>            :   } else {
+<span class="lineNum">     280 </span>            :     // Use 1 byte storage because we can
+<span class="lineNum">     281 </span><span class="lineCov">        142 :     char* buff = static_cast&lt;char*&gt;(malloc(aLength));</span>
+<span class="lineNum">     282 </span><span class="lineCov">        142 :     if (!buff) {</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     284 </span>            :     }
+<span class="lineNum">     285 </span>            : 
+<span class="lineNum">     286 </span>            :     // Copy data
+<span class="lineNum">     287 </span><span class="lineCov">        142 :     LossyConvertEncoding16to8 converter(buff);</span>
+<span class="lineNum">     288 </span><span class="lineCov">        142 :     copy_string(aBuffer, aBuffer+aLength, converter);</span>
+<span class="lineNum">     289 </span><span class="lineCov">        142 :     m1b = buff;</span>
+<span class="lineNum">     290 </span><span class="lineCov">        142 :     mState.mIs2b = false;</span>
+<span class="lineNum">     291 </span>            :   }
+<span class="lineNum">     292 </span>            : 
+<span class="lineNum">     293 </span>            :   // Setup our fields
+<span class="lineNum">     294 </span><span class="lineCov">        150 :   mState.mInHeap = true;</span>
+<span class="lineNum">     295 </span><span class="lineCov">        150 :   mState.mLength = aLength;</span>
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span><span class="lineCov">        150 :   return true;</span>
+<span class="lineNum">     298 </span>            : }
+<a name="299"><span class="lineNum">     299 </span>            : </a>
+<span class="lineNum">     300 </span>            : void
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 : nsTextFragment::CopyTo(char16_t *aDest, int32_t aOffset, int32_t aCount)</span>
+<span class="lineNum">     302 </span>            : {
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :   NS_ASSERTION(aOffset &gt;= 0, &quot;Bad offset passed to nsTextFragment::CopyTo()!&quot;);</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :   NS_ASSERTION(aCount &gt;= 0, &quot;Bad count passed to nsTextFragment::CopyTo()!&quot;);</span>
+<span class="lineNum">     305 </span>            : 
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   if (aOffset &lt; 0) {</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :     aOffset = 0;</span>
+<span class="lineNum">     308 </span>            :   }
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :   if (uint32_t(aOffset + aCount) &gt; GetLength()) {</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :     aCount = mState.mLength - aOffset;</span>
+<span class="lineNum">     312 </span>            :   }
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :   if (aCount != 0) {</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :     if (mState.mIs2b) {</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :       memcpy(aDest, m2b + aOffset, sizeof(char16_t) * aCount);</span>
+<span class="lineNum">     317 </span>            :     } else {
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :       const char *cp = m1b + aOffset;</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :       const char *end = cp + aCount;</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :       LossyConvertEncoding8to16 converter(aDest);</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :       copy_string(cp, end, converter);</span>
+<span class="lineNum">     322 </span>            :     }
+<span class="lineNum">     323 </span>            :   }
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 : }</span>
+<a name="325"><span class="lineNum">     325 </span>            : </a>
+<span class="lineNum">     326 </span>            : bool
+<span class="lineNum">     327 </span><span class="lineCov">          1 : nsTextFragment::Append(const char16_t* aBuffer, uint32_t aLength, bool aUpdateBidi)</span>
+<span class="lineNum">     328 </span>            : {
+<span class="lineNum">     329 </span>            :   // This is a common case because some callsites create a textnode
+<span class="lineNum">     330 </span>            :   // with a value by creating the node and then calling AppendData.
+<span class="lineNum">     331 </span><span class="lineCov">          1 :   if (mState.mLength == 0) {</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     return SetTo(aBuffer, aLength, aUpdateBidi);</span>
+<span class="lineNum">     333 </span>            :   }
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span>            :   // Should we optimize for aData.Length() == 0?
+<span class="lineNum">     336 </span>            : 
+<span class="lineNum">     337 </span><span class="lineCov">          1 :   CheckedUint32 length = mState.mLength;</span>
+<span class="lineNum">     338 </span><span class="lineCov">          1 :   length += aLength;</span>
+<span class="lineNum">     339 </span>            : 
+<span class="lineNum">     340 </span><span class="lineCov">          1 :   if (!length.isValid()) {</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     342 </span>            :   }
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span><span class="lineCov">          1 :   if (mState.mIs2b) {</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :     length *= sizeof(char16_t);</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :     if (!length.isValid()) {</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     348 </span>            :     }
+<span class="lineNum">     349 </span>            : 
+<span class="lineNum">     350 </span>            :     // Already a 2-byte string so the result will be too
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :     char16_t* buff = static_cast&lt;char16_t*&gt;(realloc(m2b, length.value()));</span>
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :     if (!buff) {</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     354 </span>            :     }
+<span class="lineNum">     355 </span>            : 
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :     memcpy(buff + mState.mLength, aBuffer, aLength * sizeof(char16_t));</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :     mState.mLength += aLength;</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :     m2b = buff;</span>
+<span class="lineNum">     359 </span>            : 
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :     if (aUpdateBidi) {</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :       UpdateBidiFlag(aBuffer, aLength);</span>
+<span class="lineNum">     362 </span>            :     }
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     365 </span>            :   }
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span>            :   // Current string is a 1-byte string, check if the new data fits in one byte too.
+<span class="lineNum">     368 </span><span class="lineCov">          1 :   int32_t first16bit = FirstNon8Bit(aBuffer, aBuffer + aLength);</span>
+<span class="lineNum">     369 </span>            : 
+<span class="lineNum">     370 </span><span class="lineCov">          1 :   if (first16bit != -1) { // aBuffer contains no non-8bit character</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :     length *= sizeof(char16_t);</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :     if (!length.isValid()) {</span>
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     374 </span>            :     }
+<span class="lineNum">     375 </span>            : 
+<span class="lineNum">     376 </span>            :     // The old data was 1-byte, but the new is not so we have to expand it
+<span class="lineNum">     377 </span>            :     // all to 2-byte
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :     char16_t* buff = static_cast&lt;char16_t*&gt;(malloc(length.value()));</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :     if (!buff) {</span>
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     381 </span>            :     }
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span>            :     // Copy data into buff
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :     LossyConvertEncoding8to16 converter(buff);</span>
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :     copy_string(m1b, m1b+mState.mLength, converter);</span>
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :     memcpy(buff + mState.mLength, aBuffer, aLength * sizeof(char16_t));</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :     mState.mLength += aLength;</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :     mState.mIs2b = true;</span>
+<span class="lineNum">     390 </span>            : 
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :     if (mState.mInHeap) {</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :       free(m2b);</span>
+<span class="lineNum">     393 </span>            :     }
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :     m2b = buff;</span>
+<span class="lineNum">     395 </span>            : 
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :     mState.mInHeap = true;</span>
+<span class="lineNum">     397 </span>            : 
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :     if (aUpdateBidi) {</span>
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :       UpdateBidiFlag(aBuffer + first16bit, aLength - first16bit);</span>
+<span class="lineNum">     400 </span>            :     }
+<span class="lineNum">     401 </span>            : 
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     403 </span>            :   }
+<span class="lineNum">     404 </span>            : 
+<span class="lineNum">     405 </span>            :   // The new and the old data is all 1-byte
+<span class="lineNum">     406 </span>            :   char* buff;
+<span class="lineNum">     407 </span><span class="lineCov">          1 :   if (mState.mInHeap) {</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :     buff = static_cast&lt;char*&gt;(realloc(const_cast&lt;char*&gt;(m1b), length.value()));</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :     if (!buff) {</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     411 </span>            :     }
+<span class="lineNum">     412 </span>            :   }
+<span class="lineNum">     413 </span>            :   else {
+<span class="lineNum">     414 </span><span class="lineCov">          1 :     buff = static_cast&lt;char*&gt;(malloc(length.value()));</span>
+<span class="lineNum">     415 </span><span class="lineCov">          1 :     if (!buff) {</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     417 </span>            :     }
+<span class="lineNum">     418 </span>            : 
+<span class="lineNum">     419 </span><span class="lineCov">          1 :     memcpy(buff, m1b, mState.mLength);</span>
+<span class="lineNum">     420 </span><span class="lineCov">          1 :     mState.mInHeap = true;</span>
+<span class="lineNum">     421 </span>            :   }
+<span class="lineNum">     422 </span>            : 
+<span class="lineNum">     423 </span>            :   // Copy aBuffer into buff.
+<span class="lineNum">     424 </span><span class="lineCov">          1 :   LossyConvertEncoding16to8 converter(buff + mState.mLength);</span>
+<span class="lineNum">     425 </span><span class="lineCov">          1 :   copy_string(aBuffer, aBuffer + aLength, converter);</span>
+<span class="lineNum">     426 </span>            : 
+<span class="lineNum">     427 </span><span class="lineCov">          1 :   m1b = buff;</span>
+<span class="lineNum">     428 </span><span class="lineCov">          1 :   mState.mLength += aLength;</span>
+<span class="lineNum">     429 </span>            : 
+<span class="lineNum">     430 </span><span class="lineCov">          1 :   return true;</span>
+<span class="lineNum">     431 </span>            : }
+<a name="432"><span class="lineNum">     432 </span>            : </a>
+<span class="lineNum">     433 </span>            : /* virtual */ size_t
+<span class="lineNum">     434 </span><span class="lineCov">        184 : nsTextFragment::SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const</span>
+<span class="lineNum">     435 </span>            : {
+<span class="lineNum">     436 </span><span class="lineCov">        184 :   if (Is2b()) {</span>
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :     return aMallocSizeOf(m2b);</span>
+<span class="lineNum">     438 </span>            :   }
+<span class="lineNum">     439 </span>            : 
+<span class="lineNum">     440 </span><span class="lineCov">        184 :   if (mState.mInHeap) {</span>
+<span class="lineNum">     441 </span><span class="lineCov">         27 :     return aMallocSizeOf(m1b);</span>
+<span class="lineNum">     442 </span>            :   }
+<span class="lineNum">     443 </span>            : 
+<span class="lineNum">     444 </span><span class="lineCov">        157 :   return 0;</span>
+<span class="lineNum">     445 </span>            : }
+<span class="lineNum">     446 </span>            : 
+<span class="lineNum">     447 </span>            : // To save time we only do this when we really want to know, not during
+<a name="448"><span class="lineNum">     448 </span>            : // every allocation</a>
+<span class="lineNum">     449 </span>            : void
+<span class="lineNum">     450 </span><span class="lineCov">          8 : nsTextFragment::UpdateBidiFlag(const char16_t* aBuffer, uint32_t aLength)</span>
+<span class="lineNum">     451 </span>            : {
+<span class="lineNum">     452 </span><span class="lineCov">          8 :   if (mState.mIs2b &amp;&amp; !mState.mIsBidi) {</span>
+<span class="lineNum">     453 </span><span class="lineCov">          8 :     if (HasRTLChars(aBuffer, aLength)) {</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :       mState.mIsBidi = true;</span>
+<span class="lineNum">     455 </span>            :     }
+<span class="lineNum">     456 </span>            :   }
+<span class="lineNum">     457 </span><span class="lineCov">          8 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

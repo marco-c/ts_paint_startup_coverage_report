@@ -1,0 +1,1465 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - layout/style/nsCSSScanner.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">layout/style</a> - nsCSSScanner.cpp<span style="font-size: 80%;"> (source / <a href="nsCSSScanner.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">376</td>
+            <td class="headerCovTableEntry">581</td>
+            <td class="headerCovTableEntryLo">64.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">40</td>
+            <td class="headerCovTableEntry">46</td>
+            <td class="headerCovTableEntryMed">87.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       3 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       4 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       5 </span>            : 
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : /* tokenization of CSS style sheets */
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;nsCSSScanner.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;nsStyleUtil.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;nsISupportsImpl.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/ArrayUtils.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/css/ErrorReporter.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/Likely.h&quot;
+<span class="lineNum">      15 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : using namespace mozilla;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : /* Character class tables and related helper functions. */
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : static const uint8_t IS_HEX_DIGIT  = 0x01;
+<span class="lineNum">      22 </span>            : static const uint8_t IS_IDSTART    = 0x02;
+<span class="lineNum">      23 </span>            : static const uint8_t IS_IDCHAR     = 0x04;
+<span class="lineNum">      24 </span>            : static const uint8_t IS_URL_CHAR   = 0x08;
+<span class="lineNum">      25 </span>            : static const uint8_t IS_HSPACE     = 0x10;
+<span class="lineNum">      26 </span>            : static const uint8_t IS_VSPACE     = 0x20;
+<span class="lineNum">      27 </span>            : static const uint8_t IS_SPACE      = IS_HSPACE|IS_VSPACE;
+<span class="lineNum">      28 </span>            : static const uint8_t IS_STRING     = 0x40;
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : #define H    IS_HSPACE
+<span class="lineNum">      31 </span>            : #define V    IS_VSPACE
+<span class="lineNum">      32 </span>            : #define I    IS_IDCHAR
+<span class="lineNum">      33 </span>            : #define J    IS_IDSTART
+<span class="lineNum">      34 </span>            : #define U    IS_URL_CHAR
+<span class="lineNum">      35 </span>            : #define S    IS_STRING
+<span class="lineNum">      36 </span>            : #define X    IS_HEX_DIGIT
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            : #define SH    S|H
+<span class="lineNum">      39 </span>            : #define SU    S|U
+<span class="lineNum">      40 </span>            : #define SUI   S|U|I
+<span class="lineNum">      41 </span>            : #define SUIJ  S|U|I|J
+<span class="lineNum">      42 </span>            : #define SUIX  S|U|I|X
+<span class="lineNum">      43 </span>            : #define SUIJX S|U|I|J|X
+<span class="lineNum">      44 </span>            : 
+<span class="lineNum">      45 </span>            : static const uint8_t gLexTable[] = {
+<span class="lineNum">      46 </span>            : // 00    01    02    03    04    05    06    07
+<span class="lineNum">      47 </span>            :     0,    S,    S,    S,    S,    S,    S,    S,
+<span class="lineNum">      48 </span>            : // 08   TAB    LF    0B    FF    CR    0E    0F
+<span class="lineNum">      49 </span>            :     S,   SH,    V,    S,    V,    V,    S,    S,
+<span class="lineNum">      50 </span>            : // 10    11    12    13    14    15    16    17
+<span class="lineNum">      51 </span>            :     S,    S,    S,    S,    S,    S,    S,    S,
+<span class="lineNum">      52 </span>            : // 18    19    1A    1B    1C    1D    1E    1F
+<span class="lineNum">      53 </span>            :     S,    S,    S,    S,    S,    S,    S,    S,
+<span class="lineNum">      54 </span>            : //SPC     !     &quot;     #     $     %     &amp;     '
+<span class="lineNum">      55 </span>            :    SH,   SU,    0,   SU,   SU,   SU,   SU,    0,
+<span class="lineNum">      56 </span>            : //  (     )     *     +     ,     -     .     /
+<span class="lineNum">      57 </span>            :     S,    S,   SU,   SU,   SU,  SUI,   SU,   SU,
+<span class="lineNum">      58 </span>            : //  0     1     2     3     4     5     6     7
+<span class="lineNum">      59 </span>            :  SUIX, SUIX, SUIX, SUIX, SUIX, SUIX, SUIX, SUIX,
+<span class="lineNum">      60 </span>            : //  8     9     :     ;     &lt;     =     &gt;     ?
+<span class="lineNum">      61 </span>            :  SUIX, SUIX,   SU,   SU,   SU,   SU,   SU,   SU,
+<span class="lineNum">      62 </span>            : //  @     A     B     C     D     E     F     G
+<span class="lineNum">      63 </span>            :    SU,SUIJX,SUIJX,SUIJX,SUIJX,SUIJX,SUIJX, SUIJ,
+<span class="lineNum">      64 </span>            : //  H     I     J     K     L     M     N     O
+<span class="lineNum">      65 </span>            :  SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ,
+<span class="lineNum">      66 </span>            : //  P     Q     R     S     T     U     V     W
+<span class="lineNum">      67 </span>            :  SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ,
+<span class="lineNum">      68 </span>            : //  X     Y     Z     [     \     ]     ^     _
+<span class="lineNum">      69 </span>            :  SUIJ, SUIJ, SUIJ,   SU,    J,   SU,   SU, SUIJ,
+<span class="lineNum">      70 </span>            : //  `     a     b     c     d     e     f     g
+<span class="lineNum">      71 </span>            :    SU,SUIJX,SUIJX,SUIJX,SUIJX,SUIJX,SUIJX, SUIJ,
+<span class="lineNum">      72 </span>            : //  h     i     j     k     l     m     n     o
+<span class="lineNum">      73 </span>            :  SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ,
+<span class="lineNum">      74 </span>            : //  p     q     r     s     t     u     v     w
+<span class="lineNum">      75 </span>            :  SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ, SUIJ,
+<span class="lineNum">      76 </span>            : //  x     y     z     {     |     }     ~    7F
+<span class="lineNum">      77 </span>            :  SUIJ, SUIJ, SUIJ,   SU,   SU,   SU,   SU,    S,
+<span class="lineNum">      78 </span>            : };
+<span class="lineNum">      79 </span>            : 
+<span class="lineNum">      80 </span>            : static_assert(MOZ_ARRAY_LENGTH(gLexTable) == 128,
+<span class="lineNum">      81 </span>            :               &quot;gLexTable expected to cover all 128 ASCII characters&quot;);
+<span class="lineNum">      82 </span>            : 
+<span class="lineNum">      83 </span>            : #undef I
+<span class="lineNum">      84 </span>            : #undef J
+<span class="lineNum">      85 </span>            : #undef U
+<span class="lineNum">      86 </span>            : #undef S
+<span class="lineNum">      87 </span>            : #undef X
+<span class="lineNum">      88 </span>            : #undef SH
+<span class="lineNum">      89 </span>            : #undef SU
+<span class="lineNum">      90 </span>            : #undef SUI
+<span class="lineNum">      91 </span>            : #undef SUIJ
+<span class="lineNum">      92 </span>            : #undef SUIX
+<span class="lineNum">      93 </span>            : #undef SUIJX
+<span class="lineNum">      94 </span>            : 
+<span class="lineNum">      95 </span>            : /**
+<span class="lineNum">      96 </span>            :  * True if 'ch' is in character class 'cls', which should be one of
+<span class="lineNum">      97 </span>            :  * the constants above or some combination of them.  All characters
+<span class="lineNum">      98 </span>            :  * above U+007F are considered to be in 'cls'.  EOF is never in 'cls'.
+<a name="99"><span class="lineNum">      99 </span>            :  */</a>
+<span class="lineNum">     100 </span>            : static inline bool
+<span class="lineNum">     101 </span><span class="lineCov">     570830 : IsOpenCharClass(int32_t ch, uint8_t cls) {</span>
+<span class="lineNum">     102 </span><span class="lineCov">     570830 :   return ch &gt;= 0 &amp;&amp; (ch &gt;= 128 || (gLexTable[ch] &amp; cls) != 0);</span>
+<span class="lineNum">     103 </span>            : }
+<span class="lineNum">     104 </span>            : 
+<span class="lineNum">     105 </span>            : /**
+<span class="lineNum">     106 </span>            :  * True if 'ch' is in character class 'cls', which should be one of
+<span class="lineNum">     107 </span>            :  * the constants above or some combination of them.  No characters
+<span class="lineNum">     108 </span>            :  * above U+007F are considered to be in 'cls'. EOF is never in 'cls'.
+<a name="109"><span class="lineNum">     109 </span>            :  */</a>
+<span class="lineNum">     110 </span>            : static inline bool
+<span class="lineNum">     111 </span><span class="lineCov">     638488 : IsClosedCharClass(int32_t ch, uint8_t cls) {</span>
+<span class="lineNum">     112 </span><span class="lineCov">     638488 :   return uint32_t(ch) &lt; 128 &amp;&amp; (gLexTable[ch] &amp; cls) != 0;</span>
+<span class="lineNum">     113 </span>            : }
+<span class="lineNum">     114 </span>            : 
+<span class="lineNum">     115 </span>            : /**
+<span class="lineNum">     116 </span>            :  * True if 'ch' is CSS whitespace, i.e. any of the ASCII characters
+<span class="lineNum">     117 </span>            :  * TAB, LF, FF, CR, or SPC.
+<a name="118"><span class="lineNum">     118 </span>            :  */</a>
+<span class="lineNum">     119 </span>            : static inline bool
+<span class="lineNum">     120 </span><span class="lineCov">     241770 : IsWhitespace(int32_t ch) {</span>
+<span class="lineNum">     121 </span><span class="lineCov">     241770 :   return IsClosedCharClass(ch, IS_SPACE);</span>
+<span class="lineNum">     122 </span>            : }
+<span class="lineNum">     123 </span>            : 
+<span class="lineNum">     124 </span>            : /**
+<span class="lineNum">     125 </span>            :  * True if 'ch' is horizontal whitespace, i.e. TAB or SPC.
+<a name="126"><span class="lineNum">     126 </span>            :  */</a>
+<span class="lineNum">     127 </span>            : static inline bool
+<span class="lineNum">     128 </span><span class="lineCov">       1442 : IsHorzSpace(int32_t ch) {</span>
+<span class="lineNum">     129 </span><span class="lineCov">       1442 :   return IsClosedCharClass(ch, IS_HSPACE);</span>
+<span class="lineNum">     130 </span>            : }
+<span class="lineNum">     131 </span>            : 
+<span class="lineNum">     132 </span>            : /**
+<span class="lineNum">     133 </span>            :  * True if 'ch' is vertical whitespace, i.e. LF, FF, or CR.  Vertical
+<span class="lineNum">     134 </span>            :  * whitespace requires special handling when consumed, see AdvanceLine.
+<a name="135"><span class="lineNum">     135 </span>            :  */</a>
+<span class="lineNum">     136 </span>            : static inline bool
+<span class="lineNum">     137 </span><span class="lineCov">     388615 : IsVertSpace(int32_t ch) {</span>
+<span class="lineNum">     138 </span><span class="lineCov">     388615 :   return IsClosedCharClass(ch, IS_VSPACE);</span>
+<span class="lineNum">     139 </span>            : }
+<span class="lineNum">     140 </span>            : 
+<span class="lineNum">     141 </span>            : /**
+<span class="lineNum">     142 </span>            :  * True if 'ch' is a character that can appear in the middle of an identifier.
+<span class="lineNum">     143 </span>            :  * This includes U+0000 since it is handled as U+FFFD, but for purposes of
+<span class="lineNum">     144 </span>            :  * GatherText it should not be included in IsOpenCharClass.
+<a name="145"><span class="lineNum">     145 </span>            :  */</a>
+<span class="lineNum">     146 </span>            : static inline bool
+<span class="lineNum">     147 </span><span class="lineCov">       2386 : IsIdentChar(int32_t ch) {</span>
+<span class="lineNum">     148 </span><span class="lineCov">       2386 :   return IsOpenCharClass(ch, IS_IDCHAR) || ch == 0;</span>
+<span class="lineNum">     149 </span>            : }
+<span class="lineNum">     150 </span>            : 
+<span class="lineNum">     151 </span>            : /**
+<span class="lineNum">     152 </span>            :  * True if 'ch' is a character that by itself begins an identifier.
+<span class="lineNum">     153 </span>            :  * This includes U+0000 since it is handled as U+FFFD, but for purposes of
+<span class="lineNum">     154 </span>            :  * GatherText it should not be included in IsOpenCharClass.
+<span class="lineNum">     155 </span>            :  * (This is a subset of IsIdentChar.)
+<a name="156"><span class="lineNum">     156 </span>            :  */</a>
+<span class="lineNum">     157 </span>            : static inline bool
+<span class="lineNum">     158 </span><span class="lineCov">      99781 : IsIdentStart(int32_t ch) {</span>
+<span class="lineNum">     159 </span><span class="lineCov">      99781 :   return IsOpenCharClass(ch, IS_IDSTART) || ch == 0;</span>
+<span class="lineNum">     160 </span>            : }
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span>            : /**
+<span class="lineNum">     163 </span>            :  * True if the two-character sequence aFirstChar+aSecondChar begins an
+<span class="lineNum">     164 </span>            :  * identifier.
+<a name="165"><span class="lineNum">     165 </span>            :  */</a>
+<span class="lineNum">     166 </span>            : static inline bool
+<span class="lineNum">     167 </span><span class="lineCov">      10048 : StartsIdent(int32_t aFirstChar, int32_t aSecondChar)</span>
+<span class="lineNum">     168 </span>            : {
+<span class="lineNum">     169 </span><span class="lineCov">      16304 :   return IsIdentStart(aFirstChar) ||</span>
+<span class="lineNum">     170 </span><span class="lineCov">      10050 :     (aFirstChar == '-' &amp;&amp; (aSecondChar == '-' || IsIdentStart(aSecondChar)));</span>
+<span class="lineNum">     171 </span>            : }
+<span class="lineNum">     172 </span>            : 
+<span class="lineNum">     173 </span>            : /**
+<span class="lineNum">     174 </span>            :  * True if 'ch' is a decimal digit.
+<a name="175"><span class="lineNum">     175 </span>            :  */</a>
+<span class="lineNum">     176 </span>            : static inline bool
+<span class="lineNum">     177 </span><span class="lineCov">      96736 : IsDigit(int32_t ch) {</span>
+<span class="lineNum">     178 </span><span class="lineCov">      96736 :   return (ch &gt;= '0') &amp;&amp; (ch &lt;= '9');</span>
+<span class="lineNum">     179 </span>            : }
+<span class="lineNum">     180 </span>            : 
+<span class="lineNum">     181 </span>            : /**
+<span class="lineNum">     182 </span>            :  * True if 'ch' is a hexadecimal digit.
+<a name="183"><span class="lineNum">     183 </span>            :  */</a>
+<span class="lineNum">     184 </span>            : static inline bool
+<span class="lineNum">     185 </span><span class="lineCov">       6661 : IsHexDigit(int32_t ch) {</span>
+<span class="lineNum">     186 </span><span class="lineCov">       6661 :   return IsClosedCharClass(ch, IS_HEX_DIGIT);</span>
+<span class="lineNum">     187 </span>            : }
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span>            : /**
+<span class="lineNum">     190 </span>            :  * Assuming that 'ch' is a decimal digit, return its numeric value.
+<a name="191"><span class="lineNum">     191 </span>            :  */</a>
+<span class="lineNum">     192 </span>            : static inline uint32_t
+<span class="lineNum">     193 </span><span class="lineCov">      15635 : DecimalDigitValue(int32_t ch)</span>
+<span class="lineNum">     194 </span>            : {
+<span class="lineNum">     195 </span><span class="lineCov">      15635 :   return ch - '0';</span>
+<span class="lineNum">     196 </span>            : }
+<span class="lineNum">     197 </span>            : 
+<span class="lineNum">     198 </span>            : /**
+<span class="lineNum">     199 </span>            :  * Assuming that 'ch' is a hexadecimal digit, return its numeric value.
+<a name="200"><span class="lineNum">     200 </span>            :  */</a>
+<span class="lineNum">     201 </span>            : static inline uint32_t
+<span class="lineNum">     202 </span><span class="lineCov">       5218 : HexDigitValue(int32_t ch)</span>
+<span class="lineNum">     203 </span>            : {
+<span class="lineNum">     204 </span><span class="lineCov">       5218 :   if (IsDigit(ch)) {</span>
+<span class="lineNum">     205 </span><span class="lineCov">       3978 :     return DecimalDigitValue(ch);</span>
+<span class="lineNum">     206 </span>            :   } else {
+<span class="lineNum">     207 </span>            :     // Note: c&amp;7 just keeps the low three bits which causes
+<span class="lineNum">     208 </span>            :     // upper and lower case alphabetics to both yield their
+<span class="lineNum">     209 </span>            :     // &quot;relative to 10&quot; value for computing the hex value.
+<span class="lineNum">     210 </span><span class="lineCov">       1240 :     return (ch &amp; 0x7) + 9;</span>
+<span class="lineNum">     211 </span>            :   }
+<span class="lineNum">     212 </span>            : }
+<span class="lineNum">     213 </span>            : 
+<span class="lineNum">     214 </span>            : /**
+<span class="lineNum">     215 </span>            :  * If 'ch' can be the first character of a two-character match operator
+<span class="lineNum">     216 </span>            :  * token, return the token type code for that token, otherwise return
+<span class="lineNum">     217 </span>            :  * eCSSToken_Symbol to indicate that it can't.
+<a name="218"><span class="lineNum">     218 </span>            :  */</a>
+<span class="lineNum">     219 </span>            : static inline nsCSSTokenType
+<span class="lineNum">     220 </span><span class="lineCov">      43978 : MatchOperatorType(int32_t ch)</span>
+<span class="lineNum">     221 </span>            : {
+<span class="lineNum">     222 </span><span class="lineCov">      43978 :   switch (ch) {</span>
+<span class="lineNum">     223 </span><span class="lineCov">        109 :   case '~': return eCSSToken_Includes;</span>
+<span class="lineNum">     224 </span><span class="lineCov">        204 :   case '|': return eCSSToken_Dashmatch;</span>
+<span class="lineNum">     225 </span><span class="lineCov">         10 :   case '^': return eCSSToken_Beginsmatch;</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :   case '$': return eCSSToken_Endsmatch;</span>
+<span class="lineNum">     227 </span><span class="lineCov">        563 :   case '*': return eCSSToken_Containsmatch;</span>
+<span class="lineNum">     228 </span><span class="lineCov">      43092 :   default:  return eCSSToken_Symbol;</span>
+<span class="lineNum">     229 </span>            :   }
+<span class="lineNum">     230 </span>            : }
+<span class="lineNum">     231 </span>            : 
+<span class="lineNum">     232 </span>            : /* Out-of-line nsCSSToken methods. */
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span>            : /**
+<span class="lineNum">     235 </span>            :  * Append the textual representation of |this| to |aBuffer|.
+<a name="236"><span class="lineNum">     236 </span>            :  */</a>
+<span class="lineNum">     237 </span>            : void
+<span class="lineNum">     238 </span><span class="lineCov">         66 : nsCSSToken::AppendToString(nsString&amp; aBuffer) const</span>
+<span class="lineNum">     239 </span>            : {
+<span class="lineNum">     240 </span><span class="lineCov">         66 :   switch (mType) {</span>
+<span class="lineNum">     241 </span>            :     case eCSSToken_Ident:
+<span class="lineNum">     242 </span><span class="lineCov">         22 :       nsStyleUtil::AppendEscapedCSSIdent(mIdent, aBuffer);</span>
+<span class="lineNum">     243 </span><span class="lineCov">         22 :       break;</span>
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span>            :     case eCSSToken_AtKeyword:
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :       aBuffer.Append('@');</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :       nsStyleUtil::AppendEscapedCSSIdent(mIdent, aBuffer);</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span>            :     case eCSSToken_ID:
+<span class="lineNum">     251 </span>            :     case eCSSToken_Hash:
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :       aBuffer.Append('#');</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :       nsStyleUtil::AppendEscapedCSSIdent(mIdent, aBuffer);</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     255 </span>            : 
+<span class="lineNum">     256 </span>            :     case eCSSToken_Function:
+<span class="lineNum">     257 </span><span class="lineCov">         44 :       nsStyleUtil::AppendEscapedCSSIdent(mIdent, aBuffer);</span>
+<span class="lineNum">     258 </span><span class="lineCov">         44 :       aBuffer.Append('(');</span>
+<span class="lineNum">     259 </span><span class="lineCov">         44 :       break;</span>
+<span class="lineNum">     260 </span>            : 
+<span class="lineNum">     261 </span>            :     case eCSSToken_URL:
+<span class="lineNum">     262 </span>            :     case eCSSToken_Bad_URL:
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :       aBuffer.AppendLiteral(&quot;url(&quot;);</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :       if (mSymbol != char16_t(0)) {</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :         nsStyleUtil::AppendEscapedCSSString(mIdent, aBuffer, mSymbol);</span>
+<span class="lineNum">     266 </span>            :       } else {
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :         aBuffer.Append(mIdent);</span>
+<span class="lineNum">     268 </span>            :       }
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :       if (mType == eCSSToken_URL) {</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :         aBuffer.Append(char16_t(')'));</span>
+<span class="lineNum">     271 </span>            :       }
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span>            :     case eCSSToken_Number:
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :       if (mIntegerValid) {</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :         aBuffer.AppendInt(mInteger, 10);</span>
+<span class="lineNum">     277 </span>            :       } else {
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :         aBuffer.AppendFloat(mNumber);</span>
+<span class="lineNum">     279 </span>            :       }
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     281 </span>            : 
+<span class="lineNum">     282 </span>            :     case eCSSToken_Percentage:
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :       aBuffer.AppendFloat(mNumber * 100.0f);</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :       aBuffer.Append(char16_t('%'));</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     286 </span>            : 
+<span class="lineNum">     287 </span>            :     case eCSSToken_Dimension:
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :       if (mIntegerValid) {</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :         aBuffer.AppendInt(mInteger, 10);</span>
+<span class="lineNum">     290 </span>            :       } else {
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :         aBuffer.AppendFloat(mNumber);</span>
+<span class="lineNum">     292 </span>            :       }
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :       nsStyleUtil::AppendEscapedCSSIdent(mIdent, aBuffer);</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     295 </span>            : 
+<span class="lineNum">     296 </span>            :     case eCSSToken_Bad_String:
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :       nsStyleUtil::AppendEscapedCSSString(mIdent, aBuffer, mSymbol);</span>
+<span class="lineNum">     298 </span>            :       // remove the trailing quote character
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :       aBuffer.Truncate(aBuffer.Length() - 1);</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     301 </span>            : 
+<span class="lineNum">     302 </span>            :     case eCSSToken_String:
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :       nsStyleUtil::AppendEscapedCSSString(mIdent, aBuffer, mSymbol);</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     305 </span>            : 
+<span class="lineNum">     306 </span>            :     case eCSSToken_Symbol:
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :       aBuffer.Append(mSymbol);</span>
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span>            :     case eCSSToken_Whitespace:
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :       aBuffer.Append(' ');</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span>            :     case eCSSToken_HTMLComment:
+<span class="lineNum">     315 </span>            :     case eCSSToken_URange:
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :       aBuffer.Append(mIdent);</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     318 </span>            : 
+<span class="lineNum">     319 </span>            :     case eCSSToken_Includes:
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :       aBuffer.AppendLiteral(&quot;~=&quot;);</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     322 </span>            :     case eCSSToken_Dashmatch:
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :       aBuffer.AppendLiteral(&quot;|=&quot;);</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     325 </span>            :     case eCSSToken_Beginsmatch:
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :       aBuffer.AppendLiteral(&quot;^=&quot;);</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     328 </span>            :     case eCSSToken_Endsmatch:
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :       aBuffer.AppendLiteral(&quot;$=&quot;);</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     331 </span>            :     case eCSSToken_Containsmatch:
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :       aBuffer.AppendLiteral(&quot;*=&quot;);</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span>            :     default:
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :       NS_ERROR(&quot;invalid token type&quot;);</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     338 </span>            :   }
+<span class="lineNum">     339 </span><span class="lineCov">         66 : }</span>
+<span class="lineNum">     340 </span>            : 
+<a name="341"><span class="lineNum">     341 </span>            : /* nsCSSScanner methods. */</a>
+<span class="lineNum">     342 </span>            : 
+<span class="lineNum">     343 </span><span class="lineCov">       2380 : nsCSSScanner::nsCSSScanner(const nsAString&amp; aBuffer, uint32_t aLineNumber)</span>
+<span class="lineNum">     344 </span><span class="lineCov">       2380 :   : mBuffer(aBuffer.BeginReading())</span>
+<span class="lineNum">     345 </span>            :   , mOffset(0)
+<span class="lineNum">     346 </span><span class="lineCov">       2380 :   , mCount(aBuffer.Length())</span>
+<span class="lineNum">     347 </span>            :   , mLineNumber(aLineNumber)
+<span class="lineNum">     348 </span>            :   , mLineOffset(0)
+<span class="lineNum">     349 </span>            :   , mTokenLineNumber(aLineNumber)
+<span class="lineNum">     350 </span>            :   , mTokenLineOffset(0)
+<span class="lineNum">     351 </span>            :   , mTokenOffset(0)
+<span class="lineNum">     352 </span>            :   , mRecordStartOffset(0)
+<span class="lineNum">     353 </span>            :   , mEOFCharacters(eEOFCharacters_None)
+<span class="lineNum">     354 </span>            :   , mReporter(nullptr)
+<span class="lineNum">     355 </span>            :   , mRecording(false)
+<span class="lineNum">     356 </span>            :   , mSeenBadToken(false)
+<span class="lineNum">     357 </span><span class="lineCov">       4760 :   , mSeenVariableReference(false)</span>
+<span class="lineNum">     358 </span>            : {
+<span class="lineNum">     359 </span><span class="lineCov">       2380 :   MOZ_COUNT_CTOR(nsCSSScanner);</span>
+<a name="360"><span class="lineNum">     360 </span><span class="lineCov">       2380 : }</span></a>
+<span class="lineNum">     361 </span>            : 
+<span class="lineNum">     362 </span><span class="lineCov">       4760 : nsCSSScanner::~nsCSSScanner()</span>
+<span class="lineNum">     363 </span>            : {
+<span class="lineNum">     364 </span><span class="lineCov">       2380 :   MOZ_COUNT_DTOR(nsCSSScanner);</span>
+<span class="lineNum">     365 </span><span class="lineCov">       2380 : }</span>
+<a name="366"><span class="lineNum">     366 </span>            : </a>
+<span class="lineNum">     367 </span>            : void
+<span class="lineNum">     368 </span><span class="lineCov">       3434 : nsCSSScanner::StartRecording()</span>
+<span class="lineNum">     369 </span>            : {
+<span class="lineNum">     370 </span><span class="lineCov">       3434 :   MOZ_ASSERT(!mRecording, &quot;already started recording&quot;);</span>
+<span class="lineNum">     371 </span><span class="lineCov">       3434 :   mRecording = true;</span>
+<span class="lineNum">     372 </span><span class="lineCov">       3434 :   mRecordStartOffset = mOffset;</span>
+<span class="lineNum">     373 </span><span class="lineCov">       3434 : }</span>
+<a name="374"><span class="lineNum">     374 </span>            : </a>
+<span class="lineNum">     375 </span>            : void
+<span class="lineNum">     376 </span><span class="lineCov">       1024 : nsCSSScanner::StopRecording()</span>
+<span class="lineNum">     377 </span>            : {
+<span class="lineNum">     378 </span><span class="lineCov">       1024 :   MOZ_ASSERT(mRecording, &quot;haven't started recording&quot;);</span>
+<span class="lineNum">     379 </span><span class="lineCov">       1024 :   mRecording = false;</span>
+<span class="lineNum">     380 </span><span class="lineCov">       1024 : }</span>
+<a name="381"><span class="lineNum">     381 </span>            : </a>
+<span class="lineNum">     382 </span>            : void
+<span class="lineNum">     383 </span><span class="lineCov">       2410 : nsCSSScanner::StopRecording(nsString&amp; aBuffer)</span>
+<span class="lineNum">     384 </span>            : {
+<span class="lineNum">     385 </span><span class="lineCov">       2410 :   MOZ_ASSERT(mRecording, &quot;haven't started recording&quot;);</span>
+<span class="lineNum">     386 </span><span class="lineCov">       2410 :   mRecording = false;</span>
+<span class="lineNum">     387 </span><span class="lineCov">       2410 :   aBuffer.Append(mBuffer + mRecordStartOffset,</span>
+<span class="lineNum">     388 </span><span class="lineCov">       4820 :                  mOffset - mRecordStartOffset);</span>
+<span class="lineNum">     389 </span><span class="lineCov">       2410 : }</span>
+<a name="390"><span class="lineNum">     390 </span>            : </a>
+<span class="lineNum">     391 </span>            : uint32_t
+<span class="lineNum">     392 </span><span class="lineCov">       5454 : nsCSSScanner::RecordingLength() const</span>
+<span class="lineNum">     393 </span>            : {
+<span class="lineNum">     394 </span><span class="lineCov">       5454 :   MOZ_ASSERT(mRecording, &quot;haven't started recording&quot;);</span>
+<span class="lineNum">     395 </span><span class="lineCov">       5454 :   return mOffset - mRecordStartOffset;</span>
+<span class="lineNum">     396 </span>            : }
+<span class="lineNum">     397 </span>            : 
+<a name="398"><span class="lineNum">     398 </span>            : #ifdef DEBUG</a>
+<span class="lineNum">     399 </span>            : bool
+<span class="lineNum">     400 </span><span class="lineCov">       1024 : nsCSSScanner::IsRecording() const</span>
+<span class="lineNum">     401 </span>            : {
+<span class="lineNum">     402 </span><span class="lineCov">       1024 :   return mRecording;</span>
+<span class="lineNum">     403 </span>            : }
+<span class="lineNum">     404 </span>            : #endif
+<a name="405"><span class="lineNum">     405 </span>            : </a>
+<span class="lineNum">     406 </span>            : nsDependentSubstring
+<span class="lineNum">     407 </span><span class="lineCov">         64 : nsCSSScanner::GetCurrentLine() const</span>
+<span class="lineNum">     408 </span>            : {
+<span class="lineNum">     409 </span><span class="lineCov">         64 :   uint32_t end = mTokenOffset;</span>
+<span class="lineNum">     410 </span><span class="lineCov">       3132 :   while (end &lt; mCount &amp;&amp; !IsVertSpace(mBuffer[end])) {</span>
+<span class="lineNum">     411 </span><span class="lineCov">       1534 :     end++;</span>
+<span class="lineNum">     412 </span>            :   }
+<span class="lineNum">     413 </span><span class="lineCov">         64 :   return nsDependentSubstring(mBuffer + mTokenLineOffset,</span>
+<span class="lineNum">     414 </span><span class="lineCov">        128 :                               mBuffer + end);</span>
+<span class="lineNum">     415 </span>            : }
+<span class="lineNum">     416 </span>            : 
+<span class="lineNum">     417 </span>            : /**
+<span class="lineNum">     418 </span>            :  * Return the raw UTF-16 code unit at position |mOffset + n| within
+<span class="lineNum">     419 </span>            :  * the read buffer.  If that is beyond the end of the buffer, returns
+<span class="lineNum">     420 </span>            :  * -1 to indicate end of input.
+<a name="421"><span class="lineNum">     421 </span>            :  */</a>
+<span class="lineNum">     422 </span>            : inline int32_t
+<span class="lineNum">     423 </span><span class="lineCov">     487855 : nsCSSScanner::Peek(uint32_t n)</span>
+<span class="lineNum">     424 </span>            : {
+<span class="lineNum">     425 </span><span class="lineCov">     487855 :   if (mOffset + n &gt;= mCount) {</span>
+<span class="lineNum">     426 </span><span class="lineCov">       6560 :     return -1;</span>
+<span class="lineNum">     427 </span>            :   }
+<span class="lineNum">     428 </span><span class="lineCov">     481295 :   return mBuffer[mOffset + n];</span>
+<span class="lineNum">     429 </span>            : }
+<span class="lineNum">     430 </span>            : 
+<span class="lineNum">     431 </span>            : /**
+<span class="lineNum">     432 </span>            :  * Advance |mOffset| over |n| code units.  Advance(0) is a no-op.
+<span class="lineNum">     433 </span>            :  * If |n| is greater than the distance to end of input, will silently
+<span class="lineNum">     434 </span>            :  * stop at the end.  May not be used to advance over a line boundary;
+<span class="lineNum">     435 </span>            :  * AdvanceLine() must be used instead.
+<a name="436"><span class="lineNum">     436 </span>            :  */</a>
+<span class="lineNum">     437 </span>            : inline void
+<span class="lineNum">     438 </span><span class="lineCov">     425316 : nsCSSScanner::Advance(uint32_t n)</span>
+<span class="lineNum">     439 </span>            : {
+<span class="lineNum">     440 </span>            : #ifdef DEBUG
+<span class="lineNum">     441 </span><span class="lineCov">     638578 :   while (mOffset &lt; mCount &amp;&amp; n &gt; 0) {</span>
+<span class="lineNum">     442 </span><span class="lineCov">     213262 :     MOZ_ASSERT(!IsVertSpace(mBuffer[mOffset]),</span>
+<span class="lineNum">     443 </span>            :                &quot;may not Advance() over a line boundary&quot;);
+<span class="lineNum">     444 </span><span class="lineCov">     213262 :     mOffset++;</span>
+<span class="lineNum">     445 </span><span class="lineCov">     213262 :     n--;</span>
+<span class="lineNum">     446 </span>            :   }
+<span class="lineNum">     447 </span>            : #else
+<span class="lineNum">     448 </span>            :   if (mOffset + n &gt;= mCount || mOffset + n &lt; mOffset)
+<span class="lineNum">     449 </span>            :     mOffset = mCount;
+<span class="lineNum">     450 </span>            :   else
+<span class="lineNum">     451 </span>            :     mOffset += n;
+<span class="lineNum">     452 </span>            : #endif
+<span class="lineNum">     453 </span><span class="lineCov">     212054 : }</span>
+<span class="lineNum">     454 </span>            : 
+<span class="lineNum">     455 </span>            : /**
+<span class="lineNum">     456 </span>            :  * Advance |mOffset| over a line boundary.
+<a name="457"><span class="lineNum">     457 </span>            :  */</a>
+<span class="lineNum">     458 </span>            : void
+<span class="lineNum">     459 </span><span class="lineCov">      20035 : nsCSSScanner::AdvanceLine()</span>
+<span class="lineNum">     460 </span>            : {
+<span class="lineNum">     461 </span><span class="lineCov">      20035 :   MOZ_ASSERT(IsVertSpace(mBuffer[mOffset]),</span>
+<span class="lineNum">     462 </span>            :              &quot;may not AdvanceLine() over a horizontal character&quot;);
+<span class="lineNum">     463 </span>            :   // Advance over \r\n as a unit.
+<span class="lineNum">     464 </span><span class="lineCov">      20035 :   if (mBuffer[mOffset]   == '\r' &amp;&amp; mOffset + 1 &lt; mCount &amp;&amp;</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :       mBuffer[mOffset+1] == '\n')</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :     mOffset += 2;</span>
+<span class="lineNum">     467 </span>            :   else
+<span class="lineNum">     468 </span><span class="lineCov">      20035 :     mOffset += 1;</span>
+<span class="lineNum">     469 </span>            :   // 0 is a magical line number meaning that we don't know (i.e., script)
+<span class="lineNum">     470 </span><span class="lineCov">      20035 :   if (mLineNumber != 0)</span>
+<span class="lineNum">     471 </span><span class="lineCov">      20035 :     mLineNumber++;</span>
+<span class="lineNum">     472 </span><span class="lineCov">      20035 :   mLineOffset = mOffset;</span>
+<span class="lineNum">     473 </span><span class="lineCov">      20035 : }</span>
+<span class="lineNum">     474 </span>            : 
+<span class="lineNum">     475 </span>            : /**
+<span class="lineNum">     476 </span>            :  * Back up |mOffset| over |n| code units.  Backup(0) is a no-op.
+<span class="lineNum">     477 </span>            :  * If |n| is greater than the distance to beginning of input, will
+<span class="lineNum">     478 </span>            :  * silently stop at the beginning.  May not be used to back up over a
+<span class="lineNum">     479 </span>            :  * line boundary.
+<a name="480"><span class="lineNum">     480 </span>            :  */</a>
+<span class="lineNum">     481 </span>            : void
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 : nsCSSScanner::Backup(uint32_t n)</span>
+<span class="lineNum">     483 </span>            : {
+<span class="lineNum">     484 </span>            : #ifdef DEBUG
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :   while (mOffset &gt; 0 &amp;&amp; n &gt; 0) {</span>
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(!IsVertSpace(mBuffer[mOffset-1]),</span>
+<span class="lineNum">     487 </span>            :                &quot;may not Backup() over a line boundary&quot;);
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :     mOffset--;</span>
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :     n--;</span>
+<span class="lineNum">     490 </span>            :   }
+<span class="lineNum">     491 </span>            : #else
+<span class="lineNum">     492 </span>            :   if (mOffset &lt; n)
+<span class="lineNum">     493 </span>            :     mOffset = 0;
+<span class="lineNum">     494 </span>            :   else
+<span class="lineNum">     495 </span>            :     mOffset -= n;
+<span class="lineNum">     496 </span>            : #endif
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 : }</span>
+<a name="498"><span class="lineNum">     498 </span>            : </a>
+<span class="lineNum">     499 </span>            : void
+<span class="lineNum">     500 </span><span class="lineCov">       7458 : nsCSSScanner::SavePosition(nsCSSScannerPosition&amp; aState)</span>
+<span class="lineNum">     501 </span>            : {
+<span class="lineNum">     502 </span><span class="lineCov">       7458 :   aState.mOffset = mOffset;</span>
+<span class="lineNum">     503 </span><span class="lineCov">       7458 :   aState.mLineNumber = mLineNumber;</span>
+<span class="lineNum">     504 </span><span class="lineCov">       7458 :   aState.mLineOffset = mLineOffset;</span>
+<span class="lineNum">     505 </span><span class="lineCov">       7458 :   aState.mTokenLineNumber = mTokenLineNumber;</span>
+<span class="lineNum">     506 </span><span class="lineCov">       7458 :   aState.mTokenLineOffset = mTokenLineOffset;</span>
+<span class="lineNum">     507 </span><span class="lineCov">       7458 :   aState.mTokenOffset = mTokenOffset;</span>
+<span class="lineNum">     508 </span><span class="lineCov">       7458 :   aState.mInitialized = true;</span>
+<span class="lineNum">     509 </span><span class="lineCov">       7458 : }</span>
+<a name="510"><span class="lineNum">     510 </span>            : </a>
+<span class="lineNum">     511 </span>            : void
+<span class="lineNum">     512 </span><span class="lineCov">        258 : nsCSSScanner::RestoreSavedPosition(const nsCSSScannerPosition&amp; aState)</span>
+<span class="lineNum">     513 </span>            : {
+<span class="lineNum">     514 </span><span class="lineCov">        258 :   MOZ_ASSERT(aState.mInitialized, &quot;have not saved state&quot;);</span>
+<span class="lineNum">     515 </span><span class="lineCov">        258 :   if (aState.mInitialized) {</span>
+<span class="lineNum">     516 </span><span class="lineCov">        258 :     mOffset = aState.mOffset;</span>
+<span class="lineNum">     517 </span><span class="lineCov">        258 :     mLineNumber = aState.mLineNumber;</span>
+<span class="lineNum">     518 </span><span class="lineCov">        258 :     mLineOffset = aState.mLineOffset;</span>
+<span class="lineNum">     519 </span><span class="lineCov">        258 :     mTokenLineNumber = aState.mTokenLineNumber;</span>
+<span class="lineNum">     520 </span><span class="lineCov">        258 :     mTokenLineOffset = aState.mTokenLineOffset;</span>
+<span class="lineNum">     521 </span><span class="lineCov">        258 :     mTokenOffset = aState.mTokenOffset;</span>
+<span class="lineNum">     522 </span>            :   }
+<span class="lineNum">     523 </span><span class="lineCov">        258 : }</span>
+<span class="lineNum">     524 </span>            : 
+<span class="lineNum">     525 </span>            : /**
+<span class="lineNum">     526 </span>            :  * Skip over a sequence of whitespace characters (vertical or
+<span class="lineNum">     527 </span>            :  * horizontal) starting at the current read position.
+<a name="528"><span class="lineNum">     528 </span>            :  */</a>
+<span class="lineNum">     529 </span>            : void
+<span class="lineNum">     530 </span><span class="lineCov">     106930 : nsCSSScanner::SkipWhitespace()</span>
+<span class="lineNum">     531 </span>            : {
+<span class="lineNum">     532 </span>            :   for (;;) {
+<span class="lineNum">     533 </span><span class="lineCov">     106930 :     int32_t ch = Peek();</span>
+<span class="lineNum">     534 </span><span class="lineCov">     106930 :     if (!IsWhitespace(ch)) { // EOF counts as non-whitespace</span>
+<span class="lineNum">     535 </span><span class="lineCov">      43589 :       break;</span>
+<span class="lineNum">     536 </span>            :     }
+<span class="lineNum">     537 </span><span class="lineCov">      63341 :     if (IsVertSpace(ch)) {</span>
+<span class="lineNum">     538 </span><span class="lineCov">      19238 :       AdvanceLine();</span>
+<span class="lineNum">     539 </span>            :     } else {
+<span class="lineNum">     540 </span><span class="lineCov">      44103 :       Advance();</span>
+<span class="lineNum">     541 </span>            :     }
+<span class="lineNum">     542 </span><span class="lineCov">      63341 :   }</span>
+<span class="lineNum">     543 </span><span class="lineCov">      43589 : }</span>
+<span class="lineNum">     544 </span>            : 
+<span class="lineNum">     545 </span>            : /**
+<span class="lineNum">     546 </span>            :  * Skip over one CSS comment starting at the current read position.
+<a name="547"><span class="lineNum">     547 </span>            :  */</a>
+<span class="lineNum">     548 </span>            : void
+<span class="lineNum">     549 </span><span class="lineCov">       1090 : nsCSSScanner::SkipComment()</span>
+<span class="lineNum">     550 </span>            : {
+<span class="lineNum">     551 </span><span class="lineCov">       1090 :   MOZ_ASSERT(Peek() == '/' &amp;&amp; Peek(1) == '*', &quot;should not have been called&quot;);</span>
+<span class="lineNum">     552 </span><span class="lineCov">       1090 :   Advance(2);</span>
+<span class="lineNum">     553 </span>            :   for (;;) {
+<span class="lineNum">     554 </span><span class="lineCov">      90021 :     int32_t ch = Peek();</span>
+<span class="lineNum">     555 </span><span class="lineCov">      90021 :     if (ch &lt; 0) {</span>
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :       if (mReporter)</span>
+<span class="lineNum">     557 </span><span class="lineNoCov">          0 :         mReporter-&gt;ReportUnexpectedEOF(&quot;PECommentEOF&quot;);</span>
+<span class="lineNum">     558 </span><span class="lineNoCov">          0 :       SetEOFCharacters(eEOFCharacters_Asterisk | eEOFCharacters_Slash);</span>
+<span class="lineNum">     559 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">     560 </span>            :     }
+<span class="lineNum">     561 </span><span class="lineCov">      90021 :     if (ch == '*') {</span>
+<span class="lineNum">     562 </span><span class="lineCov">       2527 :       Advance();</span>
+<span class="lineNum">     563 </span><span class="lineCov">       2527 :       ch = Peek();</span>
+<span class="lineNum">     564 </span><span class="lineCov">       2527 :       if (ch &lt; 0) {</span>
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :         if (mReporter)</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :           mReporter-&gt;ReportUnexpectedEOF(&quot;PECommentEOF&quot;);</span>
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :         SetEOFCharacters(eEOFCharacters_Slash);</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     569 </span>            :       }
+<span class="lineNum">     570 </span><span class="lineCov">       2527 :       if (ch == '/') {</span>
+<span class="lineNum">     571 </span><span class="lineCov">       1090 :         Advance();</span>
+<span class="lineNum">     572 </span><span class="lineCov">       1090 :         return;</span>
+<span class="lineNum">     573 </span>            :       }
+<span class="lineNum">     574 </span><span class="lineCov">      87494 :     } else if (IsVertSpace(ch)) {</span>
+<span class="lineNum">     575 </span><span class="lineCov">        797 :       AdvanceLine();</span>
+<span class="lineNum">     576 </span>            :     } else {
+<span class="lineNum">     577 </span><span class="lineCov">      86697 :       Advance();</span>
+<span class="lineNum">     578 </span>            :     }
+<span class="lineNum">     579 </span><span class="lineCov">      88931 :   }</span>
+<span class="lineNum">     580 </span>            : }
+<span class="lineNum">     581 </span>            : 
+<span class="lineNum">     582 </span>            : /**
+<span class="lineNum">     583 </span>            :  * If there is a valid escape sequence starting at the current read
+<span class="lineNum">     584 </span>            :  * position, consume it, decode it, append the result to |aOutput|,
+<span class="lineNum">     585 </span>            :  * and return true.  Otherwise, consume nothing, leave |aOutput|
+<span class="lineNum">     586 </span>            :  * unmodified, and return false.  If |aInString| is true, accept the
+<span class="lineNum">     587 </span>            :  * additional form of escape sequence allowed within string-like tokens.
+<a name="588"><span class="lineNum">     588 </span>            :  */</a>
+<span class="lineNum">     589 </span>            : bool
+<span class="lineNum">     590 </span><span class="lineCov">       1443 : nsCSSScanner::GatherEscape(nsString&amp; aOutput, bool aInString)</span>
+<span class="lineNum">     591 </span>            : {
+<span class="lineNum">     592 </span><span class="lineCov">       1443 :   MOZ_ASSERT(Peek() == '\\', &quot;should not have been called&quot;);</span>
+<span class="lineNum">     593 </span><span class="lineCov">       1443 :   int32_t ch = Peek(1);</span>
+<span class="lineNum">     594 </span><span class="lineCov">       1443 :   if (ch &lt; 0) {</span>
+<span class="lineNum">     595 </span>            :     // If we are in a string (or a url() containing a string), we want to drop
+<span class="lineNum">     596 </span>            :     // the backslash on the floor.  Otherwise, we want to treat it as a U+FFFD
+<span class="lineNum">     597 </span>            :     // character.
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :     Advance();</span>
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :     if (aInString) {</span>
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :       SetEOFCharacters(eEOFCharacters_DropBackslash);</span>
+<span class="lineNum">     601 </span>            :     } else {
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :       aOutput.Append(UCS2_REPLACEMENT_CHAR);</span>
+<span class="lineNum">     603 </span><span class="lineNoCov">          0 :       SetEOFCharacters(eEOFCharacters_ReplacementChar);</span>
+<span class="lineNum">     604 </span>            :     }
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     606 </span>            :   }
+<span class="lineNum">     607 </span><span class="lineCov">       1443 :   if (IsVertSpace(ch)) {</span>
+<span class="lineNum">     608 </span><span class="lineNoCov">          0 :     if (aInString) {</span>
+<span class="lineNum">     609 </span>            :       // In strings (and in url() containing a string), escaped
+<span class="lineNum">     610 </span>            :       // newlines are completely removed, to allow splitting over
+<span class="lineNum">     611 </span>            :       // multiple lines.
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :       Advance();</span>
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 :       AdvanceLine();</span>
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :       return true;</span>
+<span class="lineNum">     615 </span>            :     }
+<span class="lineNum">     616 </span>            :     // Outside of strings, backslash followed by a newline is not an escape.
+<span class="lineNum">     617 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     618 </span>            :   }
+<span class="lineNum">     619 </span>            : 
+<span class="lineNum">     620 </span><span class="lineCov">       1443 :   if (!IsHexDigit(ch)) {</span>
+<span class="lineNum">     621 </span>            :     // &quot;Any character (except a hexadecimal digit, linefeed, carriage
+<span class="lineNum">     622 </span>            :     // return, or form feed) can be escaped with a backslash to remove
+<span class="lineNum">     623 </span>            :     // its special meaning.&quot; -- CSS2.1 section 4.1.3
+<span class="lineNum">     624 </span><span class="lineCov">          1 :     Advance(2);</span>
+<span class="lineNum">     625 </span><span class="lineCov">          1 :     if (ch == 0) {</span>
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :       aOutput.Append(UCS2_REPLACEMENT_CHAR);</span>
+<span class="lineNum">     627 </span>            :     } else {
+<span class="lineNum">     628 </span><span class="lineCov">          1 :       aOutput.Append(ch);</span>
+<span class="lineNum">     629 </span>            :     }
+<span class="lineNum">     630 </span><span class="lineCov">          1 :     return true;</span>
+<span class="lineNum">     631 </span>            :   }
+<span class="lineNum">     632 </span>            : 
+<span class="lineNum">     633 </span>            :   // &quot;[at most six hexadecimal digits following a backslash] stand
+<span class="lineNum">     634 </span>            :   // for the ISO 10646 character with that number, which must not be
+<span class="lineNum">     635 </span>            :   // zero. (It is undefined in CSS 2.1 what happens if a style sheet
+<span class="lineNum">     636 </span>            :   // does contain a character with Unicode codepoint zero.)&quot;
+<span class="lineNum">     637 </span>            :   //   -- CSS2.1 section 4.1.3
+<span class="lineNum">     638 </span>            : 
+<span class="lineNum">     639 </span>            :   // At this point we know we have \ followed by at least one
+<span class="lineNum">     640 </span>            :   // hexadecimal digit, therefore the escape sequence is valid and we
+<span class="lineNum">     641 </span>            :   // can go ahead and consume the backslash.
+<span class="lineNum">     642 </span><span class="lineCov">       1442 :   Advance();</span>
+<span class="lineNum">     643 </span><span class="lineCov">       1442 :   uint32_t val = 0;</span>
+<span class="lineNum">     644 </span><span class="lineCov">       1442 :   int i = 0;</span>
+<span class="lineNum">     645 </span><span class="lineCov">       5218 :   do {</span>
+<span class="lineNum">     646 </span><span class="lineCov">       5218 :     val = val * 16 + HexDigitValue(ch);</span>
+<span class="lineNum">     647 </span><span class="lineCov">       5218 :     i++;</span>
+<span class="lineNum">     648 </span><span class="lineCov">       5218 :     Advance();</span>
+<span class="lineNum">     649 </span><span class="lineCov">       5218 :     ch = Peek();</span>
+<span class="lineNum">     650 </span><span class="lineCov">       5218 :   } while (i &lt; 6 &amp;&amp; IsHexDigit(ch));</span>
+<span class="lineNum">     651 </span>            : 
+<span class="lineNum">     652 </span>            :   // &quot;Interpret the hex digits as a hexadecimal number. If this number is zero,
+<span class="lineNum">     653 </span>            :   // or is greater than the maximum allowed codepoint, return U+FFFD
+<span class="lineNum">     654 </span>            :   // REPLACEMENT CHARACTER&quot; -- CSS Syntax Level 3
+<span class="lineNum">     655 </span><span class="lineCov">       1442 :   if (MOZ_UNLIKELY(val == 0)) {</span>
+<span class="lineNum">     656 </span><span class="lineNoCov">          0 :     aOutput.Append(UCS2_REPLACEMENT_CHAR);</span>
+<span class="lineNum">     657 </span>            :   } else {
+<span class="lineNum">     658 </span><span class="lineCov">       1442 :     AppendUCS4ToUTF16(ENSURE_VALID_CHAR(val), aOutput);</span>
+<span class="lineNum">     659 </span>            :   }
+<span class="lineNum">     660 </span>            : 
+<span class="lineNum">     661 </span>            :   // Consume exactly one whitespace character after a
+<span class="lineNum">     662 </span>            :   // hexadecimal escape sequence.
+<span class="lineNum">     663 </span><span class="lineCov">       1442 :   if (IsVertSpace(ch)) {</span>
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :     AdvanceLine();</span>
+<span class="lineNum">     665 </span><span class="lineCov">       1442 :   } else if (IsHorzSpace(ch)) {</span>
+<span class="lineNum">     666 </span><span class="lineCov">       1076 :     Advance();</span>
+<span class="lineNum">     667 </span>            :   }
+<span class="lineNum">     668 </span><span class="lineCov">       1442 :   return true;</span>
+<span class="lineNum">     669 </span>            : }
+<span class="lineNum">     670 </span>            : 
+<span class="lineNum">     671 </span>            : /**
+<span class="lineNum">     672 </span>            :  * Consume a run of &quot;text&quot; beginning with the current read position,
+<span class="lineNum">     673 </span>            :  * consisting of characters in the class |aClass| (which must be a
+<span class="lineNum">     674 </span>            :  * suitable argument to IsOpenCharClass) plus escape sequences.
+<span class="lineNum">     675 </span>            :  * Append the text to |aText|, after decoding escape sequences.
+<span class="lineNum">     676 </span>            :  *
+<span class="lineNum">     677 </span>            :  * Returns true if at least one character was appended to |aText|,
+<span class="lineNum">     678 </span>            :  * false otherwise.
+<a name="679"><span class="lineNum">     679 </span>            :  */</a>
+<span class="lineNum">     680 </span>            : bool
+<span class="lineNum">     681 </span><span class="lineCov">      39210 : nsCSSScanner::GatherText(uint8_t aClass, nsString&amp; aText)</span>
+<span class="lineNum">     682 </span>            : {
+<span class="lineNum">     683 </span>            :   // This is all of the character classes currently used with
+<span class="lineNum">     684 </span>            :   // GatherText.  If you have a need to use this function with a
+<span class="lineNum">     685 </span>            :   // different class, go ahead and add it.
+<span class="lineNum">     686 </span><span class="lineCov">      39210 :   MOZ_ASSERT(aClass == IS_STRING ||</span>
+<span class="lineNum">     687 </span>            :              aClass == IS_IDCHAR ||
+<span class="lineNum">     688 </span>            :              aClass == IS_URL_CHAR,
+<span class="lineNum">     689 </span>            :              &quot;possibly-inappropriate character class&quot;);
+<span class="lineNum">     690 </span>            : 
+<span class="lineNum">     691 </span><span class="lineCov">      39210 :   uint32_t start = mOffset;</span>
+<span class="lineNum">     692 </span><span class="lineCov">      39210 :   bool inString = aClass == IS_STRING;</span>
+<span class="lineNum">     693 </span>            : 
+<span class="lineNum">     694 </span>            :   for (;;) {
+<span class="lineNum">     695 </span>            :     // Consume runs of unescaped characters in one go.
+<span class="lineNum">     696 </span><span class="lineCov">      40653 :     uint32_t n = mOffset;</span>
+<span class="lineNum">     697 </span><span class="lineCov">     819163 :     while (n &lt; mCount &amp;&amp; IsOpenCharClass(mBuffer[n], aClass)) {</span>
+<span class="lineNum">     698 </span><span class="lineCov">     389255 :       n++;</span>
+<span class="lineNum">     699 </span>            :     }
+<span class="lineNum">     700 </span><span class="lineCov">      40653 :     if (n &gt; mOffset) {</span>
+<span class="lineNum">     701 </span><span class="lineCov">      37743 :       aText.Append(&amp;mBuffer[mOffset], n - mOffset);</span>
+<span class="lineNum">     702 </span><span class="lineCov">      37743 :       mOffset = n;</span>
+<span class="lineNum">     703 </span>            :     }
+<span class="lineNum">     704 </span><span class="lineCov">      40653 :     if (n == mCount) {</span>
+<span class="lineNum">     705 </span><span class="lineCov">        949 :       break;</span>
+<span class="lineNum">     706 </span>            :     }
+<span class="lineNum">     707 </span>            : 
+<span class="lineNum">     708 </span><span class="lineCov">      39704 :     int32_t ch = Peek();</span>
+<span class="lineNum">     709 </span><span class="lineCov">      39704 :     MOZ_ASSERT(!IsOpenCharClass(ch, aClass),</span>
+<span class="lineNum">     710 </span>            :                &quot;should not have exited the inner loop&quot;);
+<span class="lineNum">     711 </span><span class="lineCov">      39704 :     if (ch == 0) {</span>
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :       Advance();</span>
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :       aText.Append(UCS2_REPLACEMENT_CHAR);</span>
+<span class="lineNum">     714 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     715 </span>            :     }
+<span class="lineNum">     716 </span>            : 
+<span class="lineNum">     717 </span><span class="lineCov">      39704 :     if (ch != '\\') {</span>
+<span class="lineNum">     718 </span><span class="lineCov">      38261 :       break;</span>
+<span class="lineNum">     719 </span>            :     }
+<span class="lineNum">     720 </span><span class="lineCov">       1443 :     if (!GatherEscape(aText, inString)) {</span>
+<span class="lineNum">     721 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     722 </span>            :     }
+<span class="lineNum">     723 </span><span class="lineCov">       1443 :   }</span>
+<span class="lineNum">     724 </span>            : 
+<span class="lineNum">     725 </span><span class="lineCov">      39210 :   return mOffset &gt; start;</span>
+<span class="lineNum">     726 </span>            : }
+<span class="lineNum">     727 </span>            : 
+<span class="lineNum">     728 </span>            : /**
+<span class="lineNum">     729 </span>            :  * Scan an Ident token.  This also handles Function and URL tokens,
+<span class="lineNum">     730 </span>            :  * both of which begin indistinguishably from an identifier.  It can
+<span class="lineNum">     731 </span>            :  * produce a Symbol token when an apparent identifier actually led
+<span class="lineNum">     732 </span>            :  * into an invalid escape sequence.
+<a name="733"><span class="lineNum">     733 </span>            :  */</a>
+<span class="lineNum">     734 </span>            : bool
+<span class="lineNum">     735 </span><span class="lineCov">      30613 : nsCSSScanner::ScanIdent(nsCSSToken&amp; aToken)</span>
+<span class="lineNum">     736 </span>            : {
+<span class="lineNum">     737 </span><span class="lineCov">      30613 :   if (MOZ_UNLIKELY(!GatherText(IS_IDCHAR, aToken.mIdent))) {</span>
+<span class="lineNum">     738 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(Peek() == '\\',</span>
+<span class="lineNum">     739 </span>            :                &quot;unexpected IsIdentStart character that did not begin an ident&quot;);
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :     aToken.mSymbol = Peek();</span>
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 :     Advance();</span>
+<span class="lineNum">     742 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     743 </span>            :   }
+<span class="lineNum">     744 </span>            : 
+<span class="lineNum">     745 </span><span class="lineCov">      30613 :   if (MOZ_LIKELY(Peek() != '(')) {</span>
+<span class="lineNum">     746 </span><span class="lineCov">      26255 :     aToken.mType = eCSSToken_Ident;</span>
+<span class="lineNum">     747 </span><span class="lineCov">      26255 :     return true;</span>
+<span class="lineNum">     748 </span>            :   }
+<span class="lineNum">     749 </span>            : 
+<span class="lineNum">     750 </span><span class="lineCov">       4358 :   Advance();</span>
+<span class="lineNum">     751 </span><span class="lineCov">       4358 :   aToken.mType = eCSSToken_Function;</span>
+<span class="lineNum">     752 </span><span class="lineCov">       4358 :   if (aToken.mIdent.LowerCaseEqualsLiteral(&quot;url&quot;)) {</span>
+<span class="lineNum">     753 </span><span class="lineCov">        752 :     NextURL(aToken);</span>
+<span class="lineNum">     754 </span><span class="lineCov">       3606 :   } else if (aToken.mIdent.LowerCaseEqualsLiteral(&quot;var&quot;)) {</span>
+<span class="lineNum">     755 </span><span class="lineCov">       1603 :     mSeenVariableReference = true;</span>
+<span class="lineNum">     756 </span>            :   }
+<span class="lineNum">     757 </span><span class="lineCov">       4358 :   return true;</span>
+<span class="lineNum">     758 </span>            : }
+<span class="lineNum">     759 </span>            : 
+<span class="lineNum">     760 </span>            : /**
+<span class="lineNum">     761 </span>            :  * Scan an AtKeyword token.  Also handles production of Symbol when
+<span class="lineNum">     762 </span>            :  * an '@' is not followed by an identifier.
+<a name="763"><span class="lineNum">     763 </span>            :  */</a>
+<span class="lineNum">     764 </span>            : bool
+<span class="lineNum">     765 </span><span class="lineCov">        286 : nsCSSScanner::ScanAtKeyword(nsCSSToken&amp; aToken)</span>
+<span class="lineNum">     766 </span>            : {
+<span class="lineNum">     767 </span><span class="lineCov">        286 :   MOZ_ASSERT(Peek() == '@', &quot;should not have been called&quot;);</span>
+<span class="lineNum">     768 </span>            : 
+<span class="lineNum">     769 </span>            :   // Fall back for when '@' isn't followed by an identifier.
+<span class="lineNum">     770 </span><span class="lineCov">        286 :   aToken.mSymbol = '@';</span>
+<span class="lineNum">     771 </span><span class="lineCov">        286 :   Advance();</span>
+<span class="lineNum">     772 </span>            : 
+<span class="lineNum">     773 </span><span class="lineCov">        286 :   int32_t ch = Peek();</span>
+<span class="lineNum">     774 </span><span class="lineCov">        286 :   if (StartsIdent(ch, Peek(1))) {</span>
+<span class="lineNum">     775 </span><span class="lineCov">        286 :     if (GatherText(IS_IDCHAR, aToken.mIdent)) {</span>
+<span class="lineNum">     776 </span><span class="lineCov">        286 :        aToken.mType = eCSSToken_AtKeyword;</span>
+<span class="lineNum">     777 </span>            :      }
+<span class="lineNum">     778 </span>            :   }
+<span class="lineNum">     779 </span><span class="lineCov">        286 :   return true;</span>
+<span class="lineNum">     780 </span>            : }
+<span class="lineNum">     781 </span>            : 
+<span class="lineNum">     782 </span>            : /**
+<span class="lineNum">     783 </span>            :  * Scan a Hash token.  Handles the distinction between eCSSToken_ID
+<span class="lineNum">     784 </span>            :  * and eCSSToken_Hash, and handles production of Symbol when a '#'
+<span class="lineNum">     785 </span>            :  * is not followed by identifier characters.
+<a name="786"><span class="lineNum">     786 </span>            :  */</a>
+<span class="lineNum">     787 </span>            : bool
+<span class="lineNum">     788 </span><span class="lineCov">       2386 : nsCSSScanner::ScanHash(nsCSSToken&amp; aToken)</span>
+<span class="lineNum">     789 </span>            : {
+<span class="lineNum">     790 </span><span class="lineCov">       2386 :   MOZ_ASSERT(Peek() == '#', &quot;should not have been called&quot;);</span>
+<span class="lineNum">     791 </span>            : 
+<span class="lineNum">     792 </span>            :   // Fall back for when '#' isn't followed by identifier characters.
+<span class="lineNum">     793 </span><span class="lineCov">       2386 :   aToken.mSymbol = '#';</span>
+<span class="lineNum">     794 </span><span class="lineCov">       2386 :   Advance();</span>
+<span class="lineNum">     795 </span>            : 
+<span class="lineNum">     796 </span><span class="lineCov">       2386 :   int32_t ch = Peek();</span>
+<span class="lineNum">     797 </span><span class="lineCov">       2386 :   if (IsIdentChar(ch) || ch == '\\') {</span>
+<span class="lineNum">     798 </span>            :     nsCSSTokenType type =
+<span class="lineNum">     799 </span><span class="lineCov">       2386 :       StartsIdent(ch, Peek(1)) ? eCSSToken_ID : eCSSToken_Hash;</span>
+<span class="lineNum">     800 </span><span class="lineCov">       2386 :     aToken.mIdent.SetLength(0);</span>
+<span class="lineNum">     801 </span><span class="lineCov">       2386 :     if (GatherText(IS_IDCHAR, aToken.mIdent)) {</span>
+<span class="lineNum">     802 </span><span class="lineCov">       2386 :       aToken.mType = type;</span>
+<span class="lineNum">     803 </span>            :     }
+<span class="lineNum">     804 </span>            :   }
+<span class="lineNum">     805 </span>            : 
+<span class="lineNum">     806 </span><span class="lineCov">       2386 :   return true;</span>
+<span class="lineNum">     807 </span>            : }
+<span class="lineNum">     808 </span>            : 
+<span class="lineNum">     809 </span>            : /**
+<span class="lineNum">     810 </span>            :  * Scan a Number, Percentage, or Dimension token (all of which begin
+<span class="lineNum">     811 </span>            :  * like a Number).  Can produce a Symbol when a '.' is not followed by
+<span class="lineNum">     812 </span>            :  * digits, or when '+' or '-' are not followed by either a digit or a
+<span class="lineNum">     813 </span>            :  * '.' and then a digit.  Can also produce a HTMLComment when it
+<span class="lineNum">     814 </span>            :  * encounters '--&gt;'.
+<a name="815"><span class="lineNum">     815 </span>            :  */</a>
+<span class="lineNum">     816 </span>            : bool
+<span class="lineNum">     817 </span><span class="lineCov">       7607 : nsCSSScanner::ScanNumber(nsCSSToken&amp; aToken)</span>
+<span class="lineNum">     818 </span>            : {
+<span class="lineNum">     819 </span><span class="lineCov">       7607 :   int32_t c = Peek();</span>
+<span class="lineNum">     820 </span>            : #ifdef DEBUG
+<span class="lineNum">     821 </span>            :   {
+<span class="lineNum">     822 </span><span class="lineCov">       7607 :     int32_t c2 = Peek(1);</span>
+<span class="lineNum">     823 </span><span class="lineCov">       7607 :     int32_t c3 = Peek(2);</span>
+<span class="lineNum">     824 </span><span class="lineCov">       7607 :     MOZ_ASSERT(IsDigit(c) ||</span>
+<span class="lineNum">     825 </span>            :                (IsDigit(c2) &amp;&amp; (c == '.' || c == '+' || c == '-')) ||
+<span class="lineNum">     826 </span>            :                (IsDigit(c3) &amp;&amp; (c == '+' || c == '-') &amp;&amp; c2 == '.'),
+<span class="lineNum">     827 </span>            :                &quot;should not have been called&quot;);
+<span class="lineNum">     828 </span>            :   }
+<span class="lineNum">     829 </span>            : #endif
+<span class="lineNum">     830 </span>            : 
+<span class="lineNum">     831 </span>            :   // Sign of the mantissa (-1 or 1).
+<span class="lineNum">     832 </span><span class="lineCov">       7607 :   int32_t sign = c == '-' ? -1 : 1;</span>
+<span class="lineNum">     833 </span>            :   // Absolute value of the integer part of the mantissa.  This is a double so
+<span class="lineNum">     834 </span>            :   // we don't run into overflow issues for consumers that only care about our
+<span class="lineNum">     835 </span>            :   // floating-point value while still being able to express the full int32_t
+<span class="lineNum">     836 </span>            :   // range for consumers who want integers.
+<span class="lineNum">     837 </span><span class="lineCov">       7607 :   double intPart = 0;</span>
+<span class="lineNum">     838 </span>            :   // Fractional part of the mantissa.  This is a double so that when we convert
+<span class="lineNum">     839 </span>            :   // to float at the end we'll end up rounding to nearest float instead of
+<span class="lineNum">     840 </span>            :   // truncating down (as we would if fracPart were a float and we just
+<span class="lineNum">     841 </span>            :   // effectively lost the last several digits).
+<span class="lineNum">     842 </span><span class="lineCov">       7607 :   double fracPart = 0;</span>
+<span class="lineNum">     843 </span>            :   // Absolute value of the power of 10 that we should multiply by (only
+<span class="lineNum">     844 </span>            :   // relevant for numbers in scientific notation).  Has to be a signed integer,
+<span class="lineNum">     845 </span>            :   // because multiplication of signed by unsigned converts the unsigned to
+<span class="lineNum">     846 </span>            :   // signed, so if we plan to actually multiply by expSign...
+<span class="lineNum">     847 </span><span class="lineCov">       7607 :   int32_t exponent = 0;</span>
+<span class="lineNum">     848 </span>            :   // Sign of the exponent.
+<span class="lineNum">     849 </span><span class="lineCov">       7607 :   int32_t expSign = 1;</span>
+<span class="lineNum">     850 </span>            : 
+<span class="lineNum">     851 </span><span class="lineCov">       7607 :   aToken.mHasSign = (c == '+' || c == '-');</span>
+<span class="lineNum">     852 </span><span class="lineCov">       7607 :   if (aToken.mHasSign) {</span>
+<span class="lineNum">     853 </span><span class="lineCov">        302 :     Advance();</span>
+<span class="lineNum">     854 </span><span class="lineCov">        302 :     c = Peek();</span>
+<span class="lineNum">     855 </span>            :   }
+<span class="lineNum">     856 </span>            : 
+<span class="lineNum">     857 </span><span class="lineCov">       7607 :   bool gotDot = (c == '.');</span>
+<span class="lineNum">     858 </span>            : 
+<span class="lineNum">     859 </span><span class="lineCov">       7607 :   if (!gotDot) {</span>
+<span class="lineNum">     860 </span>            :     // Scan the integer part of the mantissa.
+<span class="lineNum">     861 </span><span class="lineCov">       7298 :     MOZ_ASSERT(IsDigit(c), &quot;should have been excluded by logic above&quot;);</span>
+<span class="lineNum">     862 </span><span class="lineCov">      10866 :     do {</span>
+<span class="lineNum">     863 </span><span class="lineCov">      10866 :       intPart = 10*intPart + DecimalDigitValue(c);</span>
+<span class="lineNum">     864 </span><span class="lineCov">      10866 :       Advance();</span>
+<span class="lineNum">     865 </span><span class="lineCov">      10866 :       c = Peek();</span>
+<span class="lineNum">     866 </span>            :     } while (IsDigit(c));
+<span class="lineNum">     867 </span>            : 
+<span class="lineNum">     868 </span><span class="lineCov">       7298 :     gotDot = (c == '.') &amp;&amp; IsDigit(Peek(1));</span>
+<span class="lineNum">     869 </span>            :   }
+<span class="lineNum">     870 </span>            : 
+<span class="lineNum">     871 </span><span class="lineCov">       7607 :   if (gotDot) {</span>
+<span class="lineNum">     872 </span>            :     // Scan the fractional part of the mantissa.
+<span class="lineNum">     873 </span><span class="lineCov">        581 :     Advance();</span>
+<span class="lineNum">     874 </span><span class="lineCov">        581 :     c = Peek();</span>
+<span class="lineNum">     875 </span><span class="lineCov">        581 :     MOZ_ASSERT(IsDigit(c), &quot;should have been excluded by logic above&quot;);</span>
+<span class="lineNum">     876 </span>            :     // Power of ten by which we need to divide our next digit
+<span class="lineNum">     877 </span><span class="lineCov">        581 :     double divisor = 10;</span>
+<span class="lineNum">     878 </span><span class="lineCov">        791 :     do {</span>
+<span class="lineNum">     879 </span><span class="lineCov">        791 :       fracPart += DecimalDigitValue(c) / divisor;</span>
+<span class="lineNum">     880 </span><span class="lineCov">        791 :       divisor *= 10;</span>
+<span class="lineNum">     881 </span><span class="lineCov">        791 :       Advance();</span>
+<span class="lineNum">     882 </span><span class="lineCov">        791 :       c = Peek();</span>
+<span class="lineNum">     883 </span>            :     } while (IsDigit(c));
+<span class="lineNum">     884 </span>            :   }
+<span class="lineNum">     885 </span>            : 
+<span class="lineNum">     886 </span><span class="lineCov">       7607 :   bool gotE = false;</span>
+<span class="lineNum">     887 </span><span class="lineCov">       7607 :   if (c == 'e' || c == 'E') {</span>
+<span class="lineNum">     888 </span><span class="lineCov">        298 :     int32_t expSignChar = Peek(1);</span>
+<span class="lineNum">     889 </span><span class="lineCov">        298 :     int32_t nextChar = Peek(2);</span>
+<span class="lineNum">     890 </span><span class="lineCov">        298 :     if (IsDigit(expSignChar) ||</span>
+<span class="lineNum">     891 </span><span class="lineCov">        298 :         ((expSignChar == '-' || expSignChar == '+') &amp;&amp; IsDigit(nextChar))) {</span>
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :       gotE = true;</span>
+<span class="lineNum">     893 </span><span class="lineNoCov">          0 :       if (expSignChar == '-') {</span>
+<span class="lineNum">     894 </span><span class="lineNoCov">          0 :         expSign = -1;</span>
+<span class="lineNum">     895 </span>            :       }
+<span class="lineNum">     896 </span><span class="lineNoCov">          0 :       Advance(); // consumes the E</span>
+<span class="lineNum">     897 </span><span class="lineNoCov">          0 :       if (expSignChar == '-' || expSignChar == '+') {</span>
+<span class="lineNum">     898 </span><span class="lineNoCov">          0 :         Advance();</span>
+<span class="lineNum">     899 </span><span class="lineNoCov">          0 :         c = nextChar;</span>
+<span class="lineNum">     900 </span>            :       } else {
+<span class="lineNum">     901 </span><span class="lineNoCov">          0 :         c = expSignChar;</span>
+<span class="lineNum">     902 </span>            :       }
+<span class="lineNum">     903 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(IsDigit(c), &quot;should have been excluded by logic above&quot;);</span>
+<span class="lineNum">     904 </span><span class="lineNoCov">          0 :       do {</span>
+<span class="lineNum">     905 </span><span class="lineNoCov">          0 :         exponent = 10*exponent + DecimalDigitValue(c);</span>
+<span class="lineNum">     906 </span><span class="lineNoCov">          0 :         Advance();</span>
+<span class="lineNum">     907 </span><span class="lineNoCov">          0 :         c = Peek();</span>
+<span class="lineNum">     908 </span>            :       } while (IsDigit(c));
+<span class="lineNum">     909 </span>            :     }
+<span class="lineNum">     910 </span>            :   }
+<span class="lineNum">     911 </span>            : 
+<span class="lineNum">     912 </span><span class="lineCov">       7607 :   nsCSSTokenType type = eCSSToken_Number;</span>
+<span class="lineNum">     913 </span>            : 
+<span class="lineNum">     914 </span>            :   // Set mIntegerValid for all cases (except %, below) because we need
+<span class="lineNum">     915 </span>            :   // it for the &quot;2n&quot; in :nth-child(2n).
+<span class="lineNum">     916 </span><span class="lineCov">       7607 :   aToken.mIntegerValid = false;</span>
+<span class="lineNum">     917 </span>            : 
+<span class="lineNum">     918 </span>            :   // Time to reassemble our number.
+<span class="lineNum">     919 </span>            :   // Do all the math in double precision so it's truncated only once.
+<span class="lineNum">     920 </span><span class="lineCov">       7607 :   double value = sign * (intPart + fracPart);</span>
+<span class="lineNum">     921 </span><span class="lineCov">       7607 :   if (gotE) {</span>
+<span class="lineNum">     922 </span>            :     // Avoid multiplication of 0 by Infinity.
+<span class="lineNum">     923 </span><span class="lineNoCov">          0 :     if (value != 0.0) {</span>
+<span class="lineNum">     924 </span>            :       // Explicitly cast expSign*exponent to double to avoid issues with
+<span class="lineNum">     925 </span>            :       // overloaded pow() on Windows.
+<span class="lineNum">     926 </span><span class="lineNoCov">          0 :       value *= pow(10.0, double(expSign * exponent));</span>
+<span class="lineNum">     927 </span>            :     }
+<span class="lineNum">     928 </span><span class="lineCov">       7607 :   } else if (!gotDot) {</span>
+<span class="lineNum">     929 </span>            :     // Clamp values outside of integer range.
+<span class="lineNum">     930 </span><span class="lineCov">       7026 :     if (sign &gt; 0) {</span>
+<span class="lineNum">     931 </span><span class="lineCov">       6735 :       aToken.mInteger = int32_t(std::min(intPart, double(INT32_MAX)));</span>
+<span class="lineNum">     932 </span>            :     } else {
+<span class="lineNum">     933 </span><span class="lineCov">        291 :       aToken.mInteger = int32_t(std::max(-intPart, double(INT32_MIN)));</span>
+<span class="lineNum">     934 </span>            :     }
+<span class="lineNum">     935 </span><span class="lineCov">       7026 :     aToken.mIntegerValid = true;</span>
+<span class="lineNum">     936 </span>            :   }
+<span class="lineNum">     937 </span>            : 
+<span class="lineNum">     938 </span><span class="lineCov">       7607 :   nsString&amp; ident = aToken.mIdent;</span>
+<span class="lineNum">     939 </span>            : 
+<span class="lineNum">     940 </span>            :   // Check for Dimension and Percentage tokens.
+<span class="lineNum">     941 </span><span class="lineCov">       7607 :   if (c &gt;= 0) {</span>
+<span class="lineNum">     942 </span><span class="lineCov">       7376 :     if (StartsIdent(c, Peek(1))) {</span>
+<span class="lineNum">     943 </span><span class="lineCov">       3788 :       if (GatherText(IS_IDCHAR, ident)) {</span>
+<span class="lineNum">     944 </span><span class="lineCov">       3788 :         type = eCSSToken_Dimension;</span>
+<span class="lineNum">     945 </span>            :       }
+<span class="lineNum">     946 </span><span class="lineCov">       3588 :     } else if (c == '%') {</span>
+<span class="lineNum">     947 </span><span class="lineCov">        758 :       Advance();</span>
+<span class="lineNum">     948 </span><span class="lineCov">        758 :       type = eCSSToken_Percentage;</span>
+<span class="lineNum">     949 </span><span class="lineCov">        758 :       value = value / 100.0f;</span>
+<span class="lineNum">     950 </span><span class="lineCov">        758 :       aToken.mIntegerValid = false;</span>
+<span class="lineNum">     951 </span>            :     }
+<span class="lineNum">     952 </span>            :   }
+<span class="lineNum">     953 </span><span class="lineCov">       7607 :   MOZ_ASSERT(!IsNaN(value), &quot;The value should not be NaN&quot;);</span>
+<span class="lineNum">     954 </span><span class="lineCov">       7607 :   aToken.mNumber = value;</span>
+<span class="lineNum">     955 </span><span class="lineCov">       7607 :   aToken.mType = type;</span>
+<span class="lineNum">     956 </span><span class="lineCov">       7607 :   return true;</span>
+<span class="lineNum">     957 </span>            : }
+<span class="lineNum">     958 </span>            : 
+<span class="lineNum">     959 </span>            : /**
+<span class="lineNum">     960 </span>            :  * Scan a string constant ('foo' or &quot;foo&quot;).  Will always produce
+<span class="lineNum">     961 </span>            :  * either a String or a Bad_String token; the latter occurs when the
+<span class="lineNum">     962 </span>            :  * close quote is missing.  Always returns true (for convenience in Next()).
+<a name="963"><span class="lineNum">     963 </span>            :  */</a>
+<span class="lineNum">     964 </span>            : bool
+<span class="lineNum">     965 </span><span class="lineCov">       1855 : nsCSSScanner::ScanString(nsCSSToken&amp; aToken)</span>
+<span class="lineNum">     966 </span>            : {
+<span class="lineNum">     967 </span><span class="lineCov">       1855 :   int32_t aStop = Peek();</span>
+<span class="lineNum">     968 </span><span class="lineCov">       1855 :   MOZ_ASSERT(aStop == '&quot;' || aStop == '\'', &quot;should not have been called&quot;);</span>
+<span class="lineNum">     969 </span><span class="lineCov">       1855 :   aToken.mType = eCSSToken_String;</span>
+<span class="lineNum">     970 </span><span class="lineCov">       1855 :   aToken.mSymbol = char16_t(aStop); // Remember how it's quoted.</span>
+<span class="lineNum">     971 </span><span class="lineCov">       1855 :   Advance();</span>
+<span class="lineNum">     972 </span>            : 
+<span class="lineNum">     973 </span>            :   for (;;) {
+<span class="lineNum">     974 </span><span class="lineCov">       1895 :     GatherText(IS_STRING, aToken.mIdent);</span>
+<span class="lineNum">     975 </span>            : 
+<span class="lineNum">     976 </span><span class="lineCov">       1895 :     int32_t ch = Peek();</span>
+<span class="lineNum">     977 </span><span class="lineCov">       1895 :     if (ch == -1) {</span>
+<span class="lineNum">     978 </span><span class="lineNoCov">          0 :       AddEOFCharacters(aStop == '&quot;' ? eEOFCharacters_DoubleQuote :</span>
+<span class="lineNum">     979 </span><span class="lineNoCov">          0 :                                       eEOFCharacters_SingleQuote);</span>
+<span class="lineNum">     980 </span><span class="lineNoCov">          0 :       break; // EOF ends a string token with no error.</span>
+<span class="lineNum">     981 </span>            :     }
+<span class="lineNum">     982 </span><span class="lineCov">       1895 :     if (ch == aStop) {</span>
+<span class="lineNum">     983 </span><span class="lineCov">       1855 :       Advance();</span>
+<span class="lineNum">     984 </span><span class="lineCov">       1855 :       break;</span>
+<span class="lineNum">     985 </span>            :     }
+<span class="lineNum">     986 </span>            :     // Both &quot; and ' are excluded from IS_STRING.
+<span class="lineNum">     987 </span><span class="lineCov">         40 :     if (ch == '&quot;' || ch == '\'') {</span>
+<span class="lineNum">     988 </span><span class="lineCov">         40 :       aToken.mIdent.Append(ch);</span>
+<span class="lineNum">     989 </span><span class="lineCov">         40 :       Advance();</span>
+<span class="lineNum">     990 </span><span class="lineCov">         40 :       continue;</span>
+<span class="lineNum">     991 </span>            :     }
+<span class="lineNum">     992 </span>            : 
+<span class="lineNum">     993 </span><span class="lineNoCov">          0 :     mSeenBadToken = true;</span>
+<span class="lineNum">     994 </span><span class="lineNoCov">          0 :     aToken.mType = eCSSToken_Bad_String;</span>
+<span class="lineNum">     995 </span><span class="lineNoCov">          0 :     if (mReporter)</span>
+<span class="lineNum">     996 </span><span class="lineNoCov">          0 :       mReporter-&gt;ReportUnexpected(&quot;SEUnterminatedString&quot;, aToken);</span>
+<span class="lineNum">     997 </span><span class="lineNoCov">          0 :     break;</span>
+<span class="lineNum">     998 </span><span class="lineCov">         40 :   }</span>
+<span class="lineNum">     999 </span><span class="lineCov">       1855 :   return true;</span>
+<span class="lineNum">    1000 </span>            : }
+<span class="lineNum">    1001 </span>            : 
+<span class="lineNum">    1002 </span>            : /**
+<span class="lineNum">    1003 </span>            :  * Scan a unicode-range token.  These match the regular expression
+<span class="lineNum">    1004 </span>            :  *
+<span class="lineNum">    1005 </span>            :  *     u\+[0-9a-f?]{1,6}(-[0-9a-f]{1,6})?
+<span class="lineNum">    1006 </span>            :  *
+<span class="lineNum">    1007 </span>            :  * However, some such tokens are &quot;invalid&quot;.  There are three valid forms:
+<span class="lineNum">    1008 </span>            :  *
+<span class="lineNum">    1009 </span>            :  *     u+[0-9a-f]{x}              1 &lt;= x &lt;= 6
+<span class="lineNum">    1010 </span>            :  *     u+[0-9a-f]{x}\?{y}         1 &lt;= x+y &lt;= 6
+<span class="lineNum">    1011 </span>            :  *     u+[0-9a-f]{x}-[0-9a-f]{y}  1 &lt;= x &lt;= 6, 1 &lt;= y &lt;= 6
+<span class="lineNum">    1012 </span>            :  *
+<span class="lineNum">    1013 </span>            :  * All unicode-range tokens have their text recorded in mIdent; valid ones
+<span class="lineNum">    1014 </span>            :  * are also decoded into mInteger and mInteger2, and mIntegerValid is set.
+<span class="lineNum">    1015 </span>            :  * Note that this does not validate the numeric range, only the syntactic
+<span class="lineNum">    1016 </span>            :  * form.
+<a name="1017"><span class="lineNum">    1017 </span>            :  */</a>
+<span class="lineNum">    1018 </span>            : bool
+<span class="lineNum">    1019 </span><span class="lineNoCov">          0 : nsCSSScanner::ScanURange(nsCSSToken&amp; aResult)</span>
+<span class="lineNum">    1020 </span>            : {
+<span class="lineNum">    1021 </span><span class="lineNoCov">          0 :   int32_t intro1 = Peek();</span>
+<span class="lineNum">    1022 </span><span class="lineNoCov">          0 :   int32_t intro2 = Peek(1);</span>
+<span class="lineNum">    1023 </span><span class="lineNoCov">          0 :   int32_t ch = Peek(2);</span>
+<span class="lineNum">    1024 </span>            : 
+<span class="lineNum">    1025 </span><span class="lineNoCov">          0 :   MOZ_ASSERT((intro1 == 'u' || intro1 == 'U') &amp;&amp;</span>
+<span class="lineNum">    1026 </span>            :              intro2 == '+' &amp;&amp;
+<span class="lineNum">    1027 </span>            :              (IsHexDigit(ch) || ch == '?'),
+<span class="lineNum">    1028 </span>            :              &quot;should not have been called&quot;);
+<span class="lineNum">    1029 </span>            : 
+<span class="lineNum">    1030 </span><span class="lineNoCov">          0 :   aResult.mIdent.Append(intro1);</span>
+<span class="lineNum">    1031 </span><span class="lineNoCov">          0 :   aResult.mIdent.Append(intro2);</span>
+<span class="lineNum">    1032 </span><span class="lineNoCov">          0 :   Advance(2);</span>
+<span class="lineNum">    1033 </span>            : 
+<span class="lineNum">    1034 </span><span class="lineNoCov">          0 :   bool valid = true;</span>
+<span class="lineNum">    1035 </span><span class="lineNoCov">          0 :   bool haveQues = false;</span>
+<span class="lineNum">    1036 </span><span class="lineNoCov">          0 :   uint32_t low = 0;</span>
+<span class="lineNum">    1037 </span><span class="lineNoCov">          0 :   uint32_t high = 0;</span>
+<span class="lineNum">    1038 </span><span class="lineNoCov">          0 :   int i = 0;</span>
+<span class="lineNum">    1039 </span>            : 
+<span class="lineNum">    1040 </span><span class="lineNoCov">          0 :   do {</span>
+<span class="lineNum">    1041 </span><span class="lineNoCov">          0 :     aResult.mIdent.Append(ch);</span>
+<span class="lineNum">    1042 </span><span class="lineNoCov">          0 :     if (IsHexDigit(ch)) {</span>
+<span class="lineNum">    1043 </span><span class="lineNoCov">          0 :       if (haveQues) {</span>
+<span class="lineNum">    1044 </span><span class="lineNoCov">          0 :         valid = false; // All question marks should be at the end.</span>
+<span class="lineNum">    1045 </span>            :       }
+<span class="lineNum">    1046 </span><span class="lineNoCov">          0 :       low = low*16 + HexDigitValue(ch);</span>
+<span class="lineNum">    1047 </span><span class="lineNoCov">          0 :       high = high*16 + HexDigitValue(ch);</span>
+<span class="lineNum">    1048 </span>            :     } else {
+<span class="lineNum">    1049 </span><span class="lineNoCov">          0 :       haveQues = true;</span>
+<span class="lineNum">    1050 </span><span class="lineNoCov">          0 :       low = low*16 + 0x0;</span>
+<span class="lineNum">    1051 </span><span class="lineNoCov">          0 :       high = high*16 + 0xF;</span>
+<span class="lineNum">    1052 </span>            :     }
+<span class="lineNum">    1053 </span>            : 
+<span class="lineNum">    1054 </span><span class="lineNoCov">          0 :     i++;</span>
+<span class="lineNum">    1055 </span><span class="lineNoCov">          0 :     Advance();</span>
+<span class="lineNum">    1056 </span><span class="lineNoCov">          0 :     ch = Peek();</span>
+<span class="lineNum">    1057 </span><span class="lineNoCov">          0 :   } while (i &lt; 6 &amp;&amp; (IsHexDigit(ch) || ch == '?'));</span>
+<span class="lineNum">    1058 </span>            : 
+<span class="lineNum">    1059 </span><span class="lineNoCov">          0 :   if (ch == '-' &amp;&amp; IsHexDigit(Peek(1))) {</span>
+<span class="lineNum">    1060 </span><span class="lineNoCov">          0 :     if (haveQues) {</span>
+<span class="lineNum">    1061 </span><span class="lineNoCov">          0 :       valid = false;</span>
+<span class="lineNum">    1062 </span>            :     }
+<span class="lineNum">    1063 </span>            : 
+<span class="lineNum">    1064 </span><span class="lineNoCov">          0 :     aResult.mIdent.Append(ch);</span>
+<span class="lineNum">    1065 </span><span class="lineNoCov">          0 :     Advance();</span>
+<span class="lineNum">    1066 </span><span class="lineNoCov">          0 :     ch = Peek();</span>
+<span class="lineNum">    1067 </span><span class="lineNoCov">          0 :     high = 0;</span>
+<span class="lineNum">    1068 </span><span class="lineNoCov">          0 :     i = 0;</span>
+<span class="lineNum">    1069 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">    1070 </span><span class="lineNoCov">          0 :       aResult.mIdent.Append(ch);</span>
+<span class="lineNum">    1071 </span><span class="lineNoCov">          0 :       high = high*16 + HexDigitValue(ch);</span>
+<span class="lineNum">    1072 </span>            : 
+<span class="lineNum">    1073 </span><span class="lineNoCov">          0 :       i++;</span>
+<span class="lineNum">    1074 </span><span class="lineNoCov">          0 :       Advance();</span>
+<span class="lineNum">    1075 </span><span class="lineNoCov">          0 :       ch = Peek();</span>
+<span class="lineNum">    1076 </span><span class="lineNoCov">          0 :     } while (i &lt; 6 &amp;&amp; IsHexDigit(ch));</span>
+<span class="lineNum">    1077 </span>            :   }
+<span class="lineNum">    1078 </span>            : 
+<span class="lineNum">    1079 </span><span class="lineNoCov">          0 :   aResult.mInteger = low;</span>
+<span class="lineNum">    1080 </span><span class="lineNoCov">          0 :   aResult.mInteger2 = high;</span>
+<span class="lineNum">    1081 </span><span class="lineNoCov">          0 :   aResult.mIntegerValid = valid;</span>
+<span class="lineNum">    1082 </span><span class="lineNoCov">          0 :   aResult.mType = eCSSToken_URange;</span>
+<span class="lineNum">    1083 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">    1084 </span>            : }
+<span class="lineNum">    1085 </span>            : 
+<a name="1086"><span class="lineNum">    1086 </span>            : #ifdef DEBUG</a>
+<span class="lineNum">    1087 </span>            : /* static */ void
+<span class="lineNum">    1088 </span><span class="lineCov">        614 : nsCSSScanner::AssertEOFCharactersValid(uint32_t c)</span>
+<span class="lineNum">    1089 </span>            : {
+<span class="lineNum">    1090 </span><span class="lineCov">        614 :   MOZ_ASSERT(c == eEOFCharacters_None ||</span>
+<span class="lineNum">    1091 </span>            :              c == eEOFCharacters_ReplacementChar ||
+<span class="lineNum">    1092 </span>            :              c == eEOFCharacters_Slash ||
+<span class="lineNum">    1093 </span>            :              c == (eEOFCharacters_Asterisk |
+<span class="lineNum">    1094 </span>            :                    eEOFCharacters_Slash) ||
+<span class="lineNum">    1095 </span>            :              c == eEOFCharacters_DoubleQuote ||
+<span class="lineNum">    1096 </span>            :              c == eEOFCharacters_SingleQuote ||
+<span class="lineNum">    1097 </span>            :              c == (eEOFCharacters_DropBackslash |
+<span class="lineNum">    1098 </span>            :                    eEOFCharacters_DoubleQuote) ||
+<span class="lineNum">    1099 </span>            :              c == (eEOFCharacters_DropBackslash |
+<span class="lineNum">    1100 </span>            :                    eEOFCharacters_SingleQuote) ||
+<span class="lineNum">    1101 </span>            :              c == eEOFCharacters_CloseParen ||
+<span class="lineNum">    1102 </span>            :              c == (eEOFCharacters_ReplacementChar |
+<span class="lineNum">    1103 </span>            :                    eEOFCharacters_CloseParen) ||
+<span class="lineNum">    1104 </span>            :              c == (eEOFCharacters_DoubleQuote |
+<span class="lineNum">    1105 </span>            :                    eEOFCharacters_CloseParen) ||
+<span class="lineNum">    1106 </span>            :              c == (eEOFCharacters_SingleQuote |
+<span class="lineNum">    1107 </span>            :                    eEOFCharacters_CloseParen) ||
+<span class="lineNum">    1108 </span>            :              c == (eEOFCharacters_DropBackslash |
+<span class="lineNum">    1109 </span>            :                    eEOFCharacters_DoubleQuote |
+<span class="lineNum">    1110 </span>            :                    eEOFCharacters_CloseParen) ||
+<span class="lineNum">    1111 </span>            :              c == (eEOFCharacters_DropBackslash |
+<span class="lineNum">    1112 </span>            :                    eEOFCharacters_SingleQuote |
+<span class="lineNum">    1113 </span>            :                    eEOFCharacters_CloseParen),
+<span class="lineNum">    1114 </span>            :              &quot;invalid EOFCharacters value&quot;);
+<span class="lineNum">    1115 </span><span class="lineCov">        614 : }</span>
+<span class="lineNum">    1116 </span>            : #endif
+<a name="1117"><span class="lineNum">    1117 </span>            : </a>
+<span class="lineNum">    1118 </span>            : void
+<span class="lineNum">    1119 </span><span class="lineNoCov">          0 : nsCSSScanner::SetEOFCharacters(uint32_t aEOFCharacters)</span>
+<span class="lineNum">    1120 </span>            : {
+<span class="lineNum">    1121 </span><span class="lineNoCov">          0 :   mEOFCharacters = EOFCharacters(aEOFCharacters);</span>
+<span class="lineNum">    1122 </span><span class="lineNoCov">          0 : }</span>
+<a name="1123"><span class="lineNum">    1123 </span>            : </a>
+<span class="lineNum">    1124 </span>            : void
+<span class="lineNum">    1125 </span><span class="lineNoCov">          0 : nsCSSScanner::AddEOFCharacters(uint32_t aEOFCharacters)</span>
+<span class="lineNum">    1126 </span>            : {
+<span class="lineNum">    1127 </span><span class="lineNoCov">          0 :   mEOFCharacters = EOFCharacters(mEOFCharacters | aEOFCharacters);</span>
+<span class="lineNum">    1128 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">    1129 </span>            : 
+<span class="lineNum">    1130 </span>            : static const char16_t kImpliedEOFCharacters[] = {
+<span class="lineNum">    1131 </span>            :   UCS2_REPLACEMENT_CHAR, '*', '/', '&quot;', '\'', ')', 0
+<span class="lineNum">    1132 </span>            : };
+<a name="1133"><span class="lineNum">    1133 </span>            : </a>
+<span class="lineNum">    1134 </span>            : /* static */ void
+<span class="lineNum">    1135 </span><span class="lineCov">        141 : nsCSSScanner::AppendImpliedEOFCharacters(EOFCharacters aEOFCharacters,</span>
+<span class="lineNum">    1136 </span>            :                                          nsAString&amp; aResult)
+<span class="lineNum">    1137 </span>            : {
+<span class="lineNum">    1138 </span>            :   // First, ignore eEOFCharacters_DropBackslash.
+<span class="lineNum">    1139 </span><span class="lineCov">        141 :   uint32_t c = aEOFCharacters &gt;&gt; 1;</span>
+<span class="lineNum">    1140 </span>            : 
+<span class="lineNum">    1141 </span>            :   // All of the remaining EOFCharacters bits represent appended characters,
+<span class="lineNum">    1142 </span>            :   // and the bits are in the order that they need appending.
+<span class="lineNum">    1143 </span><span class="lineCov">        141 :   for (const char16_t* p = kImpliedEOFCharacters; *p &amp;&amp; c; p++, c &gt;&gt;= 1) {</span>
+<span class="lineNum">    1144 </span><span class="lineNoCov">          0 :     if (c &amp; 1) {</span>
+<span class="lineNum">    1145 </span><span class="lineNoCov">          0 :       aResult.Append(*p);</span>
+<span class="lineNum">    1146 </span>            :     }
+<span class="lineNum">    1147 </span>            :   }
+<span class="lineNum">    1148 </span>            : 
+<span class="lineNum">    1149 </span><span class="lineCov">        141 :   MOZ_ASSERT(c == 0, &quot;too many bits in mEOFCharacters&quot;);</span>
+<span class="lineNum">    1150 </span><span class="lineCov">        141 : }</span>
+<span class="lineNum">    1151 </span>            : 
+<span class="lineNum">    1152 </span>            : /**
+<span class="lineNum">    1153 </span>            :  * Consume the part of an URL token after the initial 'url('.  Caller
+<span class="lineNum">    1154 </span>            :  * is assumed to have consumed 'url(' already.  Will always produce
+<span class="lineNum">    1155 </span>            :  * either an URL or a Bad_URL token.
+<span class="lineNum">    1156 </span>            :  *
+<span class="lineNum">    1157 </span>            :  * Exposed for use by nsCSSParser::ParseMozDocumentRule, which applies
+<span class="lineNum">    1158 </span>            :  * the special lexical rules for URL tokens in a nonstandard context.
+<a name="1159"><span class="lineNum">    1159 </span>            :  */</a>
+<span class="lineNum">    1160 </span>            : void
+<span class="lineNum">    1161 </span><span class="lineCov">        754 : nsCSSScanner::NextURL(nsCSSToken&amp; aToken)</span>
+<span class="lineNum">    1162 </span>            : {
+<span class="lineNum">    1163 </span><span class="lineCov">        754 :   SkipWhitespace();</span>
+<span class="lineNum">    1164 </span>            : 
+<span class="lineNum">    1165 </span>            :   // aToken.mIdent may be &quot;url&quot; at this point; clear that out
+<span class="lineNum">    1166 </span><span class="lineCov">        754 :   aToken.mIdent.Truncate();</span>
+<span class="lineNum">    1167 </span>            : 
+<span class="lineNum">    1168 </span><span class="lineCov">        754 :   int32_t ch = Peek();</span>
+<span class="lineNum">    1169 </span>            :   // Do we have a string?
+<span class="lineNum">    1170 </span><span class="lineCov">       1266 :   if (ch == '&quot;' || ch == '\'') {</span>
+<span class="lineNum">    1171 </span><span class="lineCov">        512 :     ScanString(aToken);</span>
+<span class="lineNum">    1172 </span><span class="lineCov">        512 :     if (MOZ_UNLIKELY(aToken.mType == eCSSToken_Bad_String)) {</span>
+<span class="lineNum">    1173 </span><span class="lineNoCov">          0 :       aToken.mType = eCSSToken_Bad_URL;</span>
+<span class="lineNum">    1174 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">    1175 </span>            :     }
+<span class="lineNum">    1176 </span><span class="lineCov">        512 :     MOZ_ASSERT(aToken.mType == eCSSToken_String, &quot;unexpected token type&quot;);</span>
+<span class="lineNum">    1177 </span>            : 
+<span class="lineNum">    1178 </span>            :   } else {
+<span class="lineNum">    1179 </span>            :     // Otherwise, this is the start of a non-quoted url (which may be empty).
+<span class="lineNum">    1180 </span><span class="lineCov">        242 :     aToken.mSymbol = char16_t(0);</span>
+<span class="lineNum">    1181 </span><span class="lineCov">        242 :     GatherText(IS_URL_CHAR, aToken.mIdent);</span>
+<span class="lineNum">    1182 </span>            :   }
+<span class="lineNum">    1183 </span>            : 
+<span class="lineNum">    1184 </span>            :   // Consume trailing whitespace and then look for a close parenthesis.
+<span class="lineNum">    1185 </span><span class="lineCov">        754 :   SkipWhitespace();</span>
+<span class="lineNum">    1186 </span><span class="lineCov">        754 :   ch = Peek();</span>
+<span class="lineNum">    1187 </span>            :   // ch can be less than zero indicating EOF
+<span class="lineNum">    1188 </span><span class="lineCov">        754 :   if (MOZ_LIKELY(ch &lt; 0 || ch == ')')) {</span>
+<span class="lineNum">    1189 </span><span class="lineCov">        754 :     Advance();</span>
+<span class="lineNum">    1190 </span><span class="lineCov">        754 :     aToken.mType = eCSSToken_URL;</span>
+<span class="lineNum">    1191 </span><span class="lineCov">       1508 :     if (ch &lt; 0) {</span>
+<span class="lineNum">    1192 </span><span class="lineNoCov">          0 :       AddEOFCharacters(eEOFCharacters_CloseParen);</span>
+<span class="lineNum">    1193 </span>            :     }
+<span class="lineNum">    1194 </span>            :   } else {
+<span class="lineNum">    1195 </span><span class="lineNoCov">          0 :     mSeenBadToken = true;</span>
+<span class="lineNum">    1196 </span><span class="lineNoCov">          0 :     aToken.mType = eCSSToken_Bad_URL;</span>
+<span class="lineNum">    1197 </span>            :   }
+<span class="lineNum">    1198 </span>            : }
+<span class="lineNum">    1199 </span>            : 
+<span class="lineNum">    1200 </span>            : /**
+<span class="lineNum">    1201 </span>            :  * Primary scanner entry point.  Consume one token and fill in
+<span class="lineNum">    1202 </span>            :  * |aToken| accordingly.  Will skip over any number of comments first,
+<span class="lineNum">    1203 </span>            :  * and will also skip over rather than return whitespace and comment
+<span class="lineNum">    1204 </span>            :  * tokens, depending on the value of |aSkip|.
+<span class="lineNum">    1205 </span>            :  *
+<span class="lineNum">    1206 </span>            :  * Returns true if it successfully consumed a token, false if EOF has
+<span class="lineNum">    1207 </span>            :  * been reached.  Will always advance the current read position by at
+<span class="lineNum">    1208 </span>            :  * least one character unless called when already at EOF.
+<a name="1209"><span class="lineNum">    1209 </span>            :  */</a>
+<span class="lineNum">    1210 </span>            : bool
+<span class="lineNum">    1211 </span><span class="lineCov">     100541 : nsCSSScanner::Next(nsCSSToken&amp; aToken, nsCSSScannerExclude aSkip)</span>
+<span class="lineNum">    1212 </span>            : {
+<span class="lineNum">    1213 </span>            :   int32_t ch;
+<span class="lineNum">    1214 </span>            : 
+<span class="lineNum">    1215 </span>            :   // do this here so we don't have to do it in dozens of other places
+<span class="lineNum">    1216 </span><span class="lineCov">     100541 :   aToken.mIdent.Truncate();</span>
+<span class="lineNum">    1217 </span><span class="lineCov">     100541 :   aToken.mType = eCSSToken_Symbol;</span>
+<span class="lineNum">    1218 </span>            : 
+<span class="lineNum">    1219 </span>            :   for (;;) {
+<span class="lineNum">    1220 </span>            :     // Consume any number of comments, and possibly also whitespace tokens,
+<span class="lineNum">    1221 </span>            :     // in between other tokens.
+<span class="lineNum">    1222 </span><span class="lineCov">     169139 :     mTokenOffset = mOffset;</span>
+<span class="lineNum">    1223 </span><span class="lineCov">     134840 :     mTokenLineOffset = mLineOffset;</span>
+<span class="lineNum">    1224 </span><span class="lineCov">     134840 :     mTokenLineNumber = mLineNumber;</span>
+<span class="lineNum">    1225 </span>            : 
+<span class="lineNum">    1226 </span><span class="lineCov">     134840 :     ch = Peek();</span>
+<span class="lineNum">    1227 </span><span class="lineCov">     134840 :     if (IsWhitespace(ch)) {</span>
+<span class="lineNum">    1228 </span><span class="lineCov">      42081 :       SkipWhitespace();</span>
+<span class="lineNum">    1229 </span><span class="lineCov">      42081 :       if (aSkip != eCSSScannerExclude_WhitespaceAndComments) {</span>
+<span class="lineNum">    1230 </span><span class="lineCov">       8872 :         aToken.mType = eCSSToken_Whitespace;</span>
+<span class="lineNum">    1231 </span><span class="lineCov">       8872 :         return true;</span>
+<span class="lineNum">    1232 </span>            :       }
+<span class="lineNum">    1233 </span><span class="lineCov">      33209 :       continue; // start again at the beginning</span>
+<span class="lineNum">    1234 </span>            :     }
+<span class="lineNum">    1235 </span><span class="lineCov">      92759 :     if (ch == '/' &amp;&amp; Peek(1) == '*') {</span>
+<span class="lineNum">    1236 </span><span class="lineCov">       1090 :       SkipComment();</span>
+<span class="lineNum">    1237 </span><span class="lineCov">       1090 :       if (aSkip == eCSSScannerExclude_None) {</span>
+<span class="lineNum">    1238 </span><span class="lineNoCov">          0 :         aToken.mType = eCSSToken_Comment;</span>
+<span class="lineNum">    1239 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">    1240 </span>            :       }
+<span class="lineNum">    1241 </span><span class="lineCov">       1090 :       continue; // start again at the beginning</span>
+<span class="lineNum">    1242 </span>            :     }
+<span class="lineNum">    1243 </span><span class="lineCov">      91669 :     break;</span>
+<span class="lineNum">    1244 </span>            :   }
+<span class="lineNum">    1245 </span>            : 
+<span class="lineNum">    1246 </span>            :   // EOF
+<span class="lineNum">    1247 </span><span class="lineCov">      91669 :   if (ch &lt; 0) {</span>
+<span class="lineNum">    1248 </span><span class="lineCov">       5456 :     return false;</span>
+<span class="lineNum">    1249 </span>            :   }
+<span class="lineNum">    1250 </span>            : 
+<span class="lineNum">    1251 </span>            :   // 'u' could be UNICODE-RANGE or an identifier-family token
+<span class="lineNum">    1252 </span><span class="lineCov">      86213 :   if (ch == 'u' || ch == 'U') {</span>
+<span class="lineNum">    1253 </span><span class="lineCov">        974 :     int32_t c2 = Peek(1);</span>
+<span class="lineNum">    1254 </span><span class="lineCov">        974 :     int32_t c3 = Peek(2);</span>
+<span class="lineNum">    1255 </span><span class="lineCov">        974 :     if (c2 == '+' &amp;&amp; (IsHexDigit(c3) || c3 == '?')) {</span>
+<span class="lineNum">    1256 </span><span class="lineNoCov">          0 :       return ScanURange(aToken);</span>
+<span class="lineNum">    1257 </span>            :     }
+<span class="lineNum">    1258 </span><span class="lineCov">        974 :     return ScanIdent(aToken);</span>
+<span class="lineNum">    1259 </span>            :   }
+<span class="lineNum">    1260 </span>            : 
+<span class="lineNum">    1261 </span>            :   // identifier family
+<span class="lineNum">    1262 </span><span class="lineCov">      85239 :   if (IsIdentStart(ch)) {</span>
+<span class="lineNum">    1263 </span><span class="lineCov">      25547 :     return ScanIdent(aToken);</span>
+<span class="lineNum">    1264 </span>            :   }
+<span class="lineNum">    1265 </span>            : 
+<span class="lineNum">    1266 </span>            :   // number family
+<span class="lineNum">    1267 </span><span class="lineCov">      59692 :   if (IsDigit(ch)) {</span>
+<span class="lineNum">    1268 </span><span class="lineCov">       6997 :     return ScanNumber(aToken);</span>
+<span class="lineNum">    1269 </span>            :   }
+<span class="lineNum">    1270 </span>            : 
+<span class="lineNum">    1271 </span><span class="lineCov">      52695 :   if (ch == '.' &amp;&amp; IsDigit(Peek(1))) {</span>
+<span class="lineNum">    1272 </span><span class="lineCov">        308 :     return ScanNumber(aToken);</span>
+<span class="lineNum">    1273 </span>            :   }
+<span class="lineNum">    1274 </span>            : 
+<span class="lineNum">    1275 </span><span class="lineCov">      52387 :   if (ch == '+') {</span>
+<span class="lineNum">    1276 </span><span class="lineCov">        296 :     int32_t c2 = Peek(1);</span>
+<span class="lineNum">    1277 </span><span class="lineCov">        296 :     if (IsDigit(c2) || (c2 == '.' &amp;&amp; IsDigit(Peek(2)))) {</span>
+<span class="lineNum">    1278 </span><span class="lineNoCov">          0 :       return ScanNumber(aToken);</span>
+<span class="lineNum">    1279 </span>            :     }
+<span class="lineNum">    1280 </span>            :   }
+<span class="lineNum">    1281 </span>            : 
+<span class="lineNum">    1282 </span>            :   // '-' can start an identifier-family token, a number-family token,
+<span class="lineNum">    1283 </span>            :   // or an HTML-comment
+<span class="lineNum">    1284 </span><span class="lineCov">      52387 :   if (ch == '-') {</span>
+<span class="lineNum">    1285 </span><span class="lineCov">       4492 :     int32_t c2 = Peek(1);</span>
+<span class="lineNum">    1286 </span><span class="lineCov">       4492 :     int32_t c3 = Peek(2);</span>
+<span class="lineNum">    1287 </span><span class="lineCov">       4492 :     if (IsIdentStart(c2) || (c2 == '-' &amp;&amp; c3 != '&gt;')) {</span>
+<span class="lineNum">    1288 </span><span class="lineCov">       4092 :       return ScanIdent(aToken);</span>
+<span class="lineNum">    1289 </span>            :     }
+<span class="lineNum">    1290 </span><span class="lineCov">        400 :     if (IsDigit(c2) || (c2 == '.' &amp;&amp; IsDigit(c3))) {</span>
+<span class="lineNum">    1291 </span><span class="lineCov">        302 :       return ScanNumber(aToken);</span>
+<span class="lineNum">    1292 </span>            :     }
+<span class="lineNum">    1293 </span><span class="lineCov">         98 :     if (c2 == '-' &amp;&amp; c3 == '&gt;') {</span>
+<span class="lineNum">    1294 </span><span class="lineNoCov">          0 :       Advance(3);</span>
+<span class="lineNum">    1295 </span><span class="lineNoCov">          0 :       aToken.mType = eCSSToken_HTMLComment;</span>
+<span class="lineNum">    1296 </span><span class="lineNoCov">          0 :       aToken.mIdent.AssignLiteral(&quot;--&gt;&quot;);</span>
+<span class="lineNum">    1297 </span><span class="lineNoCov">          0 :       return true;</span>
+<span class="lineNum">    1298 </span>            :     }
+<span class="lineNum">    1299 </span>            :   }
+<span class="lineNum">    1300 </span>            : 
+<span class="lineNum">    1301 </span>            :   // the other HTML-comment token
+<span class="lineNum">    1302 </span><span class="lineCov">      47993 :   if (ch == '&lt;' &amp;&amp; Peek(1) == '!' &amp;&amp; Peek(2) == '-' &amp;&amp; Peek(3) == '-') {</span>
+<span class="lineNum">    1303 </span><span class="lineNoCov">          0 :     Advance(4);</span>
+<span class="lineNum">    1304 </span><span class="lineNoCov">          0 :     aToken.mType = eCSSToken_HTMLComment;</span>
+<span class="lineNum">    1305 </span><span class="lineNoCov">          0 :     aToken.mIdent.AssignLiteral(&quot;&lt;!--&quot;);</span>
+<span class="lineNum">    1306 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">    1307 </span>            :   }
+<span class="lineNum">    1308 </span>            : 
+<span class="lineNum">    1309 </span>            :   // AT_KEYWORD
+<span class="lineNum">    1310 </span><span class="lineCov">      47993 :   if (ch == '@') {</span>
+<span class="lineNum">    1311 </span><span class="lineCov">        286 :     return ScanAtKeyword(aToken);</span>
+<span class="lineNum">    1312 </span>            :   }
+<span class="lineNum">    1313 </span>            : 
+<span class="lineNum">    1314 </span>            :   // HASH
+<span class="lineNum">    1315 </span><span class="lineCov">      47707 :   if (ch == '#') {</span>
+<span class="lineNum">    1316 </span><span class="lineCov">       2386 :     return ScanHash(aToken);</span>
+<span class="lineNum">    1317 </span>            :   }
+<span class="lineNum">    1318 </span>            : 
+<span class="lineNum">    1319 </span>            :   // STRING
+<span class="lineNum">    1320 </span><span class="lineCov">      45321 :   if (ch == '&quot;' || ch == '\'') {</span>
+<span class="lineNum">    1321 </span><span class="lineCov">       1343 :     return ScanString(aToken);</span>
+<span class="lineNum">    1322 </span>            :   }
+<span class="lineNum">    1323 </span>            : 
+<span class="lineNum">    1324 </span>            :   // Match operators: ~= |= ^= $= *=
+<span class="lineNum">    1325 </span><span class="lineCov">      43978 :   nsCSSTokenType opType = MatchOperatorType(ch);</span>
+<span class="lineNum">    1326 </span><span class="lineCov">      43978 :   if (opType != eCSSToken_Symbol &amp;&amp; Peek(1) == '=') {</span>
+<span class="lineNum">    1327 </span><span class="lineCov">        117 :     aToken.mType = opType;</span>
+<span class="lineNum">    1328 </span><span class="lineCov">        117 :     Advance(2);</span>
+<span class="lineNum">    1329 </span><span class="lineCov">        117 :     return true;</span>
+<span class="lineNum">    1330 </span>            :   }
+<span class="lineNum">    1331 </span>            : 
+<span class="lineNum">    1332 </span>            :   // Otherwise, a symbol (DELIM).
+<span class="lineNum">    1333 </span><span class="lineCov">      43861 :   aToken.mSymbol = ch;</span>
+<span class="lineNum">    1334 </span><span class="lineCov">      43861 :   Advance();</span>
+<span class="lineNum">    1335 </span><span class="lineCov">      43861 :   return true;</span>
+<span class="lineNum">    1336 </span>            : }
+<span class="lineNum">    1337 </span>            : 
+<a name="1338"><span class="lineNum">    1338 </span>            : /* nsCSSGridTemplateAreaScanner methods. */</a>
+<span class="lineNum">    1339 </span>            : 
+<span class="lineNum">    1340 </span><span class="lineNoCov">          0 : nsCSSGridTemplateAreaScanner::nsCSSGridTemplateAreaScanner(const nsAString&amp; aBuffer)</span>
+<span class="lineNum">    1341 </span><span class="lineNoCov">          0 :   : mBuffer(aBuffer.BeginReading())</span>
+<span class="lineNum">    1342 </span>            :   , mOffset(0)
+<span class="lineNum">    1343 </span><span class="lineNoCov">          0 :   , mCount(aBuffer.Length())</span>
+<span class="lineNum">    1344 </span>            : {
+<span class="lineNum">    1345 </span><span class="lineNoCov">          0 : }</span>
+<a name="1346"><span class="lineNum">    1346 </span>            : </a>
+<span class="lineNum">    1347 </span>            : bool
+<span class="lineNum">    1348 </span><span class="lineNoCov">          0 : nsCSSGridTemplateAreaScanner::Next(nsCSSGridTemplateAreaToken&amp; aTokenResult)</span>
+<span class="lineNum">    1349 </span>            : {
+<span class="lineNum">    1350 </span>            :   int32_t ch;
+<span class="lineNum">    1351 </span>            :   // Skip whitespace
+<span class="lineNum">    1352 </span><span class="lineNoCov">          0 :   do {</span>
+<span class="lineNum">    1353 </span><span class="lineNoCov">          0 :     if (mOffset &gt;= mCount) {</span>
+<span class="lineNum">    1354 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">    1355 </span>            :     }
+<span class="lineNum">    1356 </span><span class="lineNoCov">          0 :     ch = mBuffer[mOffset];</span>
+<span class="lineNum">    1357 </span><span class="lineNoCov">          0 :     mOffset++;</span>
+<span class="lineNum">    1358 </span>            :   } while (IsWhitespace(ch));
+<span class="lineNum">    1359 </span>            : 
+<span class="lineNum">    1360 </span><span class="lineNoCov">          0 :   if (IsOpenCharClass(ch, IS_IDCHAR)) {</span>
+<span class="lineNum">    1361 </span>            :     // Named cell token
+<span class="lineNum">    1362 </span><span class="lineNoCov">          0 :     uint32_t start = mOffset - 1;  // offset of |ch|</span>
+<span class="lineNum">    1363 </span><span class="lineNoCov">          0 :     while (mOffset &lt; mCount &amp;&amp; IsOpenCharClass(mBuffer[mOffset], IS_IDCHAR)) {</span>
+<span class="lineNum">    1364 </span><span class="lineNoCov">          0 :       mOffset++;</span>
+<span class="lineNum">    1365 </span>            :     }
+<span class="lineNum">    1366 </span><span class="lineNoCov">          0 :     aTokenResult.mName.Assign(&amp;mBuffer[start], mOffset - start);</span>
+<span class="lineNum">    1367 </span><span class="lineNoCov">          0 :     aTokenResult.isTrash = false;</span>
+<span class="lineNum">    1368 </span><span class="lineNoCov">          0 :   } else if (ch == '.') {</span>
+<span class="lineNum">    1369 </span>            :     // Null cell token
+<span class="lineNum">    1370 </span>            :     // Skip any other '.'
+<span class="lineNum">    1371 </span><span class="lineNoCov">          0 :     while (mOffset &lt; mCount &amp;&amp; mBuffer[mOffset] == '.') {</span>
+<span class="lineNum">    1372 </span><span class="lineNoCov">          0 :       mOffset++;</span>
+<span class="lineNum">    1373 </span>            :     }
+<span class="lineNum">    1374 </span><span class="lineNoCov">          0 :     aTokenResult.mName.Truncate();</span>
+<span class="lineNum">    1375 </span><span class="lineNoCov">          0 :     aTokenResult.isTrash = false;</span>
+<span class="lineNum">    1376 </span>            :   } else {
+<span class="lineNum">    1377 </span>            :     // Trash token
+<span class="lineNum">    1378 </span><span class="lineNoCov">          0 :     aTokenResult.isTrash = true;</span>
+<span class="lineNum">    1379 </span>            :   }
+<span class="lineNum">    1380 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">    1381 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,992 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - js/src/gc/Memory.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">js/src/gc</a> - Memory.cpp<span style="font-size: 80%;"> (source / <a href="Memory.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">70</td>
+            <td class="headerCovTableEntry">184</td>
+            <td class="headerCovTableEntryLo">38.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">12</td>
+            <td class="headerCovTableEntry">20</td>
+            <td class="headerCovTableEntryLo">60.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-</a>
+<span class="lineNum">       2 </span>            :  * vim: set ts=8 sts=4 et sw=4 tw=99:
+<span class="lineNum">       3 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;gc/Memory.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/Atomics.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/TaggedAnonymousMemory.h&quot;
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : #include &quot;js/HeapAPI.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;vm/Runtime.h&quot;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #if defined(XP_WIN)
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : #include &quot;mozilla/Sprintf.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;jswin.h&quot;
+<span class="lineNum">      19 </span>            : #include &lt;psapi.h&gt;
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : #elif defined(SOLARIS)
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : #include &lt;sys/mman.h&gt;
+<span class="lineNum">      24 </span>            : #include &lt;unistd.h&gt;
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : #elif defined(XP_UNIX)
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      29 </span>            : #include &lt;errno.h&gt;
+<span class="lineNum">      30 </span>            : #include &lt;sys/mman.h&gt;
+<span class="lineNum">      31 </span>            : #include &lt;sys/resource.h&gt;
+<span class="lineNum">      32 </span>            : #include &lt;sys/stat.h&gt;
+<span class="lineNum">      33 </span>            : #include &lt;sys/types.h&gt;
+<span class="lineNum">      34 </span>            : #include &lt;unistd.h&gt;
+<span class="lineNum">      35 </span>            : 
+<span class="lineNum">      36 </span>            : #endif
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            : namespace js {
+<span class="lineNum">      39 </span>            : namespace gc {
+<span class="lineNum">      40 </span>            : 
+<span class="lineNum">      41 </span>            : // The GC can only safely decommit memory when the page size of the
+<span class="lineNum">      42 </span>            : // running process matches the compiled arena size.
+<span class="lineNum">      43 </span>            : static size_t pageSize = 0;
+<span class="lineNum">      44 </span>            : 
+<span class="lineNum">      45 </span>            : // The OS allocation granularity may not match the page size.
+<span class="lineNum">      46 </span>            : static size_t allocGranularity = 0;
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span>            : #if defined(XP_UNIX)
+<span class="lineNum">      49 </span>            : // The addresses handed out by mmap may grow up or down.
+<span class="lineNum">      50 </span>            : static mozilla::Atomic&lt;int, mozilla::Relaxed&gt; growthDirection(0);
+<span class="lineNum">      51 </span>            : #endif
+<span class="lineNum">      52 </span>            : 
+<span class="lineNum">      53 </span>            : // Data from OOM crashes shows there may be up to 24 chunksized but unusable
+<span class="lineNum">      54 </span>            : // chunks available in low memory situations. These chunks may all need to be
+<span class="lineNum">      55 </span>            : // used up before we gain access to remaining *alignable* chunksized regions,
+<span class="lineNum">      56 </span>            : // so we use a generous limit of 32 unusable chunks to ensure we reach them.
+<span class="lineNum">      57 </span>            : static const int MaxLastDitchAttempts = 32;
+<span class="lineNum">      58 </span>            : 
+<span class="lineNum">      59 </span>            : static void GetNewChunk(void** aAddress, void** aRetainedAddr, size_t size, size_t alignment);
+<span class="lineNum">      60 </span>            : static void* MapAlignedPagesSlow(size_t size, size_t alignment);
+<span class="lineNum">      61 </span>            : static void* MapAlignedPagesLastDitch(size_t size, size_t alignment);
+<a name="62"><span class="lineNum">      62 </span>            : </a>
+<span class="lineNum">      63 </span>            : size_t
+<span class="lineNum">      64 </span><span class="lineCov">      13523 : SystemPageSize()</span>
+<span class="lineNum">      65 </span>            : {
+<span class="lineNum">      66 </span><span class="lineCov">      13523 :     return pageSize;</span>
+<span class="lineNum">      67 </span>            : }
+<a name="68"><span class="lineNum">      68 </span>            : </a>
+<span class="lineNum">      69 </span>            : static bool
+<span class="lineNum">      70 </span><span class="lineCov">       6707 : DecommitEnabled()</span>
+<span class="lineNum">      71 </span>            : {
+<span class="lineNum">      72 </span><span class="lineCov">       6707 :     return pageSize == ArenaSize;</span>
+<span class="lineNum">      73 </span>            : }
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span>            : /*
+<span class="lineNum">      76 </span>            :  * This returns the offset of address p from the nearest aligned address at
+<span class="lineNum">      77 </span>            :  * or below p - or alternatively, the number of unaligned bytes at the end of
+<span class="lineNum">      78 </span>            :  * the region starting at p (as we assert that allocation size is an integer
+<span class="lineNum">      79 </span>            :  * multiple of the alignment).
+<a name="80"><span class="lineNum">      80 </span>            :  */</a>
+<span class="lineNum">      81 </span>            : static inline size_t
+<span class="lineNum">      82 </span><span class="lineCov">       6762 : OffsetFromAligned(void* p, size_t alignment)</span>
+<span class="lineNum">      83 </span>            : {
+<span class="lineNum">      84 </span><span class="lineCov">       6762 :     return uintptr_t(p) % alignment;</span>
+<span class="lineNum">      85 </span>            : }
+<a name="86"><span class="lineNum">      86 </span>            : </a>
+<span class="lineNum">      87 </span>            : void*
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 : TestMapAlignedPagesLastDitch(size_t size, size_t alignment)</span>
+<span class="lineNum">      89 </span>            : {
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :     return MapAlignedPagesLastDitch(size, alignment);</span>
+<span class="lineNum">      91 </span>            : }
+<span class="lineNum">      92 </span>            : 
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span>            : #if defined(XP_WIN)
+<span class="lineNum">      95 </span>            : 
+<span class="lineNum">      96 </span>            : void
+<span class="lineNum">      97 </span>            : InitMemorySubsystem()
+<span class="lineNum">      98 </span>            : {
+<span class="lineNum">      99 </span>            :     if (pageSize == 0) {
+<span class="lineNum">     100 </span>            :         SYSTEM_INFO sysinfo;
+<span class="lineNum">     101 </span>            :         GetSystemInfo(&amp;sysinfo);
+<span class="lineNum">     102 </span>            :         pageSize = sysinfo.dwPageSize;
+<span class="lineNum">     103 </span>            :         allocGranularity = sysinfo.dwAllocationGranularity;
+<span class="lineNum">     104 </span>            :     }
+<span class="lineNum">     105 </span>            : }
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span>            : #  if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span>            : static inline void*
+<span class="lineNum">     110 </span>            : MapMemoryAt(void* desired, size_t length, int flags, int prot = PAGE_READWRITE)
+<span class="lineNum">     111 </span>            : {
+<span class="lineNum">     112 </span>            :     return VirtualAlloc(desired, length, flags, prot);
+<span class="lineNum">     113 </span>            : }
+<span class="lineNum">     114 </span>            : 
+<span class="lineNum">     115 </span>            : static inline void*
+<span class="lineNum">     116 </span>            : MapMemory(size_t length, int flags, int prot = PAGE_READWRITE)
+<span class="lineNum">     117 </span>            : {
+<span class="lineNum">     118 </span>            :     return VirtualAlloc(nullptr, length, flags, prot);
+<span class="lineNum">     119 </span>            : }
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span>            : void*
+<span class="lineNum">     122 </span>            : MapAlignedPages(size_t size, size_t alignment)
+<span class="lineNum">     123 </span>            : {
+<span class="lineNum">     124 </span>            :     MOZ_ASSERT(size &gt;= alignment);
+<span class="lineNum">     125 </span>            :     MOZ_ASSERT(size &gt;= allocGranularity);
+<span class="lineNum">     126 </span>            :     MOZ_ASSERT(size % alignment == 0);
+<span class="lineNum">     127 </span>            :     MOZ_ASSERT(size % pageSize == 0);
+<span class="lineNum">     128 </span>            :     MOZ_ASSERT_IF(alignment &lt; allocGranularity, allocGranularity % alignment == 0);
+<span class="lineNum">     129 </span>            :     MOZ_ASSERT_IF(alignment &gt; allocGranularity, alignment % allocGranularity == 0);
+<span class="lineNum">     130 </span>            : 
+<span class="lineNum">     131 </span>            :     void* p = MapMemory(size, MEM_COMMIT | MEM_RESERVE);
+<span class="lineNum">     132 </span>            : 
+<span class="lineNum">     133 </span>            :     /* Special case: If we want allocation alignment, no further work is needed. */
+<span class="lineNum">     134 </span>            :     if (alignment == allocGranularity)
+<span class="lineNum">     135 </span>            :         return p;
+<span class="lineNum">     136 </span>            : 
+<span class="lineNum">     137 </span>            :     if (OffsetFromAligned(p, alignment) == 0)
+<span class="lineNum">     138 </span>            :         return p;
+<span class="lineNum">     139 </span>            : 
+<span class="lineNum">     140 </span>            :     void* retainedAddr;
+<span class="lineNum">     141 </span>            :     GetNewChunk(&amp;p, &amp;retainedAddr, size, alignment);
+<span class="lineNum">     142 </span>            :     if (retainedAddr)
+<span class="lineNum">     143 </span>            :         UnmapPages(retainedAddr, size);
+<span class="lineNum">     144 </span>            :     if (p) {
+<span class="lineNum">     145 </span>            :         if (OffsetFromAligned(p, alignment) == 0)
+<span class="lineNum">     146 </span>            :             return p;
+<span class="lineNum">     147 </span>            :         UnmapPages(p, size);
+<span class="lineNum">     148 </span>            :     }
+<span class="lineNum">     149 </span>            : 
+<span class="lineNum">     150 </span>            :     p = MapAlignedPagesSlow(size, alignment);
+<span class="lineNum">     151 </span>            :     if (!p)
+<span class="lineNum">     152 </span>            :         return MapAlignedPagesLastDitch(size, alignment);
+<span class="lineNum">     153 </span>            : 
+<span class="lineNum">     154 </span>            :     MOZ_ASSERT(OffsetFromAligned(p, alignment) == 0);
+<span class="lineNum">     155 </span>            :     return p;
+<span class="lineNum">     156 </span>            : }
+<span class="lineNum">     157 </span>            : 
+<span class="lineNum">     158 </span>            : static void*
+<span class="lineNum">     159 </span>            : MapAlignedPagesSlow(size_t size, size_t alignment)
+<span class="lineNum">     160 </span>            : {
+<span class="lineNum">     161 </span>            :     /*
+<span class="lineNum">     162 </span>            :      * Windows requires that there be a 1:1 mapping between VM allocation
+<span class="lineNum">     163 </span>            :      * and deallocation operations.  Therefore, take care here to acquire the
+<span class="lineNum">     164 </span>            :      * final result via one mapping operation.  This means unmapping any
+<span class="lineNum">     165 </span>            :      * preliminary result that is not correctly aligned.
+<span class="lineNum">     166 </span>            :      */
+<span class="lineNum">     167 </span>            :     void* p;
+<span class="lineNum">     168 </span>            :     do {
+<span class="lineNum">     169 </span>            :         /*
+<span class="lineNum">     170 </span>            :          * Over-allocate in order to map a memory region that is definitely
+<span class="lineNum">     171 </span>            :          * large enough, then deallocate and allocate again the correct size,
+<span class="lineNum">     172 </span>            :          * within the over-sized mapping.
+<span class="lineNum">     173 </span>            :          *
+<span class="lineNum">     174 </span>            :          * Since we're going to unmap the whole thing anyway, the first
+<span class="lineNum">     175 </span>            :          * mapping doesn't have to commit pages.
+<span class="lineNum">     176 </span>            :          */
+<span class="lineNum">     177 </span>            :         size_t reserveSize = size + alignment - pageSize;
+<span class="lineNum">     178 </span>            :         p = MapMemory(reserveSize, MEM_RESERVE);
+<span class="lineNum">     179 </span>            :         if (!p)
+<span class="lineNum">     180 </span>            :             return nullptr;
+<span class="lineNum">     181 </span>            :         void* chunkStart = (void*)AlignBytes(uintptr_t(p), alignment);
+<span class="lineNum">     182 </span>            :         UnmapPages(p, reserveSize);
+<span class="lineNum">     183 </span>            :         p = MapMemoryAt(chunkStart, size, MEM_COMMIT | MEM_RESERVE);
+<span class="lineNum">     184 </span>            : 
+<span class="lineNum">     185 </span>            :         /* Failure here indicates a race with another thread, so try again. */
+<span class="lineNum">     186 </span>            :     } while (!p);
+<span class="lineNum">     187 </span>            : 
+<span class="lineNum">     188 </span>            :     return p;
+<span class="lineNum">     189 </span>            : }
+<span class="lineNum">     190 </span>            : 
+<span class="lineNum">     191 </span>            : /*
+<span class="lineNum">     192 </span>            :  * In a low memory or high fragmentation situation, alignable chunks of the
+<span class="lineNum">     193 </span>            :  * desired size may still be available, even if there are no more contiguous
+<span class="lineNum">     194 </span>            :  * free chunks that meet the |size + alignment - pageSize| requirement of
+<span class="lineNum">     195 </span>            :  * MapAlignedPagesSlow. In this case, try harder to find an alignable chunk
+<span class="lineNum">     196 </span>            :  * by temporarily holding onto the unaligned parts of each chunk until the
+<span class="lineNum">     197 </span>            :  * allocator gives us a chunk that either is, or can be aligned.
+<span class="lineNum">     198 </span>            :  */
+<span class="lineNum">     199 </span>            : static void*
+<span class="lineNum">     200 </span>            : MapAlignedPagesLastDitch(size_t size, size_t alignment)
+<span class="lineNum">     201 </span>            : {
+<span class="lineNum">     202 </span>            :     void* tempMaps[MaxLastDitchAttempts];
+<span class="lineNum">     203 </span>            :     int attempt = 0;
+<span class="lineNum">     204 </span>            :     void* p = MapMemory(size, MEM_COMMIT | MEM_RESERVE);
+<span class="lineNum">     205 </span>            :     if (OffsetFromAligned(p, alignment) == 0)
+<span class="lineNum">     206 </span>            :         return p;
+<span class="lineNum">     207 </span>            :     for (; attempt &lt; MaxLastDitchAttempts; ++attempt) {
+<span class="lineNum">     208 </span>            :         GetNewChunk(&amp;p, tempMaps + attempt, size, alignment);
+<span class="lineNum">     209 </span>            :         if (OffsetFromAligned(p, alignment) == 0) {
+<span class="lineNum">     210 </span>            :             if (tempMaps[attempt])
+<span class="lineNum">     211 </span>            :                 UnmapPages(tempMaps[attempt], size);
+<span class="lineNum">     212 </span>            :             break;
+<span class="lineNum">     213 </span>            :         }
+<span class="lineNum">     214 </span>            :         if (!tempMaps[attempt])
+<span class="lineNum">     215 </span>            :             break; /* Bail if GetNewChunk failed. */
+<span class="lineNum">     216 </span>            :     }
+<span class="lineNum">     217 </span>            :     if (OffsetFromAligned(p, alignment)) {
+<span class="lineNum">     218 </span>            :         UnmapPages(p, size);
+<span class="lineNum">     219 </span>            :         p = nullptr;
+<span class="lineNum">     220 </span>            :     }
+<span class="lineNum">     221 </span>            :     while (--attempt &gt;= 0)
+<span class="lineNum">     222 </span>            :         UnmapPages(tempMaps[attempt], size);
+<span class="lineNum">     223 </span>            :     return p;
+<span class="lineNum">     224 </span>            : }
+<span class="lineNum">     225 </span>            : 
+<span class="lineNum">     226 </span>            : /*
+<span class="lineNum">     227 </span>            :  * On Windows, map and unmap calls must be matched, so we deallocate the
+<span class="lineNum">     228 </span>            :  * unaligned chunk, then reallocate the unaligned part to block off the
+<span class="lineNum">     229 </span>            :  * old address and force the allocator to give us a new one.
+<span class="lineNum">     230 </span>            :  */
+<span class="lineNum">     231 </span>            : static void
+<span class="lineNum">     232 </span>            : GetNewChunk(void** aAddress, void** aRetainedAddr, size_t size, size_t alignment)
+<span class="lineNum">     233 </span>            : {
+<span class="lineNum">     234 </span>            :     void* address = *aAddress;
+<span class="lineNum">     235 </span>            :     void* retainedAddr = nullptr;
+<span class="lineNum">     236 </span>            :     do {
+<span class="lineNum">     237 </span>            :         size_t retainedSize;
+<span class="lineNum">     238 </span>            :         size_t offset = OffsetFromAligned(address, alignment);
+<span class="lineNum">     239 </span>            :         if (!offset)
+<span class="lineNum">     240 </span>            :             break;
+<span class="lineNum">     241 </span>            :         UnmapPages(address, size);
+<span class="lineNum">     242 </span>            :         retainedSize = alignment - offset;
+<span class="lineNum">     243 </span>            :         retainedAddr = MapMemoryAt(address, retainedSize, MEM_RESERVE);
+<span class="lineNum">     244 </span>            :         address = MapMemory(size, MEM_COMMIT | MEM_RESERVE);
+<span class="lineNum">     245 </span>            :         /* If retainedAddr is null here, we raced with another thread. */
+<span class="lineNum">     246 </span>            :     } while (!retainedAddr);
+<span class="lineNum">     247 </span>            :     *aAddress = address;
+<span class="lineNum">     248 </span>            :     *aRetainedAddr = retainedAddr;
+<span class="lineNum">     249 </span>            : }
+<span class="lineNum">     250 </span>            : 
+<span class="lineNum">     251 </span>            : void
+<span class="lineNum">     252 </span>            : UnmapPages(void* p, size_t size)
+<span class="lineNum">     253 </span>            : {
+<span class="lineNum">     254 </span>            :     MOZ_ALWAYS_TRUE(VirtualFree(p, 0, MEM_RELEASE));
+<span class="lineNum">     255 </span>            : }
+<span class="lineNum">     256 </span>            : 
+<span class="lineNum">     257 </span>            : bool
+<span class="lineNum">     258 </span>            : MarkPagesUnused(void* p, size_t size)
+<span class="lineNum">     259 </span>            : {
+<span class="lineNum">     260 </span>            :     if (!DecommitEnabled())
+<span class="lineNum">     261 </span>            :         return true;
+<span class="lineNum">     262 </span>            : 
+<span class="lineNum">     263 </span>            :     MOZ_ASSERT(OffsetFromAligned(p, pageSize) == 0);
+<span class="lineNum">     264 </span>            :     LPVOID p2 = MapMemoryAt(p, size, MEM_RESET);
+<span class="lineNum">     265 </span>            :     return p2 == p;
+<span class="lineNum">     266 </span>            : }
+<span class="lineNum">     267 </span>            : 
+<span class="lineNum">     268 </span>            : void
+<span class="lineNum">     269 </span>            : MarkPagesInUse(void* p, size_t size)
+<span class="lineNum">     270 </span>            : {
+<span class="lineNum">     271 </span>            :     if (!DecommitEnabled())
+<span class="lineNum">     272 </span>            :         return;
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span>            :     MOZ_ASSERT(OffsetFromAligned(p, pageSize) == 0);
+<span class="lineNum">     275 </span>            : }
+<span class="lineNum">     276 </span>            : 
+<span class="lineNum">     277 </span>            : size_t
+<span class="lineNum">     278 </span>            : GetPageFaultCount()
+<span class="lineNum">     279 </span>            : {
+<span class="lineNum">     280 </span>            :     PROCESS_MEMORY_COUNTERS pmc;
+<span class="lineNum">     281 </span>            :     if (!GetProcessMemoryInfo(GetCurrentProcess(), &amp;pmc, sizeof(pmc)))
+<span class="lineNum">     282 </span>            :         return 0;
+<span class="lineNum">     283 </span>            :     return pmc.PageFaultCount;
+<span class="lineNum">     284 </span>            : }
+<span class="lineNum">     285 </span>            : 
+<span class="lineNum">     286 </span>            : void*
+<span class="lineNum">     287 </span>            : AllocateMappedContent(int fd, size_t offset, size_t length, size_t alignment)
+<span class="lineNum">     288 </span>            : {
+<span class="lineNum">     289 </span>            :     MOZ_ASSERT(length &amp;&amp; alignment);
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span>            :     // The allocation granularity and the requested offset
+<span class="lineNum">     292 </span>            :     // must both be divisible by the requested alignment.
+<span class="lineNum">     293 </span>            :     // Alignments larger than the allocation granularity are not supported.
+<span class="lineNum">     294 </span>            :     if (allocGranularity % alignment != 0 || offset % alignment != 0)
+<span class="lineNum">     295 </span>            :         return nullptr;
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span>            :     HANDLE hFile = reinterpret_cast&lt;HANDLE&gt;(intptr_t(fd));
+<span class="lineNum">     298 </span>            : 
+<span class="lineNum">     299 </span>            :     // This call will fail if the file does not exist, which is what we want.
+<span class="lineNum">     300 </span>            :     HANDLE hMap = CreateFileMapping(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
+<span class="lineNum">     301 </span>            :     if (!hMap)
+<span class="lineNum">     302 </span>            :         return nullptr;
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span>            :     size_t alignedOffset = offset - (offset % allocGranularity);
+<span class="lineNum">     305 </span>            :     size_t alignedLength = length + (offset % allocGranularity);
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span>            :     DWORD offsetH = uint32_t(uint64_t(alignedOffset) &gt;&gt; 32);
+<span class="lineNum">     308 </span>            :     DWORD offsetL = uint32_t(alignedOffset);
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span>            :     // If the offset or length are out of bounds, this call will fail.
+<span class="lineNum">     311 </span>            :     uint8_t* map = static_cast&lt;uint8_t*&gt;(MapViewOfFile(hMap, FILE_MAP_COPY, offsetH,
+<span class="lineNum">     312 </span>            :                                                        offsetL, alignedLength));
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span>            :     // This just decreases the file mapping object's internal reference count;
+<span class="lineNum">     315 </span>            :     // it won't actually be destroyed until we unmap the associated view.
+<span class="lineNum">     316 </span>            :     CloseHandle(hMap);
+<span class="lineNum">     317 </span>            : 
+<span class="lineNum">     318 </span>            :     if (!map)
+<span class="lineNum">     319 </span>            :         return nullptr;
+<span class="lineNum">     320 </span>            : 
+<span class="lineNum">     321 </span>            : #ifdef DEBUG
+<span class="lineNum">     322 </span>            :     // Zero out data before and after the desired mapping to catch errors early.
+<span class="lineNum">     323 </span>            :     if (offset != alignedOffset)
+<span class="lineNum">     324 </span>            :         memset(map, 0, offset - alignedOffset);
+<span class="lineNum">     325 </span>            :     if (alignedLength % pageSize)
+<span class="lineNum">     326 </span>            :         memset(map + alignedLength, 0, pageSize - (alignedLength % pageSize));
+<span class="lineNum">     327 </span>            : #endif
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span>            :     return map + (offset - alignedOffset);
+<span class="lineNum">     330 </span>            : }
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span>            : void
+<span class="lineNum">     333 </span>            : DeallocateMappedContent(void* p, size_t /*length*/)
+<span class="lineNum">     334 </span>            : {
+<span class="lineNum">     335 </span>            :     if (!p)
+<span class="lineNum">     336 </span>            :         return;
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span>            :     // Calculate the address originally returned by MapViewOfFile.
+<span class="lineNum">     339 </span>            :     // This is needed because AllocateMappedContent returns a pointer
+<span class="lineNum">     340 </span>            :     // that might be offset from the view, as the beginning of a
+<span class="lineNum">     341 </span>            :     // view must be aligned with the allocation granularity.
+<span class="lineNum">     342 </span>            :     uintptr_t map = uintptr_t(p) - (uintptr_t(p) % allocGranularity);
+<span class="lineNum">     343 </span>            :     MOZ_ALWAYS_TRUE(UnmapViewOfFile(reinterpret_cast&lt;void*&gt;(map)));
+<span class="lineNum">     344 </span>            : }
+<span class="lineNum">     345 </span>            : 
+<span class="lineNum">     346 </span>            : #  else // Various APIs are unavailable.
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span>            : void*
+<span class="lineNum">     349 </span>            : MapAlignedPages(size_t size, size_t alignment)
+<span class="lineNum">     350 </span>            : {
+<span class="lineNum">     351 </span>            :     MOZ_ASSERT(size &gt;= alignment);
+<span class="lineNum">     352 </span>            :     MOZ_ASSERT(size &gt;= allocGranularity);
+<span class="lineNum">     353 </span>            :     MOZ_ASSERT(size % alignment == 0);
+<span class="lineNum">     354 </span>            :     MOZ_ASSERT(size % pageSize == 0);
+<span class="lineNum">     355 </span>            :     MOZ_ASSERT_IF(alignment &lt; allocGranularity, allocGranularity % alignment == 0);
+<span class="lineNum">     356 </span>            :     MOZ_ASSERT_IF(alignment &gt; allocGranularity, alignment % allocGranularity == 0);
+<span class="lineNum">     357 </span>            : 
+<span class="lineNum">     358 </span>            :     void* p = _aligned_malloc(size, alignment);
+<span class="lineNum">     359 </span>            : 
+<span class="lineNum">     360 </span>            :     MOZ_ASSERT(OffsetFromAligned(p, alignment) == 0);
+<span class="lineNum">     361 </span>            :     return p;
+<span class="lineNum">     362 </span>            : }
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span>            : static void*
+<span class="lineNum">     365 </span>            : MapAlignedPagesLastDitch(size_t size, size_t alignment)
+<span class="lineNum">     366 </span>            : {
+<span class="lineNum">     367 </span>            :     return nullptr;
+<span class="lineNum">     368 </span>            : }
+<span class="lineNum">     369 </span>            : 
+<span class="lineNum">     370 </span>            : void
+<span class="lineNum">     371 </span>            : UnmapPages(void* p, size_t size)
+<span class="lineNum">     372 </span>            : {
+<span class="lineNum">     373 </span>            :     _aligned_free(p);
+<span class="lineNum">     374 </span>            : }
+<span class="lineNum">     375 </span>            : 
+<span class="lineNum">     376 </span>            : bool
+<span class="lineNum">     377 </span>            : MarkPagesUnused(void* p, size_t size)
+<span class="lineNum">     378 </span>            : {
+<span class="lineNum">     379 </span>            :     MOZ_ASSERT(OffsetFromAligned(p, pageSize) == 0);
+<span class="lineNum">     380 </span>            :     return true;
+<span class="lineNum">     381 </span>            : }
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span>            : bool
+<span class="lineNum">     384 </span>            : MarkPagesInUse(void* p, size_t size)
+<span class="lineNum">     385 </span>            : {
+<span class="lineNum">     386 </span>            :     MOZ_ASSERT(OffsetFromAligned(p, pageSize) == 0);
+<span class="lineNum">     387 </span>            : }
+<span class="lineNum">     388 </span>            : 
+<span class="lineNum">     389 </span>            : size_t
+<span class="lineNum">     390 </span>            : GetPageFaultCount()
+<span class="lineNum">     391 </span>            : {
+<span class="lineNum">     392 </span>            :     // GetProcessMemoryInfo is unavailable.
+<span class="lineNum">     393 </span>            :     return 0;
+<span class="lineNum">     394 </span>            : }
+<span class="lineNum">     395 </span>            : 
+<span class="lineNum">     396 </span>            : void*
+<span class="lineNum">     397 </span>            : AllocateMappedContent(int fd, size_t offset, size_t length, size_t alignment)
+<span class="lineNum">     398 </span>            : {
+<span class="lineNum">     399 </span>            :     // Not implemented.
+<span class="lineNum">     400 </span>            :     return nullptr;
+<span class="lineNum">     401 </span>            : }
+<span class="lineNum">     402 </span>            : 
+<span class="lineNum">     403 </span>            : // Deallocate mapped memory for object.
+<span class="lineNum">     404 </span>            : void
+<span class="lineNum">     405 </span>            : DeallocateMappedContent(void* p, size_t length)
+<span class="lineNum">     406 </span>            : {
+<span class="lineNum">     407 </span>            :     // Not implemented.
+<span class="lineNum">     408 </span>            : }
+<span class="lineNum">     409 </span>            : 
+<span class="lineNum">     410 </span>            : #  endif
+<span class="lineNum">     411 </span>            : 
+<span class="lineNum">     412 </span>            : #elif defined(SOLARIS)
+<span class="lineNum">     413 </span>            : 
+<span class="lineNum">     414 </span>            : #ifndef MAP_NOSYNC
+<span class="lineNum">     415 </span>            : # define MAP_NOSYNC 0
+<span class="lineNum">     416 </span>            : #endif
+<span class="lineNum">     417 </span>            : 
+<span class="lineNum">     418 </span>            : void
+<span class="lineNum">     419 </span>            : InitMemorySubsystem()
+<span class="lineNum">     420 </span>            : {
+<span class="lineNum">     421 </span>            :     if (pageSize == 0)
+<span class="lineNum">     422 </span>            :         pageSize = allocGranularity = size_t(sysconf(_SC_PAGESIZE));
+<span class="lineNum">     423 </span>            : }
+<span class="lineNum">     424 </span>            : 
+<span class="lineNum">     425 </span>            : void*
+<span class="lineNum">     426 </span>            : MapAlignedPages(size_t size, size_t alignment)
+<span class="lineNum">     427 </span>            : {
+<span class="lineNum">     428 </span>            :     MOZ_ASSERT(size &gt;= alignment);
+<span class="lineNum">     429 </span>            :     MOZ_ASSERT(size &gt;= allocGranularity);
+<span class="lineNum">     430 </span>            :     MOZ_ASSERT(size % alignment == 0);
+<span class="lineNum">     431 </span>            :     MOZ_ASSERT(size % pageSize == 0);
+<span class="lineNum">     432 </span>            :     MOZ_ASSERT_IF(alignment &lt; allocGranularity, allocGranularity % alignment == 0);
+<span class="lineNum">     433 </span>            :     MOZ_ASSERT_IF(alignment &gt; allocGranularity, alignment % allocGranularity == 0);
+<span class="lineNum">     434 </span>            : 
+<span class="lineNum">     435 </span>            :     int prot = PROT_READ | PROT_WRITE;
+<span class="lineNum">     436 </span>            :     int flags = MAP_PRIVATE | MAP_ANON | MAP_ALIGN | MAP_NOSYNC;
+<span class="lineNum">     437 </span>            : 
+<span class="lineNum">     438 </span>            :     void* p = mmap((caddr_t)alignment, size, prot, flags, -1, 0);
+<span class="lineNum">     439 </span>            :     if (p == MAP_FAILED)
+<span class="lineNum">     440 </span>            :         return nullptr;
+<span class="lineNum">     441 </span>            :     return p;
+<span class="lineNum">     442 </span>            : }
+<span class="lineNum">     443 </span>            : 
+<span class="lineNum">     444 </span>            : static void*
+<span class="lineNum">     445 </span>            : MapAlignedPagesLastDitch(size_t size, size_t alignment)
+<span class="lineNum">     446 </span>            : {
+<span class="lineNum">     447 </span>            :     return nullptr;
+<span class="lineNum">     448 </span>            : }
+<span class="lineNum">     449 </span>            : 
+<span class="lineNum">     450 </span>            : void
+<span class="lineNum">     451 </span>            : UnmapPages(void* p, size_t size)
+<span class="lineNum">     452 </span>            : {
+<span class="lineNum">     453 </span>            :     MOZ_ALWAYS_TRUE(0 == munmap((caddr_t)p, size));
+<span class="lineNum">     454 </span>            : }
+<span class="lineNum">     455 </span>            : 
+<span class="lineNum">     456 </span>            : bool
+<span class="lineNum">     457 </span>            : MarkPagesUnused(void* p, size_t size)
+<span class="lineNum">     458 </span>            : {
+<span class="lineNum">     459 </span>            :     MOZ_ASSERT(OffsetFromAligned(p, pageSize) == 0);
+<span class="lineNum">     460 </span>            :     return true;
+<span class="lineNum">     461 </span>            : }
+<span class="lineNum">     462 </span>            : 
+<span class="lineNum">     463 </span>            : bool
+<span class="lineNum">     464 </span>            : MarkPagesInUse(void* p, size_t size)
+<span class="lineNum">     465 </span>            : {
+<span class="lineNum">     466 </span>            :     if (!DecommitEnabled())
+<span class="lineNum">     467 </span>            :         return;
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span>            :     MOZ_ASSERT(OffsetFromAligned(p, pageSize) == 0);
+<span class="lineNum">     470 </span>            : }
+<span class="lineNum">     471 </span>            : 
+<span class="lineNum">     472 </span>            : size_t
+<span class="lineNum">     473 </span>            : GetPageFaultCount()
+<span class="lineNum">     474 </span>            : {
+<span class="lineNum">     475 </span>            :     return 0;
+<span class="lineNum">     476 </span>            : }
+<span class="lineNum">     477 </span>            : 
+<span class="lineNum">     478 </span>            : void*
+<span class="lineNum">     479 </span>            : AllocateMappedContent(int fd, size_t offset, size_t length, size_t alignment)
+<span class="lineNum">     480 </span>            : {
+<span class="lineNum">     481 </span>            :     // Not implemented.
+<span class="lineNum">     482 </span>            :     return nullptr;
+<span class="lineNum">     483 </span>            : }
+<span class="lineNum">     484 </span>            : 
+<span class="lineNum">     485 </span>            : // Deallocate mapped memory for object.
+<span class="lineNum">     486 </span>            : void
+<span class="lineNum">     487 </span>            : DeallocateMappedContent(void* p, size_t length)
+<span class="lineNum">     488 </span>            : {
+<span class="lineNum">     489 </span>            :     // Not implemented.
+<span class="lineNum">     490 </span>            : }
+<span class="lineNum">     491 </span>            : 
+<span class="lineNum">     492 </span>            : #elif defined(XP_UNIX)
+<a name="493"><span class="lineNum">     493 </span>            : </a>
+<span class="lineNum">     494 </span>            : void
+<span class="lineNum">     495 </span><span class="lineCov">          3 : InitMemorySubsystem()</span>
+<span class="lineNum">     496 </span>            : {
+<span class="lineNum">     497 </span><span class="lineCov">          3 :     if (pageSize == 0)</span>
+<span class="lineNum">     498 </span><span class="lineCov">          3 :         pageSize = allocGranularity = size_t(sysconf(_SC_PAGESIZE));</span>
+<span class="lineNum">     499 </span><span class="lineCov">          3 : }</span>
+<a name="500"><span class="lineNum">     500 </span>            : </a>
+<span class="lineNum">     501 </span>            : static inline void*
+<span class="lineNum">     502 </span><span class="lineCov">          6 : MapMemoryAt(void* desired, size_t length, int prot = PROT_READ | PROT_WRITE,</span>
+<span class="lineNum">     503 </span>            :             int flags = MAP_PRIVATE | MAP_ANON, int fd = -1, off_t offset = 0)
+<span class="lineNum">     504 </span>            : {
+<span class="lineNum">     505 </span>            : 
+<span class="lineNum">     506 </span>            : #if defined(__ia64__) || defined(__aarch64__) || \
+<span class="lineNum">     507 </span>            :     (defined(__sparc__) &amp;&amp; defined(__arch64__) &amp;&amp; (defined(__NetBSD__) || defined(__linux__)))
+<span class="lineNum">     508 </span>            :     MOZ_ASSERT((0xffff800000000000ULL &amp; (uintptr_t(desired) + length - 1)) == 0);
+<span class="lineNum">     509 </span>            : #endif
+<span class="lineNum">     510 </span><span class="lineCov">          6 :     void* region = mmap(desired, length, prot, flags, fd, offset);</span>
+<span class="lineNum">     511 </span><span class="lineCov">          6 :     if (region == MAP_FAILED)</span>
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     513 </span>            :     /*
+<span class="lineNum">     514 </span>            :      * mmap treats the given address as a hint unless the MAP_FIXED flag is
+<span class="lineNum">     515 </span>            :      * used (which isn't usually what you want, as this overrides existing
+<span class="lineNum">     516 </span>            :      * mappings), so check that the address we got is the address we wanted.
+<span class="lineNum">     517 </span>            :      */
+<span class="lineNum">     518 </span><span class="lineCov">          6 :     if (region != desired) {</span>
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :         if (munmap(region, length))</span>
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :             MOZ_ASSERT(errno == ENOMEM);</span>
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     522 </span>            :     }
+<span class="lineNum">     523 </span><span class="lineCov">          6 :     return region;</span>
+<span class="lineNum">     524 </span>            : }
+<a name="525"><span class="lineNum">     525 </span>            : </a>
+<span class="lineNum">     526 </span>            : static inline void*
+<span class="lineNum">     527 </span><span class="lineCov">         37 : MapMemory(size_t length, int prot = PROT_READ | PROT_WRITE,</span>
+<span class="lineNum">     528 </span>            :           int flags = MAP_PRIVATE | MAP_ANON, int fd = -1, off_t offset = 0)
+<span class="lineNum">     529 </span>            : {
+<span class="lineNum">     530 </span>            : #if defined(__ia64__) || (defined(__sparc__) &amp;&amp; defined(__arch64__) &amp;&amp; defined(__NetBSD__))
+<span class="lineNum">     531 </span>            :     /*
+<span class="lineNum">     532 </span>            :      * The JS engine assumes that all allocated pointers have their high 17 bits clear,
+<span class="lineNum">     533 </span>            :      * which ia64's mmap doesn't support directly. However, we can emulate it by passing
+<span class="lineNum">     534 </span>            :      * mmap an &quot;addr&quot; parameter with those bits clear. The mmap will return that address,
+<span class="lineNum">     535 </span>            :      * or the nearest available memory above that address, providing a near-guarantee
+<span class="lineNum">     536 </span>            :      * that those bits are clear. If they are not, we return nullptr below to indicate
+<span class="lineNum">     537 </span>            :      * out-of-memory.
+<span class="lineNum">     538 </span>            :      *
+<span class="lineNum">     539 </span>            :      * The addr is chosen as 0x0000070000000000, which still allows about 120TB of virtual
+<span class="lineNum">     540 </span>            :      * address space.
+<span class="lineNum">     541 </span>            :      *
+<span class="lineNum">     542 </span>            :      * See Bug 589735 for more information.
+<span class="lineNum">     543 </span>            :      */
+<span class="lineNum">     544 </span>            :     void* region = mmap((void*)0x0000070000000000, length, prot, flags, fd, offset);
+<span class="lineNum">     545 </span>            :     if (region == MAP_FAILED)
+<span class="lineNum">     546 </span>            :         return nullptr;
+<span class="lineNum">     547 </span>            :     /*
+<span class="lineNum">     548 </span>            :      * If the allocated memory doesn't have its upper 17 bits clear, consider it
+<span class="lineNum">     549 </span>            :      * as out of memory.
+<span class="lineNum">     550 </span>            :      */
+<span class="lineNum">     551 </span>            :     if ((uintptr_t(region) + (length - 1)) &amp; 0xffff800000000000) {
+<span class="lineNum">     552 </span>            :         if (munmap(region, length))
+<span class="lineNum">     553 </span>            :             MOZ_ASSERT(errno == ENOMEM);
+<span class="lineNum">     554 </span>            :         return nullptr;
+<span class="lineNum">     555 </span>            :     }
+<span class="lineNum">     556 </span>            :     return region;
+<span class="lineNum">     557 </span>            : #elif defined(__aarch64__) || (defined(__sparc__) &amp;&amp; defined(__arch64__) &amp;&amp; defined(__linux__))
+<span class="lineNum">     558 </span>            :    /*
+<span class="lineNum">     559 </span>            :     * There might be similar virtual address issue on arm64 which depends on
+<span class="lineNum">     560 </span>            :     * hardware and kernel configurations. But the work around is slightly
+<span class="lineNum">     561 </span>            :     * different due to the different mmap behavior.
+<span class="lineNum">     562 </span>            :     *
+<span class="lineNum">     563 </span>            :     * TODO: Merge with the above code block if this implementation works for
+<span class="lineNum">     564 </span>            :     * ia64 and sparc64.
+<span class="lineNum">     565 </span>            :     */
+<span class="lineNum">     566 </span>            :     const uintptr_t start = UINT64_C(0x0000070000000000);
+<span class="lineNum">     567 </span>            :     const uintptr_t end   = UINT64_C(0x0000800000000000);
+<span class="lineNum">     568 </span>            :     const uintptr_t step  = ChunkSize;
+<span class="lineNum">     569 </span>            :    /*
+<span class="lineNum">     570 </span>            :     * Optimization options if there are too many retries in practice:
+<span class="lineNum">     571 </span>            :     * 1. Examine /proc/self/maps to find an available address. This file is
+<span class="lineNum">     572 </span>            :     *    not always available, however. In addition, even if we examine
+<span class="lineNum">     573 </span>            :     *    /proc/self/maps, we may still need to retry several times due to
+<span class="lineNum">     574 </span>            :     *    racing with other threads.
+<span class="lineNum">     575 </span>            :     * 2. Use a global/static variable with lock to track the addresses we have
+<span class="lineNum">     576 </span>            :     *    allocated or tried.
+<span class="lineNum">     577 </span>            :     */
+<span class="lineNum">     578 </span>            :     uintptr_t hint;
+<span class="lineNum">     579 </span>            :     void* region = MAP_FAILED;
+<span class="lineNum">     580 </span>            :     for (hint = start; region == MAP_FAILED &amp;&amp; hint + length &lt;= end; hint += step) {
+<span class="lineNum">     581 </span>            :         region = mmap((void*)hint, length, prot, flags, fd, offset);
+<span class="lineNum">     582 </span>            :         if (region != MAP_FAILED) {
+<span class="lineNum">     583 </span>            :             if ((uintptr_t(region) + (length - 1)) &amp; 0xffff800000000000) {
+<span class="lineNum">     584 </span>            :                 if (munmap(region, length)) {
+<span class="lineNum">     585 </span>            :                     MOZ_ASSERT(errno == ENOMEM);
+<span class="lineNum">     586 </span>            :                 }
+<span class="lineNum">     587 </span>            :                 region = MAP_FAILED;
+<span class="lineNum">     588 </span>            :             }
+<span class="lineNum">     589 </span>            :         }
+<span class="lineNum">     590 </span>            :     }
+<span class="lineNum">     591 </span>            :     return region == MAP_FAILED ? nullptr : region;
+<span class="lineNum">     592 </span>            : #else
+<span class="lineNum">     593 </span><span class="lineCov">         37 :     void* region = MozTaggedAnonymousMmap(nullptr, length, prot, flags, fd, offset, &quot;js-gc-heap&quot;);</span>
+<span class="lineNum">     594 </span><span class="lineCov">         37 :     if (region == MAP_FAILED)</span>
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     596 </span><span class="lineCov">         37 :     return region;</span>
+<span class="lineNum">     597 </span>            : #endif
+<span class="lineNum">     598 </span>            : }
+<a name="599"><span class="lineNum">     599 </span>            : </a>
+<span class="lineNum">     600 </span>            : void*
+<span class="lineNum">     601 </span><span class="lineCov">         37 : MapAlignedPages(size_t size, size_t alignment)</span>
+<span class="lineNum">     602 </span>            : {
+<span class="lineNum">     603 </span><span class="lineCov">         37 :     MOZ_ASSERT(size &gt;= alignment);</span>
+<span class="lineNum">     604 </span><span class="lineCov">         37 :     MOZ_ASSERT(size &gt;= allocGranularity);</span>
+<span class="lineNum">     605 </span><span class="lineCov">         37 :     MOZ_ASSERT(size % alignment == 0);</span>
+<span class="lineNum">     606 </span><span class="lineCov">         37 :     MOZ_ASSERT(size % pageSize == 0);</span>
+<span class="lineNum">     607 </span><span class="lineCov">         37 :     MOZ_ASSERT_IF(alignment &lt; allocGranularity, allocGranularity % alignment == 0);</span>
+<span class="lineNum">     608 </span><span class="lineCov">         37 :     MOZ_ASSERT_IF(alignment &gt; allocGranularity, alignment % allocGranularity == 0);</span>
+<span class="lineNum">     609 </span>            : 
+<span class="lineNum">     610 </span><span class="lineCov">         37 :     void* p = MapMemory(size);</span>
+<span class="lineNum">     611 </span>            : 
+<span class="lineNum">     612 </span>            :     /* Special case: If we want page alignment, no further work is needed. */
+<span class="lineNum">     613 </span><span class="lineCov">         37 :     if (alignment == allocGranularity)</span>
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :         return p;</span>
+<span class="lineNum">     615 </span>            : 
+<span class="lineNum">     616 </span><span class="lineCov">         37 :     if (OffsetFromAligned(p, alignment) == 0)</span>
+<span class="lineNum">     617 </span><span class="lineCov">         31 :         return p;</span>
+<span class="lineNum">     618 </span>            : 
+<span class="lineNum">     619 </span>            :     void* retainedAddr;
+<span class="lineNum">     620 </span><span class="lineCov">          6 :     GetNewChunk(&amp;p, &amp;retainedAddr, size, alignment);</span>
+<span class="lineNum">     621 </span><span class="lineCov">          6 :     if (retainedAddr)</span>
+<span class="lineNum">     622 </span><span class="lineNoCov">          0 :         UnmapPages(retainedAddr, size);</span>
+<span class="lineNum">     623 </span><span class="lineCov">          6 :     if (p) {</span>
+<span class="lineNum">     624 </span><span class="lineCov">          6 :         if (OffsetFromAligned(p, alignment) == 0)</span>
+<span class="lineNum">     625 </span><span class="lineCov">          6 :             return p;</span>
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :         UnmapPages(p, size);</span>
+<span class="lineNum">     627 </span>            :     }
+<span class="lineNum">     628 </span>            : 
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :     p = MapAlignedPagesSlow(size, alignment);</span>
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 :     if (!p)</span>
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :         return MapAlignedPagesLastDitch(size, alignment);</span>
+<span class="lineNum">     632 </span>            : 
+<span class="lineNum">     633 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(OffsetFromAligned(p, alignment) == 0);</span>
+<span class="lineNum">     634 </span><span class="lineNoCov">          0 :     return p;</span>
+<span class="lineNum">     635 </span>            : }
+<a name="636"><span class="lineNum">     636 </span>            : </a>
+<span class="lineNum">     637 </span>            : static void*
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 : MapAlignedPagesSlow(size_t size, size_t alignment)</span>
+<span class="lineNum">     639 </span>            : {
+<span class="lineNum">     640 </span>            :     /* Overallocate and unmap the region's edges. */
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :     size_t reqSize = size + alignment - pageSize;</span>
+<span class="lineNum">     642 </span><span class="lineNoCov">          0 :     void* region = MapMemory(reqSize);</span>
+<span class="lineNum">     643 </span><span class="lineNoCov">          0 :     if (!region)</span>
+<span class="lineNum">     644 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     645 </span>            : 
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 :     void* regionEnd = (void*)(uintptr_t(region) + reqSize);</span>
+<span class="lineNum">     647 </span>            :     void* front;
+<span class="lineNum">     648 </span>            :     void* end;
+<span class="lineNum">     649 </span><span class="lineNoCov">          0 :     if (growthDirection &lt;= 0) {</span>
+<span class="lineNum">     650 </span><span class="lineNoCov">          0 :         size_t offset = OffsetFromAligned(regionEnd, alignment);</span>
+<span class="lineNum">     651 </span><span class="lineNoCov">          0 :         end = (void*)(uintptr_t(regionEnd) - offset);</span>
+<span class="lineNum">     652 </span><span class="lineNoCov">          0 :         front = (void*)(uintptr_t(end) - size);</span>
+<span class="lineNum">     653 </span>            :     } else {
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 :         size_t offset = OffsetFromAligned(region, alignment);</span>
+<span class="lineNum">     655 </span><span class="lineNoCov">          0 :         front = (void*)(uintptr_t(region) + (offset ? alignment - offset : 0));</span>
+<span class="lineNum">     656 </span><span class="lineNoCov">          0 :         end = (void*)(uintptr_t(front) + size);</span>
+<span class="lineNum">     657 </span>            :     }
+<span class="lineNum">     658 </span>            : 
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :     if (front != region)</span>
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :         UnmapPages(region, uintptr_t(front) - uintptr_t(region));</span>
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :     if (end != regionEnd)</span>
+<span class="lineNum">     662 </span><span class="lineNoCov">          0 :         UnmapPages(end, uintptr_t(regionEnd) - uintptr_t(end));</span>
+<span class="lineNum">     663 </span>            : 
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :     return front;</span>
+<span class="lineNum">     665 </span>            : }
+<span class="lineNum">     666 </span>            : 
+<span class="lineNum">     667 </span>            : /*
+<span class="lineNum">     668 </span>            :  * In a low memory or high fragmentation situation, alignable chunks of the
+<span class="lineNum">     669 </span>            :  * desired size may still be available, even if there are no more contiguous
+<span class="lineNum">     670 </span>            :  * free chunks that meet the |size + alignment - pageSize| requirement of
+<span class="lineNum">     671 </span>            :  * MapAlignedPagesSlow. In this case, try harder to find an alignable chunk
+<span class="lineNum">     672 </span>            :  * by temporarily holding onto the unaligned parts of each chunk until the
+<span class="lineNum">     673 </span>            :  * allocator gives us a chunk that either is, or can be aligned.
+<a name="674"><span class="lineNum">     674 </span>            :  */</a>
+<span class="lineNum">     675 </span>            : static void*
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 : MapAlignedPagesLastDitch(size_t size, size_t alignment)</span>
+<span class="lineNum">     677 </span>            : {
+<span class="lineNum">     678 </span>            :     void* tempMaps[MaxLastDitchAttempts];
+<span class="lineNum">     679 </span><span class="lineNoCov">          0 :     int attempt = 0;</span>
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 :     void* p = MapMemory(size);</span>
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :     if (OffsetFromAligned(p, alignment) == 0)</span>
+<span class="lineNum">     682 </span><span class="lineNoCov">          0 :         return p;</span>
+<span class="lineNum">     683 </span><span class="lineNoCov">          0 :     for (; attempt &lt; MaxLastDitchAttempts; ++attempt) {</span>
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :         GetNewChunk(&amp;p, tempMaps + attempt, size, alignment);</span>
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :         if (OffsetFromAligned(p, alignment) == 0) {</span>
+<span class="lineNum">     686 </span><span class="lineNoCov">          0 :             if (tempMaps[attempt])</span>
+<span class="lineNum">     687 </span><span class="lineNoCov">          0 :                 UnmapPages(tempMaps[attempt], size);</span>
+<span class="lineNum">     688 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     689 </span>            :         }
+<span class="lineNum">     690 </span><span class="lineNoCov">          0 :         if (!tempMaps[attempt])</span>
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :             break; /* Bail if GetNewChunk failed. */</span>
+<span class="lineNum">     692 </span>            :     }
+<span class="lineNum">     693 </span><span class="lineNoCov">          0 :     if (OffsetFromAligned(p, alignment)) {</span>
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :         UnmapPages(p, size);</span>
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :         p = nullptr;</span>
+<span class="lineNum">     696 </span>            :     }
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :     while (--attempt &gt;= 0)</span>
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :         UnmapPages(tempMaps[attempt], size);</span>
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :     return p;</span>
+<span class="lineNum">     700 </span>            : }
+<span class="lineNum">     701 </span>            : 
+<span class="lineNum">     702 </span>            : /*
+<span class="lineNum">     703 </span>            :  * mmap calls don't have to be matched with calls to munmap, so we can unmap
+<span class="lineNum">     704 </span>            :  * just the pages we don't need. However, as we don't know a priori if addresses
+<span class="lineNum">     705 </span>            :  * are handed out in increasing or decreasing order, we have to try both
+<span class="lineNum">     706 </span>            :  * directions (depending on the environment, one will always fail).
+<a name="707"><span class="lineNum">     707 </span>            :  */</a>
+<span class="lineNum">     708 </span>            : static void
+<span class="lineNum">     709 </span><span class="lineCov">          6 : GetNewChunk(void** aAddress, void** aRetainedAddr, size_t size, size_t alignment)</span>
+<span class="lineNum">     710 </span>            : {
+<span class="lineNum">     711 </span><span class="lineCov">          6 :     void* address = *aAddress;</span>
+<span class="lineNum">     712 </span><span class="lineCov">          6 :     void* retainedAddr = nullptr;</span>
+<span class="lineNum">     713 </span><span class="lineCov">          6 :     bool addrsGrowDown = growthDirection &lt;= 0;</span>
+<span class="lineNum">     714 </span><span class="lineCov">          6 :     int i = 0;</span>
+<span class="lineNum">     715 </span><span class="lineCov">          6 :     for (; i &lt; 2; ++i) {</span>
+<span class="lineNum">     716 </span>            :         /* Try the direction indicated by growthDirection. */
+<span class="lineNum">     717 </span><span class="lineCov">          6 :         if (addrsGrowDown) {</span>
+<span class="lineNum">     718 </span><span class="lineCov">          6 :             size_t offset = OffsetFromAligned(address, alignment);</span>
+<span class="lineNum">     719 </span><span class="lineCov">          6 :             void* head = (void*)((uintptr_t)address - offset);</span>
+<span class="lineNum">     720 </span><span class="lineCov">          6 :             void* tail = (void*)((uintptr_t)head + size);</span>
+<span class="lineNum">     721 </span><span class="lineCov">          6 :             if (MapMemoryAt(head, offset)) {</span>
+<span class="lineNum">     722 </span><span class="lineCov">          6 :                 UnmapPages(tail, offset);</span>
+<span class="lineNum">     723 </span><span class="lineCov">          6 :                 if (growthDirection &gt;= -8)</span>
+<span class="lineNum">     724 </span><span class="lineCov">          6 :                     --growthDirection;</span>
+<span class="lineNum">     725 </span><span class="lineCov">          6 :                 address = head;</span>
+<span class="lineNum">     726 </span><span class="lineCov">          6 :                 break;</span>
+<span class="lineNum">     727 </span>            :             }
+<span class="lineNum">     728 </span>            :         } else {
+<span class="lineNum">     729 </span><span class="lineNoCov">          0 :             size_t offset = alignment - OffsetFromAligned(address, alignment);</span>
+<span class="lineNum">     730 </span><span class="lineNoCov">          0 :             void* head = (void*)((uintptr_t)address + offset);</span>
+<span class="lineNum">     731 </span><span class="lineNoCov">          0 :             void* tail = (void*)((uintptr_t)address + size);</span>
+<span class="lineNum">     732 </span><span class="lineNoCov">          0 :             if (MapMemoryAt(tail, offset)) {</span>
+<span class="lineNum">     733 </span><span class="lineNoCov">          0 :                 UnmapPages(address, offset);</span>
+<span class="lineNum">     734 </span><span class="lineNoCov">          0 :                 if (growthDirection &lt;= 8)</span>
+<span class="lineNum">     735 </span><span class="lineNoCov">          0 :                     ++growthDirection;</span>
+<span class="lineNum">     736 </span><span class="lineNoCov">          0 :                 address = head;</span>
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     738 </span>            :             }
+<span class="lineNum">     739 </span>            :         }
+<span class="lineNum">     740 </span>            :         /* If we're confident in the growth direction, don't try the other. */
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 :         if (growthDirection &lt; -8 || growthDirection &gt; 8)</span>
+<span class="lineNum">     742 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     743 </span>            :         /* If that failed, try the opposite direction. */
+<span class="lineNum">     744 </span><span class="lineNoCov">          0 :         addrsGrowDown = !addrsGrowDown;</span>
+<span class="lineNum">     745 </span>            :     }
+<span class="lineNum">     746 </span>            :     /* If our current chunk cannot be aligned, see if the next one is aligned. */
+<span class="lineNum">     747 </span><span class="lineCov">          6 :     if (OffsetFromAligned(address, alignment)) {</span>
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :         retainedAddr = address;</span>
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :         address = MapMemory(size);</span>
+<span class="lineNum">     750 </span>            :     }
+<span class="lineNum">     751 </span><span class="lineCov">          6 :     *aAddress = address;</span>
+<span class="lineNum">     752 </span><span class="lineCov">          6 :     *aRetainedAddr = retainedAddr;</span>
+<span class="lineNum">     753 </span><span class="lineCov">          6 : }</span>
+<a name="754"><span class="lineNum">     754 </span>            : </a>
+<span class="lineNum">     755 </span>            : void
+<span class="lineNum">     756 </span><span class="lineCov">          6 : UnmapPages(void* p, size_t size)</span>
+<span class="lineNum">     757 </span>            : {
+<span class="lineNum">     758 </span><span class="lineCov">          6 :     if (munmap(p, size))</span>
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(errno == ENOMEM);</span>
+<span class="lineNum">     760 </span><span class="lineCov">          6 : }</span>
+<a name="761"><span class="lineNum">     761 </span>            : </a>
+<span class="lineNum">     762 </span>            : bool
+<span class="lineNum">     763 </span><span class="lineCov">         50 : MarkPagesUnused(void* p, size_t size)</span>
+<span class="lineNum">     764 </span>            : {
+<span class="lineNum">     765 </span><span class="lineCov">         50 :     if (!DecommitEnabled())</span>
+<span class="lineNum">     766 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     767 </span>            : 
+<span class="lineNum">     768 </span><span class="lineCov">         50 :     MOZ_ASSERT(OffsetFromAligned(p, pageSize) == 0);</span>
+<span class="lineNum">     769 </span>            : #if defined(XP_SOLARIS)
+<span class="lineNum">     770 </span>            :     int result = posix_madvise(p, size, POSIX_MADV_DONTNEED);
+<span class="lineNum">     771 </span>            : #else
+<span class="lineNum">     772 </span><span class="lineCov">         50 :     int result = madvise(p, size, MADV_DONTNEED);</span>
+<span class="lineNum">     773 </span>            : #endif
+<span class="lineNum">     774 </span><span class="lineCov">         50 :     return result != -1;</span>
+<span class="lineNum">     775 </span>            : }
+<a name="776"><span class="lineNum">     776 </span>            : </a>
+<span class="lineNum">     777 </span>            : void
+<span class="lineNum">     778 </span><span class="lineCov">       6657 : MarkPagesInUse(void* p, size_t size)</span>
+<span class="lineNum">     779 </span>            : {
+<span class="lineNum">     780 </span><span class="lineCov">       6657 :     if (!DecommitEnabled())</span>
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     782 </span>            : 
+<span class="lineNum">     783 </span><span class="lineCov">       6657 :     MOZ_ASSERT(OffsetFromAligned(p, pageSize) == 0);</span>
+<span class="lineNum">     784 </span>            : }
+<a name="785"><span class="lineNum">     785 </span>            : </a>
+<span class="lineNum">     786 </span>            : size_t
+<span class="lineNum">     787 </span><span class="lineCov">          6 : GetPageFaultCount()</span>
+<span class="lineNum">     788 </span>            : {
+<span class="lineNum">     789 </span>            :     struct rusage usage;
+<span class="lineNum">     790 </span><span class="lineCov">          6 :     int err = getrusage(RUSAGE_SELF, &amp;usage);</span>
+<span class="lineNum">     791 </span><span class="lineCov">          6 :     if (err)</span>
+<span class="lineNum">     792 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     793 </span><span class="lineCov">          6 :     return usage.ru_majflt;</span>
+<span class="lineNum">     794 </span>            : }
+<a name="795"><span class="lineNum">     795 </span>            : </a>
+<span class="lineNum">     796 </span>            : void*
+<span class="lineNum">     797 </span><span class="lineNoCov">          0 : AllocateMappedContent(int fd, size_t offset, size_t length, size_t alignment)</span>
+<span class="lineNum">     798 </span>            : {
+<span class="lineNum">     799 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(length &amp;&amp; alignment);</span>
+<span class="lineNum">     800 </span>            : 
+<span class="lineNum">     801 </span>            :     // The allocation granularity and the requested offset
+<span class="lineNum">     802 </span>            :     // must both be divisible by the requested alignment.
+<span class="lineNum">     803 </span>            :     // Alignments larger than the allocation granularity are not supported.
+<span class="lineNum">     804 </span><span class="lineNoCov">          0 :     if (allocGranularity % alignment != 0 || offset % alignment != 0)</span>
+<span class="lineNum">     805 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     806 </span>            : 
+<span class="lineNum">     807 </span>            :     // Sanity check the offset and size, as mmap does not do this for us.
+<span class="lineNum">     808 </span>            :     struct stat st;
+<span class="lineNum">     809 </span><span class="lineNoCov">          0 :     if (fstat(fd, &amp;st) || offset &gt;= uint64_t(st.st_size) || length &gt; uint64_t(st.st_size) - offset)</span>
+<span class="lineNum">     810 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     811 </span>            : 
+<span class="lineNum">     812 </span><span class="lineNoCov">          0 :     size_t alignedOffset = offset - (offset % allocGranularity);</span>
+<span class="lineNum">     813 </span><span class="lineNoCov">          0 :     size_t alignedLength = length + (offset % allocGranularity);</span>
+<span class="lineNum">     814 </span>            : 
+<span class="lineNum">     815 </span><span class="lineNoCov">          0 :     uint8_t* map = static_cast&lt;uint8_t*&gt;(MapMemory(alignedLength, PROT_READ | PROT_WRITE,</span>
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 :                                                    MAP_PRIVATE, fd, alignedOffset));</span>
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :     if (!map)</span>
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     819 </span>            : 
+<span class="lineNum">     820 </span>            : #ifdef DEBUG
+<span class="lineNum">     821 </span>            :     // Zero out data before and after the desired mapping to catch errors early.
+<span class="lineNum">     822 </span><span class="lineNoCov">          0 :     if (offset != alignedOffset)</span>
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 :         memset(map, 0, offset - alignedOffset);</span>
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :     if (alignedLength % pageSize)</span>
+<span class="lineNum">     825 </span><span class="lineNoCov">          0 :         memset(map + alignedLength, 0, pageSize - (alignedLength % pageSize));</span>
+<span class="lineNum">     826 </span>            : #endif
+<span class="lineNum">     827 </span>            : 
+<span class="lineNum">     828 </span><span class="lineNoCov">          0 :     return map + (offset - alignedOffset);</span>
+<span class="lineNum">     829 </span>            : }
+<a name="830"><span class="lineNum">     830 </span>            : </a>
+<span class="lineNum">     831 </span>            : void
+<span class="lineNum">     832 </span><span class="lineNoCov">          0 : DeallocateMappedContent(void* p, size_t length)</span>
+<span class="lineNum">     833 </span>            : {
+<span class="lineNum">     834 </span><span class="lineNoCov">          0 :     if (!p)</span>
+<span class="lineNum">     835 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     836 </span>            : 
+<span class="lineNum">     837 </span>            :     // Calculate the address originally returned by mmap.
+<span class="lineNum">     838 </span>            :     // This is needed because AllocateMappedContent returns a pointer
+<span class="lineNum">     839 </span>            :     // that might be offset from the mapping, as the beginning of a
+<span class="lineNum">     840 </span>            :     // mapping must be aligned with the allocation granularity.
+<span class="lineNum">     841 </span><span class="lineNoCov">          0 :     uintptr_t map = uintptr_t(p) - (uintptr_t(p) % allocGranularity);</span>
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :     size_t alignedLength = length + (uintptr_t(p) % allocGranularity);</span>
+<span class="lineNum">     843 </span><span class="lineNoCov">          0 :     UnmapPages(reinterpret_cast&lt;void*&gt;(map), alignedLength);</span>
+<span class="lineNum">     844 </span>            : }
+<span class="lineNum">     845 </span>            : 
+<span class="lineNum">     846 </span>            : #else
+<span class="lineNum">     847 </span>            : #error &quot;Memory mapping functions are not defined for your OS.&quot;
+<span class="lineNum">     848 </span>            : #endif
+<a name="849"><span class="lineNum">     849 </span>            : </a>
+<span class="lineNum">     850 </span>            : void
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 : ProtectPages(void* p, size_t size)</span>
+<span class="lineNum">     852 </span>            : {
+<span class="lineNum">     853 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(size % pageSize == 0);</span>
+<span class="lineNum">     854 </span><span class="lineNoCov">          0 :     MOZ_RELEASE_ASSERT(size &gt; 0);</span>
+<span class="lineNum">     855 </span><span class="lineNoCov">          0 :     MOZ_RELEASE_ASSERT(p);</span>
+<span class="lineNum">     856 </span>            : #if defined(XP_WIN)
+<span class="lineNum">     857 </span>            :     DWORD oldProtect;
+<span class="lineNum">     858 </span>            :     if (!VirtualProtect(p, size, PAGE_NOACCESS, &amp;oldProtect)) {
+<span class="lineNum">     859 </span>            :         MOZ_CRASH_UNSAFE_PRINTF(&quot;VirtualProtect(PAGE_NOACCESS) failed! Error code: %lu&quot;,
+<span class="lineNum">     860 </span>            :                                 GetLastError());
+<span class="lineNum">     861 </span>            :     }
+<span class="lineNum">     862 </span>            :     MOZ_ASSERT(oldProtect == PAGE_READWRITE);
+<span class="lineNum">     863 </span>            : #else  // assume Unix
+<span class="lineNum">     864 </span><span class="lineNoCov">          0 :     if (mprotect(p, size, PROT_NONE))</span>
+<span class="lineNum">     865 </span><span class="lineNoCov">          0 :         MOZ_CRASH(&quot;mprotect(PROT_NONE) failed&quot;);</span>
+<span class="lineNum">     866 </span>            : #endif
+<span class="lineNum">     867 </span><span class="lineNoCov">          0 : }</span>
+<a name="868"><span class="lineNum">     868 </span>            : </a>
+<span class="lineNum">     869 </span>            : void
+<span class="lineNum">     870 </span><span class="lineNoCov">          0 : MakePagesReadOnly(void* p, size_t size)</span>
+<span class="lineNum">     871 </span>            : {
+<span class="lineNum">     872 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(size % pageSize == 0);</span>
+<span class="lineNum">     873 </span><span class="lineNoCov">          0 :     MOZ_RELEASE_ASSERT(size &gt; 0);</span>
+<span class="lineNum">     874 </span><span class="lineNoCov">          0 :     MOZ_RELEASE_ASSERT(p);</span>
+<span class="lineNum">     875 </span>            : #if defined(XP_WIN)
+<span class="lineNum">     876 </span>            :     DWORD oldProtect;
+<span class="lineNum">     877 </span>            :     if (!VirtualProtect(p, size, PAGE_READONLY, &amp;oldProtect)) {
+<span class="lineNum">     878 </span>            :         MOZ_CRASH_UNSAFE_PRINTF(&quot;VirtualProtect(PAGE_READONLY) failed! Error code: %lu&quot;,
+<span class="lineNum">     879 </span>            :                                 GetLastError());
+<span class="lineNum">     880 </span>            :     }
+<span class="lineNum">     881 </span>            :     MOZ_ASSERT(oldProtect == PAGE_READWRITE);
+<span class="lineNum">     882 </span>            : #else  // assume Unix
+<span class="lineNum">     883 </span><span class="lineNoCov">          0 :     if (mprotect(p, size, PROT_READ))</span>
+<span class="lineNum">     884 </span><span class="lineNoCov">          0 :         MOZ_CRASH(&quot;mprotect(PROT_READ) failed&quot;);</span>
+<span class="lineNum">     885 </span>            : #endif
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 : }</span>
+<a name="887"><span class="lineNum">     887 </span>            : </a>
+<span class="lineNum">     888 </span>            : void
+<span class="lineNum">     889 </span><span class="lineNoCov">          0 : UnprotectPages(void* p, size_t size)</span>
+<span class="lineNum">     890 </span>            : {
+<span class="lineNum">     891 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(size % pageSize == 0);</span>
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :     MOZ_RELEASE_ASSERT(size &gt; 0);</span>
+<span class="lineNum">     893 </span><span class="lineNoCov">          0 :     MOZ_RELEASE_ASSERT(p);</span>
+<span class="lineNum">     894 </span>            : #if defined(XP_WIN)
+<span class="lineNum">     895 </span>            :     DWORD oldProtect;
+<span class="lineNum">     896 </span>            :     if (!VirtualProtect(p, size, PAGE_READWRITE, &amp;oldProtect)) {
+<span class="lineNum">     897 </span>            :         MOZ_CRASH_UNSAFE_PRINTF(&quot;VirtualProtect(PAGE_READWRITE) failed! Error code: %lu&quot;,
+<span class="lineNum">     898 </span>            :                                 GetLastError());
+<span class="lineNum">     899 </span>            :     }
+<span class="lineNum">     900 </span>            :     MOZ_ASSERT(oldProtect == PAGE_NOACCESS || oldProtect == PAGE_READONLY);
+<span class="lineNum">     901 </span>            : #else  // assume Unix
+<span class="lineNum">     902 </span><span class="lineNoCov">          0 :     if (mprotect(p, size, PROT_READ | PROT_WRITE))</span>
+<span class="lineNum">     903 </span><span class="lineNoCov">          0 :         MOZ_CRASH(&quot;mprotect(PROT_READ | PROT_WRITE) failed&quot;);</span>
+<span class="lineNum">     904 </span>            : #endif
+<span class="lineNum">     905 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     906 </span>            : 
+<span class="lineNum">     907 </span>            : } // namespace gc
+<span class="lineNum">     908 </span>            : } // namespace js
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

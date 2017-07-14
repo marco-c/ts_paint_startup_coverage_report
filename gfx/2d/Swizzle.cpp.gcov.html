@@ -1,0 +1,877 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - gfx/2d/Swizzle.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">gfx/2d</a> - Swizzle.cpp<span style="font-size: 80%;"> (source / <a href="Swizzle.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">251</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">46</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public</a>
+<span class="lineNum">       2 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       3 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       4 </span>            : 
+<span class="lineNum">       5 </span>            : #include &quot;Swizzle.h&quot;
+<span class="lineNum">       6 </span>            : #include &quot;Logging.h&quot;
+<span class="lineNum">       7 </span>            : #include &quot;Tools.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;mozilla/CheckedInt.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/EndianUtils.h&quot;
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #ifdef BUILD_ARM_NEON
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/arm.h&quot;
+<span class="lineNum">      13 </span>            : #endif
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : namespace mozilla {
+<span class="lineNum">      16 </span>            : namespace gfx {
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : /**
+<span class="lineNum">      19 </span>            :  * Convenience macros for dispatching to various format combinations.
+<span class="lineNum">      20 </span>            :  */
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : // Hash the formats to a relatively dense value to optimize jump table generation.
+<span class="lineNum">      23 </span>            : // The first 6 formats in SurfaceFormat are the 32-bit BGRA variants and are the most
+<span class="lineNum">      24 </span>            : // common formats dispatched here. Room is reserved in the lowish bits for up to
+<span class="lineNum">      25 </span>            : // these 6 destination formats. If a destination format is &gt;= 6, the 6th bit is set
+<span class="lineNum">      26 </span>            : // to avoid collisions.
+<span class="lineNum">      27 </span>            : #define FORMAT_KEY(aSrcFormat, aDstFormat) \
+<span class="lineNum">      28 </span>            :   (int(aSrcFormat) * 6 + int(aDstFormat) + (int(int(aDstFormat) &gt;= 6) &lt;&lt; 6))
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : #define FORMAT_CASE_EXPR(aSrcFormat, aDstFormat, ...) \
+<span class="lineNum">      31 </span>            :   case FORMAT_KEY(aSrcFormat, aDstFormat): \
+<span class="lineNum">      32 </span>            :     __VA_ARGS__; \
+<span class="lineNum">      33 </span>            :     return true;
+<span class="lineNum">      34 </span>            : 
+<span class="lineNum">      35 </span>            : #define FORMAT_CASE(aSrcFormat, aDstFormat, ...) \
+<span class="lineNum">      36 </span>            :   FORMAT_CASE_EXPR(aSrcFormat, aDstFormat, FORMAT_CASE_CALL(__VA_ARGS__))
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            : /**
+<span class="lineNum">      39 </span>            :  * Constexpr functions for analyzing format attributes in templates.
+<span class="lineNum">      40 </span>            :  */
+<span class="lineNum">      41 </span>            : 
+<span class="lineNum">      42 </span>            : // Whether B comes before R in pixel memory layout.
+<span class="lineNum">      43 </span>            : static constexpr bool
+<span class="lineNum">      44 </span>            : IsBGRFormat(SurfaceFormat aFormat)
+<span class="lineNum">      45 </span>            : {
+<span class="lineNum">      46 </span>            :   return aFormat == SurfaceFormat::B8G8R8A8 ||
+<span class="lineNum">      47 </span>            : #if MOZ_LITTLE_ENDIAN
+<span class="lineNum">      48 </span>            :          aFormat == SurfaceFormat::R5G6B5_UINT16 ||
+<span class="lineNum">      49 </span>            : #endif
+<span class="lineNum">      50 </span>            :          aFormat == SurfaceFormat::B8G8R8X8 ||
+<span class="lineNum">      51 </span>            :          aFormat == SurfaceFormat::B8G8R8;
+<span class="lineNum">      52 </span>            : }
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span>            : // Whether the order of B and R need to be swapped to map from src to dst.
+<span class="lineNum">      55 </span>            : static constexpr bool
+<span class="lineNum">      56 </span>            : ShouldSwapRB(SurfaceFormat aSrcFormat, SurfaceFormat aDstFormat)
+<span class="lineNum">      57 </span>            : {
+<span class="lineNum">      58 </span>            :   return IsBGRFormat(aSrcFormat) != IsBGRFormat(aDstFormat);
+<span class="lineNum">      59 </span>            : }
+<span class="lineNum">      60 </span>            : 
+<span class="lineNum">      61 </span>            : // The starting byte of the RGB components in pixel memory.
+<span class="lineNum">      62 </span>            : static constexpr uint32_t
+<span class="lineNum">      63 </span>            : RGBByteIndex(SurfaceFormat aFormat)
+<span class="lineNum">      64 </span>            : {
+<span class="lineNum">      65 </span>            :   return aFormat == SurfaceFormat::A8R8G8B8 ||
+<span class="lineNum">      66 </span>            :          aFormat == SurfaceFormat::X8R8G8B8
+<span class="lineNum">      67 </span>            :            ? 1 : 0;
+<span class="lineNum">      68 </span>            : }
+<span class="lineNum">      69 </span>            : 
+<span class="lineNum">      70 </span>            : // The byte of the alpha component, which just comes after RGB.
+<span class="lineNum">      71 </span>            : static constexpr uint32_t
+<span class="lineNum">      72 </span>            : AlphaByteIndex(SurfaceFormat aFormat)
+<span class="lineNum">      73 </span>            : {
+<span class="lineNum">      74 </span>            :   return (RGBByteIndex(aFormat) + 3) % 4;
+<span class="lineNum">      75 </span>            : }
+<span class="lineNum">      76 </span>            : 
+<span class="lineNum">      77 </span>            : // The endian-dependent bit shift to access RGB of a UINT32 pixel.
+<span class="lineNum">      78 </span>            : static constexpr uint32_t
+<span class="lineNum">      79 </span>            : RGBBitShift(SurfaceFormat aFormat)
+<span class="lineNum">      80 </span>            : {
+<span class="lineNum">      81 </span>            : #if MOZ_LITTLE_ENDIAN
+<span class="lineNum">      82 </span>            :   return 8 * RGBByteIndex(aFormat);
+<span class="lineNum">      83 </span>            : #else
+<span class="lineNum">      84 </span>            :   return 24 - 8 * RGBByteIndex(aFormat);
+<span class="lineNum">      85 </span>            : #endif
+<span class="lineNum">      86 </span>            : }
+<span class="lineNum">      87 </span>            : 
+<span class="lineNum">      88 </span>            : // The endian-dependent bit shift to access alpha of a UINT32 pixel.
+<span class="lineNum">      89 </span>            : static constexpr uint32_t
+<span class="lineNum">      90 </span>            : AlphaBitShift(SurfaceFormat aFormat)
+<span class="lineNum">      91 </span>            : {
+<span class="lineNum">      92 </span>            :   return (RGBBitShift(aFormat) + 24) % 32;
+<span class="lineNum">      93 </span>            : }
+<span class="lineNum">      94 </span>            : 
+<span class="lineNum">      95 </span>            : // Whether the pixel format should ignore the value of the alpha channel and treat it as opaque.
+<span class="lineNum">      96 </span>            : static constexpr bool
+<span class="lineNum">      97 </span>            : IgnoreAlpha(SurfaceFormat aFormat)
+<span class="lineNum">      98 </span>            : {
+<span class="lineNum">      99 </span>            :   return aFormat == SurfaceFormat::B8G8R8X8 ||
+<span class="lineNum">     100 </span>            :          aFormat == SurfaceFormat::R8G8B8X8 ||
+<span class="lineNum">     101 </span>            :          aFormat == SurfaceFormat::X8R8G8B8;
+<span class="lineNum">     102 </span>            : }
+<span class="lineNum">     103 </span>            : 
+<span class="lineNum">     104 </span>            : // Whether to force alpha to opaque to map from src to dst.
+<span class="lineNum">     105 </span>            : static constexpr bool
+<span class="lineNum">     106 </span>            : ShouldForceOpaque(SurfaceFormat aSrcFormat, SurfaceFormat aDstFormat)
+<span class="lineNum">     107 </span>            : {
+<span class="lineNum">     108 </span>            :   return IgnoreAlpha(aSrcFormat) != IgnoreAlpha(aDstFormat);
+<span class="lineNum">     109 </span>            : }
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span>            : #ifdef USE_SSE2
+<span class="lineNum">     112 </span>            : /**
+<span class="lineNum">     113 </span>            :  * SSE2 optimizations
+<span class="lineNum">     114 </span>            :  */
+<span class="lineNum">     115 </span>            : 
+<span class="lineNum">     116 </span>            : template&lt;bool aSwapRB, bool aOpaqueAlpha&gt;
+<span class="lineNum">     117 </span>            : void Premultiply_SSE2(const uint8_t*, int32_t, uint8_t*, int32_t, IntSize);
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span>            : #define PREMULTIPLY_SSE2(aSrcFormat, aDstFormat) \
+<span class="lineNum">     120 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     121 </span>            :     Premultiply_SSE2 \
+<span class="lineNum">     122 </span>            :       &lt;ShouldSwapRB(aSrcFormat, aDstFormat), \
+<span class="lineNum">     123 </span>            :        ShouldForceOpaque(aSrcFormat, aDstFormat)&gt;)
+<span class="lineNum">     124 </span>            : 
+<span class="lineNum">     125 </span>            : template&lt;bool aSwapRB&gt;
+<span class="lineNum">     126 </span>            : void Unpremultiply_SSE2(const uint8_t*, int32_t, uint8_t*, int32_t, IntSize);
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span>            : #define UNPREMULTIPLY_SSE2(aSrcFormat, aDstFormat) \
+<span class="lineNum">     129 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     130 </span>            :     Unpremultiply_SSE2&lt;ShouldSwapRB(aSrcFormat, aDstFormat)&gt;)
+<span class="lineNum">     131 </span>            : 
+<span class="lineNum">     132 </span>            : template&lt;bool aSwapRB, bool aOpaqueAlpha&gt;
+<span class="lineNum">     133 </span>            : void Swizzle_SSE2(const uint8_t*, int32_t, uint8_t*, int32_t, IntSize);
+<span class="lineNum">     134 </span>            : 
+<span class="lineNum">     135 </span>            : #define SWIZZLE_SSE2(aSrcFormat, aDstFormat) \
+<span class="lineNum">     136 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     137 </span>            :     Swizzle_SSE2 \
+<span class="lineNum">     138 </span>            :       &lt;ShouldSwapRB(aSrcFormat, aDstFormat), \
+<span class="lineNum">     139 </span>            :        ShouldForceOpaque(aSrcFormat, aDstFormat)&gt;)
+<span class="lineNum">     140 </span>            : 
+<span class="lineNum">     141 </span>            : #endif
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span>            : #ifdef BUILD_ARM_NEON
+<span class="lineNum">     144 </span>            : /**
+<span class="lineNum">     145 </span>            :  * ARM NEON optimizations
+<span class="lineNum">     146 </span>            :  */
+<span class="lineNum">     147 </span>            : 
+<span class="lineNum">     148 </span>            : template&lt;bool aSwapRB, bool aOpaqueAlpha&gt;
+<span class="lineNum">     149 </span>            : void Premultiply_NEON(const uint8_t*, int32_t, uint8_t*, int32_t, IntSize);
+<span class="lineNum">     150 </span>            : 
+<span class="lineNum">     151 </span>            : #define PREMULTIPLY_NEON(aSrcFormat, aDstFormat) \
+<span class="lineNum">     152 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     153 </span>            :     Premultiply_NEON \
+<span class="lineNum">     154 </span>            :       &lt;ShouldSwapRB(aSrcFormat, aDstFormat), \
+<span class="lineNum">     155 </span>            :        ShouldForceOpaque(aSrcFormat, aDstFormat)&gt;)
+<span class="lineNum">     156 </span>            : 
+<span class="lineNum">     157 </span>            : template&lt;bool aSwapRB&gt;
+<span class="lineNum">     158 </span>            : void Unpremultiply_NEON(const uint8_t*, int32_t, uint8_t*, int32_t, IntSize);
+<span class="lineNum">     159 </span>            : 
+<span class="lineNum">     160 </span>            : #define UNPREMULTIPLY_NEON(aSrcFormat, aDstFormat) \
+<span class="lineNum">     161 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     162 </span>            :     Unpremultiply_NEON&lt;ShouldSwapRB(aSrcFormat, aDstFormat)&gt;)
+<span class="lineNum">     163 </span>            : 
+<span class="lineNum">     164 </span>            : template&lt;bool aSwapRB, bool aOpaqueAlpha&gt;
+<span class="lineNum">     165 </span>            : void Swizzle_NEON(const uint8_t*, int32_t, uint8_t*, int32_t, IntSize);
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span>            : #define SWIZZLE_NEON(aSrcFormat, aDstFormat) \
+<span class="lineNum">     168 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     169 </span>            :     Swizzle_NEON \
+<span class="lineNum">     170 </span>            :       &lt;ShouldSwapRB(aSrcFormat, aDstFormat), \
+<span class="lineNum">     171 </span>            :        ShouldForceOpaque(aSrcFormat, aDstFormat)&gt;)
+<span class="lineNum">     172 </span>            : 
+<span class="lineNum">     173 </span>            : #endif
+<span class="lineNum">     174 </span>            : 
+<span class="lineNum">     175 </span>            : /**
+<span class="lineNum">     176 </span>            :  * Premultiplying
+<span class="lineNum">     177 </span>            :  */
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span>            : // Fallback premultiply implementation that uses splayed pixel math to reduce the
+<span class="lineNum">     180 </span>            : // multiplications used. That is, the R and B components are isolated from the G and A
+<span class="lineNum">     181 </span>            : // components, which then can be multiplied as if they were two 2-component vectors.
+<span class="lineNum">     182 </span>            : // Otherwise, an approximation if divide-by-255 is used which is faster than an actual
+<span class="lineNum">     183 </span>            : // division. These optimizations are also used for the SSE2 and NEON implementations.
+<span class="lineNum">     184 </span>            : template&lt;bool aSwapRB, bool aOpaqueAlpha,
+<span class="lineNum">     185 </span>            :          uint32_t aSrcRGBShift, uint32_t aSrcAShift,
+<a name="186"><span class="lineNum">     186 </span>            :          uint32_t aDstRGBShift, uint32_t aDstAShift&gt;</a>
+<span class="lineNum">     187 </span>            : static void
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 : PremultiplyFallback(const uint8_t* aSrc, int32_t aSrcGap,</span>
+<span class="lineNum">     189 </span>            :                     uint8_t* aDst, int32_t aDstGap,
+<span class="lineNum">     190 </span>            :                     IntSize aSize)
+<span class="lineNum">     191 </span>            : {
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :   for (int32_t height = aSize.height; height &gt; 0; height--) {</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :     const uint8_t* end = aSrc + 4 * aSize.width;</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     195 </span>            :       // Load and process 1 entire pixel at a time.
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :       uint32_t color = *reinterpret_cast&lt;const uint32_t*&gt;(aSrc);</span>
+<span class="lineNum">     197 </span>            : 
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :       uint32_t a = aSrcAShift ? color &gt;&gt; aSrcAShift : color &amp; 0xFF;</span>
+<span class="lineNum">     199 </span>            : 
+<span class="lineNum">     200 </span>            :       // Isolate the R and B components.
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :       uint32_t rb = (color &gt;&gt; aSrcRGBShift) &amp; 0x00FF00FF;</span>
+<span class="lineNum">     202 </span>            :       // Swap the order of R and B if necessary.
+<span class="lineNum">     203 </span>            :       if (aSwapRB) {
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :         rb = (rb &gt;&gt; 16) | (rb &lt;&lt; 16);</span>
+<span class="lineNum">     205 </span>            :       }
+<span class="lineNum">     206 </span>            :       // Approximate the multiply by alpha and divide by 255 which is essentially:
+<span class="lineNum">     207 </span>            :       // c = c*a + 255; c = (c + (c &gt;&gt; 8)) &gt;&gt; 8;
+<span class="lineNum">     208 </span>            :       // However, we omit the final &gt;&gt; 8 to fold it with the final shift into place
+<span class="lineNum">     209 </span>            :       // depending on desired output format.
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :       rb = rb*a + 0x00FF00FF;</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :       rb = (rb + ((rb &gt;&gt; 8) &amp; 0x00FF00FF)) &amp; 0xFF00FF00;</span>
+<span class="lineNum">     212 </span>            : 
+<span class="lineNum">     213 </span>            :       // Use same approximation as above, but G is shifted 8 bits left.
+<span class="lineNum">     214 </span>            :       // Alpha is left out and handled separately.
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :       uint32_t g = color &amp; (0xFF00 &lt;&lt; aSrcRGBShift);</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :       g = g*a + (0xFF00 &lt;&lt; aSrcRGBShift);</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :       g = (g + (g &gt;&gt; 8)) &amp; (0xFF0000 &lt;&lt; aSrcRGBShift);</span>
+<span class="lineNum">     218 </span>            : 
+<span class="lineNum">     219 </span>            :       // The above math leaves RGB shifted left by 8 bits.
+<span class="lineNum">     220 </span>            :       // Shift them right if required for the output format.
+<span class="lineNum">     221 </span>            :       // then combine them back together to produce output pixel.
+<span class="lineNum">     222 </span>            :       // Add the alpha back on if the output format is not opaque.
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :       *reinterpret_cast&lt;uint32_t*&gt;(aDst) =</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :          (rb &gt;&gt; (8 - aDstRGBShift)) |</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :          (g &gt;&gt; (8 + aSrcRGBShift - aDstRGBShift)) |</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :          (aOpaqueAlpha ? 0xFF &lt;&lt; aDstAShift : a &lt;&lt; aDstAShift);</span>
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :       aSrc += 4;</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :       aDst += 4;</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :     } while (aSrc &lt; end);</span>
+<span class="lineNum">     231 </span>            : 
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :     aSrc += aSrcGap;</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :     aDst += aDstGap;</span>
+<span class="lineNum">     234 </span>            :   }
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span>            : #define PREMULTIPLY_FALLBACK_CASE(aSrcFormat, aDstFormat) \
+<span class="lineNum">     238 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     239 </span>            :     PremultiplyFallback \
+<span class="lineNum">     240 </span>            :       &lt;ShouldSwapRB(aSrcFormat, aDstFormat), \
+<span class="lineNum">     241 </span>            :        ShouldForceOpaque(aSrcFormat, aDstFormat), \
+<span class="lineNum">     242 </span>            :        RGBBitShift(aSrcFormat), AlphaBitShift(aSrcFormat), \
+<span class="lineNum">     243 </span>            :        RGBBitShift(aDstFormat), AlphaBitShift(aDstFormat)&gt;)
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span>            : #define PREMULTIPLY_FALLBACK(aSrcFormat) \
+<span class="lineNum">     246 </span>            :   PREMULTIPLY_FALLBACK_CASE(aSrcFormat, SurfaceFormat::B8G8R8A8) \
+<span class="lineNum">     247 </span>            :   PREMULTIPLY_FALLBACK_CASE(aSrcFormat, SurfaceFormat::B8G8R8X8) \
+<span class="lineNum">     248 </span>            :   PREMULTIPLY_FALLBACK_CASE(aSrcFormat, SurfaceFormat::R8G8B8A8) \
+<span class="lineNum">     249 </span>            :   PREMULTIPLY_FALLBACK_CASE(aSrcFormat, SurfaceFormat::R8G8B8X8) \
+<span class="lineNum">     250 </span>            :   PREMULTIPLY_FALLBACK_CASE(aSrcFormat, SurfaceFormat::A8R8G8B8) \
+<span class="lineNum">     251 </span>            :   PREMULTIPLY_FALLBACK_CASE(aSrcFormat, SurfaceFormat::X8R8G8B8)
+<span class="lineNum">     252 </span>            : 
+<span class="lineNum">     253 </span>            : // If rows are tightly packed, and the size of the total area will fit within
+<span class="lineNum">     254 </span>            : // the precision range of a single row, then process all the data as if it was
+<a name="255"><span class="lineNum">     255 </span>            : // a single row.</a>
+<span class="lineNum">     256 </span>            : static inline IntSize
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 : CollapseSize(const IntSize&amp; aSize, int32_t aSrcStride, int32_t aDstStride)</span>
+<span class="lineNum">     258 </span>            : {
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :   if (aSrcStride == aDstStride &amp;&amp;</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :       aSrcStride == 4 * aSize.width) {</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :     CheckedInt32 area = CheckedInt32(aSize.width) * CheckedInt32(aSize.height);</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :     if (area.isValid()) {</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :       return IntSize(area.value(), 1);</span>
+<span class="lineNum">     264 </span>            :     }
+<span class="lineNum">     265 </span>            :   }
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :   return aSize;</span>
+<span class="lineNum">     267 </span>            : }
+<a name="268"><span class="lineNum">     268 </span>            : </a>
+<span class="lineNum">     269 </span>            : bool
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 : PremultiplyData(const uint8_t* aSrc, int32_t aSrcStride, SurfaceFormat aSrcFormat,</span>
+<span class="lineNum">     271 </span>            :                 uint8_t* aDst, int32_t aDstStride, SurfaceFormat aDstFormat,
+<span class="lineNum">     272 </span>            :                 const IntSize&amp; aSize)
+<span class="lineNum">     273 </span>            : {
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :   if (aSize.IsEmpty()) {</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     276 </span>            :   }
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   IntSize size = CollapseSize(aSize, aSrcStride, aDstStride);</span>
+<span class="lineNum">     278 </span>            :   // Find gap from end of row to the start of the next row.
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :   int32_t srcGap = aSrcStride - BytesPerPixel(aSrcFormat) * aSize.width;</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :   int32_t dstGap = aDstStride - BytesPerPixel(aDstFormat) * aSize.width;</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(srcGap &gt;= 0 &amp;&amp; dstGap &gt;= 0);</span>
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span>            : #define FORMAT_CASE_CALL(...) __VA_ARGS__(aSrc, srcGap, aDst, dstGap, size)
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span>            : #ifdef USE_SSE2
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :   switch (FORMAT_KEY(aSrcFormat, aDstFormat)) {</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   PREMULTIPLY_SSE2(SurfaceFormat::B8G8R8A8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :   PREMULTIPLY_SSE2(SurfaceFormat::B8G8R8A8, SurfaceFormat::B8G8R8X8)</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   PREMULTIPLY_SSE2(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   PREMULTIPLY_SSE2(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8X8)</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   PREMULTIPLY_SSE2(SurfaceFormat::R8G8B8A8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :   PREMULTIPLY_SSE2(SurfaceFormat::R8G8B8A8, SurfaceFormat::R8G8B8X8)</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :   PREMULTIPLY_SSE2(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :   PREMULTIPLY_SSE2(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8X8)</span>
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :   default: break;</span>
+<span class="lineNum">     296 </span>            :   }
+<span class="lineNum">     297 </span>            : #endif
+<span class="lineNum">     298 </span>            : 
+<span class="lineNum">     299 </span>            : #ifdef BUILD_ARM_NEON
+<span class="lineNum">     300 </span>            :   if (mozilla::supports_neon()) switch (FORMAT_KEY(aSrcFormat, aDstFormat)) {
+<span class="lineNum">     301 </span>            :   PREMULTIPLY_NEON(SurfaceFormat::B8G8R8A8, SurfaceFormat::B8G8R8A8)
+<span class="lineNum">     302 </span>            :   PREMULTIPLY_NEON(SurfaceFormat::B8G8R8A8, SurfaceFormat::B8G8R8X8)
+<span class="lineNum">     303 </span>            :   PREMULTIPLY_NEON(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8A8)
+<span class="lineNum">     304 </span>            :   PREMULTIPLY_NEON(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8X8)
+<span class="lineNum">     305 </span>            :   PREMULTIPLY_NEON(SurfaceFormat::R8G8B8A8, SurfaceFormat::R8G8B8A8)
+<span class="lineNum">     306 </span>            :   PREMULTIPLY_NEON(SurfaceFormat::R8G8B8A8, SurfaceFormat::R8G8B8X8)
+<span class="lineNum">     307 </span>            :   PREMULTIPLY_NEON(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8A8)
+<span class="lineNum">     308 </span>            :   PREMULTIPLY_NEON(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8X8)
+<span class="lineNum">     309 </span>            :   default: break;
+<span class="lineNum">     310 </span>            :   }
+<span class="lineNum">     311 </span>            : #endif
+<span class="lineNum">     312 </span>            : 
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :   switch (FORMAT_KEY(aSrcFormat, aDstFormat)) {</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :   PREMULTIPLY_FALLBACK(SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :   PREMULTIPLY_FALLBACK(SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :   PREMULTIPLY_FALLBACK(SurfaceFormat::A8R8G8B8)</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :   default: break;</span>
+<span class="lineNum">     318 </span>            :   }
+<span class="lineNum">     319 </span>            : 
+<span class="lineNum">     320 </span>            : #undef FORMAT_CASE_CALL
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(false, &quot;Unsupported premultiply formats&quot;);</span>
+<span class="lineNum">     323 </span>            :   return false;
+<span class="lineNum">     324 </span>            : }
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span>            : /**
+<span class="lineNum">     327 </span>            :  * Unpremultiplying
+<span class="lineNum">     328 </span>            :  */
+<span class="lineNum">     329 </span>            : 
+<span class="lineNum">     330 </span>            : // Generate a table of 8.16 fixed-point reciprocals representing 1/alpha.
+<span class="lineNum">     331 </span>            : #define UNPREMULQ(x) (0xFF00FFU / (x))
+<span class="lineNum">     332 </span>            : #define UNPREMULQ_2(x) UNPREMULQ(x), UNPREMULQ((x) + 1)
+<span class="lineNum">     333 </span>            : #define UNPREMULQ_4(x) UNPREMULQ_2(x), UNPREMULQ_2((x) + 2)
+<span class="lineNum">     334 </span>            : #define UNPREMULQ_8(x) UNPREMULQ_4(x), UNPREMULQ_4((x) + 4)
+<span class="lineNum">     335 </span>            : #define UNPREMULQ_16(x) UNPREMULQ_8(x), UNPREMULQ_8((x) + 8)
+<span class="lineNum">     336 </span>            : #define UNPREMULQ_32(x) UNPREMULQ_16(x), UNPREMULQ_16((x) + 16)
+<span class="lineNum">     337 </span>            : static const uint32_t sUnpremultiplyTable[256] =
+<span class="lineNum">     338 </span>            : {
+<span class="lineNum">     339 </span>            :   0, UNPREMULQ(1), UNPREMULQ_2(2), UNPREMULQ_4(4),
+<span class="lineNum">     340 </span>            :   UNPREMULQ_8(8), UNPREMULQ_16(16), UNPREMULQ_32(32),
+<span class="lineNum">     341 </span>            :   UNPREMULQ_32(64), UNPREMULQ_32(96), UNPREMULQ_32(128),
+<span class="lineNum">     342 </span>            :   UNPREMULQ_32(160), UNPREMULQ_32(192), UNPREMULQ_32(224)
+<span class="lineNum">     343 </span>            : };
+<span class="lineNum">     344 </span>            : 
+<span class="lineNum">     345 </span>            : // Fallback unpremultiply implementation that uses 8.16 fixed-point reciprocal math
+<span class="lineNum">     346 </span>            : // to eliminate any division by the alpha component. This optimization is used for the
+<span class="lineNum">     347 </span>            : // SSE2 and NEON implementations, with some adaptations. This implementation also accesses
+<span class="lineNum">     348 </span>            : // color components using individual byte accesses as this profiles faster than accessing
+<span class="lineNum">     349 </span>            : // the pixel as a uint32_t and shifting/masking to access components.
+<span class="lineNum">     350 </span>            : template&lt;bool aSwapRB,
+<span class="lineNum">     351 </span>            :          uint32_t aSrcRGBIndex, uint32_t aSrcAIndex,
+<a name="352"><span class="lineNum">     352 </span>            :          uint32_t aDstRGBIndex, uint32_t aDstAIndex&gt;</a>
+<span class="lineNum">     353 </span>            : static void
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 : UnpremultiplyFallback(const uint8_t* aSrc, int32_t aSrcGap,</span>
+<span class="lineNum">     355 </span>            :                       uint8_t* aDst, int32_t aDstGap,
+<span class="lineNum">     356 </span>            :                       IntSize aSize)
+<span class="lineNum">     357 </span>            : {
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :   for (int32_t height = aSize.height; height &gt; 0; height--) {</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :     const uint8_t* end = aSrc + 4 * aSize.width;</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :       uint8_t r = aSrc[aSrcRGBIndex + (aSwapRB ? 2 : 0)];</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :       uint8_t g = aSrc[aSrcRGBIndex + 1];</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :       uint8_t b = aSrc[aSrcRGBIndex + (aSwapRB ? 0 : 2)];</span>
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :       uint8_t a = aSrc[aSrcAIndex];</span>
+<span class="lineNum">     365 </span>            : 
+<span class="lineNum">     366 </span>            :       // Access the 8.16 reciprocal from the table based on alpha. Multiply by the
+<span class="lineNum">     367 </span>            :       // reciprocal and shift off the fraction bits to approximate the division by alpha.
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :       uint32_t q = sUnpremultiplyTable[a];</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :       aDst[aDstRGBIndex + 0] = (r * q) &gt;&gt; 16;</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :       aDst[aDstRGBIndex + 1] = (g * q) &gt;&gt; 16;</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :       aDst[aDstRGBIndex + 2] = (b * q) &gt;&gt; 16;</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :       aDst[aDstAIndex] = a;</span>
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :       aSrc += 4;</span>
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :       aDst += 4;</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :     } while (aSrc &lt; end);</span>
+<span class="lineNum">     377 </span>            : 
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :     aSrc += aSrcGap;</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :     aDst += aDstGap;</span>
+<span class="lineNum">     380 </span>            :   }
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span>            : #define UNPREMULTIPLY_FALLBACK_CASE(aSrcFormat, aDstFormat) \
+<span class="lineNum">     384 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     385 </span>            :     UnpremultiplyFallback \
+<span class="lineNum">     386 </span>            :       &lt;ShouldSwapRB(aSrcFormat, aDstFormat), \
+<span class="lineNum">     387 </span>            :        RGBByteIndex(aSrcFormat), AlphaByteIndex(aSrcFormat), \
+<span class="lineNum">     388 </span>            :        RGBByteIndex(aDstFormat), AlphaByteIndex(aDstFormat)&gt;)
+<span class="lineNum">     389 </span>            : 
+<span class="lineNum">     390 </span>            : #define UNPREMULTIPLY_FALLBACK(aSrcFormat) \
+<span class="lineNum">     391 </span>            :   UNPREMULTIPLY_FALLBACK_CASE(aSrcFormat, SurfaceFormat::B8G8R8A8) \
+<span class="lineNum">     392 </span>            :   UNPREMULTIPLY_FALLBACK_CASE(aSrcFormat, SurfaceFormat::R8G8B8A8) \
+<span class="lineNum">     393 </span>            :   UNPREMULTIPLY_FALLBACK_CASE(aSrcFormat, SurfaceFormat::A8R8G8B8)
+<a name="394"><span class="lineNum">     394 </span>            : </a>
+<span class="lineNum">     395 </span>            : bool
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 : UnpremultiplyData(const uint8_t* aSrc, int32_t aSrcStride, SurfaceFormat aSrcFormat,</span>
+<span class="lineNum">     397 </span>            :                   uint8_t* aDst, int32_t aDstStride, SurfaceFormat aDstFormat,
+<span class="lineNum">     398 </span>            :                   const IntSize&amp; aSize)
+<span class="lineNum">     399 </span>            : {
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :   if (aSize.IsEmpty()) {</span>
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     402 </span>            :   }
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :   IntSize size = CollapseSize(aSize, aSrcStride, aDstStride);</span>
+<span class="lineNum">     404 </span>            :   // Find gap from end of row to the start of the next row.
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :   int32_t srcGap = aSrcStride - BytesPerPixel(aSrcFormat) * aSize.width;</span>
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :   int32_t dstGap = aDstStride - BytesPerPixel(aDstFormat) * aSize.width;</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(srcGap &gt;= 0 &amp;&amp; dstGap &gt;= 0);</span>
+<span class="lineNum">     408 </span>            : 
+<span class="lineNum">     409 </span>            : #define FORMAT_CASE_CALL(...) __VA_ARGS__(aSrc, srcGap, aDst, dstGap, size)
+<span class="lineNum">     410 </span>            : 
+<span class="lineNum">     411 </span>            : #ifdef USE_SSE2
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :   switch (FORMAT_KEY(aSrcFormat, aDstFormat)) {</span>
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :   UNPREMULTIPLY_SSE2(SurfaceFormat::B8G8R8A8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :   UNPREMULTIPLY_SSE2(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :   UNPREMULTIPLY_SSE2(SurfaceFormat::R8G8B8A8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :   UNPREMULTIPLY_SSE2(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :   default: break;</span>
+<span class="lineNum">     418 </span>            :   }
+<span class="lineNum">     419 </span>            : #endif
+<span class="lineNum">     420 </span>            : 
+<span class="lineNum">     421 </span>            : #ifdef BUILD_ARM_NEON
+<span class="lineNum">     422 </span>            :   if (mozilla::supports_neon()) switch (FORMAT_KEY(aSrcFormat, aDstFormat)) {
+<span class="lineNum">     423 </span>            :   UNPREMULTIPLY_NEON(SurfaceFormat::B8G8R8A8, SurfaceFormat::B8G8R8A8)
+<span class="lineNum">     424 </span>            :   UNPREMULTIPLY_NEON(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8A8)
+<span class="lineNum">     425 </span>            :   UNPREMULTIPLY_NEON(SurfaceFormat::R8G8B8A8, SurfaceFormat::R8G8B8A8)
+<span class="lineNum">     426 </span>            :   UNPREMULTIPLY_NEON(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8A8)
+<span class="lineNum">     427 </span>            :   default: break;
+<span class="lineNum">     428 </span>            :   }
+<span class="lineNum">     429 </span>            : #endif
+<span class="lineNum">     430 </span>            : 
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :   switch (FORMAT_KEY(aSrcFormat, aDstFormat)) {</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :   UNPREMULTIPLY_FALLBACK(SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :   UNPREMULTIPLY_FALLBACK(SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :   UNPREMULTIPLY_FALLBACK(SurfaceFormat::A8R8G8B8)</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :   default: break;</span>
+<span class="lineNum">     436 </span>            :   }
+<span class="lineNum">     437 </span>            : 
+<span class="lineNum">     438 </span>            : #undef FORMAT_CASE_CALL
+<span class="lineNum">     439 </span>            : 
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(false, &quot;Unsupported unpremultiply formats&quot;);</span>
+<span class="lineNum">     441 </span>            :   return false;
+<span class="lineNum">     442 </span>            : }
+<span class="lineNum">     443 </span>            : 
+<span class="lineNum">     444 </span>            : /**
+<span class="lineNum">     445 </span>            :  * Swizzling
+<span class="lineNum">     446 </span>            :  */
+<span class="lineNum">     447 </span>            : 
+<span class="lineNum">     448 </span>            : // Fallback swizzle implementation that uses shifting and masking to reorder pixels.
+<span class="lineNum">     449 </span>            : template&lt;bool aSwapRB, bool aOpaqueAlpha,
+<span class="lineNum">     450 </span>            :          uint32_t aSrcRGBShift, uint32_t aSrcAShift,
+<a name="451"><span class="lineNum">     451 </span>            :          uint32_t aDstRGBShift, uint32_t aDstAShift&gt;</a>
+<span class="lineNum">     452 </span>            : static void
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 : SwizzleFallback(const uint8_t* aSrc, int32_t aSrcGap,</span>
+<span class="lineNum">     454 </span>            :                 uint8_t* aDst, int32_t aDstGap,
+<span class="lineNum">     455 </span>            :                 IntSize aSize)
+<span class="lineNum">     456 </span>            : {
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :   for (int32_t height = aSize.height; height &gt; 0; height--) {</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :     const uint8_t* end = aSrc + 4 * aSize.width;</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :       uint32_t rgba = *reinterpret_cast&lt;const uint32_t*&gt;(aSrc);</span>
+<span class="lineNum">     461 </span>            : 
+<span class="lineNum">     462 </span>            :       if (aSwapRB) {
+<span class="lineNum">     463 </span>            :         // Handle R and B swaps by exchanging words and masking.
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :         uint32_t rb = ((rgba &lt;&lt; 16) | (rgba &gt;&gt; 16)) &amp; (0x00FF00FF &lt;&lt; aSrcRGBShift);</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :         uint32_t ga = rgba &amp; ((0xFF &lt;&lt; aSrcAShift) | (0xFF00 &lt;&lt; aSrcRGBShift));</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :         rgba = rb | ga;</span>
+<span class="lineNum">     467 </span>            :       }
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span>            :       // If src and dst shifts differ, rotate left or right to move RGB into place,
+<span class="lineNum">     470 </span>            :       // i.e. ARGB -&gt; RGBA or ARGB -&gt; RGBA.
+<span class="lineNum">     471 </span>            :       if (aDstRGBShift &gt; aSrcRGBShift) {
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :         rgba = (rgba &lt;&lt; 8) | (aOpaqueAlpha ? 0x000000FF : rgba &gt;&gt; 24);</span>
+<span class="lineNum">     473 </span>            :       } else if (aSrcRGBShift &gt; aDstRGBShift) {
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :         rgba = (rgba &gt;&gt; 8) | (aOpaqueAlpha ? 0xFF000000 : rgba &lt;&lt; 24);</span>
+<span class="lineNum">     475 </span>            :       } else if (aOpaqueAlpha) {
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :         rgba |= 0xFF &lt;&lt; aDstAShift;</span>
+<span class="lineNum">     477 </span>            :       }
+<span class="lineNum">     478 </span>            : 
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :       *reinterpret_cast&lt;uint32_t*&gt;(aDst) = rgba;</span>
+<span class="lineNum">     480 </span>            : 
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :       aSrc += 4;</span>
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :       aDst += 4;</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :     } while (aSrc &lt; end);</span>
+<span class="lineNum">     484 </span>            : 
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :     aSrc += aSrcGap;</span>
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :     aDst += aDstGap;</span>
+<span class="lineNum">     487 </span>            :   }
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     489 </span>            : 
+<span class="lineNum">     490 </span>            : #define SWIZZLE_FALLBACK(aSrcFormat, aDstFormat) \
+<span class="lineNum">     491 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     492 </span>            :     SwizzleFallback \
+<span class="lineNum">     493 </span>            :       &lt;ShouldSwapRB(aSrcFormat, aDstFormat), \
+<span class="lineNum">     494 </span>            :        ShouldForceOpaque(aSrcFormat, aDstFormat), \
+<span class="lineNum">     495 </span>            :        RGBBitShift(aSrcFormat), AlphaBitShift(aSrcFormat), \
+<span class="lineNum">     496 </span>            :        RGBBitShift(aDstFormat), AlphaBitShift(aDstFormat)&gt;)
+<span class="lineNum">     497 </span>            : 
+<a name="498"><span class="lineNum">     498 </span>            : // Fast-path for matching formats.</a>
+<span class="lineNum">     499 </span>            : static void
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 : SwizzleCopy(const uint8_t* aSrc, int32_t aSrcGap,</span>
+<span class="lineNum">     501 </span>            :             uint8_t* aDst, int32_t aDstGap,
+<span class="lineNum">     502 </span>            :             IntSize aSize, int32_t aBPP)
+<span class="lineNum">     503 </span>            : {
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :   if (aSrc != aDst) {</span>
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :     int32_t rowLength = aBPP * aSize.width;</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :     for (int32_t height = aSize.height; height &gt; 0; height--) {</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :       memcpy(aDst, aSrc, rowLength);</span>
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :       aSrc += rowLength + aSrcGap;</span>
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :       aDst += rowLength + aDstGap;</span>
+<span class="lineNum">     510 </span>            :     }
+<span class="lineNum">     511 </span>            :   }
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     513 </span>            : 
+<span class="lineNum">     514 </span>            : // Fast-path for conversions that swap all bytes.
+<a name="515"><span class="lineNum">     515 </span>            : template&lt;bool aOpaqueAlpha, uint32_t aSrcAShift, uint32_t aDstAShift&gt;</a>
+<span class="lineNum">     516 </span>            : static void
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 : SwizzleSwap(const uint8_t* aSrc, int32_t aSrcGap,</span>
+<span class="lineNum">     518 </span>            :             uint8_t* aDst, int32_t aDstGap,
+<span class="lineNum">     519 </span>            :             IntSize aSize)
+<span class="lineNum">     520 </span>            : {
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :   for (int32_t height = aSize.height; height &gt; 0; height--) {</span>
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :     const uint8_t* end = aSrc + 4 * aSize.width;</span>
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     524 </span>            :       // Use an endian swap to move the bytes, i.e. BGRA -&gt; ARGB.
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :       uint32_t rgba = *reinterpret_cast&lt;const uint32_t*&gt;(aSrc);</span>
+<span class="lineNum">     526 </span>            : #if MOZ_LITTLE_ENDIAN
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :       rgba = NativeEndian::swapToBigEndian(rgba);</span>
+<span class="lineNum">     528 </span>            : #else
+<span class="lineNum">     529 </span>            :       rgba = NativeEndian::swapToLittleEndian(rgba);
+<span class="lineNum">     530 </span>            : #endif
+<span class="lineNum">     531 </span>            :       if (aOpaqueAlpha) {
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :         rgba |= 0xFF &lt;&lt; aDstAShift;</span>
+<span class="lineNum">     533 </span>            :       }
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :       *reinterpret_cast&lt;uint32_t*&gt;(aDst) = rgba;</span>
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :       aSrc += 4;</span>
+<span class="lineNum">     536 </span><span class="lineNoCov">          0 :       aDst += 4;</span>
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :     } while (aSrc &lt; end);</span>
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :     aSrc += aSrcGap;</span>
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :     aDst += aDstGap;</span>
+<span class="lineNum">     540 </span>            :   }
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     542 </span>            : 
+<span class="lineNum">     543 </span>            : #define SWIZZLE_SWAP(aSrcFormat, aDstFormat) \
+<span class="lineNum">     544 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     545 </span>            :     SwizzleSwap \
+<span class="lineNum">     546 </span>            :       &lt;ShouldForceOpaque(aSrcFormat, aDstFormat), \
+<span class="lineNum">     547 </span>            :        AlphaBitShift(aSrcFormat), AlphaBitShift(aDstFormat)&gt;)
+<span class="lineNum">     548 </span>            : 
+<span class="lineNum">     549 </span>            : // Fast-path for conversions that force alpha to opaque.
+<a name="550"><span class="lineNum">     550 </span>            : template&lt;uint32_t aDstAShift&gt;</a>
+<span class="lineNum">     551 </span>            : static void
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 : SwizzleOpaque(const uint8_t* aSrc, int32_t aSrcGap,</span>
+<span class="lineNum">     553 </span>            :               uint8_t* aDst, int32_t aDstGap,
+<span class="lineNum">     554 </span>            :               IntSize aSize)
+<span class="lineNum">     555 </span>            : {
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :   if (aSrc == aDst) {</span>
+<span class="lineNum">     557 </span>            :     // Modifying in-place, so just write out the alpha.
+<span class="lineNum">     558 </span><span class="lineNoCov">          0 :     for (int32_t height = aSize.height; height &gt; 0; height--) {</span>
+<span class="lineNum">     559 </span><span class="lineNoCov">          0 :       const uint8_t* end = aDst + 4 * aSize.width;</span>
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 :       do {</span>
+<span class="lineNum">     561 </span>            :         // ORing directly onto destination memory profiles faster than writing
+<span class="lineNum">     562 </span>            :         // individually to the alpha byte and also profiles equivalently to a
+<span class="lineNum">     563 </span>            :         // SSE2 implementation.
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :         *reinterpret_cast&lt;uint32_t*&gt;(aDst) |= 0xFF &lt;&lt; aDstAShift;</span>
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :         aDst += 4;</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :       } while (aDst &lt; end);</span>
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :       aDst += aDstGap;</span>
+<span class="lineNum">     568 </span>            :     }
+<span class="lineNum">     569 </span>            :   } else {
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :     for (int32_t height = aSize.height; height &gt; 0; height--) {</span>
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :       const uint8_t* end = aSrc + 4 * aSize.width;</span>
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :       do {</span>
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :         uint32_t rgba = *reinterpret_cast&lt;const uint32_t*&gt;(aSrc);</span>
+<span class="lineNum">     574 </span>            :         // Just add on the alpha bits to the source.
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :         rgba |= 0xFF &lt;&lt; aDstAShift;</span>
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :         *reinterpret_cast&lt;uint32_t*&gt;(aDst) = rgba;</span>
+<span class="lineNum">     577 </span><span class="lineNoCov">          0 :         aSrc += 4;</span>
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :         aDst += 4;</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :       } while (aSrc &lt; end);</span>
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :       aSrc += aSrcGap;</span>
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :       aDst += aDstGap;</span>
+<span class="lineNum">     582 </span>            :     }
+<span class="lineNum">     583 </span>            :   }
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     585 </span>            : 
+<span class="lineNum">     586 </span>            : #define SWIZZLE_OPAQUE(aSrcFormat, aDstFormat) \
+<span class="lineNum">     587 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     588 </span>            :     SwizzleOpaque&lt;AlphaBitShift(aDstFormat)&gt;)
+<span class="lineNum">     589 </span>            : 
+<span class="lineNum">     590 </span>            : // Packing of 32-bit formats to RGB565.
+<a name="591"><span class="lineNum">     591 </span>            : template&lt;bool aSwapRB, uint32_t aSrcRGBShift, uint32_t aSrcRGBIndex&gt;</a>
+<span class="lineNum">     592 </span>            : static void
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 : PackToRGB565(const uint8_t* aSrc, int32_t aSrcGap,</span>
+<span class="lineNum">     594 </span>            :              uint8_t* aDst, int32_t aDstGap,
+<span class="lineNum">     595 </span>            :              IntSize aSize)
+<span class="lineNum">     596 </span>            : {
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 :   for (int32_t height = aSize.height; height &gt; 0; height--) {</span>
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :     const uint8_t* end = aSrc + 4 * aSize.width;</span>
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :       uint32_t rgba = *reinterpret_cast&lt;const uint32_t*&gt;(aSrc);</span>
+<span class="lineNum">     601 </span>            : 
+<span class="lineNum">     602 </span>            :       // Isolate the R, G, and B components and shift to final endian-dependent locations.
+<span class="lineNum">     603 </span>            :       uint16_t rgb565;
+<span class="lineNum">     604 </span>            :       if (aSwapRB) {
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :         rgb565 = ((rgba &amp; (0xF8 &lt;&lt; aSrcRGBShift)) &lt;&lt; (8 - aSrcRGBShift)) |</span>
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :                  ((rgba &amp; (0xFC00 &lt;&lt; aSrcRGBShift)) &gt;&gt; (5 + aSrcRGBShift)) |</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :                  ((rgba &amp; (0xF80000 &lt;&lt; aSrcRGBShift)) &gt;&gt; (19 + aSrcRGBShift));</span>
+<span class="lineNum">     608 </span>            :       } else {
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :         rgb565 = ((rgba &amp; (0xF8 &lt;&lt; aSrcRGBShift)) &gt;&gt; (3 + aSrcRGBShift)) |</span>
+<span class="lineNum">     610 </span><span class="lineNoCov">          0 :                  ((rgba &amp; (0xFC00 &lt;&lt; aSrcRGBShift)) &gt;&gt; (5 + aSrcRGBShift)) |</span>
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :                  ((rgba &amp; (0xF80000 &lt;&lt; aSrcRGBShift)) &gt;&gt; (8 + aSrcRGBShift));</span>
+<span class="lineNum">     612 </span>            :       }
+<span class="lineNum">     613 </span>            : 
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :       *reinterpret_cast&lt;uint16_t*&gt;(aDst) = rgb565;</span>
+<span class="lineNum">     615 </span>            : 
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 :       aSrc += 4;</span>
+<span class="lineNum">     617 </span><span class="lineNoCov">          0 :       aDst += 2;</span>
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 :     } while (aSrc &lt; end);</span>
+<span class="lineNum">     619 </span>            : 
+<span class="lineNum">     620 </span><span class="lineNoCov">          0 :     aSrc += aSrcGap;</span>
+<span class="lineNum">     621 </span><span class="lineNoCov">          0 :     aDst += aDstGap;</span>
+<span class="lineNum">     622 </span>            :   }
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     624 </span>            : 
+<span class="lineNum">     625 </span>            : // Packing of 32-bit formats to 24-bit formats.
+<a name="626"><span class="lineNum">     626 </span>            : template&lt;bool aSwapRB, uint32_t aSrcRGBShift, uint32_t aSrcRGBIndex&gt;</a>
+<span class="lineNum">     627 </span>            : static void
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 : PackToRGB24(const uint8_t* aSrc, int32_t aSrcGap,</span>
+<span class="lineNum">     629 </span>            :             uint8_t* aDst, int32_t aDstGap,
+<span class="lineNum">     630 </span>            :             IntSize aSize)
+<span class="lineNum">     631 </span>            : {
+<span class="lineNum">     632 </span><span class="lineNoCov">          0 :   for (int32_t height = aSize.height; height &gt; 0; height--) {</span>
+<span class="lineNum">     633 </span><span class="lineNoCov">          0 :     const uint8_t* end = aSrc + 4 * aSize.width;</span>
+<span class="lineNum">     634 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     635 </span><span class="lineNoCov">          0 :       uint8_t r = aSrc[aSrcRGBIndex + (aSwapRB ? 2 : 0)];</span>
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :       uint8_t g = aSrc[aSrcRGBIndex + 1];</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :       uint8_t b = aSrc[aSrcRGBIndex + (aSwapRB ? 0 : 2)];</span>
+<span class="lineNum">     638 </span>            : 
+<span class="lineNum">     639 </span><span class="lineNoCov">          0 :       aDst[0] = r;</span>
+<span class="lineNum">     640 </span><span class="lineNoCov">          0 :       aDst[1] = g;</span>
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :       aDst[2] = b;</span>
+<span class="lineNum">     642 </span>            : 
+<span class="lineNum">     643 </span><span class="lineNoCov">          0 :       aSrc += 4;</span>
+<span class="lineNum">     644 </span><span class="lineNoCov">          0 :       aDst += 3;</span>
+<span class="lineNum">     645 </span><span class="lineNoCov">          0 :     } while (aSrc &lt; end);</span>
+<span class="lineNum">     646 </span>            : 
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :     aSrc += aSrcGap;</span>
+<span class="lineNum">     648 </span><span class="lineNoCov">          0 :     aDst += aDstGap;</span>
+<span class="lineNum">     649 </span>            :   }
+<span class="lineNum">     650 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     651 </span>            : 
+<span class="lineNum">     652 </span>            : #define PACK_RGB_CASE(aSrcFormat, aDstFormat, aPackFunc) \
+<span class="lineNum">     653 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     654 </span>            :     aPackFunc \
+<span class="lineNum">     655 </span>            :       &lt;ShouldSwapRB(aSrcFormat, aDstFormat), \
+<span class="lineNum">     656 </span>            :        RGBBitShift(aSrcFormat), RGBByteIndex(aSrcFormat)&gt;)
+<span class="lineNum">     657 </span>            : 
+<span class="lineNum">     658 </span>            : #define PACK_RGB(aDstFormat, aPackFunc) \
+<span class="lineNum">     659 </span>            :   PACK_RGB_CASE(SurfaceFormat::B8G8R8A8, aDstFormat, aPackFunc) \
+<span class="lineNum">     660 </span>            :   PACK_RGB_CASE(SurfaceFormat::B8G8R8X8, aDstFormat, aPackFunc) \
+<span class="lineNum">     661 </span>            :   PACK_RGB_CASE(SurfaceFormat::R8G8B8A8, aDstFormat, aPackFunc) \
+<span class="lineNum">     662 </span>            :   PACK_RGB_CASE(SurfaceFormat::R8G8B8X8, aDstFormat, aPackFunc) \
+<span class="lineNum">     663 </span>            :   PACK_RGB_CASE(SurfaceFormat::A8R8G8B8, aDstFormat, aPackFunc) \
+<span class="lineNum">     664 </span>            :   PACK_RGB_CASE(SurfaceFormat::X8R8G8B8, aDstFormat, aPackFunc)
+<span class="lineNum">     665 </span>            : 
+<span class="lineNum">     666 </span>            : // Packing of 32-bit formats to A8.
+<a name="667"><span class="lineNum">     667 </span>            : template&lt;uint32_t aSrcAIndex&gt;</a>
+<span class="lineNum">     668 </span>            : static void
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 : PackToA8(const uint8_t* aSrc, int32_t aSrcGap,</span>
+<span class="lineNum">     670 </span>            :          uint8_t* aDst, int32_t aDstGap,
+<span class="lineNum">     671 </span>            :          IntSize aSize)
+<span class="lineNum">     672 </span>            : {
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :   for (int32_t height = aSize.height; height &gt; 0; height--) {</span>
+<span class="lineNum">     674 </span><span class="lineNoCov">          0 :     const uint8_t* end = aSrc + 4 * aSize.width;</span>
+<span class="lineNum">     675 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :       *aDst++ = aSrc[aSrcAIndex];</span>
+<span class="lineNum">     677 </span><span class="lineNoCov">          0 :       aSrc += 4;</span>
+<span class="lineNum">     678 </span><span class="lineNoCov">          0 :     } while (aSrc &lt; end);</span>
+<span class="lineNum">     679 </span><span class="lineNoCov">          0 :     aSrc += aSrcGap;</span>
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 :     aDst += aDstGap;</span>
+<span class="lineNum">     681 </span>            :   }
+<span class="lineNum">     682 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     683 </span>            : 
+<span class="lineNum">     684 </span>            : #define PACK_ALPHA_CASE(aSrcFormat, aDstFormat, aPackFunc) \
+<span class="lineNum">     685 </span>            :   FORMAT_CASE(aSrcFormat, aDstFormat, \
+<span class="lineNum">     686 </span>            :     aPackFunc&lt;AlphaByteIndex(aSrcFormat)&gt;)
+<span class="lineNum">     687 </span>            : 
+<span class="lineNum">     688 </span>            : #define PACK_ALPHA(aDstFormat, aPackFunc) \
+<span class="lineNum">     689 </span>            :   PACK_ALPHA_CASE(SurfaceFormat::B8G8R8A8, aDstFormat, aPackFunc) \
+<span class="lineNum">     690 </span>            :   PACK_ALPHA_CASE(SurfaceFormat::R8G8B8A8, aDstFormat, aPackFunc) \
+<span class="lineNum">     691 </span>            :   PACK_ALPHA_CASE(SurfaceFormat::A8R8G8B8, aDstFormat, aPackFunc)
+<a name="692"><span class="lineNum">     692 </span>            : </a>
+<span class="lineNum">     693 </span>            : bool
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 : SwizzleData(const uint8_t* aSrc, int32_t aSrcStride, SurfaceFormat aSrcFormat,</span>
+<span class="lineNum">     695 </span>            :             uint8_t* aDst, int32_t aDstStride, SurfaceFormat aDstFormat,
+<span class="lineNum">     696 </span>            :             const IntSize&amp; aSize)
+<span class="lineNum">     697 </span>            : {
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :   if (aSize.IsEmpty()) {</span>
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     700 </span>            :   }
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :   IntSize size = CollapseSize(aSize, aSrcStride, aDstStride);</span>
+<span class="lineNum">     702 </span>            :   // Find gap from end of row to the start of the next row.
+<span class="lineNum">     703 </span><span class="lineNoCov">          0 :   int32_t srcGap = aSrcStride - BytesPerPixel(aSrcFormat) * aSize.width;</span>
+<span class="lineNum">     704 </span><span class="lineNoCov">          0 :   int32_t dstGap = aDstStride - BytesPerPixel(aDstFormat) * aSize.width;</span>
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(srcGap &gt;= 0 &amp;&amp; dstGap &gt;= 0);</span>
+<span class="lineNum">     706 </span>            : 
+<span class="lineNum">     707 </span>            : #define FORMAT_CASE_CALL(...) __VA_ARGS__(aSrc, srcGap, aDst, dstGap, size)
+<span class="lineNum">     708 </span>            : 
+<span class="lineNum">     709 </span>            : #ifdef USE_SSE2
+<span class="lineNum">     710 </span><span class="lineNoCov">          0 :   switch (FORMAT_KEY(aSrcFormat, aDstFormat)) {</span>
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :   SWIZZLE_SSE2(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :   SWIZZLE_SSE2(SurfaceFormat::B8G8R8X8, SurfaceFormat::R8G8B8X8)</span>
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :   SWIZZLE_SSE2(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8X8)</span>
+<span class="lineNum">     714 </span><span class="lineNoCov">          0 :   SWIZZLE_SSE2(SurfaceFormat::B8G8R8X8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :   SWIZZLE_SSE2(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     716 </span><span class="lineNoCov">          0 :   SWIZZLE_SSE2(SurfaceFormat::R8G8B8X8, SurfaceFormat::B8G8R8X8)</span>
+<span class="lineNum">     717 </span><span class="lineNoCov">          0 :   SWIZZLE_SSE2(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8X8)</span>
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 :   SWIZZLE_SSE2(SurfaceFormat::R8G8B8X8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     719 </span><span class="lineNoCov">          0 :   default: break;</span>
+<span class="lineNum">     720 </span>            :   }
+<span class="lineNum">     721 </span>            : #endif
+<span class="lineNum">     722 </span>            : 
+<span class="lineNum">     723 </span>            : #ifdef BUILD_ARM_NEON
+<span class="lineNum">     724 </span>            :   if (mozilla::supports_neon()) switch (FORMAT_KEY(aSrcFormat, aDstFormat)) {
+<span class="lineNum">     725 </span>            :   SWIZZLE_NEON(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8A8)
+<span class="lineNum">     726 </span>            :   SWIZZLE_NEON(SurfaceFormat::B8G8R8X8, SurfaceFormat::R8G8B8X8)
+<span class="lineNum">     727 </span>            :   SWIZZLE_NEON(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8X8)
+<span class="lineNum">     728 </span>            :   SWIZZLE_NEON(SurfaceFormat::B8G8R8X8, SurfaceFormat::R8G8B8A8)
+<span class="lineNum">     729 </span>            :   SWIZZLE_NEON(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8A8)
+<span class="lineNum">     730 </span>            :   SWIZZLE_NEON(SurfaceFormat::R8G8B8X8, SurfaceFormat::B8G8R8X8)
+<span class="lineNum">     731 </span>            :   SWIZZLE_NEON(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8X8)
+<span class="lineNum">     732 </span>            :   SWIZZLE_NEON(SurfaceFormat::R8G8B8X8, SurfaceFormat::B8G8R8A8)
+<span class="lineNum">     733 </span>            :   default: break;
+<span class="lineNum">     734 </span>            :   }
+<span class="lineNum">     735 </span>            : #endif
+<span class="lineNum">     736 </span>            : 
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :   switch (FORMAT_KEY(aSrcFormat, aDstFormat)) {</span>
+<span class="lineNum">     738 </span>            : 
+<span class="lineNum">     739 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::B8G8R8X8, SurfaceFormat::R8G8B8X8)</span>
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::B8G8R8A8, SurfaceFormat::R8G8B8X8)</span>
+<span class="lineNum">     742 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::B8G8R8X8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     743 </span>            : 
+<span class="lineNum">     744 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     745 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::R8G8B8X8, SurfaceFormat::B8G8R8X8)</span>
+<span class="lineNum">     746 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::R8G8B8A8, SurfaceFormat::B8G8R8X8)</span>
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::R8G8B8X8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::R8G8B8A8, SurfaceFormat::A8R8G8B8)</span>
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::R8G8B8X8, SurfaceFormat::X8R8G8B8)</span>
+<span class="lineNum">     750 </span>            : 
+<span class="lineNum">     751 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::A8R8G8B8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     752 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::X8R8G8B8, SurfaceFormat::R8G8B8X8)</span>
+<span class="lineNum">     753 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::A8R8G8B8, SurfaceFormat::R8G8B8X8)</span>
+<span class="lineNum">     754 </span><span class="lineNoCov">          0 :   SWIZZLE_FALLBACK(SurfaceFormat::X8R8G8B8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     755 </span>            : 
+<span class="lineNum">     756 </span><span class="lineNoCov">          0 :   SWIZZLE_SWAP(SurfaceFormat::B8G8R8A8, SurfaceFormat::A8R8G8B8)</span>
+<span class="lineNum">     757 </span><span class="lineNoCov">          0 :   SWIZZLE_SWAP(SurfaceFormat::B8G8R8A8, SurfaceFormat::X8R8G8B8)</span>
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :   SWIZZLE_SWAP(SurfaceFormat::B8G8R8X8, SurfaceFormat::X8R8G8B8)</span>
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 :   SWIZZLE_SWAP(SurfaceFormat::B8G8R8X8, SurfaceFormat::A8R8G8B8)</span>
+<span class="lineNum">     760 </span><span class="lineNoCov">          0 :   SWIZZLE_SWAP(SurfaceFormat::A8R8G8B8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     761 </span><span class="lineNoCov">          0 :   SWIZZLE_SWAP(SurfaceFormat::A8R8G8B8, SurfaceFormat::B8G8R8X8)</span>
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :   SWIZZLE_SWAP(SurfaceFormat::X8R8G8B8, SurfaceFormat::B8G8R8X8)</span>
+<span class="lineNum">     763 </span><span class="lineNoCov">          0 :   SWIZZLE_SWAP(SurfaceFormat::X8R8G8B8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     764 </span>            : 
+<span class="lineNum">     765 </span><span class="lineNoCov">          0 :   SWIZZLE_OPAQUE(SurfaceFormat::B8G8R8A8, SurfaceFormat::B8G8R8X8)</span>
+<span class="lineNum">     766 </span><span class="lineNoCov">          0 :   SWIZZLE_OPAQUE(SurfaceFormat::B8G8R8X8, SurfaceFormat::B8G8R8A8)</span>
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 :   SWIZZLE_OPAQUE(SurfaceFormat::R8G8B8A8, SurfaceFormat::R8G8B8X8)</span>
+<span class="lineNum">     768 </span><span class="lineNoCov">          0 :   SWIZZLE_OPAQUE(SurfaceFormat::R8G8B8X8, SurfaceFormat::R8G8B8A8)</span>
+<span class="lineNum">     769 </span><span class="lineNoCov">          0 :   SWIZZLE_OPAQUE(SurfaceFormat::A8R8G8B8, SurfaceFormat::X8R8G8B8)</span>
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :   SWIZZLE_OPAQUE(SurfaceFormat::X8R8G8B8, SurfaceFormat::A8R8G8B8)</span>
+<span class="lineNum">     771 </span>            : 
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 :   PACK_RGB(SurfaceFormat::R5G6B5_UINT16, PackToRGB565)</span>
+<span class="lineNum">     773 </span><span class="lineNoCov">          0 :   PACK_RGB(SurfaceFormat::B8G8R8, PackToRGB24)</span>
+<span class="lineNum">     774 </span><span class="lineNoCov">          0 :   PACK_RGB(SurfaceFormat::R8G8B8, PackToRGB24)</span>
+<span class="lineNum">     775 </span><span class="lineNoCov">          0 :   PACK_ALPHA(SurfaceFormat::A8, PackToA8)</span>
+<span class="lineNum">     776 </span>            : 
+<span class="lineNum">     777 </span><span class="lineNoCov">          0 :   default: break;</span>
+<span class="lineNum">     778 </span>            :   }
+<span class="lineNum">     779 </span>            : 
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 :   if (aSrcFormat == aDstFormat) {</span>
+<span class="lineNum">     781 </span>            :     // If the formats match, just do a generic copy.
+<span class="lineNum">     782 </span><span class="lineNoCov">          0 :     SwizzleCopy(aSrc, srcGap, aDst, dstGap, size, BytesPerPixel(aSrcFormat));</span>
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     784 </span>            :   }
+<span class="lineNum">     785 </span>            : 
+<span class="lineNum">     786 </span>            : #undef FORMAT_CASE_CALL
+<span class="lineNum">     787 </span>            : 
+<span class="lineNum">     788 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(false, &quot;Unsupported swizzle formats&quot;);</span>
+<span class="lineNum">     789 </span>            :   return false;
+<span class="lineNum">     790 </span>            : }
+<span class="lineNum">     791 </span>            : 
+<span class="lineNum">     792 </span>            : } // namespace gfx
+<span class="lineNum">     793 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

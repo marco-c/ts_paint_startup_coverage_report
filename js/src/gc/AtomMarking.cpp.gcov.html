@@ -1,0 +1,391 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - js/src/gc/AtomMarking.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">js/src/gc</a> - AtomMarking.cpp<span style="font-size: 80%;"> (source / <a href="AtomMarking.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">71</td>
+            <td class="headerCovTableEntry">119</td>
+            <td class="headerCovTableEntryLo">59.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">14</td>
+            <td class="headerCovTableEntry">20</td>
+            <td class="headerCovTableEntryLo">70.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-</a>
+<span class="lineNum">       2 </span>            :  * vim: set ts=8 sts=4 et sw=4 tw=99:
+<span class="lineNum">       3 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;gc/AtomMarking-inl.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;jscompartment.h&quot;
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;jsgcinlines.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;gc/Heap-inl.h&quot;
+<span class="lineNum">      13 </span>            : 
+<span class="lineNum">      14 </span>            : namespace js {
+<span class="lineNum">      15 </span>            : namespace gc {
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : // Atom Marking Overview
+<span class="lineNum">      18 </span>            : //
+<span class="lineNum">      19 </span>            : // Things in the atoms zone (which includes atomized strings and other things,
+<span class="lineNum">      20 </span>            : // all of which we will refer to as 'atoms' here) may be pointed to freely by
+<span class="lineNum">      21 </span>            : // things in other zones. To avoid the need to perform garbage collections of
+<span class="lineNum">      22 </span>            : // the entire runtime to collect atoms, we compute a separate atom mark bitmap
+<span class="lineNum">      23 </span>            : // for each zone that is always an overapproximation of the atoms that zone is
+<span class="lineNum">      24 </span>            : // using. When an atom is not in the mark bitmap for any zone, it can be
+<span class="lineNum">      25 </span>            : // destroyed.
+<span class="lineNum">      26 </span>            : //
+<span class="lineNum">      27 </span>            : // To minimize interference with the rest of the GC, atom marking and sweeping
+<span class="lineNum">      28 </span>            : // is done by manipulating the mark bitmaps in the chunks used for the atoms.
+<span class="lineNum">      29 </span>            : // When the atoms zone is being collected, the mark bitmaps for the chunk(s)
+<span class="lineNum">      30 </span>            : // used by the atoms are updated normally during marking. After marking
+<span class="lineNum">      31 </span>            : // finishes, the chunk mark bitmaps are translated to a more efficient atom
+<span class="lineNum">      32 </span>            : // mark bitmap (see below) that is stored on the zones which the GC collected
+<span class="lineNum">      33 </span>            : // (computeBitmapFromChunkMarkBits). Before sweeping begins, the chunk mark
+<span class="lineNum">      34 </span>            : // bitmaps are updated with any atoms that might be referenced by zones which
+<span class="lineNum">      35 </span>            : // weren't collected (updateChunkMarkBits). The GC sweeping will then release
+<span class="lineNum">      36 </span>            : // all atoms which are not marked by any zone.
+<span class="lineNum">      37 </span>            : //
+<span class="lineNum">      38 </span>            : // The representation of atom mark bitmaps is as follows:
+<span class="lineNum">      39 </span>            : //
+<span class="lineNum">      40 </span>            : // Each arena in the atoms zone has an atomBitmapStart() value indicating the
+<span class="lineNum">      41 </span>            : // word index into the bitmap of the first thing in the arena. Each arena uses
+<span class="lineNum">      42 </span>            : // ArenaBitmapWords of data to store its bitmap, which uses the same
+<span class="lineNum">      43 </span>            : // representation as chunk mark bitmaps: one bit is allocated per Cell, with
+<span class="lineNum">      44 </span>            : // bits for space between things being unused when things are larger than a
+<span class="lineNum">      45 </span>            : // single Cell.
+<a name="46"><span class="lineNum">      46 </span>            : </a>
+<span class="lineNum">      47 </span>            : void
+<span class="lineNum">      48 </span><span class="lineCov">        654 : AtomMarkingRuntime::registerArena(Arena* arena)</span>
+<span class="lineNum">      49 </span>            : {
+<span class="lineNum">      50 </span><span class="lineCov">        654 :     MOZ_ASSERT(arena-&gt;getThingSize() != 0);</span>
+<span class="lineNum">      51 </span><span class="lineCov">        654 :     MOZ_ASSERT(arena-&gt;getThingSize() % CellAlignBytes == 0);</span>
+<span class="lineNum">      52 </span><span class="lineCov">        654 :     MOZ_ASSERT(arena-&gt;zone-&gt;isAtomsZone());</span>
+<span class="lineNum">      53 </span><span class="lineCov">        654 :     MOZ_ASSERT(arena-&gt;zone-&gt;runtimeFromAnyThread()-&gt;currentThreadHasExclusiveAccess());</span>
+<span class="lineNum">      54 </span>            : 
+<span class="lineNum">      55 </span>            :     // We need to find a range of bits from the atoms bitmap for this arena.
+<span class="lineNum">      56 </span>            : 
+<span class="lineNum">      57 </span>            :     // Look for a free range of bits compatible with this arena.
+<span class="lineNum">      58 </span><span class="lineCov">        654 :     if (freeArenaIndexes.ref().length()) {</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :         arena-&gt;atomBitmapStart() = freeArenaIndexes.ref().popCopy();</span>
+<span class="lineNum">      60 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">      61 </span>            :     }
+<span class="lineNum">      62 </span>            : 
+<span class="lineNum">      63 </span>            :     // Allocate a range of bits from the end for this arena.
+<span class="lineNum">      64 </span><span class="lineCov">        654 :     arena-&gt;atomBitmapStart() = allocatedWords;</span>
+<span class="lineNum">      65 </span><span class="lineCov">        654 :     allocatedWords += ArenaBitmapWords;</span>
+<span class="lineNum">      66 </span>            : }
+<a name="67"><span class="lineNum">      67 </span>            : </a>
+<span class="lineNum">      68 </span>            : void
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 : AtomMarkingRuntime::unregisterArena(Arena* arena)</span>
+<span class="lineNum">      70 </span>            : {
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(arena-&gt;zone-&gt;isAtomsZone());</span>
+<span class="lineNum">      72 </span>            : 
+<span class="lineNum">      73 </span>            :     // Leak these atom bits if we run out of memory.
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :     mozilla::Unused &lt;&lt; freeArenaIndexes.ref().emplaceBack(arena-&gt;atomBitmapStart());</span>
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 : }</span>
+<a name="76"><span class="lineNum">      76 </span>            : </a>
+<span class="lineNum">      77 </span>            : bool
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 : AtomMarkingRuntime::computeBitmapFromChunkMarkBits(JSRuntime* runtime, DenseBitmap&amp; bitmap)</span>
+<span class="lineNum">      79 </span>            : {
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(runtime-&gt;currentThreadHasExclusiveAccess());</span>
+<span class="lineNum">      81 </span>            : 
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :     if (!bitmap.ensureSpace(allocatedWords))</span>
+<span class="lineNum">      83 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :     Zone* atomsZone = runtime-&gt;unsafeAtomsCompartment()-&gt;zone();</span>
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :     for (auto thingKind : AllAllocKinds()) {</span>
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :         for (ArenaIter aiter(atomsZone, thingKind); !aiter.done(); aiter.next()) {</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :             Arena* arena = aiter.get();</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :             uintptr_t* chunkWords = arena-&gt;chunk()-&gt;bitmap.arenaBits(arena);</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :             bitmap.copyBitsFrom(arena-&gt;atomBitmapStart(), ArenaBitmapWords, chunkWords);</span>
+<span class="lineNum">      91 </span>            :         }
+<span class="lineNum">      92 </span>            :     }
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">      95 </span>            : }
+<a name="96"><span class="lineNum">      96 </span>            : </a>
+<span class="lineNum">      97 </span>            : void
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 : AtomMarkingRuntime::updateZoneBitmap(Zone* zone, const DenseBitmap&amp; bitmap)</span>
+<span class="lineNum">      99 </span>            : {
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :     if (zone-&gt;isAtomsZone())</span>
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     102 </span>            : 
+<span class="lineNum">     103 </span>            :     // Take the bitwise and between the two mark bitmaps to get the best new
+<span class="lineNum">     104 </span>            :     // overapproximation we can. |bitmap| might include bits that are not in
+<span class="lineNum">     105 </span>            :     // the zone's mark bitmap, if additional zones were collected by the GC.
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :     zone-&gt;markedAtoms().bitwiseAndWith(bitmap);</span>
+<span class="lineNum">     107 </span>            : }
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span>            : // Set any bits in the chunk mark bitmaps for atoms which are marked in bitmap.
+<a name="110"><span class="lineNum">     110 </span>            : template &lt;typename Bitmap&gt;</a>
+<span class="lineNum">     111 </span>            : static void
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 : AddBitmapToChunkMarkBits(JSRuntime* runtime, Bitmap&amp; bitmap)</span>
+<span class="lineNum">     113 </span>            : {
+<span class="lineNum">     114 </span>            :     // Make sure that by copying the mark bits for one arena in word sizes we
+<span class="lineNum">     115 </span>            :     // do not affect the mark bits for other arenas.
+<span class="lineNum">     116 </span>            :     static_assert(ArenaBitmapBits == ArenaBitmapWords * JS_BITS_PER_WORD,
+<span class="lineNum">     117 </span>            :                   &quot;ArenaBitmapWords must evenly divide ArenaBitmapBits&quot;);
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :     Zone* atomsZone = runtime-&gt;unsafeAtomsCompartment()-&gt;zone();</span>
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :     for (auto thingKind : AllAllocKinds()) {</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :         for (ArenaIter aiter(atomsZone, thingKind); !aiter.done(); aiter.next()) {</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :             Arena* arena = aiter.get();</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :             uintptr_t* chunkWords = arena-&gt;chunk()-&gt;bitmap.arenaBits(arena);</span>
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :             bitmap.bitwiseOrRangeInto(arena-&gt;atomBitmapStart(), ArenaBitmapWords, chunkWords);</span>
+<span class="lineNum">     125 </span>            :         }
+<span class="lineNum">     126 </span>            :     }
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 : }</span>
+<a name="128"><span class="lineNum">     128 </span>            : </a>
+<span class="lineNum">     129 </span>            : void
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 : AtomMarkingRuntime::updateChunkMarkBits(JSRuntime* runtime)</span>
+<span class="lineNum">     131 </span>            : {
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(runtime-&gt;currentThreadHasExclusiveAccess());</span>
+<span class="lineNum">     133 </span>            : 
+<span class="lineNum">     134 </span>            :     // Try to compute a simple union of the zone atom bitmaps before updating
+<span class="lineNum">     135 </span>            :     // the chunk mark bitmaps. If this allocation fails then fall back to
+<span class="lineNum">     136 </span>            :     // updating the chunk mark bitmaps separately for each zone.
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :     DenseBitmap markedUnion;</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :     if (markedUnion.ensureSpace(allocatedWords)) {</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :         for (ZonesIter zone(runtime, SkipAtoms); !zone.done(); zone.next()) {</span>
+<span class="lineNum">     140 </span>            :             // We only need to update the chunk mark bits for zones which were
+<span class="lineNum">     141 </span>            :             // not collected in the current GC. Atoms which are referenced by
+<span class="lineNum">     142 </span>            :             // collected zones have already been marked.
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :             if (!zone-&gt;isCollectingFromAnyThread())</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :                 zone-&gt;markedAtoms().bitwiseOrInto(markedUnion);</span>
+<span class="lineNum">     145 </span>            :         }
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :         AddBitmapToChunkMarkBits(runtime, markedUnion);</span>
+<span class="lineNum">     147 </span>            :     } else {
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :         for (ZonesIter zone(runtime, SkipAtoms); !zone.done(); zone.next()) {</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :             if (!zone-&gt;isCollectingFromAnyThread())</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :                 AddBitmapToChunkMarkBits(runtime, zone-&gt;markedAtoms());</span>
+<span class="lineNum">     151 </span>            :         }
+<span class="lineNum">     152 </span>            :     }
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     154 </span>            : 
+<a name="155"><span class="lineNum">     155 </span>            : template &lt;typename T&gt;</a>
+<span class="lineNum">     156 </span>            : void
+<span class="lineNum">     157 </span><span class="lineCov">     152821 : AtomMarkingRuntime::markAtom(JSContext* cx, T* thing)</span>
+<span class="lineNum">     158 </span>            : {
+<span class="lineNum">     159 </span><span class="lineCov">     152821 :     return inlinedMarkAtom(cx, thing);</span>
+<span class="lineNum">     160 </span>            : }
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span>            : template void AtomMarkingRuntime::markAtom(JSContext* cx, JSAtom* thing);
+<span class="lineNum">     163 </span>            : template void AtomMarkingRuntime::markAtom(JSContext* cx, JS::Symbol* thing);
+<a name="164"><span class="lineNum">     164 </span>            : </a>
+<span class="lineNum">     165 </span>            : void
+<span class="lineNum">     166 </span><span class="lineCov">      21129 : AtomMarkingRuntime::markId(JSContext* cx, jsid id)</span>
+<span class="lineNum">     167 </span>            : {
+<span class="lineNum">     168 </span><span class="lineCov">      21129 :     if (JSID_IS_ATOM(id)) {</span>
+<span class="lineNum">     169 </span><span class="lineCov">      20518 :         markAtom(cx, JSID_TO_ATOM(id));</span>
+<span class="lineNum">     170 </span><span class="lineCov">      20518 :         return;</span>
+<span class="lineNum">     171 </span>            :     }
+<span class="lineNum">     172 </span><span class="lineCov">        611 :     if (JSID_IS_SYMBOL(id)) {</span>
+<span class="lineNum">     173 </span><span class="lineCov">         54 :         markAtom(cx, JSID_TO_SYMBOL(id));</span>
+<span class="lineNum">     174 </span><span class="lineCov">         54 :         return;</span>
+<span class="lineNum">     175 </span>            :     }
+<span class="lineNum">     176 </span><span class="lineCov">        557 :     MOZ_ASSERT(!JSID_IS_GCTHING(id));</span>
+<span class="lineNum">     177 </span>            : }
+<a name="178"><span class="lineNum">     178 </span>            : </a>
+<span class="lineNum">     179 </span>            : void
+<span class="lineNum">     180 </span><span class="lineCov">       8579 : AtomMarkingRuntime::markAtomValue(JSContext* cx, const Value&amp; value)</span>
+<span class="lineNum">     181 </span>            : {
+<span class="lineNum">     182 </span><span class="lineCov">       8579 :     if (value.isString()) {</span>
+<span class="lineNum">     183 </span><span class="lineCov">       1771 :         if (value.toString()-&gt;isAtom())</span>
+<span class="lineNum">     184 </span><span class="lineCov">       1771 :             markAtom(cx, &amp;value.toString()-&gt;asAtom());</span>
+<span class="lineNum">     185 </span><span class="lineCov">       1771 :         return;</span>
+<span class="lineNum">     186 </span>            :     }
+<span class="lineNum">     187 </span><span class="lineCov">       6808 :     if (value.isSymbol()) {</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :         markAtom(cx, value.toSymbol());</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     190 </span>            :     }
+<span class="lineNum">     191 </span><span class="lineCov">       6808 :     MOZ_ASSERT_IF(value.isGCThing(), value.isObject() || value.isPrivateGCThing());</span>
+<span class="lineNum">     192 </span>            : }
+<a name="193"><span class="lineNum">     193 </span>            : </a>
+<span class="lineNum">     194 </span>            : void
+<span class="lineNum">     195 </span><span class="lineCov">         15 : AtomMarkingRuntime::adoptMarkedAtoms(Zone* target, Zone* source)</span>
+<span class="lineNum">     196 </span>            : {
+<span class="lineNum">     197 </span><span class="lineCov">         15 :     MOZ_ASSERT(target-&gt;runtimeFromAnyThread()-&gt;currentThreadHasExclusiveAccess());</span>
+<span class="lineNum">     198 </span><span class="lineCov">         15 :     target-&gt;markedAtoms().bitwiseOrWith(source-&gt;markedAtoms());</span>
+<span class="lineNum">     199 </span><span class="lineCov">         15 : }</span>
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span>            : #ifdef DEBUG
+<a name="202"><span class="lineNum">     202 </span>            : template &lt;typename T&gt;</a>
+<span class="lineNum">     203 </span>            : bool
+<span class="lineNum">     204 </span><span class="lineCov">     716332 : AtomMarkingRuntime::atomIsMarked(Zone* zone, T* thing)</span>
+<span class="lineNum">     205 </span>            : {
+<span class="lineNum">     206 </span>            :     static_assert(mozilla::IsSame&lt;T, JSAtom&gt;::value ||
+<span class="lineNum">     207 </span>            :                   mozilla::IsSame&lt;T, JS::Symbol&gt;::value,
+<span class="lineNum">     208 </span>            :                   &quot;Should only be called with JSAtom* or JS::Symbol* argument&quot;);
+<span class="lineNum">     209 </span>            : 
+<span class="lineNum">     210 </span><span class="lineCov">     716332 :     MOZ_ASSERT(thing);</span>
+<span class="lineNum">     211 </span><span class="lineCov">     716332 :     MOZ_ASSERT(!IsInsideNursery(thing));</span>
+<span class="lineNum">     212 </span><span class="lineCov">     716329 :     MOZ_ASSERT(thing-&gt;zoneFromAnyThread()-&gt;isAtomsZone());</span>
+<span class="lineNum">     213 </span>            : 
+<span class="lineNum">     214 </span><span class="lineCov">     716341 :     if (!zone-&gt;runtimeFromAnyThread()-&gt;permanentAtoms)</span>
+<span class="lineNum">     215 </span><span class="lineCov">      50655 :         return true;</span>
+<span class="lineNum">     216 </span>            : 
+<span class="lineNum">     217 </span><span class="lineCov">     665686 :     if (ThingIsPermanent(thing))</span>
+<span class="lineNum">     218 </span><span class="lineCov">     210493 :         return true;</span>
+<span class="lineNum">     219 </span>            : 
+<span class="lineNum">     220 </span>            :     if (mozilla::IsSame&lt;T, JSAtom&gt;::value) {
+<span class="lineNum">     221 </span><span class="lineCov">     455191 :         JSAtom* atom = reinterpret_cast&lt;JSAtom*&gt;(thing);</span>
+<span class="lineNum">     222 </span><span class="lineCov">     455191 :         if (AtomIsPinnedInRuntime(zone-&gt;runtimeFromAnyThread(), atom))</span>
+<span class="lineNum">     223 </span><span class="lineCov">      87439 :             return true;</span>
+<span class="lineNum">     224 </span>            :     }
+<span class="lineNum">     225 </span>            : 
+<span class="lineNum">     226 </span><span class="lineCov">     367819 :     size_t bit = GetAtomBit(thing);</span>
+<span class="lineNum">     227 </span><span class="lineCov">     367815 :     return zone-&gt;markedAtoms().getBit(bit);</span>
+<span class="lineNum">     228 </span>            : }
+<span class="lineNum">     229 </span>            : 
+<span class="lineNum">     230 </span>            : template bool AtomMarkingRuntime::atomIsMarked(Zone* zone, JSAtom* thing);
+<span class="lineNum">     231 </span>            : template bool AtomMarkingRuntime::atomIsMarked(Zone* zone, JS::Symbol* thing);
+<span class="lineNum">     232 </span>            : 
+<a name="233"><span class="lineNum">     233 </span>            : template&lt;&gt;</a>
+<span class="lineNum">     234 </span>            : bool
+<span class="lineNum">     235 </span><span class="lineCov">       4115 : AtomMarkingRuntime::atomIsMarked(Zone* zone, TenuredCell* thing)</span>
+<span class="lineNum">     236 </span>            : {
+<span class="lineNum">     237 </span><span class="lineCov">       4115 :     if (!thing)</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     239 </span>            : 
+<span class="lineNum">     240 </span><span class="lineCov">       4115 :     JS::TraceKind kind = thing-&gt;getTraceKind();</span>
+<span class="lineNum">     241 </span><span class="lineCov">       4115 :     if (kind == JS::TraceKind::String) {</span>
+<span class="lineNum">     242 </span><span class="lineCov">       4115 :         JSString* str = static_cast&lt;JSString*&gt;(thing);</span>
+<span class="lineNum">     243 </span><span class="lineCov">       4115 :         if (str-&gt;isAtom())</span>
+<span class="lineNum">     244 </span><span class="lineCov">       4115 :             return atomIsMarked(zone, &amp;str-&gt;asAtom());</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     246 </span>            :     }
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :     if (kind == JS::TraceKind::Symbol)</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :         return atomIsMarked(zone, static_cast&lt;JS::Symbol*&gt;(thing));</span>
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     250 </span>            : }
+<a name="251"><span class="lineNum">     251 </span>            : </a>
+<span class="lineNum">     252 </span>            : bool
+<span class="lineNum">     253 </span><span class="lineCov">      94846 : AtomMarkingRuntime::idIsMarked(Zone* zone, jsid id)</span>
+<span class="lineNum">     254 </span>            : {
+<span class="lineNum">     255 </span><span class="lineCov">      94846 :     if (JSID_IS_ATOM(id))</span>
+<span class="lineNum">     256 </span><span class="lineCov">      93093 :         return atomIsMarked(zone, JSID_TO_ATOM(id));</span>
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span><span class="lineCov">       1753 :     if (JSID_IS_SYMBOL(id))</span>
+<span class="lineNum">     259 </span><span class="lineCov">       1719 :         return atomIsMarked(zone, JSID_TO_SYMBOL(id));</span>
+<span class="lineNum">     260 </span>            : 
+<span class="lineNum">     261 </span><span class="lineCov">         34 :     MOZ_ASSERT(!JSID_IS_GCTHING(id));</span>
+<span class="lineNum">     262 </span><span class="lineCov">         34 :     return true;</span>
+<span class="lineNum">     263 </span>            : }
+<a name="264"><span class="lineNum">     264 </span>            : </a>
+<span class="lineNum">     265 </span>            : bool
+<span class="lineNum">     266 </span><span class="lineCov">     261139 : AtomMarkingRuntime::valueIsMarked(Zone* zone, const Value&amp; value)</span>
+<span class="lineNum">     267 </span>            : {
+<span class="lineNum">     268 </span><span class="lineCov">     261139 :     if (value.isString()) {</span>
+<span class="lineNum">     269 </span><span class="lineCov">      29651 :         if (value.toString()-&gt;isAtom())</span>
+<span class="lineNum">     270 </span><span class="lineCov">      26061 :             return atomIsMarked(zone, &amp;value.toString()-&gt;asAtom());</span>
+<span class="lineNum">     271 </span><span class="lineCov">       3590 :         return true;</span>
+<span class="lineNum">     272 </span>            :     }
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span><span class="lineCov">     231489 :     if (value.isSymbol())</span>
+<span class="lineNum">     275 </span><span class="lineCov">        280 :         return atomIsMarked(zone, value.toSymbol());</span>
+<span class="lineNum">     276 </span>            : 
+<span class="lineNum">     277 </span><span class="lineCov">     231209 :     MOZ_ASSERT_IF(value.isGCThing(), value.isObject() || value.isPrivateGCThing());</span>
+<span class="lineNum">     278 </span><span class="lineCov">     231209 :     return true;</span>
+<span class="lineNum">     279 </span>            : }
+<span class="lineNum">     280 </span>            : 
+<span class="lineNum">     281 </span>            : #endif // DEBUG
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span>            : } // namespace gc
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span>            : #ifdef DEBUG
+<a name="286"><span class="lineNum">     286 </span>            : </a>
+<span class="lineNum">     287 </span>            : bool
+<span class="lineNum">     288 </span><span class="lineCov">     427731 : AtomIsMarked(Zone* zone, JSAtom* atom)</span>
+<span class="lineNum">     289 </span>            : {
+<span class="lineNum">     290 </span><span class="lineCov">     427731 :     return zone-&gt;runtimeFromAnyThread()-&gt;gc.atomMarking.atomIsMarked(zone, atom);</span>
+<span class="lineNum">     291 </span>            : }
+<a name="292"><span class="lineNum">     292 </span>            : </a>
+<span class="lineNum">     293 </span>            : bool
+<span class="lineNum">     294 </span><span class="lineCov">      94846 : AtomIsMarked(Zone* zone, jsid id)</span>
+<span class="lineNum">     295 </span>            : {
+<span class="lineNum">     296 </span><span class="lineCov">      94846 :     return zone-&gt;runtimeFromAnyThread()-&gt;gc.atomMarking.idIsMarked(zone, id);</span>
+<span class="lineNum">     297 </span>            : }
+<a name="298"><span class="lineNum">     298 </span>            : </a>
+<span class="lineNum">     299 </span>            : bool
+<span class="lineNum">     300 </span><span class="lineCov">     261138 : AtomIsMarked(Zone* zone, const Value&amp; value)</span>
+<span class="lineNum">     301 </span>            : {
+<span class="lineNum">     302 </span><span class="lineCov">     261138 :     return zone-&gt;runtimeFromAnyThread()-&gt;gc.atomMarking.valueIsMarked(zone, value);</span>
+<span class="lineNum">     303 </span>            : }
+<span class="lineNum">     304 </span>            : 
+<span class="lineNum">     305 </span>            : #endif // DEBUG
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span>            : } // namespace js
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

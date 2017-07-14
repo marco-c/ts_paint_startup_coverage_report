@@ -1,0 +1,618 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/audio_device/audio_device_buffer.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/audio_device</a> - audio_device_buffer.cc<span style="font-size: 80%;"> (source / <a href="audio_device_buffer.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">283</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">41</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &quot;webrtc/modules/audio_device/audio_device_buffer.h&quot;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #include &quot;webrtc/base/arraysize.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;webrtc/base/bind.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;webrtc/base/logging.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;webrtc/base/format_macros.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;webrtc/base/timeutils.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;webrtc/common_audio/signal_processing/include/signal_processing_library.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;webrtc/modules/audio_device/audio_device_config.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;webrtc/system_wrappers/include/metrics.h&quot;
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : namespace webrtc {
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : static const char kTimerQueueName[] = &quot;AudioDeviceBufferTimer&quot;;
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : // Time between two sucessive calls to LogStats().
+<span class="lineNum">      30 </span>            : static const size_t kTimerIntervalInSeconds = 10;
+<span class="lineNum">      31 </span>            : static const size_t kTimerIntervalInMilliseconds =
+<span class="lineNum">      32 </span>            :     kTimerIntervalInSeconds * rtc::kNumMillisecsPerSec;
+<span class="lineNum">      33 </span>            : // Min time required to qualify an audio session as a &quot;call&quot;. If playout or
+<span class="lineNum">      34 </span>            : // recording has been active for less than this time we will not store any
+<span class="lineNum">      35 </span>            : // logs or UMA stats but instead consider the call as too short.
+<span class="lineNum">      36 </span>            : static const size_t kMinValidCallTimeTimeInSeconds = 10;
+<span class="lineNum">      37 </span>            : static const size_t kMinValidCallTimeTimeInMilliseconds =
+<a name="38"><span class="lineNum">      38 </span>            :     kMinValidCallTimeTimeInSeconds * rtc::kNumMillisecsPerSec;</a>
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span><span class="lineNoCov">          0 : AudioDeviceBuffer::AudioDeviceBuffer()</span>
+<span class="lineNum">      41 </span>            :     : task_queue_(kTimerQueueName),
+<span class="lineNum">      42 </span>            :       audio_transport_cb_(nullptr),
+<span class="lineNum">      43 </span>            :       rec_sample_rate_(0),
+<span class="lineNum">      44 </span>            :       play_sample_rate_(0),
+<span class="lineNum">      45 </span>            :       rec_channels_(0),
+<span class="lineNum">      46 </span>            :       play_channels_(0),
+<span class="lineNum">      47 </span>            :       playing_(false),
+<span class="lineNum">      48 </span>            :       recording_(false),
+<span class="lineNum">      49 </span>            :       current_mic_level_(0),
+<span class="lineNum">      50 </span>            :       new_mic_level_(0),
+<span class="lineNum">      51 </span>            :       typing_status_(false),
+<span class="lineNum">      52 </span>            :       play_delay_ms_(0),
+<span class="lineNum">      53 </span>            :       rec_delay_ms_(0),
+<span class="lineNum">      54 </span>            :       clock_drift_(0),
+<span class="lineNum">      55 </span>            :       num_stat_reports_(0),
+<span class="lineNum">      56 </span>            :       rec_callbacks_(0),
+<span class="lineNum">      57 </span>            :       last_rec_callbacks_(0),
+<span class="lineNum">      58 </span>            :       play_callbacks_(0),
+<span class="lineNum">      59 </span>            :       last_play_callbacks_(0),
+<span class="lineNum">      60 </span>            :       rec_samples_(0),
+<span class="lineNum">      61 </span>            :       last_rec_samples_(0),
+<span class="lineNum">      62 </span>            :       play_samples_(0),
+<span class="lineNum">      63 </span>            :       last_play_samples_(0),
+<span class="lineNum">      64 </span>            :       max_rec_level_(0),
+<span class="lineNum">      65 </span>            :       max_play_level_(0),
+<span class="lineNum">      66 </span>            :       last_timer_task_time_(0),
+<span class="lineNum">      67 </span>            :       rec_stat_count_(0),
+<span class="lineNum">      68 </span>            :       play_stat_count_(0),
+<span class="lineNum">      69 </span>            :       play_start_time_(0),
+<span class="lineNum">      70 </span>            :       rec_start_time_(0),
+<span class="lineNum">      71 </span>            :       only_silence_recorded_(true),
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :       log_stats_(false) {</span>
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; &quot;AudioDeviceBuffer::ctor&quot;;</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :   playout_thread_checker_.DetachFromThread();</span>
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 :   recording_thread_checker_.DetachFromThread();</span>
+<a name="76"><span class="lineNum">      76 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      77 </span>            : 
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 : AudioDeviceBuffer::~AudioDeviceBuffer() {</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;main_thread_checker_);</span>
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!playing_);</span>
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!recording_);</span>
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; &quot;AudioDeviceBuffer::~dtor&quot;;</span>
+<a name="83"><span class="lineNum">      83 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::RegisterAudioCallback(</span>
+<span class="lineNum">      86 </span>            :     AudioTransport* audio_callback) {
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;main_thread_checker_);</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; __FUNCTION__;</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :   if (playing_ || recording_) {</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;Failed to set audio transport since media was active&quot;;</span>
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">      92 </span>            :   }
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :   audio_transport_cb_ = audio_callback;</span>
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="95"><span class="lineNum">      95 </span>            : }</a>
+<span class="lineNum">      96 </span>            : 
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::StartPlayout() {</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;main_thread_checker_);</span>
+<span class="lineNum">      99 </span>            :   // TODO(henrika): allow for usage of DCHECK(!playing_) here instead. Today the
+<span class="lineNum">     100 </span>            :   // ADM allows calling Start(), Start() by ignoring the second call but it
+<span class="lineNum">     101 </span>            :   // makes more sense to only allow one call.
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :   if (playing_) {</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     104 </span>            :   }
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; __FUNCTION__;</span>
+<a name="106"><span class="lineNum">     106 </span><span class="lineNoCov">          0 :   playout_thread_checker_.DetachFromThread();</span></a>
+<span class="lineNum">     107 </span>            :   // Clear members tracking playout stats and do it on the task queue.
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :   task_queue_.PostTask([this] { ResetPlayStats(); });</span>
+<span class="lineNum">     109 </span>            :   // Start a periodic timer based on task queue if not already done by the
+<span class="lineNum">     110 </span>            :   // recording side.
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :   if (!recording_) {</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :     StartPeriodicLogging();</span>
+<span class="lineNum">     113 </span>            :   }
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :   const int64_t now_time = rtc::TimeMillis();</span>
+<span class="lineNum">     115 </span>            :   // Clear members that are only touched on the main (creating) thread.
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :   play_start_time_ = now_time;</span>
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :   playing_ = true;</span>
+<a name="118"><span class="lineNum">     118 </span>            : }</a>
+<span class="lineNum">     119 </span>            : 
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::StartRecording() {</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;main_thread_checker_);</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :   if (recording_) {</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     124 </span>            :   }
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; __FUNCTION__;</span>
+<a name="126"><span class="lineNum">     126 </span><span class="lineNoCov">          0 :   recording_thread_checker_.DetachFromThread();</span></a>
+<span class="lineNum">     127 </span>            :   // Clear members tracking recording stats and do it on the task queue.
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :   task_queue_.PostTask([this] { ResetRecStats(); });</span>
+<span class="lineNum">     129 </span>            :   // Start a periodic timer based on task queue if not already done by the
+<span class="lineNum">     130 </span>            :   // playout side.
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :   if (!playing_) {</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :     StartPeriodicLogging();</span>
+<span class="lineNum">     133 </span>            :   }
+<span class="lineNum">     134 </span>            :   // Clear members that will be touched on the main (creating) thread.
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :   rec_start_time_ = rtc::TimeMillis();</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :   recording_ = true;</span>
+<span class="lineNum">     137 </span>            :   // And finally a member which can be modified on the native audio thread.
+<span class="lineNum">     138 </span>            :   // It is safe to do so since we know by design that the owning ADM has not
+<span class="lineNum">     139 </span>            :   // yet started the native audio recording.
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :   only_silence_recorded_ = true;</span>
+<a name="141"><span class="lineNum">     141 </span>            : }</a>
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::StopPlayout() {</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;main_thread_checker_);</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :   if (!playing_) {</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     147 </span>            :   }
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; __FUNCTION__;</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :   playing_ = false;</span>
+<span class="lineNum">     150 </span>            :   // Stop periodic logging if no more media is active.
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :   if (!recording_) {</span>
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :     StopPeriodicLogging();</span>
+<span class="lineNum">     153 </span>            :   }
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; &quot;total playout time: &quot; &lt;&lt; rtc::TimeSince(play_start_time_);</span>
+<a name="155"><span class="lineNum">     155 </span>            : }</a>
+<span class="lineNum">     156 </span>            : 
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::StopRecording() {</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;main_thread_checker_);</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :   if (!recording_) {</span>
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     161 </span>            :   }
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; __FUNCTION__;</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :   recording_ = false;</span>
+<span class="lineNum">     164 </span>            :   // Stop periodic logging if no more media is active.
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :   if (!playing_) {</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     StopPeriodicLogging();</span>
+<span class="lineNum">     167 </span>            :   }
+<span class="lineNum">     168 </span>            :   // Add UMA histogram to keep track of the case when only zeros have been
+<span class="lineNum">     169 </span>            :   // recorded. Measurements (max of absolute level) are taken twice per second,
+<span class="lineNum">     170 </span>            :   // which means that if e.g 10 seconds of audio has been recorded, a total of
+<span class="lineNum">     171 </span>            :   // 20 level estimates must all be identical to zero to trigger the histogram.
+<span class="lineNum">     172 </span>            :   // |only_silence_recorded_| can only be cleared on the native audio thread
+<span class="lineNum">     173 </span>            :   // that drives audio capture but we know by design that the audio has stopped
+<span class="lineNum">     174 </span>            :   // when this method is called, hence there should not be aby conflicts. Also,
+<span class="lineNum">     175 </span>            :   // the fact that |only_silence_recorded_| can be affected during the complete
+<span class="lineNum">     176 </span>            :   // call makes chances of conflicts with potentially one last callback very
+<span class="lineNum">     177 </span>            :   // small.
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :   const size_t time_since_start = rtc::TimeSince(rec_start_time_);</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   if (time_since_start &gt; kMinValidCallTimeTimeInMilliseconds) {</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :     const int only_zeros = static_cast&lt;int&gt;(only_silence_recorded_);</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :     RTC_HISTOGRAM_BOOLEAN(&quot;WebRTC.Audio.RecordedOnlyZeros&quot;, only_zeros);</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :     LOG(INFO) &lt;&lt; &quot;HISTOGRAM(WebRTC.Audio.RecordedOnlyZeros): &quot; &lt;&lt; only_zeros;</span>
+<span class="lineNum">     183 </span>            :   }
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; &quot;total recording time: &quot; &lt;&lt; time_since_start;</span>
+<a name="185"><span class="lineNum">     185 </span>            : }</a>
+<span class="lineNum">     186 </span>            : 
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::SetRecordingSampleRate(uint32_t fsHz) {</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   RTC_DCHECK(main_thread_checker_.CalledOnValidThread());</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; &quot;SetRecordingSampleRate(&quot; &lt;&lt; fsHz &lt;&lt; &quot;)&quot;;</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :   rec_sample_rate_ = fsHz;</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="192"><span class="lineNum">     192 </span>            : }</a>
+<span class="lineNum">     193 </span>            : 
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::SetPlayoutSampleRate(uint32_t fsHz) {</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :   RTC_DCHECK(main_thread_checker_.CalledOnValidThread());</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; &quot;SetPlayoutSampleRate(&quot; &lt;&lt; fsHz &lt;&lt; &quot;)&quot;;</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   play_sample_rate_ = fsHz;</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="199"><span class="lineNum">     199 </span>            : }</a>
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::RecordingSampleRate() const {</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :   RTC_DCHECK(main_thread_checker_.CalledOnValidThread());</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :   return rec_sample_rate_;</span>
+<a name="204"><span class="lineNum">     204 </span>            : }</a>
+<span class="lineNum">     205 </span>            : 
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::PlayoutSampleRate() const {</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :   RTC_DCHECK(main_thread_checker_.CalledOnValidThread());</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :   return play_sample_rate_;</span>
+<a name="209"><span class="lineNum">     209 </span>            : }</a>
+<span class="lineNum">     210 </span>            : 
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::SetRecordingChannels(size_t channels) {</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :   RTC_DCHECK(main_thread_checker_.CalledOnValidThread());</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; &quot;SetRecordingChannels(&quot; &lt;&lt; channels &lt;&lt; &quot;)&quot;;</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :   rec_channels_ = channels;</span>
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="216"><span class="lineNum">     216 </span>            : }</a>
+<span class="lineNum">     217 </span>            : 
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::SetPlayoutChannels(size_t channels) {</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :   RTC_DCHECK(main_thread_checker_.CalledOnValidThread());</span>
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; &quot;SetPlayoutChannels(&quot; &lt;&lt; channels &lt;&lt; &quot;)&quot;;</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :   play_channels_ = channels;</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="223"><span class="lineNum">     223 </span>            : }</a>
+<span class="lineNum">     224 </span>            : 
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::SetRecordingChannel(</span>
+<span class="lineNum">     226 </span>            :     const AudioDeviceModule::ChannelType channel) {
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :   LOG(INFO) &lt;&lt; &quot;SetRecordingChannel(&quot; &lt;&lt; channel &lt;&lt; &quot;)&quot;;</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :   LOG(LS_WARNING) &lt;&lt; &quot;Not implemented&quot;;</span>
+<span class="lineNum">     229 </span>            :   // Add DCHECK to ensure that user does not try to use this API with a non-
+<span class="lineNum">     230 </span>            :   // default parameter.
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(channel, AudioDeviceModule::kChannelBoth);</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   return -1;</span>
+<a name="233"><span class="lineNum">     233 </span>            : }</a>
+<span class="lineNum">     234 </span>            : 
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::RecordingChannel(</span>
+<span class="lineNum">     236 </span>            :     AudioDeviceModule::ChannelType&amp; channel) const {
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :   LOG(LS_WARNING) &lt;&lt; &quot;Not implemented&quot;;</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :   return -1;</span>
+<a name="239"><span class="lineNum">     239 </span>            : }</a>
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 : size_t AudioDeviceBuffer::RecordingChannels() const {</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :   RTC_DCHECK(main_thread_checker_.CalledOnValidThread());</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   return rec_channels_;</span>
+<a name="244"><span class="lineNum">     244 </span>            : }</a>
+<span class="lineNum">     245 </span>            : 
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 : size_t AudioDeviceBuffer::PlayoutChannels() const {</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   RTC_DCHECK(main_thread_checker_.CalledOnValidThread());</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   return play_channels_;</span>
+<a name="249"><span class="lineNum">     249 </span>            : }</a>
+<span class="lineNum">     250 </span>            : 
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::SetCurrentMicLevel(uint32_t level) {</span>
+<span class="lineNum">     252 </span>            : #if !defined(WEBRTC_WIN)
+<span class="lineNum">     253 </span>            :   // Windows uses a dedicated thread for volume APIs.
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;recording_thread_checker_);</span>
+<span class="lineNum">     255 </span>            : #endif
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   current_mic_level_ = level;</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="258"><span class="lineNum">     258 </span>            : }</a>
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::SetTypingStatus(bool typing_status) {</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;recording_thread_checker_);</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   typing_status_ = typing_status;</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="264"><span class="lineNum">     264 </span>            : }</a>
+<span class="lineNum">     265 </span>            : 
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 : uint32_t AudioDeviceBuffer::NewMicLevel() const {</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;recording_thread_checker_);</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :   return new_mic_level_;</span>
+<a name="269"><span class="lineNum">     269 </span>            : }</a>
+<span class="lineNum">     270 </span>            : 
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::SetVQEData(int play_delay_ms,</span>
+<span class="lineNum">     272 </span>            :                                    int rec_delay_ms,
+<span class="lineNum">     273 </span>            :                                    int clock_drift) {
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;recording_thread_checker_);</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :   play_delay_ms_ = play_delay_ms;</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :   rec_delay_ms_ = rec_delay_ms;</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   clock_drift_ = clock_drift;</span>
+<a name="278"><span class="lineNum">     278 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::StartInputFileRecording(</span>
+<span class="lineNum">     281 </span>            :     const char fileName[kAdmMaxFileNameSize]) {
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :   LOG(LS_WARNING) &lt;&lt; &quot;Not implemented&quot;;</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="284"><span class="lineNum">     284 </span>            : }</a>
+<span class="lineNum">     285 </span>            : 
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::StopInputFileRecording() {</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   LOG(LS_WARNING) &lt;&lt; &quot;Not implemented&quot;;</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="289"><span class="lineNum">     289 </span>            : }</a>
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::StartOutputFileRecording(</span>
+<span class="lineNum">     292 </span>            :     const char fileName[kAdmMaxFileNameSize]) {
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :   LOG(LS_WARNING) &lt;&lt; &quot;Not implemented&quot;;</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="295"><span class="lineNum">     295 </span>            : }</a>
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::StopOutputFileRecording() {</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :   LOG(LS_WARNING) &lt;&lt; &quot;Not implemented&quot;;</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="300"><span class="lineNum">     300 </span>            : }</a>
+<span class="lineNum">     301 </span>            : 
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::SetRecordedBuffer(const void* audio_buffer,</span>
+<span class="lineNum">     303 </span>            :                                              size_t samples_per_channel) {
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;recording_thread_checker_);</span>
+<span class="lineNum">     305 </span>            :   // Copy the complete input buffer to the local buffer.
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   const size_t old_size = rec_buffer_.size();</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :   rec_buffer_.SetData(static_cast&lt;const int16_t*&gt;(audio_buffer),</span>
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :                       rec_channels_ * samples_per_channel);</span>
+<span class="lineNum">     309 </span>            :   // Keep track of the size of the recording buffer. Only updated when the
+<span class="lineNum">     310 </span>            :   // size changes, which is a rare event.
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :   if (old_size != rec_buffer_.size()) {</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :     LOG(LS_INFO) &lt;&lt; &quot;Size of recording buffer: &quot; &lt;&lt; rec_buffer_.size();</span>
+<span class="lineNum">     313 </span>            :   }
+<span class="lineNum">     314 </span>            : 
+<span class="lineNum">     315 </span>            :   // Derive a new level value twice per second and check if it is non-zero.
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :   int16_t max_abs = 0;</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LT(rec_stat_count_, 50);</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :   if (++rec_stat_count_ &gt;= 50) {</span>
+<span class="lineNum">     319 </span>            :     // Returns the largest absolute value in a signed 16-bit vector.
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     max_abs = WebRtcSpl_MaxAbsValueW16(rec_buffer_.data(), rec_buffer_.size());</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     rec_stat_count_ = 0;</span>
+<span class="lineNum">     322 </span>            :     // Set |only_silence_recorded_| to false as soon as at least one detection
+<span class="lineNum">     323 </span>            :     // of a non-zero audio packet is found. It can only be restored to true
+<span class="lineNum">     324 </span>            :     // again by restarting the call.
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :     if (max_abs &gt; 0) {</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :       only_silence_recorded_ = false;</span>
+<span class="lineNum">     327 </span>            :     }
+<span class="lineNum">     328 </span>            :   }
+<span class="lineNum">     329 </span>            :   // Update some stats but do it on the task queue to ensure that the members
+<span class="lineNum">     330 </span>            :   // are modified and read on the same thread. Note that |max_abs| will be
+<a name="331"><span class="lineNum">     331 </span>            :   // zero in most calls and then have no effect of the stats. It is only updated</a>
+<span class="lineNum">     332 </span>            :   // approximately two times per second and can then change the stats.
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :   task_queue_.PostTask([this, max_abs, samples_per_channel] {</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :     UpdateRecStats(max_abs, samples_per_channel);</span>
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :   });</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="337"><span class="lineNum">     337 </span>            : }</a>
+<span class="lineNum">     338 </span>            : 
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::DeliverRecordedData() {</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;recording_thread_checker_);</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :   if (!audio_transport_cb_) {</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :     LOG(LS_WARNING) &lt;&lt; &quot;Invalid audio transport&quot;;</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     344 </span>            :   }
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :   const size_t frames = rec_buffer_.size() / rec_channels_;</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :   const size_t bytes_per_frame = rec_channels_ * sizeof(int16_t);</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :   uint32_t new_mic_level(0);</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :   uint32_t total_delay_ms = play_delay_ms_ + rec_delay_ms_;</span>
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :   int32_t res = audio_transport_cb_-&gt;RecordedDataIsAvailable(</span>
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :       rec_buffer_.data(), frames, bytes_per_frame, rec_channels_,</span>
+<span class="lineNum">     351 </span>            :       rec_sample_rate_, total_delay_ms, clock_drift_, current_mic_level_,
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :       typing_status_, new_mic_level);</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :   if (res != -1) {</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :     new_mic_level_ = new_mic_level;</span>
+<span class="lineNum">     355 </span>            :   } else {
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;RecordedDataIsAvailable() failed&quot;;</span>
+<span class="lineNum">     357 </span>            :   }
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="359"><span class="lineNum">     359 </span>            : }</a>
+<span class="lineNum">     360 </span>            : 
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::RequestPlayoutData(size_t samples_per_channel) {</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;playout_thread_checker_);</span>
+<span class="lineNum">     363 </span>            :   // The consumer can change the requested size on the fly and we therefore
+<span class="lineNum">     364 </span>            :   // resize the buffer accordingly. Also takes place at the first call to this
+<span class="lineNum">     365 </span>            :   // method.
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :   const size_t total_samples = play_channels_ * samples_per_channel;</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :   if (play_buffer_.size() != total_samples) {</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :     play_buffer_.SetSize(total_samples);</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :     LOG(LS_INFO) &lt;&lt; &quot;Size of playout buffer: &quot; &lt;&lt; play_buffer_.size();</span>
+<span class="lineNum">     370 </span>            :   }
+<span class="lineNum">     371 </span>            : 
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :   size_t num_samples_out(0);</span>
+<span class="lineNum">     373 </span>            :   // It is currently supported to start playout without a valid audio
+<span class="lineNum">     374 </span>            :   // transport object. Leads to warning and silence.
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :   if (!audio_transport_cb_) {</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :     LOG(LS_WARNING) &lt;&lt; &quot;Invalid audio transport&quot;;</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     378 </span>            :   }
+<span class="lineNum">     379 </span>            : 
+<span class="lineNum">     380 </span>            :   // Retrieve new 16-bit PCM audio data using the audio transport instance.
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :   int64_t elapsed_time_ms = -1;</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :   int64_t ntp_time_ms = -1;</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :   const size_t bytes_per_frame = play_channels_ * sizeof(int16_t);</span>
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :   uint32_t res = audio_transport_cb_-&gt;NeedMorePlayData(</span>
+<span class="lineNum">     385 </span>            :       samples_per_channel, bytes_per_frame, play_channels_, play_sample_rate_,
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :       play_buffer_.data(), num_samples_out, &amp;elapsed_time_ms, &amp;ntp_time_ms);</span>
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :   if (res != 0) {</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;NeedMorePlayData() failed&quot;;</span>
+<span class="lineNum">     389 </span>            :   }
+<span class="lineNum">     390 </span>            : 
+<span class="lineNum">     391 </span>            :   // Derive a new level value twice per second.
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :   int16_t max_abs = 0;</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LT(play_stat_count_, 50);</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :   if (++play_stat_count_ &gt;= 50) {</span>
+<span class="lineNum">     395 </span>            :     // Returns the largest absolute value in a signed 16-bit vector.
+<span class="lineNum">     396 </span>            :     max_abs =
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :         WebRtcSpl_MaxAbsValueW16(play_buffer_.data(), play_buffer_.size());</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :     play_stat_count_ = 0;</span>
+<span class="lineNum">     399 </span>            :   }
+<span class="lineNum">     400 </span>            :   // Update some stats but do it on the task queue to ensure that the members
+<span class="lineNum">     401 </span>            :   // are modified and read on the same thread. Note that |max_abs| will be
+<a name="402"><span class="lineNum">     402 </span>            :   // zero in most calls and then have no effect of the stats. It is only updated</a>
+<span class="lineNum">     403 </span>            :   // approximately two times per second and can then change the stats.
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :   task_queue_.PostTask([this, max_abs, num_samples_out] {</span>
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :     UpdatePlayStats(max_abs, num_samples_out);</span>
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :   });</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :   return static_cast&lt;int32_t&gt;(num_samples_out);</span>
+<a name="408"><span class="lineNum">     408 </span>            : }</a>
+<span class="lineNum">     409 </span>            : 
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 : int32_t AudioDeviceBuffer::GetPlayoutData(void* audio_buffer) {</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;playout_thread_checker_);</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GT(play_buffer_.size(), 0);</span>
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :   const size_t bytes_per_sample = sizeof(int16_t);</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :   memcpy(audio_buffer, play_buffer_.data(),</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :          play_buffer_.size() * bytes_per_sample);</span>
+<span class="lineNum">     416 </span>            :   // Return samples per channel or number of frames.
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :   return static_cast&lt;int32_t&gt;(play_buffer_.size() / play_channels_);</span>
+<a name="418"><span class="lineNum">     418 </span>            : }</a>
+<span class="lineNum">     419 </span>            : 
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::StartPeriodicLogging() {</span>
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :   task_queue_.PostTask(rtc::Bind(&amp;AudioDeviceBuffer::LogStats, this,</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :                                  AudioDeviceBuffer::LOG_START));</span>
+<a name="423"><span class="lineNum">     423 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     424 </span>            : 
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::StopPeriodicLogging() {</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :   task_queue_.PostTask(rtc::Bind(&amp;AudioDeviceBuffer::LogStats, this,</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :                                  AudioDeviceBuffer::LOG_STOP));</span>
+<a name="428"><span class="lineNum">     428 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     429 </span>            : 
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::LogStats(LogState state) {</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;task_queue_);</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :   int64_t now_time = rtc::TimeMillis();</span>
+<span class="lineNum">     433 </span>            : 
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :   if (state == AudioDeviceBuffer::LOG_START) {</span>
+<span class="lineNum">     435 </span>            :     // Reset counters at start. We will not add any logging in this state but
+<span class="lineNum">     436 </span>            :     // the timer will started by posting a new (delayed) task.
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :     num_stat_reports_ = 0;</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :     last_timer_task_time_ = now_time;</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :     log_stats_ = true;</span>
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :   } else if (state == AudioDeviceBuffer::LOG_STOP) {</span>
+<span class="lineNum">     441 </span>            :     // Stop logging and posting new tasks.
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :     log_stats_ = false;</span>
+<span class="lineNum">     443 </span>            :   } else if (state == AudioDeviceBuffer::LOG_ACTIVE) {
+<span class="lineNum">     444 </span>            :     // Keep logging unless logging was disabled while task was posted.
+<span class="lineNum">     445 </span>            :   }
+<span class="lineNum">     446 </span>            : 
+<span class="lineNum">     447 </span>            :   // Avoid adding more logs since we are in STOP mode.
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :   if (!log_stats_) {</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     450 </span>            :   }
+<span class="lineNum">     451 </span>            : 
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :   int64_t next_callback_time = now_time + kTimerIntervalInMilliseconds;</span>
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :   int64_t time_since_last = rtc::TimeDiff(now_time, last_timer_task_time_);</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :   last_timer_task_time_ = now_time;</span>
+<span class="lineNum">     455 </span>            : 
+<span class="lineNum">     456 </span>            :   // Log the latest statistics but skip the first round just after state was
+<span class="lineNum">     457 </span>            :   // set to LOG_START. Hence, first printed log will be after ~10 seconds.
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :   if (++num_stat_reports_ &gt; 1 &amp;&amp; time_since_last &gt; 0) {</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :     uint32_t diff_samples = rec_samples_ - last_rec_samples_;</span>
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :     float rate = diff_samples / (static_cast&lt;float&gt;(time_since_last) / 1000.0);</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :     LOG(INFO) &lt;&lt; &quot;[REC : &quot; &lt;&lt; time_since_last &lt;&lt; &quot;msec, &quot;</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :               &lt;&lt; rec_sample_rate_ / 1000</span>
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :               &lt;&lt; &quot;kHz] callbacks: &quot; &lt;&lt; rec_callbacks_ - last_rec_callbacks_</span>
+<span class="lineNum">     464 </span>            :               &lt;&lt; &quot;, &quot;
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :               &lt;&lt; &quot;samples: &quot; &lt;&lt; diff_samples &lt;&lt; &quot;, &quot;</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :               &lt;&lt; &quot;rate: &quot; &lt;&lt; static_cast&lt;int&gt;(rate + 0.5) &lt;&lt; &quot;, &quot;</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :               &lt;&lt; &quot;level: &quot; &lt;&lt; max_rec_level_;</span>
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :     diff_samples = play_samples_ - last_play_samples_;</span>
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :     rate = diff_samples / (static_cast&lt;float&gt;(time_since_last) / 1000.0);</span>
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :     LOG(INFO) &lt;&lt; &quot;[PLAY: &quot; &lt;&lt; time_since_last &lt;&lt; &quot;msec, &quot;</span>
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :               &lt;&lt; play_sample_rate_ / 1000</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :               &lt;&lt; &quot;kHz] callbacks: &quot; &lt;&lt; play_callbacks_ - last_play_callbacks_</span>
+<span class="lineNum">     474 </span>            :               &lt;&lt; &quot;, &quot;
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :               &lt;&lt; &quot;samples: &quot; &lt;&lt; diff_samples &lt;&lt; &quot;, &quot;</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :               &lt;&lt; &quot;rate: &quot; &lt;&lt; static_cast&lt;int&gt;(rate + 0.5) &lt;&lt; &quot;, &quot;</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :               &lt;&lt; &quot;level: &quot; &lt;&lt; max_play_level_;</span>
+<span class="lineNum">     478 </span>            :   }
+<span class="lineNum">     479 </span>            : 
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :   last_rec_callbacks_ = rec_callbacks_;</span>
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :   last_play_callbacks_ = play_callbacks_;</span>
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :   last_rec_samples_ = rec_samples_;</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :   last_play_samples_ = play_samples_;</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :   max_rec_level_ = 0;</span>
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :   max_play_level_ = 0;</span>
+<span class="lineNum">     486 </span>            : 
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :   int64_t time_to_wait_ms = next_callback_time - rtc::TimeMillis();</span>
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GT(time_to_wait_ms, 0) &lt;&lt; &quot;Invalid timer interval&quot;;</span>
+<span class="lineNum">     489 </span>            : 
+<span class="lineNum">     490 </span>            :   // Keep posting new (delayed) tasks until state is changed to kLogStop.
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :   task_queue_.PostDelayedTask(rtc::Bind(&amp;AudioDeviceBuffer::LogStats, this,</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :                                         AudioDeviceBuffer::LOG_ACTIVE),</span>
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :                               time_to_wait_ms);</span>
+<a name="494"><span class="lineNum">     494 </span>            : }</a>
+<span class="lineNum">     495 </span>            : 
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::ResetRecStats() {</span>
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;task_queue_);</span>
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :   rec_callbacks_ = 0;</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :   last_rec_callbacks_ = 0;</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :   rec_samples_ = 0;</span>
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :   last_rec_samples_ = 0;</span>
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :   max_rec_level_ = 0;</span>
+<a name="503"><span class="lineNum">     503 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     504 </span>            : 
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::ResetPlayStats() {</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;task_queue_);</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :   play_callbacks_ = 0;</span>
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :   last_play_callbacks_ = 0;</span>
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :   play_samples_ = 0;</span>
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :   last_play_samples_ = 0;</span>
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :   max_play_level_ = 0;</span>
+<a name="512"><span class="lineNum">     512 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     513 </span>            : 
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::UpdateRecStats(int16_t max_abs,</span>
+<span class="lineNum">     515 </span>            :                                        size_t samples_per_channel) {
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;task_queue_);</span>
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :   ++rec_callbacks_;</span>
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :   rec_samples_ += samples_per_channel;</span>
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :   if (max_abs &gt; max_rec_level_) {</span>
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :     max_rec_level_ = max_abs;</span>
+<span class="lineNum">     521 </span>            :   }
+<a name="522"><span class="lineNum">     522 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     523 </span>            : 
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 : void AudioDeviceBuffer::UpdatePlayStats(int16_t max_abs,</span>
+<span class="lineNum">     525 </span>            :                                         size_t samples_per_channel) {
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :   RTC_DCHECK_RUN_ON(&amp;task_queue_);</span>
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :   ++play_callbacks_;</span>
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :   play_samples_ += samples_per_channel;</span>
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :   if (max_abs &gt; max_play_level_) {</span>
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 :     max_play_level_ = max_abs;</span>
+<span class="lineNum">     531 </span>            :   }
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     533 </span>            : 
+<span class="lineNum">     534 </span>            : }  // namespace webrtc
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

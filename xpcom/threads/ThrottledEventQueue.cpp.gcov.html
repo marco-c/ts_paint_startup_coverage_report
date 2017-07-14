@@ -1,0 +1,551 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - xpcom/threads/ThrottledEventQueue.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">xpcom/threads</a> - ThrottledEventQueue.cpp<span style="font-size: 80%;"> (source / <a href="ThrottledEventQueue.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">76</td>
+            <td class="headerCovTableEntry">156</td>
+            <td class="headerCovTableEntryLo">48.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">18</td>
+            <td class="headerCovTableEntry">39</td>
+            <td class="headerCovTableEntryLo">46.2 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;ThrottledEventQueue.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/Atomics.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/ClearOnShutdown.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/Mutex.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/Unused.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;nsEventQueue.h&quot;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : namespace mozilla {
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : using mozilla::services::GetObserverService;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : namespace {
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : static const char kShutdownTopic[] = &quot;xpcom-shutdown&quot;;
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : } // anonymous namespace
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : // The ThrottledEventQueue is designed with inner and outer objects:
+<span class="lineNum">      26 </span>            : //
+<span class="lineNum">      27 </span>            : //       XPCOM code    nsObserverService
+<span class="lineNum">      28 </span>            : //            |               |
+<span class="lineNum">      29 </span>            : //            |               |
+<span class="lineNum">      30 </span>            : //            v               |
+<span class="lineNum">      31 </span>            : //        +-------+           |
+<span class="lineNum">      32 </span>            : //        | Outer |           |
+<span class="lineNum">      33 </span>            : //        +-------+           |
+<span class="lineNum">      34 </span>            : //            |               |
+<span class="lineNum">      35 </span>            : //            |   +-------+   |
+<span class="lineNum">      36 </span>            : //            +--&gt;| Inner |&lt;--+
+<span class="lineNum">      37 </span>            : //                +-------+
+<span class="lineNum">      38 </span>            : //
+<span class="lineNum">      39 </span>            : // Client code references the outer nsIEventTarget which in turn references
+<span class="lineNum">      40 </span>            : // an inner object.  The inner object is also held alive by the observer
+<span class="lineNum">      41 </span>            : // service.
+<span class="lineNum">      42 </span>            : //
+<span class="lineNum">      43 </span>            : // If the outer object is dereferenced and destroyed, it will trigger a
+<span class="lineNum">      44 </span>            : // shutdown operation on the inner object.  Similarly if the observer
+<span class="lineNum">      45 </span>            : // service notifies that the browser is shutting down, then the inner
+<span class="lineNum">      46 </span>            : // object also starts shutting down.
+<span class="lineNum">      47 </span>            : //
+<span class="lineNum">      48 </span>            : // Once the queue has drained we unregister from the observer service.  If
+<span class="lineNum">      49 </span>            : // the outer object is already gone, then the inner object is free'd at this
+<span class="lineNum">      50 </span>            : // point.  If the outer object still exists then calls fall back to the
+<span class="lineNum">      51 </span>            : // ThrottledEventQueue's base target.  We just don't queue things
+<span class="lineNum">      52 </span>            : // any more.  The inner is then released once the outer object is released.
+<span class="lineNum">      53 </span>            : //
+<span class="lineNum">      54 </span>            : // Note, we must keep the inner object alive and attached to the observer
+<span class="lineNum">      55 </span>            : // service until the TaskQueue is fully shutdown and idle.  We must delay
+<span class="lineNum">      56 </span>            : // xpcom shutdown if the TaskQueue is in the middle of draining.
+<span class="lineNum">      57 </span>            : class ThrottledEventQueue::Inner final : public nsIObserver
+<span class="lineNum">      58 </span>            : {
+<span class="lineNum">      59 </span>            :   // The runnable which is dispatched to the underlying base target.  Since
+<a name="60"><span class="lineNum">      60 </span>            :   // we only execute one event at a time we just re-use a single instance</a>
+<span class="lineNum">      61 </span>            :   // of this class while there are events left in the queue.
+<span class="lineNum">      62 </span><span class="lineCov">         39 :   class Executor final : public Runnable</span>
+<span class="lineNum">      63 </span>            :   {
+<span class="lineNum">      64 </span>            :     RefPtr&lt;Inner&gt; mInner;
+<a name="65"><span class="lineNum">      65 </span>            : </a>
+<span class="lineNum">      66 </span>            :   public:
+<span class="lineNum">      67 </span><span class="lineCov">         14 :     explicit Executor(Inner* aInner)</span>
+<span class="lineNum">      68 </span><span class="lineCov">         14 :       : Runnable(&quot;ThrottledEventQueue::Inner::Executor&quot;)</span>
+<span class="lineNum">      69 </span><span class="lineCov">         14 :       , mInner(aInner)</span>
+<span class="lineNum">      70 </span><span class="lineCov">         14 :     { }</span>
+<a name="71"><span class="lineNum">      71 </span>            : </a>
+<span class="lineNum">      72 </span>            :     NS_IMETHODIMP
+<span class="lineNum">      73 </span><span class="lineCov">         13 :     Run() override</span>
+<span class="lineNum">      74 </span>            :     {
+<span class="lineNum">      75 </span><span class="lineCov">         13 :       mInner-&gt;ExecuteRunnable();</span>
+<span class="lineNum">      76 </span><span class="lineCov">         13 :       return NS_OK;</span>
+<span class="lineNum">      77 </span>            :     }
+<a name="78"><span class="lineNum">      78 </span>            : </a>
+<span class="lineNum">      79 </span>            :     NS_IMETHODIMP
+<span class="lineNum">      80 </span><span class="lineCov">         14 :     GetName(nsACString&amp; aName) override</span>
+<span class="lineNum">      81 </span>            :     {
+<span class="lineNum">      82 </span><span class="lineCov">         14 :       return mInner-&gt;CurrentName(aName);</span>
+<span class="lineNum">      83 </span>            :     }
+<span class="lineNum">      84 </span>            :   };
+<span class="lineNum">      85 </span>            : 
+<span class="lineNum">      86 </span>            :   mutable Mutex mMutex;
+<span class="lineNum">      87 </span>            :   mutable CondVar mIdleCondVar;
+<span class="lineNum">      88 </span>            : 
+<span class="lineNum">      89 </span>            :   mozilla::CondVar mEventsAvailable;
+<span class="lineNum">      90 </span>            : 
+<span class="lineNum">      91 </span>            :   // any thread, protected by mutex
+<span class="lineNum">      92 </span>            :   nsEventQueue mEventQueue;
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span>            :   // written on main thread, read on any thread
+<span class="lineNum">      95 </span>            :   nsCOMPtr&lt;nsISerialEventTarget&gt; mBaseTarget;
+<span class="lineNum">      96 </span>            : 
+<span class="lineNum">      97 </span>            :   // any thread, protected by mutex
+<span class="lineNum">      98 </span>            :   nsCOMPtr&lt;nsIRunnable&gt; mExecutor;
+<span class="lineNum">      99 </span>            : 
+<span class="lineNum">     100 </span>            :   // any thread, protected by mutex
+<a name="101"><span class="lineNum">     101 </span>            :   bool mShutdownStarted;</a>
+<span class="lineNum">     102 </span>            : 
+<span class="lineNum">     103 </span><span class="lineCov">          5 :   explicit Inner(nsISerialEventTarget* aBaseTarget)</span>
+<span class="lineNum">     104 </span><span class="lineCov">          5 :     : mMutex(&quot;ThrottledEventQueue&quot;)</span>
+<span class="lineNum">     105 </span>            :     , mIdleCondVar(mMutex, &quot;ThrottledEventQueue:Idle&quot;)
+<span class="lineNum">     106 </span>            :     , mEventsAvailable(mMutex, &quot;[ThrottledEventQueue::Inner.mEventsAvailable]&quot;)
+<span class="lineNum">     107 </span>            :     , mEventQueue(mEventsAvailable, nsEventQueue::eNormalQueue)
+<span class="lineNum">     108 </span>            :     , mBaseTarget(aBaseTarget)
+<span class="lineNum">     109 </span><span class="lineCov">          5 :     , mShutdownStarted(false)</span>
+<span class="lineNum">     110 </span>            :   {
+<a name="111"><span class="lineNum">     111 </span><span class="lineCov">          5 :   }</span></a>
+<span class="lineNum">     112 </span>            : 
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :   ~Inner()</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :   {</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(!mExecutor);</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mShutdownStarted);</span>
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :   }</span>
+<a name="118"><span class="lineNum">     118 </span>            : </a>
+<span class="lineNum">     119 </span>            :   nsresult
+<span class="lineNum">     120 </span><span class="lineCov">         14 :   CurrentName(nsACString&amp; aName)</span>
+<span class="lineNum">     121 </span>            :   {
+<span class="lineNum">     122 </span><span class="lineCov">         28 :     nsCOMPtr&lt;nsIRunnable&gt; event;</span>
+<span class="lineNum">     123 </span>            : 
+<span class="lineNum">     124 </span>            : #ifdef DEBUG
+<span class="lineNum">     125 </span><span class="lineCov">         14 :     bool currentThread = false;</span>
+<span class="lineNum">     126 </span><span class="lineCov">         14 :     mBaseTarget-&gt;IsOnCurrentThread(&amp;currentThread);</span>
+<span class="lineNum">     127 </span><span class="lineCov">         14 :     MOZ_ASSERT(currentThread);</span>
+<span class="lineNum">     128 </span>            : #endif
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span>            :     {
+<span class="lineNum">     131 </span><span class="lineCov">         28 :       MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     132 </span>            : 
+<span class="lineNum">     133 </span>            :       // We only check the name of an executor runnable when we know there is something
+<span class="lineNum">     134 </span>            :       // in the queue, so this should never fail.
+<span class="lineNum">     135 </span><span class="lineCov">         14 :       MOZ_ALWAYS_TRUE(mEventQueue.PeekEvent(getter_AddRefs(event), lock));</span>
+<span class="lineNum">     136 </span>            :     }
+<span class="lineNum">     137 </span>            : 
+<span class="lineNum">     138 </span><span class="lineCov">         15 :     if (nsCOMPtr&lt;nsINamed&gt; named = do_QueryInterface(event)) {</span>
+<span class="lineNum">     139 </span><span class="lineCov">         13 :       nsresult rv = named-&gt;GetName(aName);</span>
+<span class="lineNum">     140 </span><span class="lineCov">         13 :       return rv;</span>
+<span class="lineNum">     141 </span>            :     }
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span><span class="lineCov">          1 :     aName.AssignLiteral(&quot;non-nsINamed ThrottledEventQueue runnable&quot;);</span>
+<span class="lineNum">     144 </span><span class="lineCov">          1 :     return NS_OK;</span>
+<span class="lineNum">     145 </span>            :   }
+<a name="146"><span class="lineNum">     146 </span>            : </a>
+<span class="lineNum">     147 </span>            :   void
+<span class="lineNum">     148 </span><span class="lineCov">         13 :   ExecuteRunnable()</span>
+<span class="lineNum">     149 </span>            :   {
+<span class="lineNum">     150 </span>            :     // Any thread
+<span class="lineNum">     151 </span><span class="lineCov">         26 :     nsCOMPtr&lt;nsIRunnable&gt; event;</span>
+<span class="lineNum">     152 </span><span class="lineCov">         13 :     bool shouldShutdown = false;</span>
+<span class="lineNum">     153 </span>            : 
+<span class="lineNum">     154 </span>            : #ifdef DEBUG
+<span class="lineNum">     155 </span><span class="lineCov">         13 :     bool currentThread = false;</span>
+<span class="lineNum">     156 </span><span class="lineCov">         13 :     mBaseTarget-&gt;IsOnCurrentThread(&amp;currentThread);</span>
+<span class="lineNum">     157 </span><span class="lineCov">         13 :     MOZ_ASSERT(currentThread);</span>
+<span class="lineNum">     158 </span>            : #endif
+<span class="lineNum">     159 </span>            : 
+<span class="lineNum">     160 </span>            :     {
+<span class="lineNum">     161 </span><span class="lineCov">         26 :       MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     162 </span>            : 
+<span class="lineNum">     163 </span>            :       // We only dispatch an executor runnable when we know there is something
+<span class="lineNum">     164 </span>            :       // in the queue, so this should never fail.
+<span class="lineNum">     165 </span><span class="lineCov">         13 :       MOZ_ALWAYS_TRUE(mEventQueue.GetPendingEvent(getter_AddRefs(event), lock));</span>
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span>            :       // If there are more events in the queue, then dispatch the next
+<span class="lineNum">     168 </span>            :       // executor.  We do this now, before running the event, because
+<span class="lineNum">     169 </span>            :       // the event might spin the event loop and we don't want to stall
+<span class="lineNum">     170 </span>            :       // the queue.
+<span class="lineNum">     171 </span><span class="lineCov">         13 :       if (mEventQueue.HasPendingEvent(lock)) {</span>
+<span class="lineNum">     172 </span>            :         // Dispatch the next base target runnable to attempt to execute
+<span class="lineNum">     173 </span>            :         // the next throttled event.  We must do this before executing
+<span class="lineNum">     174 </span>            :         // the event in case the event spins the event loop.
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :         MOZ_ALWAYS_SUCCEEDS(</span>
+<span class="lineNum">     176 </span>            :           mBaseTarget-&gt;Dispatch(mExecutor, NS_DISPATCH_NORMAL));
+<span class="lineNum">     177 </span>            :       }
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span>            :       // Otherwise the queue is empty and we can stop dispatching the
+<span class="lineNum">     180 </span>            :       // executor.  We might also need to shutdown after running the
+<span class="lineNum">     181 </span>            :       // last event.
+<span class="lineNum">     182 </span>            :       else {
+<span class="lineNum">     183 </span><span class="lineCov">         13 :         shouldShutdown = mShutdownStarted;</span>
+<span class="lineNum">     184 </span>            :         // Note, this breaks a ref cycle.
+<span class="lineNum">     185 </span><span class="lineCov">         13 :         mExecutor = nullptr;</span>
+<span class="lineNum">     186 </span><span class="lineCov">         13 :         mIdleCondVar.NotifyAll();</span>
+<span class="lineNum">     187 </span>            :       }
+<span class="lineNum">     188 </span>            :     }
+<span class="lineNum">     189 </span>            : 
+<span class="lineNum">     190 </span>            :     // Execute the event now that we have unlocked.
+<span class="lineNum">     191 </span><span class="lineCov">         13 :     Unused &lt;&lt; event-&gt;Run();</span>
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span>            :     // If shutdown was started and the queue is now empty we can now
+<span class="lineNum">     194 </span>            :     // finalize the shutdown.  This is performed separately at the end
+<span class="lineNum">     195 </span>            :     // of the method in order to wait for the event to finish running.
+<span class="lineNum">     196 </span><span class="lineCov">         13 :     if (shouldShutdown) {</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(IsEmpty());</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :       NS_DispatchToMainThread(NewRunnableMethod(&quot;ThrottledEventQueue::Inner::ShutdownComplete&quot;,</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :                                                 this, &amp;Inner::ShutdownComplete));</span>
+<span class="lineNum">     200 </span>            :     }
+<span class="lineNum">     201 </span><span class="lineCov">         13 :   }</span>
+<a name="202"><span class="lineNum">     202 </span>            : </a>
+<span class="lineNum">     203 </span>            :   void
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :   ShutdownComplete()</span>
+<span class="lineNum">     205 </span>            :   {
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(IsEmpty());</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIObserverService&gt; obs = GetObserverService();</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :     obs-&gt;RemoveObserver(this, kShutdownTopic);</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     211 </span>            : 
+<a name="212"><span class="lineNum">     212 </span>            : public:</a>
+<span class="lineNum">     213 </span>            :   static already_AddRefed&lt;Inner&gt;
+<span class="lineNum">     214 </span><span class="lineCov">          5 :   Create(nsISerialEventTarget* aBaseTarget)</span>
+<span class="lineNum">     215 </span>            :   {
+<span class="lineNum">     216 </span><span class="lineCov">          5 :     MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     217 </span>            : 
+<span class="lineNum">     218 </span><span class="lineCov">          5 :     if (ClearOnShutdown_Internal::sCurrentShutdownPhase != ShutdownPhase::NotInShutdown) {</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :       return nullptr;</span>
+<span class="lineNum">     220 </span>            :     }
+<span class="lineNum">     221 </span>            : 
+<span class="lineNum">     222 </span><span class="lineCov">         10 :     nsCOMPtr&lt;nsIObserverService&gt; obs = GetObserverService();</span>
+<span class="lineNum">     223 </span><span class="lineCov">          5 :     if (NS_WARN_IF(!obs)) {</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :       return nullptr;</span>
+<span class="lineNum">     225 </span>            :     }
+<span class="lineNum">     226 </span>            : 
+<span class="lineNum">     227 </span><span class="lineCov">         10 :     RefPtr&lt;Inner&gt; ref = new Inner(aBaseTarget);</span>
+<span class="lineNum">     228 </span>            : 
+<span class="lineNum">     229 </span><span class="lineCov">          5 :     nsresult rv = obs-&gt;AddObserver(ref, kShutdownTopic,</span>
+<span class="lineNum">     230 </span><span class="lineCov">          5 :                                    false /* means OS will hold a strong ref */);</span>
+<span class="lineNum">     231 </span><span class="lineCov">          5 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :       ref-&gt;MaybeStartShutdown();</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(ref-&gt;IsEmpty());</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :       return nullptr;</span>
+<span class="lineNum">     235 </span>            :     }
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span><span class="lineCov">          5 :     return ref.forget();</span>
+<span class="lineNum">     238 </span>            :   }
+<a name="239"><span class="lineNum">     239 </span>            : </a>
+<span class="lineNum">     240 </span>            :   NS_IMETHOD
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :   Observe(nsISupports*, const char* aTopic, const char16_t*) override</span>
+<span class="lineNum">     242 </span>            :   {
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(!strcmp(aTopic, kShutdownTopic));</span>
+<span class="lineNum">     245 </span>            : 
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :     MaybeStartShutdown();</span>
+<span class="lineNum">     247 </span>            : 
+<span class="lineNum">     248 </span>            :     // Once shutdown begins we set the Atomic&lt;bool&gt; mShutdownStarted flag.
+<a name="249"><span class="lineNum">     249 </span>            :     // This prevents any new runnables from being dispatched into the</a>
+<span class="lineNum">     250 </span>            :     // TaskQueue.  Therefore this loop should be finite.
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     MOZ_ALWAYS_TRUE(SpinEventLoopUntil([&amp;]() -&gt; bool {</span>
+<span class="lineNum">     252 </span>            :         return IsEmpty();
+<span class="lineNum">     253 </span>            :     }));
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     256 </span>            :   }
+<a name="257"><span class="lineNum">     257 </span>            : </a>
+<span class="lineNum">     258 </span>            :   void
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :   MaybeStartShutdown()</span>
+<span class="lineNum">     260 </span>            :   {
+<span class="lineNum">     261 </span>            :     // Any thread
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :     MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     263 </span>            : 
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     if (mShutdownStarted) {</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">     266 </span>            :     }
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     mShutdownStarted = true;</span>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span>            :     // We are marked for shutdown now, but we are still processing runnables.
+<span class="lineNum">     270 </span>            :     // Return for now.  The shutdown will be completed once the queue is
+<span class="lineNum">     271 </span>            :     // drained.
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :     if (mExecutor) {</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">     274 </span>            :     }
+<span class="lineNum">     275 </span>            : 
+<span class="lineNum">     276 </span>            :     // The queue is empty, so we can complete immediately.
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :     NS_DispatchToMainThread(NewRunnableMethod(&quot;ThrottledEventQueue::Inner::ShutdownComplete&quot;,</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :                                               this, &amp;Inner::ShutdownComplete));</span>
+<span class="lineNum">     279 </span>            :   }
+<a name="280"><span class="lineNum">     280 </span>            : </a>
+<span class="lineNum">     281 </span>            :   bool
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :   IsEmpty() const</span>
+<span class="lineNum">     283 </span>            :   {
+<span class="lineNum">     284 </span>            :     // Any thread
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :     return Length() == 0;</span>
+<span class="lineNum">     286 </span>            :   }
+<a name="287"><span class="lineNum">     287 </span>            : </a>
+<span class="lineNum">     288 </span>            :   uint32_t
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   Length() const</span>
+<span class="lineNum">     290 </span>            :   {
+<span class="lineNum">     291 </span>            :     // Any thread
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :     MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :     return mEventQueue.Count(lock);</span>
+<span class="lineNum">     294 </span>            :   }
+<a name="295"><span class="lineNum">     295 </span>            : </a>
+<span class="lineNum">     296 </span>            :   void
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :   AwaitIdle() const</span>
+<span class="lineNum">     298 </span>            :   {
+<span class="lineNum">     299 </span>            :     // Any thread, except the main thread or our base target.  Blocking the
+<span class="lineNum">     300 </span>            :     // main thread is forbidden.  Blocking the base target is guaranteed to
+<span class="lineNum">     301 </span>            :     // produce a deadlock.
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(!NS_IsMainThread());</span>
+<span class="lineNum">     303 </span>            : #ifdef DEBUG
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :     bool onBaseTarget = false;</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :     Unused &lt;&lt; mBaseTarget-&gt;IsOnCurrentThread(&amp;onBaseTarget);</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(!onBaseTarget);</span>
+<span class="lineNum">     307 </span>            : #endif
+<span class="lineNum">     308 </span>            : 
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     while (mExecutor) {</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :       mIdleCondVar.Wait();</span>
+<span class="lineNum">     312 </span>            :     }
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :   }</span>
+<a name="314"><span class="lineNum">     314 </span>            : </a>
+<span class="lineNum">     315 </span>            :   nsresult
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :   DispatchFromScript(nsIRunnable* aEvent, uint32_t aFlags)</span>
+<span class="lineNum">     317 </span>            :   {
+<span class="lineNum">     318 </span>            :     // Any thread
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIRunnable&gt; r = aEvent;</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     return Dispatch(r.forget(), aFlags);</span>
+<span class="lineNum">     321 </span>            :   }
+<a name="322"><span class="lineNum">     322 </span>            : </a>
+<span class="lineNum">     323 </span>            :   nsresult
+<span class="lineNum">     324 </span><span class="lineCov">         14 :   Dispatch(already_AddRefed&lt;nsIRunnable&gt; aEvent, uint32_t aFlags)</span>
+<span class="lineNum">     325 </span>            :   {
+<span class="lineNum">     326 </span><span class="lineCov">         14 :     MOZ_ASSERT(aFlags == NS_DISPATCH_NORMAL ||</span>
+<span class="lineNum">     327 </span>            :                aFlags == NS_DISPATCH_AT_END);
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span>            :     // Any thread
+<span class="lineNum">     330 </span><span class="lineCov">         28 :     MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span>            :     // If we are shutting down, just fall back to our base target
+<span class="lineNum">     333 </span>            :     // directly.
+<span class="lineNum">     334 </span><span class="lineCov">         14 :     if (mShutdownStarted) {</span>
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :       return mBaseTarget-&gt;Dispatch(Move(aEvent), aFlags);</span>
+<span class="lineNum">     336 </span>            :     }
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span>            :     // We are not currently processing events, so we must start
+<span class="lineNum">     339 </span>            :     // operating on our base target.  This is fallible, so do
+<span class="lineNum">     340 </span>            :     // it first.  Our lock will prevent the executor from accessing
+<span class="lineNum">     341 </span>            :     // the event queue before we add the event below.
+<span class="lineNum">     342 </span><span class="lineCov">         14 :     if (!mExecutor) {</span>
+<span class="lineNum">     343 </span>            :       // Note, this creates a ref cycle keeping the inner alive
+<span class="lineNum">     344 </span>            :       // until the queue is drained.
+<span class="lineNum">     345 </span><span class="lineCov">         14 :       mExecutor = new Executor(this);</span>
+<span class="lineNum">     346 </span><span class="lineCov">         14 :       nsresult rv = mBaseTarget-&gt;Dispatch(mExecutor, NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     347 </span><span class="lineCov">         14 :       if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :         mExecutor = nullptr;</span>
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     350 </span>            :       }
+<span class="lineNum">     351 </span>            :     }
+<span class="lineNum">     352 </span>            : 
+<span class="lineNum">     353 </span>            :     // Only add the event to the underlying queue if are able to
+<span class="lineNum">     354 </span>            :     // dispatch to our base target.
+<span class="lineNum">     355 </span><span class="lineCov">         14 :     mEventQueue.PutEvent(Move(aEvent), lock);</span>
+<span class="lineNum">     356 </span><span class="lineCov">         14 :     return NS_OK;</span>
+<span class="lineNum">     357 </span>            :   }
+<a name="358"><span class="lineNum">     358 </span>            : </a>
+<span class="lineNum">     359 </span>            :   nsresult
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   DelayedDispatch(already_AddRefed&lt;nsIRunnable&gt; aEvent, uint32_t aDelay)</span>
+<span class="lineNum">     361 </span>            :   {
+<span class="lineNum">     362 </span>            :     // The base target may implement this, but we don't.  Always fail
+<span class="lineNum">     363 </span>            :     // to provide consistent behavior.
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_IMPLEMENTED;</span>
+<span class="lineNum">     365 </span>            :   }
+<a name="366"><span class="lineNum">     366 </span>            : </a>
+<span class="lineNum">     367 </span>            :   bool
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :   IsOnCurrentThread()</span>
+<span class="lineNum">     369 </span>            :   {
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :     return mBaseTarget-&gt;IsOnCurrentThread();</span>
+<span class="lineNum">     371 </span>            :   }
+<span class="lineNum">     372 </span>            : 
+<span class="lineNum">     373 </span>            :   NS_DECL_THREADSAFE_ISUPPORTS
+<a name="374"><span class="lineNum">     374 </span>            : };</a>
+<span class="lineNum">     375 </span>            : 
+<a name="376"><span class="lineNum">     376 </span><span class="lineCov">         37 : NS_IMPL_ISUPPORTS(ThrottledEventQueue::Inner, nsIObserver);</span></a>
+<span class="lineNum">     377 </span>            : 
+<span class="lineNum">     378 </span><span class="lineCov">         38 : NS_IMPL_ISUPPORTS(ThrottledEventQueue,</span>
+<span class="lineNum">     379 </span>            :                   ThrottledEventQueue,
+<span class="lineNum">     380 </span>            :                   nsIEventTarget,
+<a name="381"><span class="lineNum">     381 </span>            :                   nsISerialEventTarget);</a>
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span><span class="lineCov">          5 : ThrottledEventQueue::ThrottledEventQueue(already_AddRefed&lt;Inner&gt; aInner)</span>
+<span class="lineNum">     384 </span><span class="lineCov">          5 :   : mInner(aInner)</span>
+<span class="lineNum">     385 </span>            : {
+<span class="lineNum">     386 </span><span class="lineCov">          5 :   MOZ_ASSERT(mInner);</span>
+<a name="387"><span class="lineNum">     387 </span><span class="lineCov">          5 : }</span></a>
+<span class="lineNum">     388 </span>            : 
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 : ThrottledEventQueue::~ThrottledEventQueue()</span>
+<span class="lineNum">     390 </span>            : {
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :   mInner-&gt;MaybeStartShutdown();</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 : }</span>
+<a name="393"><span class="lineNum">     393 </span>            : </a>
+<span class="lineNum">     394 </span>            : void
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 : ThrottledEventQueue::MaybeStartShutdown()</span>
+<span class="lineNum">     396 </span>            : {
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :   return mInner-&gt;MaybeStartShutdown();</span>
+<span class="lineNum">     398 </span>            : }
+<a name="399"><span class="lineNum">     399 </span>            : </a>
+<span class="lineNum">     400 </span>            : already_AddRefed&lt;ThrottledEventQueue&gt;
+<span class="lineNum">     401 </span><span class="lineCov">          5 : ThrottledEventQueue::Create(nsISerialEventTarget* aBaseTarget)</span>
+<span class="lineNum">     402 </span>            : {
+<span class="lineNum">     403 </span><span class="lineCov">          5 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     404 </span><span class="lineCov">          5 :   MOZ_ASSERT(aBaseTarget);</span>
+<span class="lineNum">     405 </span>            : 
+<span class="lineNum">     406 </span><span class="lineCov">         10 :   RefPtr&lt;Inner&gt; inner = Inner::Create(aBaseTarget);</span>
+<span class="lineNum">     407 </span><span class="lineCov">          5 :   if (NS_WARN_IF(!inner)) {</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     409 </span>            :   }
+<span class="lineNum">     410 </span>            : 
+<span class="lineNum">     411 </span>            :   RefPtr&lt;ThrottledEventQueue&gt; ref =
+<span class="lineNum">     412 </span><span class="lineCov">         15 :     new ThrottledEventQueue(inner.forget());</span>
+<span class="lineNum">     413 </span><span class="lineCov">          5 :   return ref.forget();</span>
+<span class="lineNum">     414 </span>            : }
+<a name="415"><span class="lineNum">     415 </span>            : </a>
+<span class="lineNum">     416 </span>            : bool
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 : ThrottledEventQueue::IsEmpty() const</span>
+<span class="lineNum">     418 </span>            : {
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :   return mInner-&gt;IsEmpty();</span>
+<span class="lineNum">     420 </span>            : }
+<a name="421"><span class="lineNum">     421 </span>            : </a>
+<span class="lineNum">     422 </span>            : uint32_t
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 : ThrottledEventQueue::Length() const</span>
+<span class="lineNum">     424 </span>            : {
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :   return mInner-&gt;Length();</span>
+<span class="lineNum">     426 </span>            : }
+<a name="427"><span class="lineNum">     427 </span>            : </a>
+<span class="lineNum">     428 </span>            : void
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 : ThrottledEventQueue::AwaitIdle() const</span>
+<span class="lineNum">     430 </span>            : {
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :   return mInner-&gt;AwaitIdle();</span>
+<span class="lineNum">     432 </span>            : }
+<a name="433"><span class="lineNum">     433 </span>            : </a>
+<span class="lineNum">     434 </span>            : NS_IMETHODIMP
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 : ThrottledEventQueue::DispatchFromScript(nsIRunnable* aEvent, uint32_t aFlags)</span>
+<span class="lineNum">     436 </span>            : {
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :   return mInner-&gt;DispatchFromScript(aEvent, aFlags);</span>
+<span class="lineNum">     438 </span>            : }
+<a name="439"><span class="lineNum">     439 </span>            : </a>
+<span class="lineNum">     440 </span>            : NS_IMETHODIMP
+<span class="lineNum">     441 </span><span class="lineCov">         14 : ThrottledEventQueue::Dispatch(already_AddRefed&lt;nsIRunnable&gt; aEvent,</span>
+<span class="lineNum">     442 </span>            :                                      uint32_t aFlags)
+<span class="lineNum">     443 </span>            : {
+<span class="lineNum">     444 </span><span class="lineCov">         14 :   return mInner-&gt;Dispatch(Move(aEvent), aFlags);</span>
+<span class="lineNum">     445 </span>            : }
+<a name="446"><span class="lineNum">     446 </span>            : </a>
+<span class="lineNum">     447 </span>            : NS_IMETHODIMP
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 : ThrottledEventQueue::DelayedDispatch(already_AddRefed&lt;nsIRunnable&gt; aEvent,</span>
+<span class="lineNum">     449 </span>            :                                             uint32_t aFlags)
+<span class="lineNum">     450 </span>            : {
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :   return mInner-&gt;DelayedDispatch(Move(aEvent), aFlags);</span>
+<span class="lineNum">     452 </span>            : }
+<a name="453"><span class="lineNum">     453 </span>            : </a>
+<span class="lineNum">     454 </span>            : NS_IMETHODIMP
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 : ThrottledEventQueue::IsOnCurrentThread(bool* aResult)</span>
+<span class="lineNum">     456 </span>            : {
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :   *aResult = mInner-&gt;IsOnCurrentThread();</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     459 </span>            : }
+<a name="460"><span class="lineNum">     460 </span>            : </a>
+<span class="lineNum">     461 </span>            : NS_IMETHODIMP_(bool)
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 : ThrottledEventQueue::IsOnCurrentThreadInfallible()</span>
+<span class="lineNum">     463 </span>            : {
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :   return mInner-&gt;IsOnCurrentThread();</span>
+<span class="lineNum">     465 </span>            : }
+<span class="lineNum">     466 </span>            : 
+<span class="lineNum">     467 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

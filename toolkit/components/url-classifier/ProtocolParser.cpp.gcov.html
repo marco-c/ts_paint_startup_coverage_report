@@ -1,0 +1,1197 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - toolkit/components/url-classifier/ProtocolParser.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">toolkit/components/url-classifier</a> - ProtocolParser.cpp<span style="font-size: 80%;"> (source / <a href="ProtocolParser.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">145</td>
+            <td class="headerCovTableEntry">551</td>
+            <td class="headerCovTableEntryLo">26.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">19</td>
+            <td class="headerCovTableEntry">46</td>
+            <td class="headerCovTableEntryLo">41.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : //* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       3 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       4 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       5 </span>            : 
+<span class="lineNum">       6 </span>            : #include &quot;ProtocolParser.h&quot;
+<span class="lineNum">       7 </span>            : #include &quot;LookupCache.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;nsNetCID.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/Logging.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;prnetdb.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;prprf.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &quot;nsUrlClassifierDBService.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nsUrlClassifierUtils.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsPrintfCString.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;mozilla/Base64.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;RiceDeltaDecoder.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;mozilla/EndianUtils.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;mozilla/IntegerPrintfMacros.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;mozilla/SizePrintfMacros.h&quot;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : // MOZ_LOG=UrlClassifierProtocolParser:5
+<span class="lineNum">      23 </span>            : mozilla::LazyLogModule gUrlClassifierProtocolParserLog(&quot;UrlClassifierProtocolParser&quot;);
+<span class="lineNum">      24 </span>            : #define PARSER_LOG(args) MOZ_LOG(gUrlClassifierProtocolParserLog, mozilla::LogLevel::Debug, args)
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : namespace mozilla {
+<span class="lineNum">      27 </span>            : namespace safebrowsing {
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : // Updates will fail if fed chunks larger than this
+<span class="lineNum">      30 </span>            : const uint32_t MAX_CHUNK_SIZE = (1024 * 1024);
+<span class="lineNum">      31 </span>            : // Updates will fail if the total number of tocuhed chunks is larger than this
+<span class="lineNum">      32 </span>            : const uint32_t MAX_CHUNK_RANGE = 1000000;
+<span class="lineNum">      33 </span>            : 
+<span class="lineNum">      34 </span>            : const uint32_t DOMAIN_SIZE = 4;
+<span class="lineNum">      35 </span>            : 
+<span class="lineNum">      36 </span>            : // Parse one stringified range of chunks of the form &quot;n&quot; or &quot;n-m&quot; from a
+<span class="lineNum">      37 </span>            : // comma-separated list of chunks.  Upon return, 'begin' will point to the
+<a name="38"><span class="lineNum">      38 </span>            : // next range of chunks in the list of chunks.</a>
+<span class="lineNum">      39 </span>            : static bool
+<span class="lineNum">      40 </span><span class="lineCov">          6 : ParseChunkRange(nsACString::const_iterator&amp; aBegin,</span>
+<span class="lineNum">      41 </span>            :                 const nsACString::const_iterator&amp; aEnd,
+<span class="lineNum">      42 </span>            :                 uint32_t* aFirst, uint32_t* aLast)
+<span class="lineNum">      43 </span>            : {
+<span class="lineNum">      44 </span><span class="lineCov">          6 :   nsACString::const_iterator iter = aBegin;</span>
+<span class="lineNum">      45 </span><span class="lineCov">          6 :   FindCharInReadable(',', iter, aEnd);</span>
+<span class="lineNum">      46 </span>            : 
+<span class="lineNum">      47 </span><span class="lineCov">         12 :   nsAutoCString element(Substring(aBegin, iter));</span>
+<span class="lineNum">      48 </span><span class="lineCov">          6 :   aBegin = iter;</span>
+<span class="lineNum">      49 </span><span class="lineCov">          6 :   if (aBegin != aEnd)</span>
+<span class="lineNum">      50 </span><span class="lineNoCov">          0 :     aBegin++;</span>
+<span class="lineNum">      51 </span>            : 
+<span class="lineNum">      52 </span><span class="lineCov">          6 :   uint32_t numRead = PR_sscanf(element.get(), &quot;%u-%u&quot;, aFirst, aLast);</span>
+<span class="lineNum">      53 </span><span class="lineCov">          6 :   if (numRead == 2) {</span>
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 :     if (*aFirst &gt; *aLast) {</span>
+<span class="lineNum">      55 </span><span class="lineNoCov">          0 :       uint32_t tmp = *aFirst;</span>
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :       *aFirst = *aLast;</span>
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :       *aLast = tmp;</span>
+<span class="lineNum">      58 </span>            :     }
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">      60 </span>            :   }
+<span class="lineNum">      61 </span>            : 
+<span class="lineNum">      62 </span><span class="lineCov">          6 :   if (numRead == 1) {</span>
+<span class="lineNum">      63 </span><span class="lineCov">          6 :     *aLast = *aFirst;</span>
+<span class="lineNum">      64 </span><span class="lineCov">          6 :     return true;</span>
+<span class="lineNum">      65 </span>            :   }
+<span class="lineNum">      66 </span>            : 
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :   return false;</span>
+<span class="lineNum">      68 </span>            : }
+<span class="lineNum">      69 </span>            : 
+<span class="lineNum">      70 </span>            : ///////////////////////////////////////////////////////////////
+<a name="71"><span class="lineNum">      71 </span>            : // ProtocolParser implementation</a>
+<span class="lineNum">      72 </span>            : 
+<span class="lineNum">      73 </span><span class="lineCov">          1 : ProtocolParser::ProtocolParser()</span>
+<span class="lineNum">      74 </span>            :   : mUpdateStatus(NS_OK)
+<span class="lineNum">      75 </span><span class="lineCov">          1 :   , mUpdateWaitSec(0)</span>
+<span class="lineNum">      76 </span>            : {
+<a name="77"><span class="lineNum">      77 </span><span class="lineCov">          1 : }</span></a>
+<span class="lineNum">      78 </span>            : 
+<span class="lineNum">      79 </span><span class="lineCov">          2 : ProtocolParser::~ProtocolParser()</span>
+<span class="lineNum">      80 </span>            : {
+<span class="lineNum">      81 </span><span class="lineCov">          1 :   CleanupUpdates();</span>
+<span class="lineNum">      82 </span><span class="lineCov">          1 : }</span>
+<a name="83"><span class="lineNum">      83 </span>            : </a>
+<span class="lineNum">      84 </span>            : nsresult
+<span class="lineNum">      85 </span><span class="lineCov">          1 : ProtocolParser::Init(nsICryptoHash* aHasher)</span>
+<span class="lineNum">      86 </span>            : {
+<span class="lineNum">      87 </span><span class="lineCov">          1 :   mCryptoHash = aHasher;</span>
+<span class="lineNum">      88 </span><span class="lineCov">          1 :   return NS_OK;</span>
+<span class="lineNum">      89 </span>            : }
+<a name="90"><span class="lineNum">      90 </span>            : </a>
+<span class="lineNum">      91 </span>            : void
+<span class="lineNum">      92 </span><span class="lineCov">          1 : ProtocolParser::CleanupUpdates()</span>
+<span class="lineNum">      93 </span>            : {
+<span class="lineNum">      94 </span><span class="lineCov">          1 :   for (uint32_t i = 0; i &lt; mTableUpdates.Length(); i++) {</span>
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :     delete mTableUpdates[i];</span>
+<span class="lineNum">      96 </span>            :   }
+<span class="lineNum">      97 </span><span class="lineCov">          1 :   mTableUpdates.Clear();</span>
+<span class="lineNum">      98 </span><span class="lineCov">          1 : }</span>
+<a name="99"><span class="lineNum">      99 </span>            : </a>
+<span class="lineNum">     100 </span>            : TableUpdate *
+<span class="lineNum">     101 </span><span class="lineCov">          6 : ProtocolParser::GetTableUpdate(const nsACString&amp; aTable)</span>
+<span class="lineNum">     102 </span>            : {
+<span class="lineNum">     103 </span><span class="lineCov">         21 :   for (uint32_t i = 0; i &lt; mTableUpdates.Length(); i++) {</span>
+<span class="lineNum">     104 </span><span class="lineCov">         15 :     if (aTable.Equals(mTableUpdates[i]-&gt;TableName())) {</span>
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :       return mTableUpdates[i];</span>
+<span class="lineNum">     106 </span>            :     }
+<span class="lineNum">     107 </span>            :   }
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span>            :   // We free automatically on destruction, ownership of these
+<span class="lineNum">     110 </span>            :   // updates can be transferred to DBServiceWorker, which passes
+<span class="lineNum">     111 </span>            :   // them back to Classifier when doing the updates, and that
+<span class="lineNum">     112 </span>            :   // will free them.
+<span class="lineNum">     113 </span><span class="lineCov">          6 :   TableUpdate *update = CreateTableUpdate(aTable);</span>
+<span class="lineNum">     114 </span><span class="lineCov">          6 :   mTableUpdates.AppendElement(update);</span>
+<span class="lineNum">     115 </span><span class="lineCov">          6 :   return update;</span>
+<span class="lineNum">     116 </span>            : }
+<span class="lineNum">     117 </span>            : 
+<span class="lineNum">     118 </span>            : ///////////////////////////////////////////////////////////////////////
+<a name="119"><span class="lineNum">     119 </span>            : // ProtocolParserV2</a>
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span><span class="lineCov">          1 : ProtocolParserV2::ProtocolParserV2()</span>
+<span class="lineNum">     122 </span>            :   : mState(PROTOCOL_STATE_CONTROL)
+<span class="lineNum">     123 </span>            :   , mResetRequested(false)
+<span class="lineNum">     124 </span><span class="lineCov">          1 :   , mTableUpdate(nullptr)</span>
+<span class="lineNum">     125 </span>            : {
+<a name="126"><span class="lineNum">     126 </span><span class="lineCov">          1 : }</span></a>
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span><span class="lineCov">          2 : ProtocolParserV2::~ProtocolParserV2()</span>
+<span class="lineNum">     129 </span>            : {
+<span class="lineNum">     130 </span><span class="lineCov">          3 : }</span>
+<a name="131"><span class="lineNum">     131 </span>            : </a>
+<span class="lineNum">     132 </span>            : void
+<span class="lineNum">     133 </span><span class="lineCov">          6 : ProtocolParserV2::SetCurrentTable(const nsACString&amp; aTable)</span>
+<span class="lineNum">     134 </span>            : {
+<span class="lineNum">     135 </span><span class="lineCov">          6 :   auto update = GetTableUpdate(aTable);</span>
+<span class="lineNum">     136 </span><span class="lineCov">          6 :   mTableUpdate = TableUpdate::Cast&lt;TableUpdateV2&gt;(update);</span>
+<span class="lineNum">     137 </span><span class="lineCov">          6 : }</span>
+<a name="138"><span class="lineNum">     138 </span>            : </a>
+<span class="lineNum">     139 </span>            : nsresult
+<span class="lineNum">     140 </span><span class="lineCov">          1 : ProtocolParserV2::AppendStream(const nsACString&amp; aData)</span>
+<span class="lineNum">     141 </span>            : {
+<span class="lineNum">     142 </span><span class="lineCov">          1 :   if (NS_FAILED(mUpdateStatus))</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :     return mUpdateStatus;</span>
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span>            :   nsresult rv;
+<span class="lineNum">     146 </span><span class="lineCov">          1 :   mPending.Append(aData);</span>
+<span class="lineNum">     147 </span>            : #ifdef MOZ_SAFEBROWSING_DUMP_FAILED_UPDATES
+<span class="lineNum">     148 </span><span class="lineCov">          1 :   mRawUpdate.Append(aData);</span>
+<span class="lineNum">     149 </span>            : #endif
+<span class="lineNum">     150 </span>            : 
+<span class="lineNum">     151 </span><span class="lineCov">          1 :   bool done = false;</span>
+<span class="lineNum">     152 </span><span class="lineCov">         31 :   while (!done) {</span>
+<span class="lineNum">     153 </span><span class="lineCov">         15 :     if (nsUrlClassifierDBService::ShutdownHasStarted()) {</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :       return NS_ERROR_ABORT;</span>
+<span class="lineNum">     155 </span>            :     }
+<span class="lineNum">     156 </span>            : 
+<span class="lineNum">     157 </span><span class="lineCov">         15 :     if (mState == PROTOCOL_STATE_CONTROL) {</span>
+<span class="lineNum">     158 </span><span class="lineCov">          8 :       rv = ProcessControl(&amp;done);</span>
+<span class="lineNum">     159 </span><span class="lineCov">          7 :     } else if (mState == PROTOCOL_STATE_CHUNK) {</span>
+<span class="lineNum">     160 </span><span class="lineCov">          7 :       rv = ProcessChunk(&amp;done);</span>
+<span class="lineNum">     161 </span>            :     } else {
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :       NS_ERROR(&quot;Unexpected protocol state&quot;);</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :       rv = NS_ERROR_FAILURE;</span>
+<span class="lineNum">     164 </span>            :     }
+<span class="lineNum">     165 </span><span class="lineCov">         15 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :       mUpdateStatus = rv;</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     168 </span>            :     }
+<span class="lineNum">     169 </span>            :   }
+<span class="lineNum">     170 </span><span class="lineCov">          1 :   return NS_OK;</span>
+<span class="lineNum">     171 </span>            : }
+<a name="172"><span class="lineNum">     172 </span>            : </a>
+<span class="lineNum">     173 </span>            : void
+<span class="lineNum">     174 </span><span class="lineCov">          1 : ProtocolParserV2::End()</span>
+<span class="lineNum">     175 </span>            : {
+<span class="lineNum">     176 </span>            :   // Inbound data has already been processed in every AppendStream() call.
+<span class="lineNum">     177 </span><span class="lineCov">          1 : }</span>
+<a name="178"><span class="lineNum">     178 </span>            : </a>
+<span class="lineNum">     179 </span>            : nsresult
+<span class="lineNum">     180 </span><span class="lineCov">          8 : ProtocolParserV2::ProcessControl(bool* aDone)</span>
+<span class="lineNum">     181 </span>            : {
+<span class="lineNum">     182 </span>            :   nsresult rv;
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span><span class="lineCov">         16 :   nsAutoCString line;</span>
+<span class="lineNum">     185 </span><span class="lineCov">          8 :   *aDone = true;</span>
+<span class="lineNum">     186 </span><span class="lineCov">         54 :   while (NextLine(line)) {</span>
+<span class="lineNum">     187 </span><span class="lineCov">         30 :     PARSER_LOG((&quot;Processing %s\n&quot;, line.get()));</span>
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span><span class="lineCov">         30 :     if (StringBeginsWith(line, NS_LITERAL_CSTRING(&quot;i:&quot;))) {</span>
+<span class="lineNum">     190 </span>            :       // Set the table name from the table header line.
+<span class="lineNum">     191 </span><span class="lineCov">          6 :       SetCurrentTable(Substring(line, 2));</span>
+<span class="lineNum">     192 </span><span class="lineCov">         24 :     } else if (StringBeginsWith(line, NS_LITERAL_CSTRING(&quot;n:&quot;))) {</span>
+<span class="lineNum">     193 </span><span class="lineCov">          6 :       if (PR_sscanf(line.get(), &quot;n:%d&quot;, &amp;mUpdateWaitSec) != 1) {</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :         PARSER_LOG((&quot;Error parsing n: '%s' (%d)&quot;, line.get(), mUpdateWaitSec));</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :         return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     196 </span>            :       }
+<span class="lineNum">     197 </span><span class="lineCov">         18 :     } else if (line.EqualsLiteral(&quot;r:pleasereset&quot;)) {</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :       mResetRequested = true;</span>
+<span class="lineNum">     199 </span><span class="lineCov">         18 :     } else if (StringBeginsWith(line, NS_LITERAL_CSTRING(&quot;u:&quot;))) {</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :       rv = ProcessForward(line);</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :       NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     202 </span><span class="lineCov">         58 :     } else if (StringBeginsWith(line, NS_LITERAL_CSTRING(&quot;a:&quot;)) ||</span>
+<span class="lineNum">     203 </span><span class="lineCov">         40 :                StringBeginsWith(line, NS_LITERAL_CSTRING(&quot;s:&quot;))) {</span>
+<span class="lineNum">     204 </span><span class="lineCov">          7 :       rv = ProcessChunkControl(line);</span>
+<span class="lineNum">     205 </span><span class="lineCov">          7 :       NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     206 </span><span class="lineCov">          7 :       *aDone = false;</span>
+<span class="lineNum">     207 </span><span class="lineCov">          7 :       return NS_OK;</span>
+<span class="lineNum">     208 </span><span class="lineCov">         32 :     } else if (StringBeginsWith(line, NS_LITERAL_CSTRING(&quot;ad:&quot;)) ||</span>
+<span class="lineNum">     209 </span><span class="lineCov">         21 :                StringBeginsWith(line, NS_LITERAL_CSTRING(&quot;sd:&quot;))) {</span>
+<span class="lineNum">     210 </span><span class="lineCov">          6 :       rv = ProcessExpirations(line);</span>
+<span class="lineNum">     211 </span><span class="lineCov">          6 :       NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     212 </span>            :     }
+<span class="lineNum">     213 </span>            :   }
+<span class="lineNum">     214 </span>            : 
+<span class="lineNum">     215 </span><span class="lineCov">          1 :   *aDone = true;</span>
+<span class="lineNum">     216 </span><span class="lineCov">          1 :   return NS_OK;</span>
+<span class="lineNum">     217 </span>            : }
+<a name="218"><span class="lineNum">     218 </span>            : </a>
+<span class="lineNum">     219 </span>            : nsresult
+<span class="lineNum">     220 </span><span class="lineCov">          6 : ProtocolParserV2::ProcessExpirations(const nsCString&amp; aLine)</span>
+<span class="lineNum">     221 </span>            : {
+<span class="lineNum">     222 </span><span class="lineCov">          6 :   if (!mTableUpdate) {</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Got an expiration without a table.&quot;);</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     225 </span>            :   }
+<span class="lineNum">     226 </span><span class="lineCov">         12 :   const nsACString&amp; list = Substring(aLine, 3);</span>
+<span class="lineNum">     227 </span><span class="lineCov">          6 :   nsACString::const_iterator begin, end;</span>
+<span class="lineNum">     228 </span><span class="lineCov">          6 :   list.BeginReading(begin);</span>
+<span class="lineNum">     229 </span><span class="lineCov">          6 :   list.EndReading(end);</span>
+<span class="lineNum">     230 </span><span class="lineCov">         18 :   while (begin != end) {</span>
+<span class="lineNum">     231 </span>            :     uint32_t first, last;
+<span class="lineNum">     232 </span><span class="lineCov">          6 :     if (ParseChunkRange(begin, end, &amp;first, &amp;last)) {</span>
+<span class="lineNum">     233 </span><span class="lineCov">          6 :       if (last &lt; first) return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     234 </span><span class="lineCov">          6 :       if (last - first &gt; MAX_CHUNK_RANGE) return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     235 </span><span class="lineCov">         12 :       for (uint32_t num = first; num &lt;= last; num++) {</span>
+<span class="lineNum">     236 </span><span class="lineCov">          6 :         if (aLine[0] == 'a') {</span>
+<span class="lineNum">     237 </span><span class="lineCov">          6 :           nsresult rv = mTableUpdate-&gt;NewAddExpiration(num);</span>
+<span class="lineNum">     238 </span><span class="lineCov">          6 :           if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :             return rv;</span>
+<span class="lineNum">     240 </span>            :           }
+<span class="lineNum">     241 </span>            :         } else {
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :           nsresult rv = mTableUpdate-&gt;NewSubExpiration(num);</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :           if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :             return rv;</span>
+<span class="lineNum">     245 </span>            :           }
+<span class="lineNum">     246 </span>            :         }
+<span class="lineNum">     247 </span>            :       }
+<span class="lineNum">     248 </span>            :     } else {
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :       return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     250 </span>            :     }
+<span class="lineNum">     251 </span>            :   }
+<span class="lineNum">     252 </span><span class="lineCov">          6 :   return NS_OK;</span>
+<span class="lineNum">     253 </span>            : }
+<a name="254"><span class="lineNum">     254 </span>            : </a>
+<span class="lineNum">     255 </span>            : nsresult
+<span class="lineNum">     256 </span><span class="lineCov">          7 : ProtocolParserV2::ProcessChunkControl(const nsCString&amp; aLine)</span>
+<span class="lineNum">     257 </span>            : {
+<span class="lineNum">     258 </span><span class="lineCov">          7 :   if (!mTableUpdate) {</span>
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Got a chunk before getting a table.&quot;);</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     261 </span>            :   }
+<span class="lineNum">     262 </span>            : 
+<span class="lineNum">     263 </span><span class="lineCov">          7 :   mState = PROTOCOL_STATE_CHUNK;</span>
+<span class="lineNum">     264 </span>            :   char command;
+<span class="lineNum">     265 </span>            : 
+<span class="lineNum">     266 </span><span class="lineCov">          7 :   mChunkState.Clear();</span>
+<span class="lineNum">     267 </span>            : 
+<span class="lineNum">     268 </span><span class="lineCov">          7 :   if (PR_sscanf(aLine.get(),</span>
+<span class="lineNum">     269 </span>            :                 &quot;%c:%d:%d:%d&quot;,
+<span class="lineNum">     270 </span>            :                 &amp;command,
+<span class="lineNum">     271 </span>            :                 &amp;mChunkState.num, &amp;mChunkState.hashSize, &amp;mChunkState.length)
+<span class="lineNum">     272 </span>            :       != 4)
+<span class="lineNum">     273 </span>            :   {
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     NS_WARNING((&quot;PR_sscanf failed&quot;));</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     276 </span>            :   }
+<span class="lineNum">     277 </span>            : 
+<span class="lineNum">     278 </span><span class="lineCov">          7 :   if (mChunkState.length &gt; MAX_CHUNK_SIZE) {</span>
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Invalid length specified in update.&quot;);</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     281 </span>            :   }
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span><span class="lineCov">          7 :   if (!(mChunkState.hashSize == PREFIX_SIZE || mChunkState.hashSize == COMPLETE_SIZE)) {</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Invalid hash size specified in update.&quot;);</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     286 </span>            :   }
+<span class="lineNum">     287 </span>            : 
+<span class="lineNum">     288 </span><span class="lineCov">         21 :   if (StringEndsWith(mTableUpdate-&gt;TableName(),</span>
+<span class="lineNum">     289 </span><span class="lineCov">         42 :                      NS_LITERAL_CSTRING(&quot;-shavar&quot;)) ||</span>
+<span class="lineNum">     290 </span><span class="lineCov">          7 :       StringEndsWith(mTableUpdate-&gt;TableName(),</span>
+<span class="lineNum">     291 </span><span class="lineCov">         21 :                      NS_LITERAL_CSTRING(&quot;-simple&quot;))) {</span>
+<span class="lineNum">     292 </span>            :     // Accommodate test tables ending in -simple for now.
+<span class="lineNum">     293 </span><span class="lineCov">          7 :     mChunkState.type = (command == 'a') ? CHUNK_ADD : CHUNK_SUB;</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :   } else if (StringEndsWith(mTableUpdate-&gt;TableName(),</span>
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :     NS_LITERAL_CSTRING(&quot;-digest256&quot;))) {</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :     mChunkState.type = (command == 'a') ? CHUNK_ADD_DIGEST : CHUNK_SUB_DIGEST;</span>
+<span class="lineNum">     297 </span>            :   }
+<span class="lineNum">     298 </span>            :   nsresult rv;
+<span class="lineNum">     299 </span><span class="lineCov">          7 :   switch (mChunkState.type) {</span>
+<span class="lineNum">     300 </span>            :     case CHUNK_ADD:
+<span class="lineNum">     301 </span><span class="lineCov">          7 :       rv = mTableUpdate-&gt;NewAddChunk(mChunkState.num);</span>
+<span class="lineNum">     302 </span><span class="lineCov">          7 :       if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     304 </span>            :       }
+<span class="lineNum">     305 </span><span class="lineCov">          7 :       break;</span>
+<span class="lineNum">     306 </span>            :     case CHUNK_SUB:
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :       rv = mTableUpdate-&gt;NewSubChunk(mChunkState.num);</span>
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :       if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     310 </span>            :       }
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     312 </span>            :     case CHUNK_ADD_DIGEST:
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :       rv = mTableUpdate-&gt;NewAddChunk(mChunkState.num);</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :       if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     316 </span>            :       }
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     318 </span>            :     case CHUNK_SUB_DIGEST:
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :       rv = mTableUpdate-&gt;NewSubChunk(mChunkState.num);</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :       if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     322 </span>            :       }
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     324 </span>            :   }
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span><span class="lineCov">          7 :   return NS_OK;</span>
+<span class="lineNum">     327 </span>            : }
+<a name="328"><span class="lineNum">     328 </span>            : </a>
+<span class="lineNum">     329 </span>            : nsresult
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 : ProtocolParserV2::ProcessForward(const nsCString&amp; aLine)</span>
+<span class="lineNum">     331 </span>            : {
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :   const nsACString&amp; forward = Substring(aLine, 2);</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :   return AddForward(forward);</span>
+<span class="lineNum">     334 </span>            : }
+<a name="335"><span class="lineNum">     335 </span>            : </a>
+<span class="lineNum">     336 </span>            : nsresult
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 : ProtocolParserV2::AddForward(const nsACString&amp; aUrl)</span>
+<span class="lineNum">     338 </span>            : {
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :   if (!mTableUpdate) {</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Forward without a table name.&quot;);</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     342 </span>            :   }
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :   ForwardedUpdate *forward = mForwards.AppendElement();</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :   forward-&gt;table = mTableUpdate-&gt;TableName();</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :   forward-&gt;url.Assign(aUrl);</span>
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     349 </span>            : }
+<a name="350"><span class="lineNum">     350 </span>            : </a>
+<span class="lineNum">     351 </span>            : nsresult
+<span class="lineNum">     352 </span><span class="lineCov">          7 : ProtocolParserV2::ProcessChunk(bool* aDone)</span>
+<span class="lineNum">     353 </span>            : {
+<span class="lineNum">     354 </span><span class="lineCov">          7 :   if (!mTableUpdate) {</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Processing chunk without an active table.&quot;);</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     357 </span>            :   }
+<span class="lineNum">     358 </span>            : 
+<span class="lineNum">     359 </span><span class="lineCov">          7 :   NS_ASSERTION(mChunkState.num != 0, &quot;Must have a chunk number.&quot;);</span>
+<span class="lineNum">     360 </span>            : 
+<span class="lineNum">     361 </span><span class="lineCov">          7 :   if (mPending.Length() &lt; mChunkState.length) {</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :     *aDone = true;</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     364 </span>            :   }
+<span class="lineNum">     365 </span>            : 
+<span class="lineNum">     366 </span>            :   // Pull the chunk out of the pending stream data.
+<span class="lineNum">     367 </span><span class="lineCov">         14 :   nsAutoCString chunk;</span>
+<span class="lineNum">     368 </span><span class="lineCov">          7 :   chunk.Assign(Substring(mPending, 0, mChunkState.length));</span>
+<span class="lineNum">     369 </span><span class="lineCov">          7 :   mPending.Cut(0, mChunkState.length);</span>
+<span class="lineNum">     370 </span>            : 
+<span class="lineNum">     371 </span><span class="lineCov">          7 :   *aDone = false;</span>
+<span class="lineNum">     372 </span><span class="lineCov">          7 :   mState = PROTOCOL_STATE_CONTROL;</span>
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span><span class="lineCov">         14 :   if (StringEndsWith(mTableUpdate-&gt;TableName(),</span>
+<span class="lineNum">     375 </span><span class="lineCov">         14 :                      NS_LITERAL_CSTRING(&quot;-shavar&quot;))) {</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :     return ProcessShaChunk(chunk);</span>
+<span class="lineNum">     377 </span>            :   }
+<span class="lineNum">     378 </span><span class="lineCov">         14 :   if (StringEndsWith(mTableUpdate-&gt;TableName(),</span>
+<span class="lineNum">     379 </span><span class="lineCov">         14 :              NS_LITERAL_CSTRING(&quot;-digest256&quot;))) {</span>
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :     return ProcessDigestChunk(chunk);</span>
+<span class="lineNum">     381 </span>            :   }
+<span class="lineNum">     382 </span><span class="lineCov">          7 :   return ProcessPlaintextChunk(chunk);</span>
+<span class="lineNum">     383 </span>            : }
+<span class="lineNum">     384 </span>            : 
+<span class="lineNum">     385 </span>            : /**
+<span class="lineNum">     386 </span>            :  * Process a plaintext chunk (currently only used in unit tests).
+<a name="387"><span class="lineNum">     387 </span>            :  */</a>
+<span class="lineNum">     388 </span>            : nsresult
+<span class="lineNum">     389 </span><span class="lineCov">          7 : ProtocolParserV2::ProcessPlaintextChunk(const nsACString&amp; aChunk)</span>
+<span class="lineNum">     390 </span>            : {
+<span class="lineNum">     391 </span><span class="lineCov">          7 :   if (!mTableUpdate) {</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Chunk received with no table.&quot;);</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     394 </span>            :   }
+<span class="lineNum">     395 </span>            : 
+<span class="lineNum">     396 </span><span class="lineCov">          7 :   PARSER_LOG((&quot;Handling a %d-byte simple chunk&quot;, aChunk.Length()));</span>
+<span class="lineNum">     397 </span>            : 
+<span class="lineNum">     398 </span><span class="lineCov">         14 :   nsTArray&lt;nsCString&gt; lines;</span>
+<span class="lineNum">     399 </span><span class="lineCov">          7 :   ParseString(PromiseFlatCString(aChunk), '\n', lines);</span>
+<span class="lineNum">     400 </span>            : 
+<span class="lineNum">     401 </span>            :   // non-hashed tables need to be hashed
+<span class="lineNum">     402 </span><span class="lineCov">         14 :   for (uint32_t i = 0; i &lt; lines.Length(); i++) {</span>
+<span class="lineNum">     403 </span><span class="lineCov">          7 :     nsCString&amp; line = lines[i];</span>
+<span class="lineNum">     404 </span>            : 
+<span class="lineNum">     405 </span><span class="lineCov">          7 :     if (mChunkState.type == CHUNK_ADD) {</span>
+<span class="lineNum">     406 </span><span class="lineCov">          7 :       if (mChunkState.hashSize == COMPLETE_SIZE) {</span>
+<span class="lineNum">     407 </span>            :         Completion hash;
+<span class="lineNum">     408 </span><span class="lineCov">          7 :         hash.FromPlaintext(line, mCryptoHash);</span>
+<span class="lineNum">     409 </span><span class="lineCov">          7 :         nsresult rv = mTableUpdate-&gt;NewAddComplete(mChunkState.num, hash);</span>
+<span class="lineNum">     410 </span><span class="lineCov">          7 :         if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :           return rv;</span>
+<span class="lineNum">     412 </span>            :         }
+<span class="lineNum">     413 </span>            :       } else {
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :         NS_ASSERTION(mChunkState.hashSize == 4, &quot;Only 32- or 4-byte hashes can be used for add chunks.&quot;);</span>
+<span class="lineNum">     415 </span>            :         Prefix hash;
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :         hash.FromPlaintext(line, mCryptoHash);</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :         nsresult rv = mTableUpdate-&gt;NewAddPrefix(mChunkState.num, hash);</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :           return rv;</span>
+<span class="lineNum">     420 </span>            :         }
+<span class="lineNum">     421 </span>            :       }
+<span class="lineNum">     422 </span>            :     } else {
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :       nsCString::const_iterator begin, iter, end;</span>
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :       line.BeginReading(begin);</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :       line.EndReading(end);</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :       iter = begin;</span>
+<span class="lineNum">     427 </span>            :       uint32_t addChunk;
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :       if (!FindCharInReadable(':', iter, end) ||</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :           PR_sscanf(lines[i].get(), &quot;%d:&quot;, &amp;addChunk) != 1) {</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;Received sub chunk without associated add chunk.&quot;);</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :         return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     432 </span>            :       }
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :       iter++;</span>
+<span class="lineNum">     434 </span>            : 
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :       if (mChunkState.hashSize == COMPLETE_SIZE) {</span>
+<span class="lineNum">     436 </span>            :         Completion hash;
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :         hash.FromPlaintext(Substring(iter, end), mCryptoHash);</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :         nsresult rv = mTableUpdate-&gt;NewSubComplete(addChunk, hash, mChunkState.num);</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :           return rv;</span>
+<span class="lineNum">     441 </span>            :         }
+<span class="lineNum">     442 </span>            :       } else {
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :         NS_ASSERTION(mChunkState.hashSize == 4, &quot;Only 32- or 4-byte hashes can be used for add chunks.&quot;);</span>
+<span class="lineNum">     444 </span>            :         Prefix hash;
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :         hash.FromPlaintext(Substring(iter, end), mCryptoHash);</span>
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :         nsresult rv = mTableUpdate-&gt;NewSubPrefix(addChunk, hash, mChunkState.num);</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :           return rv;</span>
+<span class="lineNum">     449 </span>            :         }
+<span class="lineNum">     450 </span>            :       }
+<span class="lineNum">     451 </span>            :     }
+<span class="lineNum">     452 </span>            :   }
+<span class="lineNum">     453 </span>            : 
+<span class="lineNum">     454 </span><span class="lineCov">          7 :   return NS_OK;</span>
+<span class="lineNum">     455 </span>            : }
+<a name="456"><span class="lineNum">     456 </span>            : </a>
+<span class="lineNum">     457 </span>            : nsresult
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 : ProtocolParserV2::ProcessShaChunk(const nsACString&amp; aChunk)</span>
+<span class="lineNum">     459 </span>            : {
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :   uint32_t start = 0;</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :   while (start &lt; aChunk.Length()) {</span>
+<span class="lineNum">     462 </span>            :     // First four bytes are the domain key.
+<span class="lineNum">     463 </span>            :     Prefix domain;
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :     domain.Assign(Substring(aChunk, start, DOMAIN_SIZE));</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :     start += DOMAIN_SIZE;</span>
+<span class="lineNum">     466 </span>            : 
+<span class="lineNum">     467 </span>            :     // Then a count of entries.
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :     uint8_t numEntries = static_cast&lt;uint8_t&gt;(aChunk[start]);</span>
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :     start++;</span>
+<span class="lineNum">     470 </span>            : 
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;Handling a %d-byte shavar chunk containing %u entries&quot;</span>
+<span class="lineNum">     472 </span>            :                 &quot; for domain %X&quot;, aChunk.Length(), numEntries,
+<span class="lineNum">     473 </span>            :                 domain.ToUint32()));
+<span class="lineNum">     474 </span>            : 
+<span class="lineNum">     475 </span>            :     nsresult rv;
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :     if (mChunkState.type == CHUNK_ADD &amp;&amp; mChunkState.hashSize == PREFIX_SIZE) {</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :       rv = ProcessHostAdd(domain, numEntries, aChunk, &amp;start);</span>
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :     } else if (mChunkState.type == CHUNK_ADD &amp;&amp; mChunkState.hashSize == COMPLETE_SIZE) {</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :       rv = ProcessHostAddComplete(numEntries, aChunk, &amp;start);</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :     } else if (mChunkState.type == CHUNK_SUB &amp;&amp; mChunkState.hashSize == PREFIX_SIZE) {</span>
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :       rv = ProcessHostSub(domain, numEntries, aChunk, &amp;start);</span>
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :     } else if (mChunkState.type == CHUNK_SUB &amp;&amp; mChunkState.hashSize == COMPLETE_SIZE) {</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :       rv = ProcessHostSubComplete(numEntries, aChunk, &amp;start);</span>
+<span class="lineNum">     484 </span>            :     } else {
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :       NS_WARNING(&quot;Unexpected chunk type/hash size!&quot;);</span>
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :       PARSER_LOG((&quot;Got an unexpected chunk type/hash size: %s:%d&quot;,</span>
+<span class="lineNum">     487 </span>            :            mChunkState.type == CHUNK_ADD ? &quot;add&quot; : &quot;sub&quot;,
+<span class="lineNum">     488 </span>            :            mChunkState.hashSize));
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :       return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     490 </span>            :     }
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     492 </span>            :   }
+<span class="lineNum">     493 </span>            : 
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     495 </span>            : }
+<a name="496"><span class="lineNum">     496 </span>            : </a>
+<span class="lineNum">     497 </span>            : nsresult
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 : ProtocolParserV2::ProcessDigestChunk(const nsACString&amp; aChunk)</span>
+<span class="lineNum">     499 </span>            : {
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;Handling a %d-byte digest256 chunk&quot;, aChunk.Length()));</span>
+<span class="lineNum">     501 </span>            : 
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :   if (mChunkState.type == CHUNK_ADD_DIGEST) {</span>
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :     return ProcessDigestAdd(aChunk);</span>
+<span class="lineNum">     504 </span>            :   }
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :   if (mChunkState.type == CHUNK_SUB_DIGEST) {</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :     return ProcessDigestSub(aChunk);</span>
+<span class="lineNum">     507 </span>            :   }
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :   return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     509 </span>            : }
+<a name="510"><span class="lineNum">     510 </span>            : </a>
+<span class="lineNum">     511 </span>            : nsresult
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 : ProtocolParserV2::ProcessDigestAdd(const nsACString&amp; aChunk)</span>
+<span class="lineNum">     513 </span>            : {
+<span class="lineNum">     514 </span>            :   // The ABNF format for add chunks is (HASH)+, where HASH is 32 bytes.
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aChunk.Length() % 32 == 0,</span>
+<span class="lineNum">     516 </span>            :              &quot;Chunk length in bytes must be divisible by 4&quot;);
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :   uint32_t start = 0;</span>
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :   while (start &lt; aChunk.Length()) {</span>
+<span class="lineNum">     519 </span>            :     Completion hash;
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :     hash.Assign(Substring(aChunk, start, COMPLETE_SIZE));</span>
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :     start += COMPLETE_SIZE;</span>
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :     nsresult rv = mTableUpdate-&gt;NewAddComplete(mChunkState.num, hash);</span>
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     525 </span>            :     }
+<span class="lineNum">     526 </span>            :   }
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     528 </span>            : }
+<a name="529"><span class="lineNum">     529 </span>            : </a>
+<span class="lineNum">     530 </span>            : nsresult
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 : ProtocolParserV2::ProcessDigestSub(const nsACString&amp; aChunk)</span>
+<span class="lineNum">     532 </span>            : {
+<span class="lineNum">     533 </span>            :   // The ABNF format for sub chunks is (ADDCHUNKNUM HASH)+, where ADDCHUNKNUM
+<span class="lineNum">     534 </span>            :   // is a 4 byte chunk number, and HASH is 32 bytes.
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aChunk.Length() % 36 == 0,</span>
+<span class="lineNum">     536 </span>            :              &quot;Chunk length in bytes must be divisible by 36&quot;);
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :   uint32_t start = 0;</span>
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :   while (start &lt; aChunk.Length()) {</span>
+<span class="lineNum">     539 </span>            :     // Read ADDCHUNKNUM
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :     const nsACString&amp; addChunkStr = Substring(aChunk, start, 4);</span>
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :     start += 4;</span>
+<span class="lineNum">     542 </span>            : 
+<span class="lineNum">     543 </span>            :     uint32_t addChunk;
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :     memcpy(&amp;addChunk, addChunkStr.BeginReading(), 4);</span>
+<span class="lineNum">     545 </span><span class="lineNoCov">          0 :     addChunk = PR_ntohl(addChunk);</span>
+<span class="lineNum">     546 </span>            : 
+<span class="lineNum">     547 </span>            :     // Read the hash
+<span class="lineNum">     548 </span>            :     Completion hash;
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :     hash.Assign(Substring(aChunk, start, COMPLETE_SIZE));</span>
+<span class="lineNum">     550 </span><span class="lineNoCov">          0 :     start += COMPLETE_SIZE;</span>
+<span class="lineNum">     551 </span>            : 
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     nsresult rv = mTableUpdate-&gt;NewSubComplete(addChunk, hash, mChunkState.num);</span>
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     555 </span>            :     }
+<span class="lineNum">     556 </span>            :   }
+<span class="lineNum">     557 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     558 </span>            : }
+<a name="559"><span class="lineNum">     559 </span>            : </a>
+<span class="lineNum">     560 </span>            : nsresult
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 : ProtocolParserV2::ProcessHostAdd(const Prefix&amp; aDomain, uint8_t aNumEntries,</span>
+<span class="lineNum">     562 </span>            :                                const nsACString&amp; aChunk, uint32_t* aStart)
+<span class="lineNum">     563 </span>            : {
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :   NS_ASSERTION(mChunkState.hashSize == PREFIX_SIZE,</span>
+<span class="lineNum">     565 </span>            :                &quot;ProcessHostAdd should only be called for prefix hashes.&quot;);
+<span class="lineNum">     566 </span>            : 
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :   if (aNumEntries == 0) {</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :     nsresult rv = mTableUpdate-&gt;NewAddPrefix(mChunkState.num, aDomain);</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     571 </span>            :     }
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     573 </span>            :   }
+<span class="lineNum">     574 </span>            : 
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :   if (*aStart + (PREFIX_SIZE * aNumEntries) &gt; aChunk.Length()) {</span>
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Chunk is not long enough to contain the expected entries.&quot;);</span>
+<span class="lineNum">     577 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     578 </span>            :   }
+<span class="lineNum">     579 </span>            : 
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :   for (uint8_t i = 0; i &lt; aNumEntries; i++) {</span>
+<span class="lineNum">     581 </span>            :     Prefix hash;
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :     hash.Assign(Substring(aChunk, *aStart, PREFIX_SIZE));</span>
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;Add prefix %X&quot;, hash.ToUint32()));</span>
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 :     nsresult rv = mTableUpdate-&gt;NewAddPrefix(mChunkState.num, hash);</span>
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     587 </span>            :     }
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :     *aStart += PREFIX_SIZE;</span>
+<span class="lineNum">     589 </span>            :   }
+<span class="lineNum">     590 </span>            : 
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     592 </span>            : }
+<a name="593"><span class="lineNum">     593 </span>            : </a>
+<span class="lineNum">     594 </span>            : nsresult
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 : ProtocolParserV2::ProcessHostSub(const Prefix&amp; aDomain, uint8_t aNumEntries,</span>
+<span class="lineNum">     596 </span>            :                                const nsACString&amp; aChunk, uint32_t *aStart)
+<span class="lineNum">     597 </span>            : {
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :   NS_ASSERTION(mChunkState.hashSize == PREFIX_SIZE,</span>
+<span class="lineNum">     599 </span>            :                &quot;ProcessHostSub should only be called for prefix hashes.&quot;);
+<span class="lineNum">     600 </span>            : 
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :   if (aNumEntries == 0) {</span>
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :     if ((*aStart) + 4 &gt; aChunk.Length()) {</span>
+<span class="lineNum">     603 </span><span class="lineNoCov">          0 :       NS_WARNING(&quot;Received a zero-entry sub chunk without an associated add.&quot;);</span>
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :       return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     605 </span>            :     }
+<span class="lineNum">     606 </span>            : 
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :     const nsACString&amp; addChunkStr = Substring(aChunk, *aStart, 4);</span>
+<span class="lineNum">     608 </span><span class="lineNoCov">          0 :     *aStart += 4;</span>
+<span class="lineNum">     609 </span>            : 
+<span class="lineNum">     610 </span>            :     uint32_t addChunk;
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :     memcpy(&amp;addChunk, addChunkStr.BeginReading(), 4);</span>
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :     addChunk = PR_ntohl(addChunk);</span>
+<span class="lineNum">     613 </span>            : 
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;Sub prefix (addchunk=%u)&quot;, addChunk));</span>
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :     nsresult rv = mTableUpdate-&gt;NewSubPrefix(addChunk, aDomain, mChunkState.num);</span>
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     617 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     618 </span>            :     }
+<span class="lineNum">     619 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     620 </span>            :   }
+<span class="lineNum">     621 </span>            : 
+<span class="lineNum">     622 </span><span class="lineNoCov">          0 :   if (*aStart + ((PREFIX_SIZE + 4) * aNumEntries) &gt; aChunk.Length()) {</span>
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Chunk is not long enough to contain the expected entries.&quot;);</span>
+<span class="lineNum">     624 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     625 </span>            :   }
+<span class="lineNum">     626 </span>            : 
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :   for (uint8_t i = 0; i &lt; aNumEntries; i++) {</span>
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :     const nsACString&amp; addChunkStr = Substring(aChunk, *aStart, 4);</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :     *aStart += 4;</span>
+<span class="lineNum">     630 </span>            : 
+<span class="lineNum">     631 </span>            :     uint32_t addChunk;
+<span class="lineNum">     632 </span><span class="lineNoCov">          0 :     memcpy(&amp;addChunk, addChunkStr.BeginReading(), 4);</span>
+<span class="lineNum">     633 </span><span class="lineNoCov">          0 :     addChunk = PR_ntohl(addChunk);</span>
+<span class="lineNum">     634 </span>            : 
+<span class="lineNum">     635 </span>            :     Prefix prefix;
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :     prefix.Assign(Substring(aChunk, *aStart, PREFIX_SIZE));</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :     *aStart += PREFIX_SIZE;</span>
+<span class="lineNum">     638 </span>            : 
+<span class="lineNum">     639 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;Sub prefix %X (addchunk=%u)&quot;, prefix.ToUint32(), addChunk));</span>
+<span class="lineNum">     640 </span><span class="lineNoCov">          0 :     nsresult rv = mTableUpdate-&gt;NewSubPrefix(addChunk, prefix, mChunkState.num);</span>
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     642 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     643 </span>            :     }
+<span class="lineNum">     644 </span>            :   }
+<span class="lineNum">     645 </span>            : 
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     647 </span>            : }
+<a name="648"><span class="lineNum">     648 </span>            : </a>
+<span class="lineNum">     649 </span>            : nsresult
+<span class="lineNum">     650 </span><span class="lineNoCov">          0 : ProtocolParserV2::ProcessHostAddComplete(uint8_t aNumEntries,</span>
+<span class="lineNum">     651 </span>            :                                        const nsACString&amp; aChunk, uint32_t* aStart)
+<span class="lineNum">     652 </span>            : {
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 :   NS_ASSERTION(mChunkState.hashSize == COMPLETE_SIZE,</span>
+<span class="lineNum">     654 </span>            :                &quot;ProcessHostAddComplete should only be called for complete hashes.&quot;);
+<span class="lineNum">     655 </span>            : 
+<span class="lineNum">     656 </span><span class="lineNoCov">          0 :   if (aNumEntries == 0) {</span>
+<span class="lineNum">     657 </span>            :     // this is totally comprehensible.
+<span class="lineNum">     658 </span>            :     // My sarcasm detector is going off!
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Expected &gt; 0 entries for a 32-byte hash add.&quot;);</span>
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     661 </span>            :   }
+<span class="lineNum">     662 </span>            : 
+<span class="lineNum">     663 </span><span class="lineNoCov">          0 :   if (*aStart + (COMPLETE_SIZE * aNumEntries) &gt; aChunk.Length()) {</span>
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Chunk is not long enough to contain the expected entries.&quot;);</span>
+<span class="lineNum">     665 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     666 </span>            :   }
+<span class="lineNum">     667 </span>            : 
+<span class="lineNum">     668 </span><span class="lineNoCov">          0 :   for (uint8_t i = 0; i &lt; aNumEntries; i++) {</span>
+<span class="lineNum">     669 </span>            :     Completion hash;
+<span class="lineNum">     670 </span><span class="lineNoCov">          0 :     hash.Assign(Substring(aChunk, *aStart, COMPLETE_SIZE));</span>
+<span class="lineNum">     671 </span><span class="lineNoCov">          0 :     nsresult rv = mTableUpdate-&gt;NewAddComplete(mChunkState.num, hash);</span>
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     674 </span>            :     }
+<span class="lineNum">     675 </span><span class="lineNoCov">          0 :     *aStart += COMPLETE_SIZE;</span>
+<span class="lineNum">     676 </span>            :   }
+<span class="lineNum">     677 </span>            : 
+<span class="lineNum">     678 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     679 </span>            : }
+<a name="680"><span class="lineNum">     680 </span>            : </a>
+<span class="lineNum">     681 </span>            : nsresult
+<span class="lineNum">     682 </span><span class="lineNoCov">          0 : ProtocolParserV2::ProcessHostSubComplete(uint8_t aNumEntries,</span>
+<span class="lineNum">     683 </span>            :                                        const nsACString&amp; aChunk, uint32_t* aStart)
+<span class="lineNum">     684 </span>            : {
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :   NS_ASSERTION(mChunkState.hashSize == COMPLETE_SIZE,</span>
+<span class="lineNum">     686 </span>            :                &quot;ProcessHostSubComplete should only be called for complete hashes.&quot;);
+<span class="lineNum">     687 </span>            : 
+<span class="lineNum">     688 </span><span class="lineNoCov">          0 :   if (aNumEntries == 0) {</span>
+<span class="lineNum">     689 </span>            :     // this is totally comprehensible.
+<span class="lineNum">     690 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Expected &gt; 0 entries for a 32-byte hash sub.&quot;);</span>
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     692 </span>            :   }
+<span class="lineNum">     693 </span>            : 
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :   if (*aStart + ((COMPLETE_SIZE + 4) * aNumEntries) &gt; aChunk.Length()) {</span>
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Chunk is not long enough to contain the expected entries.&quot;);</span>
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     697 </span>            :   }
+<span class="lineNum">     698 </span>            : 
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :   for (uint8_t i = 0; i &lt; aNumEntries; i++) {</span>
+<span class="lineNum">     700 </span>            :     Completion hash;
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :     hash.Assign(Substring(aChunk, *aStart, COMPLETE_SIZE));</span>
+<span class="lineNum">     702 </span><span class="lineNoCov">          0 :     *aStart += COMPLETE_SIZE;</span>
+<span class="lineNum">     703 </span>            : 
+<span class="lineNum">     704 </span><span class="lineNoCov">          0 :     const nsACString&amp; addChunkStr = Substring(aChunk, *aStart, 4);</span>
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :     *aStart += 4;</span>
+<span class="lineNum">     706 </span>            : 
+<span class="lineNum">     707 </span>            :     uint32_t addChunk;
+<span class="lineNum">     708 </span><span class="lineNoCov">          0 :     memcpy(&amp;addChunk, addChunkStr.BeginReading(), 4);</span>
+<span class="lineNum">     709 </span><span class="lineNoCov">          0 :     addChunk = PR_ntohl(addChunk);</span>
+<span class="lineNum">     710 </span>            : 
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :     nsresult rv = mTableUpdate-&gt;NewSubComplete(addChunk, hash, mChunkState.num);</span>
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     714 </span>            :     }
+<span class="lineNum">     715 </span>            :   }
+<span class="lineNum">     716 </span>            : 
+<span class="lineNum">     717 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     718 </span>            : }
+<a name="719"><span class="lineNum">     719 </span>            : </a>
+<span class="lineNum">     720 </span>            : bool
+<span class="lineNum">     721 </span><span class="lineCov">         31 : ProtocolParserV2::NextLine(nsACString&amp; aLine)</span>
+<span class="lineNum">     722 </span>            : {
+<span class="lineNum">     723 </span><span class="lineCov">         31 :   int32_t newline = mPending.FindChar('\n');</span>
+<span class="lineNum">     724 </span><span class="lineCov">         31 :   if (newline == kNotFound) {</span>
+<span class="lineNum">     725 </span><span class="lineCov">          1 :     return false;</span>
+<span class="lineNum">     726 </span>            :   }
+<span class="lineNum">     727 </span><span class="lineCov">         30 :   aLine.Assign(Substring(mPending, 0, newline));</span>
+<span class="lineNum">     728 </span><span class="lineCov">         30 :   mPending.Cut(0, newline + 1);</span>
+<span class="lineNum">     729 </span><span class="lineCov">         30 :   return true;</span>
+<span class="lineNum">     730 </span>            : }
+<a name="731"><span class="lineNum">     731 </span>            : </a>
+<span class="lineNum">     732 </span>            : TableUpdate*
+<span class="lineNum">     733 </span><span class="lineCov">          6 : ProtocolParserV2::CreateTableUpdate(const nsACString&amp; aTableName) const</span>
+<span class="lineNum">     734 </span>            : {
+<span class="lineNum">     735 </span><span class="lineCov">          6 :   return new TableUpdateV2(aTableName);</span>
+<span class="lineNum">     736 </span>            : }
+<span class="lineNum">     737 </span>            : 
+<span class="lineNum">     738 </span>            : ///////////////////////////////////////////////////////////////////////
+<a name="739"><span class="lineNum">     739 </span>            : // ProtocolParserProtobuf</a>
+<span class="lineNum">     740 </span>            : 
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::ProtocolParserProtobuf()</span>
+<span class="lineNum">     742 </span>            : {
+<a name="743"><span class="lineNum">     743 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     744 </span>            : 
+<span class="lineNum">     745 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::~ProtocolParserProtobuf()</span>
+<span class="lineNum">     746 </span>            : {
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 : }</span>
+<a name="748"><span class="lineNum">     748 </span>            : </a>
+<span class="lineNum">     749 </span>            : void
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::SetCurrentTable(const nsACString&amp; aTable)</span>
+<span class="lineNum">     751 </span>            : {
+<span class="lineNum">     752 </span>            :   // Should never occur.
+<span class="lineNum">     753 </span><span class="lineNoCov">          0 :   MOZ_ASSERT_UNREACHABLE(&quot;SetCurrentTable shouldn't be called&quot;);</span>
+<span class="lineNum">     754 </span>            : }
+<span class="lineNum">     755 </span>            : 
+<a name="756"><span class="lineNum">     756 </span>            : </a>
+<span class="lineNum">     757 </span>            : TableUpdate*
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::CreateTableUpdate(const nsACString&amp; aTableName) const</span>
+<span class="lineNum">     759 </span>            : {
+<span class="lineNum">     760 </span><span class="lineNoCov">          0 :   return new TableUpdateV4(aTableName);</span>
+<span class="lineNum">     761 </span>            : }
+<a name="762"><span class="lineNum">     762 </span>            : </a>
+<span class="lineNum">     763 </span>            : nsresult
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::AppendStream(const nsACString&amp; aData)</span>
+<span class="lineNum">     765 </span>            : {
+<span class="lineNum">     766 </span>            :   // Protobuf data cannot be parsed progressively. Just save the incoming data.
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 :   mPending.Append(aData);</span>
+<span class="lineNum">     768 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     769 </span>            : }
+<a name="770"><span class="lineNum">     770 </span>            : </a>
+<span class="lineNum">     771 </span>            : void
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::End()</span>
+<span class="lineNum">     773 </span>            : {
+<span class="lineNum">     774 </span>            :   // mUpdateStatus will be updated to success as long as not all
+<span class="lineNum">     775 </span>            :   // the responses are invalid.
+<span class="lineNum">     776 </span><span class="lineNoCov">          0 :   mUpdateStatus = NS_ERROR_FAILURE;</span>
+<span class="lineNum">     777 </span>            : 
+<span class="lineNum">     778 </span><span class="lineNoCov">          0 :   FetchThreatListUpdatesResponse response;</span>
+<span class="lineNum">     779 </span><span class="lineNoCov">          0 :   if (!response.ParseFromArray(mPending.get(), mPending.Length())) {</span>
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;ProtocolParserProtobuf failed parsing data.&quot;);</span>
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     782 </span>            :   }
+<span class="lineNum">     783 </span>            : 
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :   auto minWaitDuration = response.minimum_wait_duration();</span>
+<span class="lineNum">     785 </span><span class="lineNoCov">          0 :   mUpdateWaitSec = minWaitDuration.seconds() +</span>
+<span class="lineNum">     786 </span><span class="lineNoCov">          0 :                    minWaitDuration.nanos() / 1000000000;</span>
+<span class="lineNum">     787 </span>            : 
+<span class="lineNum">     788 </span><span class="lineNoCov">          0 :   for (int i = 0; i &lt; response.list_update_responses_size(); i++) {</span>
+<span class="lineNum">     789 </span><span class="lineNoCov">          0 :     auto r = response.list_update_responses(i);</span>
+<span class="lineNum">     790 </span><span class="lineNoCov">          0 :     nsresult rv = ProcessOneResponse(r);</span>
+<span class="lineNum">     791 </span><span class="lineNoCov">          0 :     if (NS_SUCCEEDED(rv)) {</span>
+<span class="lineNum">     792 </span><span class="lineNoCov">          0 :       mUpdateStatus = rv;</span>
+<span class="lineNum">     793 </span>            :     } else {
+<span class="lineNum">     794 </span><span class="lineNoCov">          0 :       NS_WARNING(&quot;Failed to process one response.&quot;);</span>
+<span class="lineNum">     795 </span>            :     }
+<span class="lineNum">     796 </span>            :   }
+<span class="lineNum">     797 </span>            : }
+<a name="798"><span class="lineNum">     798 </span>            : </a>
+<span class="lineNum">     799 </span>            : nsresult
+<span class="lineNum">     800 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::ProcessOneResponse(const ListUpdateResponse&amp; aResponse)</span>
+<span class="lineNum">     801 </span>            : {
+<span class="lineNum">     802 </span>            :   // A response must have a threat type.
+<span class="lineNum">     803 </span><span class="lineNoCov">          0 :   if (!aResponse.has_threat_type()) {</span>
+<span class="lineNum">     804 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Threat type not initialized. This seems to be an invalid response.&quot;);</span>
+<span class="lineNum">     805 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     806 </span>            :   }
+<span class="lineNum">     807 </span>            : 
+<span class="lineNum">     808 </span>            :   // Convert threat type to list name.
+<span class="lineNum">     809 </span>            :   nsCOMPtr&lt;nsIUrlClassifierUtils&gt; urlUtil =
+<span class="lineNum">     810 </span><span class="lineNoCov">          0 :     do_GetService(NS_URLCLASSIFIERUTILS_CONTRACTID);</span>
+<span class="lineNum">     811 </span><span class="lineNoCov">          0 :   nsCString possibleListNames;</span>
+<span class="lineNum">     812 </span><span class="lineNoCov">          0 :   nsresult rv = urlUtil-&gt;ConvertThreatTypeToListNames(aResponse.threat_type(),</span>
+<span class="lineNum">     813 </span><span class="lineNoCov">          0 :                                                       possibleListNames);</span>
+<span class="lineNum">     814 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     815 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;Threat type to list name conversion error: %d&quot;,</span>
+<span class="lineNum">     816 </span>            :                 aResponse.threat_type()));
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     818 </span>            :   }
+<span class="lineNum">     819 </span>            : 
+<span class="lineNum">     820 </span>            :   // Match the table name we received with one of the ones we requested.
+<span class="lineNum">     821 </span>            :   // We ignore the case where a threat type matches more than one list
+<span class="lineNum">     822 </span>            :   // per provider and return the first one. See bug 1287059.&quot;
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 :   nsCString listName;</span>
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :   nsTArray&lt;nsCString&gt; possibleListNameArray;</span>
+<span class="lineNum">     825 </span><span class="lineNoCov">          0 :   Classifier::SplitTables(possibleListNames, possibleListNameArray);</span>
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 :   for (auto possibleName : possibleListNameArray) {</span>
+<span class="lineNum">     827 </span><span class="lineNoCov">          0 :     if (mRequestedTables.Contains(possibleName)) {</span>
+<span class="lineNum">     828 </span><span class="lineNoCov">          0 :       listName = possibleName;</span>
+<span class="lineNum">     829 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     830 </span>            :     }
+<span class="lineNum">     831 </span>            :   }
+<span class="lineNum">     832 </span>            : 
+<span class="lineNum">     833 </span><span class="lineNoCov">          0 :   if (listName.IsEmpty()) {</span>
+<span class="lineNum">     834 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;We received an update for a list we didn't ask for. Ignoring it.&quot;));</span>
+<span class="lineNum">     835 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     836 </span>            :   }
+<span class="lineNum">     837 </span>            : 
+<span class="lineNum">     838 </span>            :   // Test if this is a full update.
+<span class="lineNum">     839 </span><span class="lineNoCov">          0 :   bool isFullUpdate = false;</span>
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :   if (aResponse.has_response_type()) {</span>
+<span class="lineNum">     841 </span><span class="lineNoCov">          0 :     isFullUpdate =</span>
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :       aResponse.response_type() == ListUpdateResponse::FULL_UPDATE;</span>
+<span class="lineNum">     843 </span>            :   } else {
+<span class="lineNum">     844 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Response type not initialized.&quot;);</span>
+<span class="lineNum">     845 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     846 </span>            :   }
+<span class="lineNum">     847 </span>            : 
+<span class="lineNum">     848 </span>            :   // Warn if there's no new state.
+<span class="lineNum">     849 </span><span class="lineNoCov">          0 :   if (!aResponse.has_new_client_state()) {</span>
+<span class="lineNum">     850 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;New state not initialized.&quot;);</span>
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     852 </span>            :   }
+<span class="lineNum">     853 </span>            : 
+<span class="lineNum">     854 </span><span class="lineNoCov">          0 :   auto tu = GetTableUpdate(nsCString(listName.get()));</span>
+<span class="lineNum">     855 </span><span class="lineNoCov">          0 :   auto tuV4 = TableUpdate::Cast&lt;TableUpdateV4&gt;(tu);</span>
+<span class="lineNum">     856 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE(tuV4, NS_ERROR_FAILURE);</span>
+<span class="lineNum">     857 </span>            : 
+<span class="lineNum">     858 </span><span class="lineNoCov">          0 :   nsCString state(aResponse.new_client_state().c_str(),</span>
+<span class="lineNum">     859 </span><span class="lineNoCov">          0 :                   aResponse.new_client_state().size());</span>
+<span class="lineNum">     860 </span><span class="lineNoCov">          0 :   tuV4-&gt;SetNewClientState(state);</span>
+<span class="lineNum">     861 </span>            : 
+<span class="lineNum">     862 </span><span class="lineNoCov">          0 :   if (aResponse.has_checksum()) {</span>
+<span class="lineNum">     863 </span><span class="lineNoCov">          0 :     tuV4-&gt;NewChecksum(aResponse.checksum().sha256());</span>
+<span class="lineNum">     864 </span>            :   }
+<span class="lineNum">     865 </span>            : 
+<span class="lineNum">     866 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;==== Update for threat type '%d' ====&quot;, aResponse.threat_type()));</span>
+<span class="lineNum">     867 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;* listName: %s\n&quot;, listName.get()));</span>
+<span class="lineNum">     868 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;* newState: %s\n&quot;, aResponse.new_client_state().c_str()));</span>
+<span class="lineNum">     869 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;* isFullUpdate: %s\n&quot;, (isFullUpdate ? &quot;yes&quot; : &quot;no&quot;)));</span>
+<span class="lineNum">     870 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;* hasChecksum: %s\n&quot;, (aResponse.has_checksum() ? &quot;yes&quot; : &quot;no&quot;)));</span>
+<span class="lineNum">     871 </span>            : 
+<span class="lineNum">     872 </span><span class="lineNoCov">          0 :   tuV4-&gt;SetFullUpdate(isFullUpdate);</span>
+<span class="lineNum">     873 </span>            : 
+<span class="lineNum">     874 </span><span class="lineNoCov">          0 :   rv = ProcessAdditionOrRemoval(*tuV4, aResponse.additions(), true /*aIsAddition*/);</span>
+<span class="lineNum">     875 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     876 </span><span class="lineNoCov">          0 :   rv = ProcessAdditionOrRemoval(*tuV4, aResponse.removals(), false);</span>
+<span class="lineNum">     877 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     878 </span>            : 
+<span class="lineNum">     879 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;\n\n&quot;));</span>
+<span class="lineNum">     880 </span>            : 
+<span class="lineNum">     881 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     882 </span>            : }
+<a name="883"><span class="lineNum">     883 </span>            : </a>
+<span class="lineNum">     884 </span>            : nsresult
+<span class="lineNum">     885 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::ProcessAdditionOrRemoval(TableUpdateV4&amp; aTableUpdate,</span>
+<span class="lineNum">     886 </span>            :                                                  const ThreatEntrySetList&amp; aUpdate,
+<span class="lineNum">     887 </span>            :                                                  bool aIsAddition)
+<span class="lineNum">     888 </span>            : {
+<span class="lineNum">     889 </span><span class="lineNoCov">          0 :   nsresult ret = NS_OK;</span>
+<span class="lineNum">     890 </span>            : 
+<span class="lineNum">     891 </span><span class="lineNoCov">          0 :   for (int i = 0; i &lt; aUpdate.size(); i++) {</span>
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :     auto update = aUpdate.Get(i);</span>
+<span class="lineNum">     893 </span><span class="lineNoCov">          0 :     if (!update.has_compression_type()) {</span>
+<span class="lineNum">     894 </span><span class="lineNoCov">          0 :       NS_WARNING(nsPrintfCString(&quot;%s with no compression type.&quot;,</span>
+<span class="lineNum">     895 </span><span class="lineNoCov">          0 :                                   aIsAddition ? &quot;Addition&quot; : &quot;Removal&quot;).get());</span>
+<span class="lineNum">     896 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     897 </span>            :     }
+<span class="lineNum">     898 </span>            : 
+<span class="lineNum">     899 </span><span class="lineNoCov">          0 :     switch (update.compression_type()) {</span>
+<span class="lineNum">     900 </span>            :     case COMPRESSION_TYPE_UNSPECIFIED:
+<span class="lineNum">     901 </span><span class="lineNoCov">          0 :       NS_WARNING(&quot;Unspecified compression type.&quot;);</span>
+<span class="lineNum">     902 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     903 </span>            : 
+<span class="lineNum">     904 </span>            :     case RAW:
+<span class="lineNum">     905 </span><span class="lineNoCov">          0 :       ret = (aIsAddition ? ProcessRawAddition(aTableUpdate, update)</span>
+<span class="lineNum">     906 </span>            :                          : ProcessRawRemoval(aTableUpdate, update));
+<span class="lineNum">     907 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     908 </span>            : 
+<span class="lineNum">     909 </span>            :     case RICE:
+<span class="lineNum">     910 </span><span class="lineNoCov">          0 :       ret = (aIsAddition ? ProcessEncodedAddition(aTableUpdate, update)</span>
+<span class="lineNum">     911 </span>            :                          : ProcessEncodedRemoval(aTableUpdate, update));
+<span class="lineNum">     912 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     913 </span>            :     }
+<span class="lineNum">     914 </span>            :   }
+<span class="lineNum">     915 </span>            : 
+<span class="lineNum">     916 </span><span class="lineNoCov">          0 :   return ret;</span>
+<span class="lineNum">     917 </span>            : }
+<a name="918"><span class="lineNum">     918 </span>            : </a>
+<span class="lineNum">     919 </span>            : nsresult
+<span class="lineNum">     920 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::ProcessRawAddition(TableUpdateV4&amp; aTableUpdate,</span>
+<span class="lineNum">     921 </span>            :                                            const ThreatEntrySet&amp; aAddition)
+<span class="lineNum">     922 </span>            : {
+<span class="lineNum">     923 </span><span class="lineNoCov">          0 :   if (!aAddition.has_raw_hashes()) {</span>
+<span class="lineNum">     924 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;* No raw addition.&quot;));</span>
+<span class="lineNum">     925 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     926 </span>            :   }
+<span class="lineNum">     927 </span>            : 
+<span class="lineNum">     928 </span><span class="lineNoCov">          0 :   auto rawHashes = aAddition.raw_hashes();</span>
+<span class="lineNum">     929 </span><span class="lineNoCov">          0 :   if (!rawHashes.has_prefix_size()) {</span>
+<span class="lineNum">     930 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Raw hash has no prefix size&quot;);</span>
+<span class="lineNum">     931 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     932 </span>            :   }
+<span class="lineNum">     933 </span>            : 
+<span class="lineNum">     934 </span><span class="lineNoCov">          0 :   auto prefixes = rawHashes.raw_hashes();</span>
+<span class="lineNum">     935 </span><span class="lineNoCov">          0 :   if (4 == rawHashes.prefix_size()) {</span>
+<span class="lineNum">     936 </span>            :     // Process fixed length prefixes separately.
+<span class="lineNum">     937 </span><span class="lineNoCov">          0 :     uint32_t* fixedLengthPrefixes = (uint32_t*)prefixes.c_str();</span>
+<span class="lineNum">     938 </span><span class="lineNoCov">          0 :     size_t numOfFixedLengthPrefixes = prefixes.size() / 4;</span>
+<span class="lineNum">     939 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;* Raw addition (4 bytes)&quot;));</span>
+<span class="lineNum">     940 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;  - # of prefixes: %&quot; PRIuSIZE, numOfFixedLengthPrefixes));</span>
+<span class="lineNum">     941 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;  - Memory address: 0x%p&quot;, fixedLengthPrefixes));</span>
+<span class="lineNum">     942 </span>            :   } else {
+<span class="lineNum">     943 </span>            :     // TODO: Process variable length prefixes including full hashes.
+<span class="lineNum">     944 </span>            :     // See Bug 1283009.
+<span class="lineNum">     945 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot; Raw addition (%d bytes)&quot;, rawHashes.prefix_size()));</span>
+<span class="lineNum">     946 </span>            :   }
+<span class="lineNum">     947 </span>            : 
+<span class="lineNum">     948 </span><span class="lineNoCov">          0 :   if (!rawHashes.mutable_raw_hashes()) {</span>
+<span class="lineNum">     949 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;Unable to get mutable raw hashes. Can't perform a string move.&quot;));</span>
+<span class="lineNum">     950 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     951 </span>            :   }
+<span class="lineNum">     952 </span>            : 
+<span class="lineNum">     953 </span><span class="lineNoCov">          0 :   aTableUpdate.NewPrefixes(rawHashes.prefix_size(),</span>
+<span class="lineNum">     954 </span><span class="lineNoCov">          0 :                            *rawHashes.mutable_raw_hashes());</span>
+<span class="lineNum">     955 </span>            : 
+<span class="lineNum">     956 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     957 </span>            : }
+<a name="958"><span class="lineNum">     958 </span>            : </a>
+<span class="lineNum">     959 </span>            : nsresult
+<span class="lineNum">     960 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::ProcessRawRemoval(TableUpdateV4&amp; aTableUpdate,</span>
+<span class="lineNum">     961 </span>            :                                           const ThreatEntrySet&amp; aRemoval)
+<span class="lineNum">     962 </span>            : {
+<span class="lineNum">     963 </span><span class="lineNoCov">          0 :   if (!aRemoval.has_raw_indices()) {</span>
+<span class="lineNum">     964 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;A removal has no indices.&quot;);</span>
+<span class="lineNum">     965 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     966 </span>            :   }
+<span class="lineNum">     967 </span>            : 
+<span class="lineNum">     968 </span>            :   // indices is an array of int32.
+<span class="lineNum">     969 </span><span class="lineNoCov">          0 :   auto indices = aRemoval.raw_indices().indices();</span>
+<span class="lineNum">     970 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;* Raw removal&quot;));</span>
+<span class="lineNum">     971 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;  - # of removal: %d&quot;, indices.size()));</span>
+<span class="lineNum">     972 </span>            : 
+<span class="lineNum">     973 </span><span class="lineNoCov">          0 :   aTableUpdate.NewRemovalIndices((const uint32_t*)indices.data(),</span>
+<span class="lineNum">     974 </span><span class="lineNoCov">          0 :                                  indices.size());</span>
+<span class="lineNum">     975 </span>            : 
+<span class="lineNum">     976 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     977 </span>            : }
+<a name="978"><span class="lineNum">     978 </span>            : </a>
+<span class="lineNum">     979 </span>            : static nsresult
+<span class="lineNum">     980 </span><span class="lineNoCov">          0 : DoRiceDeltaDecode(const RiceDeltaEncoding&amp; aEncoding,</span>
+<span class="lineNum">     981 </span>            :                   nsTArray&lt;uint32_t&gt;&amp; aDecoded)
+<span class="lineNum">     982 </span>            : {
+<span class="lineNum">     983 </span><span class="lineNoCov">          0 :   if (!aEncoding.has_first_value()) {</span>
+<span class="lineNum">     984 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;The encoding info is incomplete.&quot;));</span>
+<span class="lineNum">     985 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     986 </span>            :   }
+<span class="lineNum">     987 </span><span class="lineNoCov">          0 :   if (aEncoding.num_entries() &gt; 0 &amp;&amp;</span>
+<span class="lineNum">     988 </span><span class="lineNoCov">          0 :       (!aEncoding.has_rice_parameter() || !aEncoding.has_encoded_data())) {</span>
+<span class="lineNum">     989 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;Rice parameter or encoded data is missing.&quot;));</span>
+<span class="lineNum">     990 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     991 </span>            :   }
+<span class="lineNum">     992 </span>            : 
+<span class="lineNum">     993 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;* Encoding info:&quot;));</span>
+<span class="lineNum">     994 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;  - First value: %&quot; PRId64, aEncoding.first_value()));</span>
+<span class="lineNum">     995 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;  - Num of entries: %d&quot;, aEncoding.num_entries()));</span>
+<span class="lineNum">     996 </span><span class="lineNoCov">          0 :   PARSER_LOG((&quot;  - Rice parameter: %d&quot;, aEncoding.rice_parameter()));</span>
+<span class="lineNum">     997 </span>            : 
+<span class="lineNum">     998 </span>            :   // Set up the input buffer. Note that the bits should be read
+<span class="lineNum">     999 </span>            :   // from LSB to MSB so that we in-place reverse the bits before
+<span class="lineNum">    1000 </span>            :   // feeding to the decoder.
+<span class="lineNum">    1001 </span><span class="lineNoCov">          0 :   auto encoded = const_cast&lt;RiceDeltaEncoding&amp;&gt;(aEncoding).mutable_encoded_data();</span>
+<span class="lineNum">    1002 </span><span class="lineNoCov">          0 :   RiceDeltaDecoder decoder((uint8_t*)encoded-&gt;c_str(), encoded-&gt;size());</span>
+<span class="lineNum">    1003 </span>            : 
+<span class="lineNum">    1004 </span>            :   // Setup the output buffer. The &quot;first value&quot; is included in
+<span class="lineNum">    1005 </span>            :   // the output buffer.
+<span class="lineNum">    1006 </span><span class="lineNoCov">          0 :   aDecoded.SetLength(aEncoding.num_entries() + 1);</span>
+<span class="lineNum">    1007 </span>            : 
+<span class="lineNum">    1008 </span>            :   // Decode!
+<span class="lineNum">    1009 </span><span class="lineNoCov">          0 :   bool rv = decoder.Decode(aEncoding.rice_parameter(),</span>
+<span class="lineNum">    1010 </span><span class="lineNoCov">          0 :                            aEncoding.first_value(), // first value.</span>
+<span class="lineNum">    1011 </span><span class="lineNoCov">          0 :                            aEncoding.num_entries(), // # of entries (first value not included).</span>
+<span class="lineNum">    1012 </span><span class="lineNoCov">          0 :                            &amp;aDecoded[0]);</span>
+<span class="lineNum">    1013 </span>            : 
+<span class="lineNum">    1014 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE(rv, NS_ERROR_FAILURE);</span>
+<span class="lineNum">    1015 </span>            : 
+<span class="lineNum">    1016 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">    1017 </span>            : }
+<a name="1018"><span class="lineNum">    1018 </span>            : </a>
+<span class="lineNum">    1019 </span>            : nsresult
+<span class="lineNum">    1020 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::ProcessEncodedAddition(TableUpdateV4&amp; aTableUpdate,</span>
+<span class="lineNum">    1021 </span>            :                                                const ThreatEntrySet&amp; aAddition)
+<span class="lineNum">    1022 </span>            : {
+<span class="lineNum">    1023 </span><span class="lineNoCov">          0 :   if (!aAddition.has_rice_hashes()) {</span>
+<span class="lineNum">    1024 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;* No rice encoded addition.&quot;));</span>
+<span class="lineNum">    1025 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">    1026 </span>            :   }
+<span class="lineNum">    1027 </span>            : 
+<span class="lineNum">    1028 </span><span class="lineNoCov">          0 :   nsTArray&lt;uint32_t&gt; decoded;</span>
+<span class="lineNum">    1029 </span><span class="lineNoCov">          0 :   nsresult rv = DoRiceDeltaDecode(aAddition.rice_hashes(), decoded);</span>
+<span class="lineNum">    1030 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">    1031 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;Failed to parse encoded prefixes.&quot;));</span>
+<span class="lineNum">    1032 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">    1033 </span>            :   }
+<span class="lineNum">    1034 </span>            : 
+<span class="lineNum">    1035 </span>            :   //  Say we have the following raw prefixes
+<span class="lineNum">    1036 </span>            :   //                              BE            LE
+<span class="lineNum">    1037 </span>            :   //   00 00 00 01                 1      16777216
+<span class="lineNum">    1038 </span>            :   //   00 00 02 00               512        131072
+<span class="lineNum">    1039 </span>            :   //   00 03 00 00            196608           768
+<span class="lineNum">    1040 </span>            :   //   04 00 00 00          67108864             4
+<span class="lineNum">    1041 </span>            :   //
+<span class="lineNum">    1042 </span>            :   // which can be treated as uint32 (big-endian) sorted in increasing order:
+<span class="lineNum">    1043 </span>            :   //
+<span class="lineNum">    1044 </span>            :   // [1, 512, 196608, 67108864]
+<span class="lineNum">    1045 </span>            :   //
+<span class="lineNum">    1046 </span>            :   // According to https://developers.google.com/safe-browsing/v4/compression,
+<span class="lineNum">    1047 </span>            :   // the following should be done prior to compression:
+<span class="lineNum">    1048 </span>            :   //
+<span class="lineNum">    1049 </span>            :   // 1) re-interpret in little-endian ==&gt; [16777216, 131072, 768, 4]
+<span class="lineNum">    1050 </span>            :   // 2) sort in increasing order       ==&gt; [4, 768, 131072, 16777216]
+<span class="lineNum">    1051 </span>            :   //
+<span class="lineNum">    1052 </span>            :   // In order to get the original byte stream from |decoded|
+<span class="lineNum">    1053 </span>            :   // ([4, 768, 131072, 16777216] in this case), we have to:
+<span class="lineNum">    1054 </span>            :   //
+<span class="lineNum">    1055 </span>            :   // 1) sort in big-endian order      ==&gt; [16777216, 131072, 768, 4]
+<span class="lineNum">    1056 </span>            :   // 2) copy each uint32 in little-endian to the result string
+<span class="lineNum">    1057 </span>            :   //
+<span class="lineNum">    1058 </span>            : 
+<span class="lineNum">    1059 </span>            :   // The 4-byte prefixes have to be re-sorted in Big-endian increasing order.
+<a name="1060"><span class="lineNum">    1060 </span>            :   struct CompareBigEndian</a>
+<span class="lineNum">    1061 </span>            :   {
+<span class="lineNum">    1062 </span><span class="lineNoCov">          0 :     bool Equals(const uint32_t&amp; aA, const uint32_t&amp; aB) const</span>
+<span class="lineNum">    1063 </span>            :     {
+<span class="lineNum">    1064 </span><span class="lineNoCov">          0 :       return aA == aB;</span>
+<a name="1065"><span class="lineNum">    1065 </span>            :     }</a>
+<span class="lineNum">    1066 </span>            : 
+<span class="lineNum">    1067 </span><span class="lineNoCov">          0 :     bool LessThan(const uint32_t&amp; aA, const uint32_t&amp; aB) const</span>
+<span class="lineNum">    1068 </span>            :     {
+<span class="lineNum">    1069 </span><span class="lineNoCov">          0 :       return NativeEndian::swapToBigEndian(aA) &lt;</span>
+<span class="lineNum">    1070 </span><span class="lineNoCov">          0 :              NativeEndian::swapToBigEndian(aB);</span>
+<span class="lineNum">    1071 </span>            :     }
+<span class="lineNum">    1072 </span>            :   };
+<span class="lineNum">    1073 </span><span class="lineNoCov">          0 :   decoded.Sort(CompareBigEndian());</span>
+<span class="lineNum">    1074 </span>            : 
+<span class="lineNum">    1075 </span>            :   // The encoded prefixes are always 4 bytes.
+<span class="lineNum">    1076 </span><span class="lineNoCov">          0 :   std::string prefixes;</span>
+<span class="lineNum">    1077 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; decoded.Length(); i++) {</span>
+<span class="lineNum">    1078 </span>            :     // Note that the third argument is the number of elements we want
+<span class="lineNum">    1079 </span>            :     // to copy (and swap) but not the number of bytes we want to copy.
+<span class="lineNum">    1080 </span>            :     char p[4];
+<span class="lineNum">    1081 </span><span class="lineNoCov">          0 :     NativeEndian::copyAndSwapToLittleEndian(p, &amp;decoded[i], 1);</span>
+<span class="lineNum">    1082 </span><span class="lineNoCov">          0 :     prefixes.append(p, 4);</span>
+<span class="lineNum">    1083 </span>            :   }
+<span class="lineNum">    1084 </span>            : 
+<span class="lineNum">    1085 </span><span class="lineNoCov">          0 :   aTableUpdate.NewPrefixes(4, prefixes);</span>
+<span class="lineNum">    1086 </span>            : 
+<span class="lineNum">    1087 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">    1088 </span>            : }
+<a name="1089"><span class="lineNum">    1089 </span>            : </a>
+<span class="lineNum">    1090 </span>            : nsresult
+<span class="lineNum">    1091 </span><span class="lineNoCov">          0 : ProtocolParserProtobuf::ProcessEncodedRemoval(TableUpdateV4&amp; aTableUpdate,</span>
+<span class="lineNum">    1092 </span>            :                                               const ThreatEntrySet&amp; aRemoval)
+<span class="lineNum">    1093 </span>            : {
+<span class="lineNum">    1094 </span><span class="lineNoCov">          0 :   if (!aRemoval.has_rice_indices()) {</span>
+<span class="lineNum">    1095 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;* No rice encoded removal.&quot;));</span>
+<span class="lineNum">    1096 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">    1097 </span>            :   }
+<span class="lineNum">    1098 </span>            : 
+<span class="lineNum">    1099 </span><span class="lineNoCov">          0 :   nsTArray&lt;uint32_t&gt; decoded;</span>
+<span class="lineNum">    1100 </span><span class="lineNoCov">          0 :   nsresult rv = DoRiceDeltaDecode(aRemoval.rice_indices(), decoded);</span>
+<span class="lineNum">    1101 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">    1102 </span><span class="lineNoCov">          0 :     PARSER_LOG((&quot;Failed to decode encoded removal indices.&quot;));</span>
+<span class="lineNum">    1103 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">    1104 </span>            :   }
+<span class="lineNum">    1105 </span>            : 
+<span class="lineNum">    1106 </span>            :   // The encoded prefixes are always 4 bytes.
+<span class="lineNum">    1107 </span><span class="lineNoCov">          0 :   aTableUpdate.NewRemovalIndices(&amp;decoded[0], decoded.Length());</span>
+<span class="lineNum">    1108 </span>            : 
+<span class="lineNum">    1109 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">    1110 </span>            : }
+<span class="lineNum">    1111 </span>            : 
+<span class="lineNum">    1112 </span>            : } // namespace safebrowsing
+<span class="lineNum">    1113 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

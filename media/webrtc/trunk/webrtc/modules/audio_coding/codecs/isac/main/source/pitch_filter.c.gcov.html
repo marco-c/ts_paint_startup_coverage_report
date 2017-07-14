@@ -1,0 +1,474 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/audio_coding/codecs/isac/main/source/pitch_filter.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/audio_coding/codecs/isac/main/source</a> - pitch_filter.c<span style="font-size: 80%;"> (source / <a href="pitch_filter.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">110</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">7</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;pitch_estimator.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &lt;math.h&gt;
+<span class="lineNum">      14 </span>            : #include &lt;memory.h&gt;
+<span class="lineNum">      15 </span>            : #include &lt;stdlib.h&gt;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : #include &quot;os_specific_inline.h&quot;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : #include &quot;webrtc/system_wrappers/include/compile_assert_c.h&quot;
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : /*
+<span class="lineNum">      22 </span>            :  * We are implementing the following filters;
+<span class="lineNum">      23 </span>            :  *
+<span class="lineNum">      24 </span>            :  * Pre-filtering:
+<span class="lineNum">      25 </span>            :  *   y(z) = x(z) + damper(z) * gain * (x(z) + y(z)) * z ^ (-lag);
+<span class="lineNum">      26 </span>            :  *
+<span class="lineNum">      27 </span>            :  * Post-filtering:
+<span class="lineNum">      28 </span>            :  *   y(z) = x(z) - damper(z) * gain * (x(z) + y(z)) * z ^ (-lag);
+<span class="lineNum">      29 </span>            :  *
+<span class="lineNum">      30 </span>            :  * Note that |lag| is a floating number so we perform an interpolation to
+<span class="lineNum">      31 </span>            :  * obtain the correct |lag|.
+<span class="lineNum">      32 </span>            :  *
+<span class="lineNum">      33 </span>            :  */
+<span class="lineNum">      34 </span>            : 
+<span class="lineNum">      35 </span>            : static const double kDampFilter[PITCH_DAMPORDER] = {-0.07, 0.25, 0.64, 0.25,
+<span class="lineNum">      36 </span>            :     -0.07};
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            : /* interpolation coefficients; generated by design_pitch_filter.m */
+<span class="lineNum">      39 </span>            : static const double kIntrpCoef[PITCH_FRACS][PITCH_FRACORDER] = {
+<span class="lineNum">      40 </span>            :     {-0.02239172458614,  0.06653315052934, -0.16515880017569,  0.60701333734125,
+<span class="lineNum">      41 </span>            :      0.64671399919202, -0.20249000396417,  0.09926548334755, -0.04765933793109,
+<span class="lineNum">      42 </span>            :      0.01754159521746},
+<span class="lineNum">      43 </span>            :     {-0.01985640750434,  0.05816126837866, -0.13991265473714,  0.44560418147643,
+<span class="lineNum">      44 </span>            :      0.79117042386876, -0.20266133815188,  0.09585268418555, -0.04533310458084,
+<span class="lineNum">      45 </span>            :      0.01654127246314},
+<span class="lineNum">      46 </span>            :     {-0.01463300534216,  0.04229888475060, -0.09897034715253,  0.28284326017787,
+<span class="lineNum">      47 </span>            :      0.90385267956632, -0.16976950138649,  0.07704272393639, -0.03584218578311,
+<span class="lineNum">      48 </span>            :      0.01295781500709},
+<span class="lineNum">      49 </span>            :     {-0.00764851320885,  0.02184035544377, -0.04985561057281,  0.13083306574393,
+<span class="lineNum">      50 </span>            :      0.97545011664662, -0.10177807997561,  0.04400901776474, -0.02010737175166,
+<span class="lineNum">      51 </span>            :      0.00719783432422},
+<span class="lineNum">      52 </span>            :     {-0.00000000000000,  0.00000000000000, -0.00000000000001,  0.00000000000001,
+<span class="lineNum">      53 </span>            :      0.99999999999999,  0.00000000000001, -0.00000000000001,  0.00000000000000,
+<span class="lineNum">      54 </span>            :      -0.00000000000000},
+<span class="lineNum">      55 </span>            :     {0.00719783432422, -0.02010737175166,  0.04400901776474, -0.10177807997562,
+<span class="lineNum">      56 </span>            :      0.97545011664663,  0.13083306574393, -0.04985561057280,  0.02184035544377,
+<span class="lineNum">      57 </span>            :      -0.00764851320885},
+<span class="lineNum">      58 </span>            :     {0.01295781500710, -0.03584218578312,  0.07704272393640, -0.16976950138650,
+<span class="lineNum">      59 </span>            :      0.90385267956634,  0.28284326017785, -0.09897034715252,  0.04229888475059,
+<span class="lineNum">      60 </span>            :      -0.01463300534216},
+<span class="lineNum">      61 </span>            :     {0.01654127246315, -0.04533310458085,  0.09585268418557, -0.20266133815190,
+<span class="lineNum">      62 </span>            :      0.79117042386878,  0.44560418147640, -0.13991265473712,  0.05816126837865,
+<span class="lineNum">      63 </span>            :      -0.01985640750433}
+<span class="lineNum">      64 </span>            : };
+<span class="lineNum">      65 </span>            : 
+<span class="lineNum">      66 </span>            : /*
+<span class="lineNum">      67 </span>            :  * Enumerating the operation of the filter.
+<span class="lineNum">      68 </span>            :  * iSAC has 4 different pitch-filter which are very similar in their structure.
+<span class="lineNum">      69 </span>            :  *
+<span class="lineNum">      70 </span>            :  * kPitchFilterPre     : In this mode the filter is operating as pitch
+<span class="lineNum">      71 </span>            :  *                       pre-filter. This is used at the encoder.
+<span class="lineNum">      72 </span>            :  * kPitchFilterPost    : In this mode the filter is operating as pitch
+<span class="lineNum">      73 </span>            :  *                       post-filter. This is the inverse of pre-filter and used
+<span class="lineNum">      74 </span>            :  *                       in the decoder.
+<span class="lineNum">      75 </span>            :  * kPitchFilterPreLa   : This is, in structure, similar to pre-filtering but
+<span class="lineNum">      76 </span>            :  *                       utilizing 3 millisecond lookahead. It is used to
+<span class="lineNum">      77 </span>            :  *                       obtain the signal for LPC analysis.
+<span class="lineNum">      78 </span>            :  * kPitchFilterPreGain : This is, in structure, similar to pre-filtering but
+<span class="lineNum">      79 </span>            :  *                       differential changes in gain is considered. This is
+<span class="lineNum">      80 </span>            :  *                       used to find the optimal gain.
+<span class="lineNum">      81 </span>            :  */
+<span class="lineNum">      82 </span>            : typedef enum {
+<span class="lineNum">      83 </span>            :   kPitchFilterPre, kPitchFilterPost, kPitchFilterPreLa, kPitchFilterPreGain
+<span class="lineNum">      84 </span>            : } PitchFilterOperation;
+<span class="lineNum">      85 </span>            : 
+<span class="lineNum">      86 </span>            : /*
+<span class="lineNum">      87 </span>            :  * Structure with parameters used for pitch-filtering.
+<span class="lineNum">      88 </span>            :  * buffer           : a buffer where the sum of previous inputs and outputs
+<span class="lineNum">      89 </span>            :  *                    are stored.
+<span class="lineNum">      90 </span>            :  * damper_state     : the state of the damping filter. The filter is defined by
+<span class="lineNum">      91 </span>            :  *                    |kDampFilter|.
+<span class="lineNum">      92 </span>            :  * interpol_coeff   : pointer to a set of coefficient which are used to utilize
+<span class="lineNum">      93 </span>            :  *                    fractional pitch by interpolation.
+<span class="lineNum">      94 </span>            :  * gain             : pitch-gain to be applied to the current segment of input.
+<span class="lineNum">      95 </span>            :  * lag              : pitch-lag for the current segment of input.
+<span class="lineNum">      96 </span>            :  * lag_offset       : the offset of lag w.r.t. current sample.
+<span class="lineNum">      97 </span>            :  * sub_frame        : sub-frame index, there are 4 pitch sub-frames in an iSAC
+<span class="lineNum">      98 </span>            :  *                    frame.
+<span class="lineNum">      99 </span>            :  *                    This specifies the usage of the filter. See
+<span class="lineNum">     100 </span>            :  *                    'PitchFilterOperation' for operational modes.
+<span class="lineNum">     101 </span>            :  * num_samples      : number of samples to be processed in each segment.
+<span class="lineNum">     102 </span>            :  * index            : index of the input and output sample.
+<span class="lineNum">     103 </span>            :  * damper_state_dg  : state of damping filter for different trial gains.
+<span class="lineNum">     104 </span>            :  * gain_mult        : differential changes to gain.
+<span class="lineNum">     105 </span>            :  */
+<span class="lineNum">     106 </span>            : typedef struct {
+<span class="lineNum">     107 </span>            :   double buffer[PITCH_INTBUFFSIZE + QLOOKAHEAD];
+<span class="lineNum">     108 </span>            :   double damper_state[PITCH_DAMPORDER];
+<span class="lineNum">     109 </span>            :   const double *interpol_coeff;
+<span class="lineNum">     110 </span>            :   double gain;
+<span class="lineNum">     111 </span>            :   double lag;
+<span class="lineNum">     112 </span>            :   int lag_offset;
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span>            :   int sub_frame;
+<span class="lineNum">     115 </span>            :   PitchFilterOperation mode;
+<span class="lineNum">     116 </span>            :   int num_samples;
+<span class="lineNum">     117 </span>            :   int index;
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span>            :   double damper_state_dg[4][PITCH_DAMPORDER];
+<span class="lineNum">     120 </span>            :   double gain_mult[4];
+<span class="lineNum">     121 </span>            : } PitchFilterParam;
+<span class="lineNum">     122 </span>            : 
+<span class="lineNum">     123 </span>            : /**********************************************************************
+<span class="lineNum">     124 </span>            :  * FilterSegment()
+<span class="lineNum">     125 </span>            :  * Filter one segment, a quarter of a frame.
+<span class="lineNum">     126 </span>            :  *
+<span class="lineNum">     127 </span>            :  * Inputs
+<span class="lineNum">     128 </span>            :  *   in_data      : pointer to the input signal of 30 ms at 8 kHz sample-rate.
+<span class="lineNum">     129 </span>            :  *   filter_param : pitch filter parameters.
+<span class="lineNum">     130 </span>            :  *
+<span class="lineNum">     131 </span>            :  * Outputs
+<span class="lineNum">     132 </span>            :  *   out_data     : pointer to a buffer where the filtered signal is written to.
+<span class="lineNum">     133 </span>            :  *   out_dg       : [only used in kPitchFilterPreGain] pointer to a buffer
+<span class="lineNum">     134 </span>            :  *                  where the output of different gain values (differential
+<a name="135"><span class="lineNum">     135 </span>            :  *                  change to gain) is written.</a>
+<span class="lineNum">     136 </span>            :  */
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 : static void FilterSegment(const double* in_data, PitchFilterParam* parameters,</span>
+<span class="lineNum">     138 </span>            :                           double* out_data,
+<span class="lineNum">     139 </span>            :                           double out_dg[][PITCH_FRAME_LEN + QLOOKAHEAD]) {
+<span class="lineNum">     140 </span>            :   int n;
+<span class="lineNum">     141 </span>            :   int m;
+<span class="lineNum">     142 </span>            :   int j;
+<span class="lineNum">     143 </span>            :   double sum;
+<span class="lineNum">     144 </span>            :   double sum2;
+<span class="lineNum">     145 </span>            :   /* Index of |parameters-&gt;buffer| where the output is written to. */
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :   int pos = parameters-&gt;index + PITCH_BUFFSIZE;</span>
+<span class="lineNum">     147 </span>            :   /* Index of |parameters-&gt;buffer| where samples are read for fractional-lag
+<span class="lineNum">     148 </span>            :    * computation. */
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :   int pos_lag = pos - parameters-&gt;lag_offset;</span>
+<span class="lineNum">     150 </span>            : 
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :   for (n = 0; n &lt; parameters-&gt;num_samples; ++n) {</span>
+<span class="lineNum">     152 </span>            :     /* Shift low pass filter states. */
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :     for (m = PITCH_DAMPORDER - 1; m &gt; 0; --m) {</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :       parameters-&gt;damper_state[m] = parameters-&gt;damper_state[m - 1];</span>
+<span class="lineNum">     155 </span>            :     }
+<span class="lineNum">     156 </span>            :     /* Filter to get fractional pitch. */
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :     sum = 0.0;</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     for (m = 0; m &lt; PITCH_FRACORDER; ++m) {</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :       sum += parameters-&gt;buffer[pos_lag + m] * parameters-&gt;interpol_coeff[m];</span>
+<span class="lineNum">     160 </span>            :     }
+<span class="lineNum">     161 </span>            :     /* Multiply with gain. */
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :     parameters-&gt;damper_state[0] = parameters-&gt;gain * sum;</span>
+<span class="lineNum">     163 </span>            : 
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :     if (parameters-&gt;mode == kPitchFilterPreGain) {</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :       int lag_index = parameters-&gt;index - parameters-&gt;lag_offset;</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :       int m_tmp = (lag_index &lt; 0) ? -lag_index : 0;</span>
+<span class="lineNum">     167 </span>            :       /* Update the damper state for the new sample. */
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :       for (m = PITCH_DAMPORDER - 1; m &gt; 0; --m) {</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :         for (j = 0; j &lt; 4; ++j) {</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :           parameters-&gt;damper_state_dg[j][m] =</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :               parameters-&gt;damper_state_dg[j][m - 1];</span>
+<span class="lineNum">     172 </span>            :         }
+<span class="lineNum">     173 </span>            :       }
+<span class="lineNum">     174 </span>            : 
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :       for (j = 0; j &lt; parameters-&gt;sub_frame + 1; ++j) {</span>
+<span class="lineNum">     176 </span>            :         /* Filter for fractional pitch. */
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :         sum2 = 0.0;</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :         for (m = PITCH_FRACORDER-1; m &gt;= m_tmp; --m) {</span>
+<span class="lineNum">     179 </span>            :           /* |lag_index + m| is always larger than or equal to zero, see how
+<span class="lineNum">     180 </span>            :            * m_tmp is computed. This is equivalent to assume samples outside
+<span class="lineNum">     181 </span>            :            * |out_dg[j]| are zero. */
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :           sum2 += out_dg[j][lag_index + m] * parameters-&gt;interpol_coeff[m];</span>
+<span class="lineNum">     183 </span>            :         }
+<span class="lineNum">     184 </span>            :         /* Add the contribution of differential gain change. */
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :         parameters-&gt;damper_state_dg[j][0] = parameters-&gt;gain_mult[j] * sum +</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :             parameters-&gt;gain * sum2;</span>
+<span class="lineNum">     187 </span>            :       }
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span>            :       /* Filter with damping filter, and store the results. */
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :       for (j = 0; j &lt; parameters-&gt;sub_frame + 1; ++j) {</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :         sum = 0.0;</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :         for (m = 0; m &lt; PITCH_DAMPORDER; ++m) {</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :           sum -= parameters-&gt;damper_state_dg[j][m] * kDampFilter[m];</span>
+<span class="lineNum">     194 </span>            :         }
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :         out_dg[j][parameters-&gt;index] = sum;</span>
+<span class="lineNum">     196 </span>            :       }
+<span class="lineNum">     197 </span>            :     }
+<span class="lineNum">     198 </span>            :     /* Filter with damping filter. */
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :     sum = 0.0;</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :     for (m = 0; m &lt; PITCH_DAMPORDER; ++m) {</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :       sum += parameters-&gt;damper_state[m] * kDampFilter[m];</span>
+<span class="lineNum">     202 </span>            :     }
+<span class="lineNum">     203 </span>            : 
+<span class="lineNum">     204 </span>            :     /* Subtract from input and update buffer. */
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :     out_data[parameters-&gt;index] = in_data[parameters-&gt;index] - sum;</span>
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :     parameters-&gt;buffer[pos] = in_data[parameters-&gt;index] +</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :         out_data[parameters-&gt;index];</span>
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :     ++parameters-&gt;index;</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :     ++pos;</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :     ++pos_lag;</span>
+<span class="lineNum">     212 </span>            :   }
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   return;</span>
+<span class="lineNum">     214 </span>            : }
+<a name="215"><span class="lineNum">     215 </span>            : </a>
+<span class="lineNum">     216 </span>            : /* Update filter parameters based on the pitch-gains and pitch-lags. */
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 : static void Update(PitchFilterParam* parameters) {</span>
+<span class="lineNum">     218 </span>            :   double fraction;
+<span class="lineNum">     219 </span>            :   int fraction_index;
+<span class="lineNum">     220 </span>            :   /* Compute integer lag-offset. */
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :   parameters-&gt;lag_offset = WebRtcIsac_lrint(parameters-&gt;lag + PITCH_FILTDELAY +</span>
+<span class="lineNum">     222 </span>            :                                             0.5);
+<span class="lineNum">     223 </span>            :   /* Find correct set of coefficients for computing fractional pitch. */
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :   fraction = parameters-&gt;lag_offset - (parameters-&gt;lag + PITCH_FILTDELAY);</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :   fraction_index = WebRtcIsac_lrint(PITCH_FRACS * fraction - 0.5);</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :   parameters-&gt;interpol_coeff = kIntrpCoef[fraction_index];</span>
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :   if (parameters-&gt;mode == kPitchFilterPreGain) {</span>
+<span class="lineNum">     229 </span>            :     /* If in this mode make a differential change to pitch gain. */
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :     parameters-&gt;gain_mult[parameters-&gt;sub_frame] += 0.2;</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     if (parameters-&gt;gain_mult[parameters-&gt;sub_frame] &gt; 1.0) {</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :       parameters-&gt;gain_mult[parameters-&gt;sub_frame] = 1.0;</span>
+<span class="lineNum">     233 </span>            :     }
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :     if (parameters-&gt;sub_frame &gt; 0) {</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :       parameters-&gt;gain_mult[parameters-&gt;sub_frame - 1] -= 0.2;</span>
+<span class="lineNum">     236 </span>            :     }
+<span class="lineNum">     237 </span>            :   }
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     239 </span>            : 
+<span class="lineNum">     240 </span>            : /******************************************************************************
+<span class="lineNum">     241 </span>            :  * FilterFrame()
+<span class="lineNum">     242 </span>            :  * Filter a frame of 30 millisecond, given pitch-lags and pitch-gains.
+<span class="lineNum">     243 </span>            :  *
+<span class="lineNum">     244 </span>            :  * Inputs
+<span class="lineNum">     245 </span>            :  *   in_data     : pointer to the input signal of 30 ms at 8 kHz sample-rate.
+<span class="lineNum">     246 </span>            :  *   lags        : pointer to pitch-lags, 4 lags per frame.
+<span class="lineNum">     247 </span>            :  *   gains       : pointer to pitch-gians, 4 gains per frame.
+<span class="lineNum">     248 </span>            :  *   mode        : defining the functionality of the filter. It takes the
+<span class="lineNum">     249 </span>            :  *                 following values.
+<span class="lineNum">     250 </span>            :  *                 kPitchFilterPre:     Pitch pre-filter, used at encoder.
+<span class="lineNum">     251 </span>            :  *                 kPitchFilterPost:    Pitch post-filter, used at decoder.
+<span class="lineNum">     252 </span>            :  *                 kPitchFilterPreLa:   Pitch pre-filter with lookahead.
+<span class="lineNum">     253 </span>            :  *                 kPitchFilterPreGain: Pitch pre-filter used to otain optimal
+<span class="lineNum">     254 </span>            :  *                                      pitch-gains.
+<span class="lineNum">     255 </span>            :  *
+<span class="lineNum">     256 </span>            :  * Outputs
+<span class="lineNum">     257 </span>            :  *   out_data    : pointer to a buffer where the filtered signal is written to.
+<span class="lineNum">     258 </span>            :  *   out_dg      : [only used in kPitchFilterPreGain] pointer to a buffer
+<span class="lineNum">     259 </span>            :  *                 where the output of different gain values (differential
+<a name="260"><span class="lineNum">     260 </span>            :  *                 change to gain) is written.</a>
+<span class="lineNum">     261 </span>            :  */
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 : static void FilterFrame(const double* in_data, PitchFiltstr* filter_state,</span>
+<span class="lineNum">     263 </span>            :                         double* lags, double* gains, PitchFilterOperation mode,
+<span class="lineNum">     264 </span>            :                         double* out_data,
+<span class="lineNum">     265 </span>            :                         double out_dg[][PITCH_FRAME_LEN + QLOOKAHEAD]) {
+<span class="lineNum">     266 </span>            :   PitchFilterParam filter_parameters;
+<span class="lineNum">     267 </span>            :   double gain_delta, lag_delta;
+<span class="lineNum">     268 </span>            :   double old_lag, old_gain;
+<span class="lineNum">     269 </span>            :   int n;
+<span class="lineNum">     270 </span>            :   int m;
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :   const double kEnhancer = 1.3;</span>
+<span class="lineNum">     272 </span>            : 
+<span class="lineNum">     273 </span>            :   /* Set up buffer and states. */
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :   filter_parameters.index = 0;</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :   filter_parameters.lag_offset = 0;</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :   filter_parameters.mode = mode;</span>
+<span class="lineNum">     277 </span>            :   /* Copy states to local variables. */
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :   memcpy(filter_parameters.buffer, filter_state-&gt;ubuf,</span>
+<span class="lineNum">     279 </span>            :          sizeof(filter_state-&gt;ubuf));
+<span class="lineNum">     280 </span>            :   COMPILE_ASSERT(sizeof(filter_parameters.buffer) &gt;=
+<span class="lineNum">     281 </span>            :                  sizeof(filter_state-&gt;ubuf));
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :   memset(filter_parameters.buffer +</span>
+<span class="lineNum">     283 </span>            :              sizeof(filter_state-&gt;ubuf) / sizeof(filter_state-&gt;ubuf[0]),
+<span class="lineNum">     284 </span>            :          0, sizeof(filter_parameters.buffer) - sizeof(filter_state-&gt;ubuf));
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :   memcpy(filter_parameters.damper_state, filter_state-&gt;ystate,</span>
+<span class="lineNum">     286 </span>            :          sizeof(filter_state-&gt;ystate));
+<span class="lineNum">     287 </span>            : 
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :   if (mode == kPitchFilterPreGain) {</span>
+<span class="lineNum">     289 </span>            :     /* Clear buffers. */
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :     memset(filter_parameters.gain_mult, 0, sizeof(filter_parameters.gain_mult));</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :     memset(filter_parameters.damper_state_dg, 0,</span>
+<span class="lineNum">     292 </span>            :            sizeof(filter_parameters.damper_state_dg));
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :     for (n = 0; n &lt; PITCH_SUBFRAMES; ++n) {</span>
+<span class="lineNum">     294 </span>            :       //memset(out_dg[n], 0, sizeof(double) * (PITCH_FRAME_LEN + QLOOKAHEAD));
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :       memset(out_dg[n], 0, sizeof(out_dg[n]));</span>
+<span class="lineNum">     296 </span>            :     }
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :   } else if (mode == kPitchFilterPost) {</span>
+<span class="lineNum">     298 </span>            :     /* Make output more periodic. Negative sign is to change the structure
+<span class="lineNum">     299 </span>            :      * of the filter. */
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :     for (n = 0; n &lt; PITCH_SUBFRAMES; ++n) {</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :       gains[n] *= -kEnhancer;</span>
+<span class="lineNum">     302 </span>            :     }
+<span class="lineNum">     303 </span>            :   }
+<span class="lineNum">     304 </span>            : 
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :   old_lag = *filter_state-&gt;oldlagp;</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   old_gain = *filter_state-&gt;oldgainp;</span>
+<span class="lineNum">     307 </span>            : 
+<span class="lineNum">     308 </span>            :   /* No interpolation if pitch lag step is big. */
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :   if ((lags[0] &gt; (PITCH_UPSTEP * old_lag)) ||</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :       (lags[0] &lt; (PITCH_DOWNSTEP * old_lag))) {</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :     old_lag = lags[0];</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :     old_gain = gains[0];</span>
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :     if (mode == kPitchFilterPreGain) {</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :       filter_parameters.gain_mult[0] = 1.0;</span>
+<span class="lineNum">     316 </span>            :     }
+<span class="lineNum">     317 </span>            :   }
+<span class="lineNum">     318 </span>            : 
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :   filter_parameters.num_samples = PITCH_UPDATE;</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :   for (m = 0; m &lt; PITCH_SUBFRAMES; ++m) {</span>
+<span class="lineNum">     321 </span>            :     /* Set the sub-frame value. */
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :     filter_parameters.sub_frame = m;</span>
+<span class="lineNum">     323 </span>            :     /* Calculate interpolation steps for pitch-lag and pitch-gain. */
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :     lag_delta = (lags[m] - old_lag) / PITCH_GRAN_PER_SUBFRAME;</span>
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :     filter_parameters.lag = old_lag;</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :     gain_delta = (gains[m] - old_gain) / PITCH_GRAN_PER_SUBFRAME;</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :     filter_parameters.gain = old_gain;</span>
+<span class="lineNum">     328 </span>            :     /* Store for the next sub-frame. */
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :     old_lag = lags[m];</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :     old_gain = gains[m];</span>
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     for (n = 0; n &lt; PITCH_GRAN_PER_SUBFRAME; ++n) {</span>
+<span class="lineNum">     333 </span>            :       /* Step-wise interpolation of pitch gains and lags. As pitch-lag changes,
+<span class="lineNum">     334 </span>            :        * some parameters of filter need to be update. */
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :       filter_parameters.gain += gain_delta;</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :       filter_parameters.lag += lag_delta;</span>
+<span class="lineNum">     337 </span>            :       /* Update parameters according to new lag value. */
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :       Update(&amp;filter_parameters);</span>
+<span class="lineNum">     339 </span>            :       /* Filter a segment of input. */
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :       FilterSegment(in_data, &amp;filter_parameters, out_data, out_dg);</span>
+<span class="lineNum">     341 </span>            :     }
+<span class="lineNum">     342 </span>            :   }
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :   if (mode != kPitchFilterPreGain) {</span>
+<span class="lineNum">     345 </span>            :     /* Export buffer and states. */
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :     memcpy(filter_state-&gt;ubuf, &amp;filter_parameters.buffer[PITCH_FRAME_LEN],</span>
+<span class="lineNum">     347 </span>            :            sizeof(filter_state-&gt;ubuf));
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :     memcpy(filter_state-&gt;ystate, filter_parameters.damper_state,</span>
+<span class="lineNum">     349 </span>            :            sizeof(filter_state-&gt;ystate));
+<span class="lineNum">     350 </span>            : 
+<span class="lineNum">     351 </span>            :     /* Store for the next frame. */
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :     *filter_state-&gt;oldlagp = old_lag;</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     *filter_state-&gt;oldgainp = old_gain;</span>
+<span class="lineNum">     354 </span>            :   }
+<span class="lineNum">     355 </span>            : 
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :   if ((mode == kPitchFilterPreGain) || (mode == kPitchFilterPreLa)) {</span>
+<span class="lineNum">     357 </span>            :     /* Filter the lookahead segment, this is treated as the last sub-frame. So
+<span class="lineNum">     358 </span>            :      * set |pf_param| to last sub-frame. */
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :     filter_parameters.sub_frame = PITCH_SUBFRAMES - 1;</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :     filter_parameters.num_samples = QLOOKAHEAD;</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :     FilterSegment(in_data, &amp;filter_parameters, out_data, out_dg);</span>
+<span class="lineNum">     362 </span>            :   }
+<a name="363"><span class="lineNum">     363 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     364 </span>            : 
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 : void WebRtcIsac_PitchfilterPre(double* in_data, double* out_data,</span>
+<span class="lineNum">     366 </span>            :                                PitchFiltstr* pf_state, double* lags,
+<span class="lineNum">     367 </span>            :                                double* gains) {
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :   FilterFrame(in_data, pf_state, lags, gains, kPitchFilterPre, out_data, NULL);</span>
+<a name="369"><span class="lineNum">     369 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     370 </span>            : 
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 : void WebRtcIsac_PitchfilterPre_la(double* in_data, double* out_data,</span>
+<span class="lineNum">     372 </span>            :                                   PitchFiltstr* pf_state, double* lags,
+<span class="lineNum">     373 </span>            :                                   double* gains) {
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :   FilterFrame(in_data, pf_state, lags, gains, kPitchFilterPreLa, out_data,</span>
+<span class="lineNum">     375 </span>            :               NULL);
+<a name="376"><span class="lineNum">     376 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     377 </span>            : 
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 : void WebRtcIsac_PitchfilterPre_gains(</span>
+<span class="lineNum">     379 </span>            :     double* in_data, double* out_data,
+<span class="lineNum">     380 </span>            :     double out_dg[][PITCH_FRAME_LEN + QLOOKAHEAD], PitchFiltstr *pf_state,
+<span class="lineNum">     381 </span>            :     double* lags, double* gains) {
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :   FilterFrame(in_data, pf_state, lags, gains, kPitchFilterPreGain, out_data,</span>
+<span class="lineNum">     383 </span>            :               out_dg);
+<a name="384"><span class="lineNum">     384 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     385 </span>            : 
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 : void WebRtcIsac_PitchfilterPost(double* in_data, double* out_data,</span>
+<span class="lineNum">     387 </span>            :                                 PitchFiltstr* pf_state, double* lags,
+<span class="lineNum">     388 </span>            :                                 double* gains) {
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :   FilterFrame(in_data, pf_state, lags, gains, kPitchFilterPost, out_data, NULL);</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

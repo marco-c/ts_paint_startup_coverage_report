@@ -1,0 +1,872 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - xpcom/ds/nsAtomTable.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">xpcom/ds</a> - nsAtomTable.cpp<span style="font-size: 80%;"> (source / <a href="nsAtomTable.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">219</td>
+            <td class="headerCovTableEntry">285</td>
+            <td class="headerCovTableEntryMed">76.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">35</td>
+            <td class="headerCovTableEntry">46</td>
+            <td class="headerCovTableEntryMed">76.1 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;mozilla/Assertions.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;mozilla/Attributes.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/HashFunctions.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/MemoryReporting.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/Mutex.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/DebugOnly.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/Sprintf.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/Unused.h&quot;
+<span class="lineNum">      15 </span>            : 
+<span class="lineNum">      16 </span>            : #include &quot;nsAtomTable.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;nsStaticAtom.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;nsString.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;nsCRT.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;PLDHashTable.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;prenv.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;nsDataHashtable.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;nsHashKeys.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;nsAutoPtr.h&quot;
+<span class="lineNum">      26 </span>            : #include &quot;nsUnicharUtils.h&quot;
+<span class="lineNum">      27 </span>            : #include &quot;nsPrintfCString.h&quot;
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : // There are two kinds of atoms handled by this module.
+<span class="lineNum">      30 </span>            : //
+<span class="lineNum">      31 </span>            : // - DynamicAtom: the atom itself is heap allocated, as is the nsStringBuffer it
+<span class="lineNum">      32 </span>            : //   points to. |gAtomTable| holds weak references to them DynamicAtoms. When
+<span class="lineNum">      33 </span>            : //   the refcount of a DynamicAtom drops to zero, we increment a static counter.
+<span class="lineNum">      34 </span>            : //   When that counter reaches a certain threshold, we iterate over the atom
+<span class="lineNum">      35 </span>            : //   table, removing and deleting DynamicAtoms with refcount zero. This allows
+<span class="lineNum">      36 </span>            : //   us to avoid acquiring the atom table lock during normal refcounting.
+<span class="lineNum">      37 </span>            : //
+<span class="lineNum">      38 </span>            : // - StaticAtom: the atom itself is heap allocated, but it points to a static
+<span class="lineNum">      39 </span>            : //   nsStringBuffer. |gAtomTable| effectively owns StaticAtoms, because such
+<span class="lineNum">      40 </span>            : //   atoms ignore all AddRef/Release calls, which ensures they stay alive until
+<span class="lineNum">      41 </span>            : //   |gAtomTable| itself is destroyed whereupon they are explicitly deleted.
+<span class="lineNum">      42 </span>            : //
+<span class="lineNum">      43 </span>            : //   Note that gAtomTable is used on multiple threads, and callers must
+<span class="lineNum">      44 </span>            : //   acquire gAtomTableLock before touching it.
+<span class="lineNum">      45 </span>            : 
+<span class="lineNum">      46 </span>            : using namespace mozilla;
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span>            : //----------------------------------------------------------------------
+<span class="lineNum">      49 </span>            : 
+<span class="lineNum">      50 </span>            : class CheckStaticAtomSizes
+<span class="lineNum">      51 </span>            : {
+<span class="lineNum">      52 </span>            :   CheckStaticAtomSizes()
+<span class="lineNum">      53 </span>            :   {
+<span class="lineNum">      54 </span>            :     static_assert((sizeof(nsFakeStringBuffer&lt;1&gt;().mRefCnt) ==
+<span class="lineNum">      55 </span>            :                    sizeof(nsStringBuffer().mRefCount)) &amp;&amp;
+<span class="lineNum">      56 </span>            :                   (sizeof(nsFakeStringBuffer&lt;1&gt;().mSize) ==
+<span class="lineNum">      57 </span>            :                    sizeof(nsStringBuffer().mStorageSize)) &amp;&amp;
+<span class="lineNum">      58 </span>            :                   (offsetof(nsFakeStringBuffer&lt;1&gt;, mRefCnt) ==
+<span class="lineNum">      59 </span>            :                    offsetof(nsStringBuffer, mRefCount)) &amp;&amp;
+<span class="lineNum">      60 </span>            :                   (offsetof(nsFakeStringBuffer&lt;1&gt;, mSize) ==
+<span class="lineNum">      61 </span>            :                    offsetof(nsStringBuffer, mStorageSize)) &amp;&amp;
+<span class="lineNum">      62 </span>            :                   (offsetof(nsFakeStringBuffer&lt;1&gt;, mStringData) ==
+<span class="lineNum">      63 </span>            :                    sizeof(nsStringBuffer)),
+<span class="lineNum">      64 </span>            :                   &quot;mocked-up strings' representations should be compatible&quot;);
+<span class="lineNum">      65 </span>            :   }
+<span class="lineNum">      66 </span>            : };
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span>            : //----------------------------------------------------------------------
+<span class="lineNum">      69 </span>            : 
+<span class="lineNum">      70 </span>            : static Atomic&lt;uint32_t, ReleaseAcquire&gt; gUnusedAtomCount(0);
+<span class="lineNum">      71 </span>            : 
+<span class="lineNum">      72 </span>            : class DynamicAtom final : public nsIAtom
+<a name="73"><span class="lineNum">      73 </span>            : {</a>
+<span class="lineNum">      74 </span>            : public:
+<span class="lineNum">      75 </span><span class="lineCov">       2854 :   static already_AddRefed&lt;DynamicAtom&gt; Create(const nsAString&amp; aString, uint32_t aHash)</span>
+<span class="lineNum">      76 </span>            :   {
+<span class="lineNum">      77 </span>            :     // The refcount is appropriately initialized in the constructor.
+<span class="lineNum">      78 </span><span class="lineCov">       2854 :     return dont_AddRef(new DynamicAtom(aString, aHash));</span>
+<span class="lineNum">      79 </span>            :   }
+<span class="lineNum">      80 </span>            : 
+<span class="lineNum">      81 </span>            :   static void GCAtomTable();
+<span class="lineNum">      82 </span>            : 
+<span class="lineNum">      83 </span>            :   enum class GCKind {
+<span class="lineNum">      84 </span>            :     RegularOperation,
+<span class="lineNum">      85 </span>            :     Shutdown,
+<span class="lineNum">      86 </span>            :   };
+<span class="lineNum">      87 </span>            : 
+<span class="lineNum">      88 </span>            :   static void GCAtomTableLocked(const MutexAutoLock&amp; aProofOfLock,
+<span class="lineNum">      89 </span>            :                                 GCKind aKind);
+<a name="90"><span class="lineNum">      90 </span>            : </a>
+<span class="lineNum">      91 </span>            : private:
+<span class="lineNum">      92 </span><span class="lineCov">       2854 :   DynamicAtom(const nsAString&amp; aString, uint32_t aHash)</span>
+<span class="lineNum">      93 </span><span class="lineCov">       2854 :     : mRefCnt(1)</span>
+<span class="lineNum">      94 </span>            :   {
+<span class="lineNum">      95 </span><span class="lineCov">       2854 :     mLength = aString.Length();</span>
+<span class="lineNum">      96 </span><span class="lineCov">       2854 :     mIsStatic = false;</span>
+<span class="lineNum">      97 </span><span class="lineCov">       5708 :     RefPtr&lt;nsStringBuffer&gt; buf = nsStringBuffer::FromString(aString);</span>
+<span class="lineNum">      98 </span><span class="lineCov">       2854 :     if (buf) {</span>
+<span class="lineNum">      99 </span><span class="lineCov">        549 :       mString = static_cast&lt;char16_t*&gt;(buf-&gt;Data());</span>
+<span class="lineNum">     100 </span>            :     } else {
+<span class="lineNum">     101 </span><span class="lineCov">       2305 :       const size_t size = (mLength + 1) * sizeof(char16_t);</span>
+<span class="lineNum">     102 </span><span class="lineCov">       2305 :       buf = nsStringBuffer::Alloc(size);</span>
+<span class="lineNum">     103 </span><span class="lineCov">       2305 :       if (MOZ_UNLIKELY(!buf)) {</span>
+<span class="lineNum">     104 </span>            :         // We OOM because atom allocations should be small and it's hard to
+<span class="lineNum">     105 </span>            :         // handle them more gracefully in a constructor.
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :         NS_ABORT_OOM(size);</span>
+<span class="lineNum">     107 </span>            :       }
+<span class="lineNum">     108 </span><span class="lineCov">       2305 :       mString = static_cast&lt;char16_t*&gt;(buf-&gt;Data());</span>
+<span class="lineNum">     109 </span><span class="lineCov">       2305 :       CopyUnicodeTo(aString, 0, mString, mLength);</span>
+<span class="lineNum">     110 </span><span class="lineCov">       2305 :       mString[mLength] = char16_t(0);</span>
+<span class="lineNum">     111 </span>            :     }
+<span class="lineNum">     112 </span>            : 
+<span class="lineNum">     113 </span><span class="lineCov">       2854 :     mHash = aHash;</span>
+<span class="lineNum">     114 </span><span class="lineCov">       2854 :     MOZ_ASSERT(mHash == HashString(mString, mLength));</span>
+<span class="lineNum">     115 </span>            : 
+<span class="lineNum">     116 </span><span class="lineCov">       2854 :     NS_ASSERTION(mString[mLength] == char16_t(0), &quot;null terminated&quot;);</span>
+<span class="lineNum">     117 </span><span class="lineCov">       2854 :     NS_ASSERTION(buf &amp;&amp; buf-&gt;StorageSize() &gt;= (mLength + 1) * sizeof(char16_t),</span>
+<span class="lineNum">     118 </span>            :                  &quot;enough storage&quot;);
+<span class="lineNum">     119 </span><span class="lineCov">       2854 :     NS_ASSERTION(Equals(aString), &quot;correct data&quot;);</span>
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span>            :     // Take ownership of buffer
+<span class="lineNum">     122 </span><span class="lineCov">       2854 :     mozilla::Unused &lt;&lt; buf.forget();</span>
+<span class="lineNum">     123 </span><span class="lineCov">       2854 :   }</span>
+<span class="lineNum">     124 </span>            : 
+<span class="lineNum">     125 </span>            : private:
+<span class="lineNum">     126 </span>            :   // We don't need a virtual destructor because we always delete via a
+<span class="lineNum">     127 </span>            :   // DynamicAtom* pointer (in GCAtomTable()), not an nsIAtom* pointer.
+<span class="lineNum">     128 </span>            :   ~DynamicAtom();
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span>            : public:
+<span class="lineNum">     131 </span>            :   NS_DECL_THREADSAFE_ISUPPORTS
+<span class="lineNum">     132 </span>            :   NS_DECL_NSIATOM
+<span class="lineNum">     133 </span>            : };
+<span class="lineNum">     134 </span>            : 
+<span class="lineNum">     135 </span>            : class StaticAtom final : public nsIAtom
+<a name="136"><span class="lineNum">     136 </span>            : {</a>
+<span class="lineNum">     137 </span>            : public:
+<span class="lineNum">     138 </span><span class="lineCov">       8013 :   StaticAtom(nsStringBuffer* aStringBuffer, uint32_t aLength, uint32_t aHash)</span>
+<span class="lineNum">     139 </span><span class="lineCov">       8013 :   {</span>
+<span class="lineNum">     140 </span><span class="lineCov">       8013 :     mLength = aLength;</span>
+<span class="lineNum">     141 </span><span class="lineCov">       8013 :     mIsStatic = true;</span>
+<span class="lineNum">     142 </span><span class="lineCov">       8013 :     mString = static_cast&lt;char16_t*&gt;(aStringBuffer-&gt;Data());</span>
+<span class="lineNum">     143 </span>            :     // Technically we could currently avoid doing this addref by instead making
+<span class="lineNum">     144 </span>            :     // the static atom buffers have an initial refcount of 2.
+<span class="lineNum">     145 </span><span class="lineCov">       8013 :     aStringBuffer-&gt;AddRef();</span>
+<span class="lineNum">     146 </span>            : 
+<span class="lineNum">     147 </span><span class="lineCov">       8013 :     mHash = aHash;</span>
+<span class="lineNum">     148 </span><span class="lineCov">       8013 :     MOZ_ASSERT(mHash == HashString(mString, mLength));</span>
+<span class="lineNum">     149 </span>            : 
+<span class="lineNum">     150 </span><span class="lineCov">       8013 :     MOZ_ASSERT(mString[mLength] == char16_t(0), &quot;null terminated&quot;);</span>
+<span class="lineNum">     151 </span><span class="lineCov">       8013 :     MOZ_ASSERT(aStringBuffer &amp;&amp;</span>
+<span class="lineNum">     152 </span>            :                aStringBuffer-&gt;StorageSize() == (mLength + 1) * sizeof(char16_t),
+<span class="lineNum">     153 </span>            :                &quot;correct storage&quot;);
+<span class="lineNum">     154 </span><span class="lineCov">       8013 :   }</span>
+<span class="lineNum">     155 </span>            : 
+<a name="156"><span class="lineNum">     156 </span>            :   // We don't need a virtual destructor because we always delete via a</a>
+<span class="lineNum">     157 </span>            :   // StaticAtom* pointer (in AtomTableClearEntry()), not an nsIAtom* pointer.
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :   ~StaticAtom() {}</span>
+<span class="lineNum">     159 </span>            : 
+<span class="lineNum">     160 </span>            :   NS_DECL_ISUPPORTS
+<span class="lineNum">     161 </span>            :   NS_DECL_NSIATOM
+<a name="162"><span class="lineNum">     162 </span>            : };</a>
+<span class="lineNum">     163 </span>            : 
+<span class="lineNum">     164 </span><span class="lineCov">      56600 : NS_IMPL_QUERY_INTERFACE(StaticAtom, nsIAtom)</span>
+<a name="165"><span class="lineNum">     165 </span>            : </a>
+<span class="lineNum">     166 </span>            : NS_IMETHODIMP_(MozExternalRefCountType)
+<span class="lineNum">     167 </span><span class="lineCov">     111207 : StaticAtom::AddRef()</span>
+<span class="lineNum">     168 </span>            : {
+<span class="lineNum">     169 </span><span class="lineCov">     111207 :   return 2;</span>
+<span class="lineNum">     170 </span>            : }
+<a name="171"><span class="lineNum">     171 </span>            : </a>
+<span class="lineNum">     172 </span>            : NS_IMETHODIMP_(MozExternalRefCountType)
+<span class="lineNum">     173 </span><span class="lineCov">      80134 : StaticAtom::Release()</span>
+<span class="lineNum">     174 </span>            : {
+<span class="lineNum">     175 </span><span class="lineCov">      80134 :   return 1;</span>
+<span class="lineNum">     176 </span>            : }
+<a name="177"><span class="lineNum">     177 </span>            : </a>
+<span class="lineNum">     178 </span>            : NS_IMETHODIMP
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 : DynamicAtom::ScriptableToString(nsAString&amp; aBuf)</span>
+<span class="lineNum">     180 </span>            : {
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :   nsStringBuffer::FromData(mString)-&gt;ToString(mLength, aBuf);</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     183 </span>            : }
+<a name="184"><span class="lineNum">     184 </span>            : </a>
+<span class="lineNum">     185 </span>            : NS_IMETHODIMP
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 : StaticAtom::ScriptableToString(nsAString&amp; aBuf)</span>
+<span class="lineNum">     187 </span>            : {
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   nsStringBuffer::FromData(mString)-&gt;ToString(mLength, aBuf);</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     190 </span>            : }
+<a name="191"><span class="lineNum">     191 </span>            : </a>
+<span class="lineNum">     192 </span>            : NS_IMETHODIMP
+<span class="lineNum">     193 </span><span class="lineCov">        100 : DynamicAtom::ToUTF8String(nsACString&amp; aBuf)</span>
+<span class="lineNum">     194 </span>            : {
+<span class="lineNum">     195 </span><span class="lineCov">        100 :   CopyUTF16toUTF8(nsDependentString(mString, mLength), aBuf);</span>
+<span class="lineNum">     196 </span><span class="lineCov">        100 :   return NS_OK;</span>
+<span class="lineNum">     197 </span>            : }
+<a name="198"><span class="lineNum">     198 </span>            : </a>
+<span class="lineNum">     199 </span>            : NS_IMETHODIMP
+<span class="lineNum">     200 </span><span class="lineCov">         86 : StaticAtom::ToUTF8String(nsACString&amp; aBuf)</span>
+<span class="lineNum">     201 </span>            : {
+<span class="lineNum">     202 </span><span class="lineCov">         86 :   CopyUTF16toUTF8(nsDependentString(mString, mLength), aBuf);</span>
+<span class="lineNum">     203 </span><span class="lineCov">         86 :   return NS_OK;</span>
+<span class="lineNum">     204 </span>            : }
+<a name="205"><span class="lineNum">     205 </span>            : </a>
+<span class="lineNum">     206 </span>            : NS_IMETHODIMP
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 : DynamicAtom::ScriptableEquals(const nsAString&amp; aString, bool* aResult)</span>
+<span class="lineNum">     208 </span>            : {
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :   *aResult = aString.Equals(nsDependentString(mString, mLength));</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     211 </span>            : }
+<a name="212"><span class="lineNum">     212 </span>            : </a>
+<span class="lineNum">     213 </span>            : NS_IMETHODIMP
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 : StaticAtom::ScriptableEquals(const nsAString&amp; aString, bool* aResult)</span>
+<span class="lineNum">     215 </span>            : {
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :   *aResult = aString.Equals(nsDependentString(mString, mLength));</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     218 </span>            : }
+<a name="219"><span class="lineNum">     219 </span>            : </a>
+<span class="lineNum">     220 </span>            : NS_IMETHODIMP_(size_t)
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 : DynamicAtom::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf)</span>
+<span class="lineNum">     222 </span>            : {
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :   size_t n = aMallocSizeOf(this);</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :   n += nsStringBuffer::FromData(mString)-&gt;SizeOfIncludingThisIfUnshared(</span>
+<span class="lineNum">     225 </span>            :          aMallocSizeOf);
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :   return n;</span>
+<span class="lineNum">     227 </span>            : }
+<a name="228"><span class="lineNum">     228 </span>            : </a>
+<span class="lineNum">     229 </span>            : NS_IMETHODIMP_(size_t)
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 : StaticAtom::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf)</span>
+<span class="lineNum">     231 </span>            : {
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   size_t n = aMallocSizeOf(this);</span>
+<span class="lineNum">     233 </span>            :   // Don't measure the string buffer pointed to by the StaticAtom because it's
+<span class="lineNum">     234 </span>            :   // in static memory.
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :   return n;</span>
+<span class="lineNum">     236 </span>            : }
+<span class="lineNum">     237 </span>            : 
+<span class="lineNum">     238 </span>            : //----------------------------------------------------------------------
+<span class="lineNum">     239 </span>            : 
+<span class="lineNum">     240 </span>            : /**
+<span class="lineNum">     241 </span>            :  * The shared hash table for atom lookups.
+<span class="lineNum">     242 </span>            :  *
+<span class="lineNum">     243 </span>            :  * Callers must hold gAtomTableLock before manipulating the table.
+<span class="lineNum">     244 </span>            :  */
+<span class="lineNum">     245 </span>            : static PLDHashTable* gAtomTable;
+<span class="lineNum">     246 </span>            : static Mutex* gAtomTableLock;
+<span class="lineNum">     247 </span>            : 
+<span class="lineNum">     248 </span>            : struct AtomTableKey
+<span class="lineNum">     249 </span>            : {
+<span class="lineNum">     250 </span>            :   AtomTableKey(const char16_t* aUTF16String, uint32_t aLength, uint32_t aHash)
+<span class="lineNum">     251 </span>            :     : mUTF16String(aUTF16String)
+<span class="lineNum">     252 </span>            :     , mUTF8String(nullptr)
+<span class="lineNum">     253 </span>            :     , mLength(aLength)
+<span class="lineNum">     254 </span>            :     , mHash(aHash)
+<span class="lineNum">     255 </span>            :   {
+<span class="lineNum">     256 </span>            :     MOZ_ASSERT(mHash == HashString(mUTF16String, mLength));
+<span class="lineNum">     257 </span>            :   }
+<span class="lineNum">     258 </span>            : 
+<span class="lineNum">     259 </span>            :   AtomTableKey(const char* aUTF8String, uint32_t aLength, uint32_t aHash)
+<span class="lineNum">     260 </span>            :     : mUTF16String(nullptr)
+<span class="lineNum">     261 </span>            :     , mUTF8String(aUTF8String)
+<span class="lineNum">     262 </span>            :     , mLength(aLength)
+<span class="lineNum">     263 </span>            :     , mHash(aHash)
+<span class="lineNum">     264 </span>            :   {
+<span class="lineNum">     265 </span>            :     mozilla::DebugOnly&lt;bool&gt; err;
+<span class="lineNum">     266 </span>            :     MOZ_ASSERT(aHash == HashUTF8AsUTF16(mUTF8String, mLength, &amp;err));
+<a name="267"><span class="lineNum">     267 </span>            :   }</a>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span><span class="lineCov">      40920 :   AtomTableKey(const char16_t* aUTF16String, uint32_t aLength,</span>
+<span class="lineNum">     270 </span>            :                uint32_t* aHashOut)
+<span class="lineNum">     271 </span><span class="lineCov">      40920 :     : mUTF16String(aUTF16String)</span>
+<span class="lineNum">     272 </span>            :     , mUTF8String(nullptr)
+<span class="lineNum">     273 </span><span class="lineCov">      40920 :     , mLength(aLength)</span>
+<span class="lineNum">     274 </span>            :   {
+<span class="lineNum">     275 </span><span class="lineCov">      40920 :     mHash = HashString(mUTF16String, mLength);</span>
+<span class="lineNum">     276 </span><span class="lineCov">      40920 :     *aHashOut = mHash;</span>
+<a name="277"><span class="lineNum">     277 </span><span class="lineCov">      40920 :   }</span></a>
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span><span class="lineCov">        844 :   AtomTableKey(const char* aUTF8String, uint32_t aLength, uint32_t* aHashOut)</span>
+<span class="lineNum">     280 </span><span class="lineCov">        844 :     : mUTF16String(nullptr)</span>
+<span class="lineNum">     281 </span>            :     , mUTF8String(aUTF8String)
+<span class="lineNum">     282 </span><span class="lineCov">        844 :     , mLength(aLength)</span>
+<span class="lineNum">     283 </span>            :   {
+<span class="lineNum">     284 </span>            :     bool err;
+<span class="lineNum">     285 </span><span class="lineCov">        844 :     mHash = HashUTF8AsUTF16(mUTF8String, mLength, &amp;err);</span>
+<span class="lineNum">     286 </span><span class="lineCov">        844 :     if (err) {</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :       mUTF8String = nullptr;</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :       mLength = 0;</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :       mHash = 0;</span>
+<span class="lineNum">     290 </span>            :     }
+<span class="lineNum">     291 </span><span class="lineCov">        844 :     *aHashOut = mHash;</span>
+<span class="lineNum">     292 </span><span class="lineCov">        844 :   }</span>
+<span class="lineNum">     293 </span>            : 
+<span class="lineNum">     294 </span>            :   const char16_t* mUTF16String;
+<span class="lineNum">     295 </span>            :   const char* mUTF8String;
+<span class="lineNum">     296 </span>            :   uint32_t mLength;
+<span class="lineNum">     297 </span>            :   uint32_t mHash;
+<span class="lineNum">     298 </span>            : };
+<span class="lineNum">     299 </span>            : 
+<span class="lineNum">     300 </span>            : struct AtomTableEntry : public PLDHashEntryHdr
+<span class="lineNum">     301 </span>            : {
+<span class="lineNum">     302 </span>            :   // These references are either to DynamicAtoms, in which case they are
+<span class="lineNum">     303 </span>            :   // non-owning, or they are to StaticAtoms, which aren't really refcounted.
+<span class="lineNum">     304 </span>            :   // See the comment at the top of this file for more details.
+<span class="lineNum">     305 </span>            :   nsIAtom* MOZ_NON_OWNING_REF mAtom;
+<span class="lineNum">     306 </span>            : };
+<a name="307"><span class="lineNum">     307 </span>            : </a>
+<span class="lineNum">     308 </span>            : static PLDHashNumber
+<span class="lineNum">     309 </span><span class="lineCov">      40558 : AtomTableGetHash(const void* aKey)</span>
+<span class="lineNum">     310 </span>            : {
+<span class="lineNum">     311 </span><span class="lineCov">      40558 :   const AtomTableKey* k = static_cast&lt;const AtomTableKey*&gt;(aKey);</span>
+<span class="lineNum">     312 </span><span class="lineCov">      40558 :   return k-&gt;mHash;</span>
+<span class="lineNum">     313 </span>            : }
+<a name="314"><span class="lineNum">     314 </span>            : </a>
+<span class="lineNum">     315 </span>            : static bool
+<span class="lineNum">     316 </span><span class="lineCov">      29691 : AtomTableMatchKey(const PLDHashEntryHdr* aEntry, const void* aKey)</span>
+<span class="lineNum">     317 </span>            : {
+<span class="lineNum">     318 </span><span class="lineCov">      29691 :   const AtomTableEntry* he = static_cast&lt;const AtomTableEntry*&gt;(aEntry);</span>
+<span class="lineNum">     319 </span><span class="lineCov">      29691 :   const AtomTableKey* k = static_cast&lt;const AtomTableKey*&gt;(aKey);</span>
+<span class="lineNum">     320 </span>            : 
+<span class="lineNum">     321 </span><span class="lineCov">      29691 :   if (k-&gt;mUTF8String) {</span>
+<span class="lineNum">     322 </span>            :     return
+<span class="lineNum">     323 </span><span class="lineCov">       1200 :       CompareUTF8toUTF16(nsDependentCSubstring(k-&gt;mUTF8String,</span>
+<span class="lineNum">     324 </span><span class="lineCov">        600 :                                                k-&gt;mUTF8String + k-&gt;mLength),</span>
+<span class="lineNum">     325 </span><span class="lineCov">       1800 :                          nsDependentAtomString(he-&gt;mAtom)) == 0;</span>
+<span class="lineNum">     326 </span>            :   }
+<span class="lineNum">     327 </span>            : 
+<span class="lineNum">     328 </span><span class="lineCov">      29091 :   return he-&gt;mAtom-&gt;Equals(k-&gt;mUTF16String, k-&gt;mLength);</span>
+<span class="lineNum">     329 </span>            : }
+<a name="330"><span class="lineNum">     330 </span>            : </a>
+<span class="lineNum">     331 </span>            : static void
+<span class="lineNum">     332 </span><span class="lineCov">         80 : AtomTableClearEntry(PLDHashTable* aTable, PLDHashEntryHdr* aEntry)</span>
+<span class="lineNum">     333 </span>            : {
+<span class="lineNum">     334 </span><span class="lineCov">         80 :   auto entry = static_cast&lt;AtomTableEntry*&gt;(aEntry);</span>
+<span class="lineNum">     335 </span><span class="lineCov">         80 :   nsIAtom* atom = entry-&gt;mAtom;</span>
+<span class="lineNum">     336 </span><span class="lineCov">         80 :   if (atom-&gt;IsStaticAtom()) {</span>
+<span class="lineNum">     337 </span>            :     // This case -- when the entry being cleared holds a StaticAtom -- only
+<span class="lineNum">     338 </span>            :     // occurs when gAtomTable is destroyed, whereupon all StaticAtoms within it
+<span class="lineNum">     339 </span>            :     // must be explicitly deleted. The cast is required because StaticAtom
+<span class="lineNum">     340 </span>            :     // doesn't have a virtual destructor.
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :     delete static_cast&lt;StaticAtom*&gt;(atom);</span>
+<span class="lineNum">     342 </span>            :   }
+<span class="lineNum">     343 </span><span class="lineCov">         80 : }</span>
+<a name="344"><span class="lineNum">     344 </span>            : </a>
+<span class="lineNum">     345 </span>            : static void
+<span class="lineNum">     346 </span><span class="lineCov">      10867 : AtomTableInitEntry(PLDHashEntryHdr* aEntry, const void* aKey)</span>
+<span class="lineNum">     347 </span>            : {
+<span class="lineNum">     348 </span><span class="lineCov">      10867 :   static_cast&lt;AtomTableEntry*&gt;(aEntry)-&gt;mAtom = nullptr;</span>
+<span class="lineNum">     349 </span><span class="lineCov">      10867 : }</span>
+<span class="lineNum">     350 </span>            : 
+<span class="lineNum">     351 </span>            : static const PLDHashTableOps AtomTableOps = {
+<span class="lineNum">     352 </span>            :   AtomTableGetHash,
+<span class="lineNum">     353 </span>            :   AtomTableMatchKey,
+<span class="lineNum">     354 </span>            :   PLDHashTable::MoveEntryStub,
+<span class="lineNum">     355 </span>            :   AtomTableClearEntry,
+<span class="lineNum">     356 </span>            :   AtomTableInitEntry
+<span class="lineNum">     357 </span>            : };
+<span class="lineNum">     358 </span>            : 
+<span class="lineNum">     359 </span>            : //----------------------------------------------------------------------
+<span class="lineNum">     360 </span>            : 
+<span class="lineNum">     361 </span>            : #define RECENTLY_USED_MAIN_THREAD_ATOM_CACHE_SIZE 31
+<span class="lineNum">     362 </span>            : static nsIAtom*
+<span class="lineNum">     363 </span>            :   sRecentlyUsedMainThreadAtoms[RECENTLY_USED_MAIN_THREAD_ATOM_CACHE_SIZE] = {};
+<a name="364"><span class="lineNum">     364 </span>            : </a>
+<span class="lineNum">     365 </span>            : void
+<span class="lineNum">     366 </span><span class="lineCov">          4 : DynamicAtom::GCAtomTable()</span>
+<span class="lineNum">     367 </span>            : {
+<span class="lineNum">     368 </span><span class="lineCov">          4 :   if (NS_IsMainThread()) {</span>
+<span class="lineNum">     369 </span><span class="lineCov">          8 :     MutexAutoLock lock(*gAtomTableLock);</span>
+<span class="lineNum">     370 </span><span class="lineCov">          4 :     GCAtomTableLocked(lock, GCKind::RegularOperation);</span>
+<span class="lineNum">     371 </span>            :   }
+<span class="lineNum">     372 </span><span class="lineCov">          4 : }</span>
+<a name="373"><span class="lineNum">     373 </span>            : </a>
+<span class="lineNum">     374 </span>            : void
+<span class="lineNum">     375 </span><span class="lineCov">          4 : DynamicAtom::GCAtomTableLocked(const MutexAutoLock&amp; aProofOfLock,</span>
+<span class="lineNum">     376 </span>            :                                GCKind aKind)
+<span class="lineNum">     377 </span>            : {
+<span class="lineNum">     378 </span><span class="lineCov">          4 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     379 </span><span class="lineCov">        128 :   for (uint32_t i = 0; i &lt; RECENTLY_USED_MAIN_THREAD_ATOM_CACHE_SIZE; ++i) {</span>
+<span class="lineNum">     380 </span><span class="lineCov">        124 :     sRecentlyUsedMainThreadAtoms[i] = nullptr;</span>
+<span class="lineNum">     381 </span>            :   }
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span><span class="lineCov">          4 :   uint32_t removedCount = 0; // Use a non-atomic temporary for cheaper increments.</span>
+<span class="lineNum">     384 </span><span class="lineCov">          8 :   nsAutoCString nonZeroRefcountAtoms;</span>
+<span class="lineNum">     385 </span><span class="lineCov">          4 :   uint32_t nonZeroRefcountAtomsCount = 0;</span>
+<span class="lineNum">     386 </span><span class="lineCov">      15456 :   for (auto i = gAtomTable-&gt;Iter(); !i.Done(); i.Next()) {</span>
+<span class="lineNum">     387 </span><span class="lineCov">      15452 :     auto entry = static_cast&lt;AtomTableEntry*&gt;(i.Get());</span>
+<span class="lineNum">     388 </span><span class="lineCov">      15452 :     if (entry-&gt;mAtom-&gt;IsStaticAtom()) {</span>
+<span class="lineNum">     389 </span><span class="lineCov">      10684 :       continue;</span>
+<span class="lineNum">     390 </span>            :     }
+<span class="lineNum">     391 </span>            : 
+<span class="lineNum">     392 </span><span class="lineCov">       4768 :     auto atom = static_cast&lt;DynamicAtom*&gt;(entry-&gt;mAtom);</span>
+<span class="lineNum">     393 </span><span class="lineCov">       4768 :     if (atom-&gt;mRefCnt == 0) {</span>
+<span class="lineNum">     394 </span><span class="lineCov">         80 :       i.Remove();</span>
+<span class="lineNum">     395 </span><span class="lineCov">         80 :       delete atom;</span>
+<span class="lineNum">     396 </span><span class="lineCov">         80 :       ++removedCount;</span>
+<span class="lineNum">     397 </span>            :     }
+<span class="lineNum">     398 </span>            : #ifdef NS_FREE_PERMANENT_DATA
+<span class="lineNum">     399 </span><span class="lineCov">       4688 :     else if (aKind == GCKind::Shutdown &amp;&amp; PR_GetEnv(&quot;XPCOM_MEM_BLOAT_LOG&quot;)) {</span>
+<span class="lineNum">     400 </span>            :       // Only report leaking atoms in leak-checking builds in a run
+<span class="lineNum">     401 </span>            :       // where we are checking for leaks, during shutdown. If
+<span class="lineNum">     402 </span>            :       // something is anomalous, then we'll assert later in this
+<span class="lineNum">     403 </span>            :       // function.
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :       nsAutoCString name;</span>
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :       atom-&gt;ToUTF8String(name);</span>
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :       if (nonZeroRefcountAtomsCount == 0) {</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :         nonZeroRefcountAtoms = name;</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :       } else if (nonZeroRefcountAtomsCount &lt; 20) {</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :         nonZeroRefcountAtoms += NS_LITERAL_CSTRING(&quot;,&quot;) + name;</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :       } else if (nonZeroRefcountAtomsCount == 20) {</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :         nonZeroRefcountAtoms += NS_LITERAL_CSTRING(&quot;,...&quot;);</span>
+<span class="lineNum">     412 </span>            :       }
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :       nonZeroRefcountAtomsCount++;</span>
+<span class="lineNum">     414 </span>            :     }
+<span class="lineNum">     415 </span>            : #endif
+<span class="lineNum">     416 </span>            : 
+<span class="lineNum">     417 </span>            :   }
+<span class="lineNum">     418 </span><span class="lineCov">          4 :   if (nonZeroRefcountAtomsCount) {</span>
+<span class="lineNum">     419 </span>            :     nsPrintfCString msg(&quot;%d dynamic atom(s) with non-zero refcount: %s&quot;,
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :                         nonZeroRefcountAtomsCount, nonZeroRefcountAtoms.get());</span>
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :     NS_ASSERTION(nonZeroRefcountAtomsCount == 0, msg.get());</span>
+<span class="lineNum">     422 </span>            :   }
+<span class="lineNum">     423 </span>            : 
+<span class="lineNum">     424 </span>            :   // During the course of this function, the atom table is locked. This means
+<span class="lineNum">     425 </span>            :   // that, barring refcounting bugs in consumers, an atom can never go from
+<span class="lineNum">     426 </span>            :   // refcount == 0 to refcount != 0 during a GC. However, an atom _can_ go from
+<span class="lineNum">     427 </span>            :   // refcount != 0 to refcount == 0 if a Release() occurs in parallel with GC.
+<span class="lineNum">     428 </span>            :   // This means that we cannot assert that gUnusedAtomCount == removedCount, and
+<span class="lineNum">     429 </span>            :   // thus that there are no unused atoms at the end of a GC. We can and do,
+<span class="lineNum">     430 </span>            :   // however, assert this after the last GC at shutdown.
+<span class="lineNum">     431 </span><span class="lineCov">          4 :   if (aKind == GCKind::RegularOperation) {</span>
+<span class="lineNum">     432 </span><span class="lineCov">          4 :     MOZ_ASSERT(removedCount &lt;= gUnusedAtomCount);</span>
+<span class="lineNum">     433 </span>            :   } else {
+<span class="lineNum">     434 </span>            :     // Complain if somebody adds new GCKind enums.
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(aKind == GCKind::Shutdown);</span>
+<span class="lineNum">     436 </span>            :     // Our unused atom count should be accurate.
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(removedCount == gUnusedAtomCount);</span>
+<span class="lineNum">     438 </span>            :   }
+<span class="lineNum">     439 </span>            : 
+<span class="lineNum">     440 </span><span class="lineCov">          4 :   gUnusedAtomCount -= removedCount;</span>
+<a name="441"><span class="lineNum">     441 </span><span class="lineCov">          4 : }</span></a>
+<span class="lineNum">     442 </span>            : 
+<span class="lineNum">     443 </span><span class="lineCov">      28769 : NS_IMPL_QUERY_INTERFACE(DynamicAtom, nsIAtom)</span>
+<a name="444"><span class="lineNum">     444 </span>            : </a>
+<span class="lineNum">     445 </span>            : NS_IMETHODIMP_(MozExternalRefCountType)
+<span class="lineNum">     446 </span><span class="lineCov">      52664 : DynamicAtom::AddRef(void)</span>
+<span class="lineNum">     447 </span>            : {
+<span class="lineNum">     448 </span><span class="lineCov">      52664 :   nsrefcnt count = ++mRefCnt;</span>
+<span class="lineNum">     449 </span><span class="lineCov">      52664 :   if (count == 1) {</span>
+<span class="lineNum">     450 </span><span class="lineCov">        164 :     MOZ_ASSERT(gUnusedAtomCount &gt; 0);</span>
+<span class="lineNum">     451 </span><span class="lineCov">        164 :     gUnusedAtomCount--;</span>
+<span class="lineNum">     452 </span>            :   }
+<span class="lineNum">     453 </span><span class="lineCov">      52664 :   return count;</span>
+<span class="lineNum">     454 </span>            : }
+<span class="lineNum">     455 </span>            : 
+<span class="lineNum">     456 </span>            : #ifdef DEBUG
+<span class="lineNum">     457 </span>            : // We set a lower GC threshold for atoms in debug builds so that we exercise
+<span class="lineNum">     458 </span>            : // the GC machinery more often.
+<span class="lineNum">     459 </span>            : static const uint32_t kAtomGCThreshold = 20;
+<span class="lineNum">     460 </span>            : #else
+<span class="lineNum">     461 </span>            : static const uint32_t kAtomGCThreshold = 10000;
+<span class="lineNum">     462 </span>            : #endif
+<a name="463"><span class="lineNum">     463 </span>            : </a>
+<span class="lineNum">     464 </span>            : NS_IMETHODIMP_(MozExternalRefCountType)
+<span class="lineNum">     465 </span><span class="lineCov">      38841 : DynamicAtom::Release(void)</span>
+<span class="lineNum">     466 </span>            : {
+<span class="lineNum">     467 </span><span class="lineCov">      38841 :   MOZ_ASSERT(mRefCnt &gt; 0);</span>
+<span class="lineNum">     468 </span><span class="lineCov">      38841 :   nsrefcnt count = --mRefCnt;</span>
+<span class="lineNum">     469 </span><span class="lineCov">      38841 :   if (count == 0) {</span>
+<span class="lineNum">     470 </span><span class="lineCov">        268 :     if (++gUnusedAtomCount &gt;= kAtomGCThreshold) {</span>
+<span class="lineNum">     471 </span><span class="lineCov">          4 :       GCAtomTable();</span>
+<span class="lineNum">     472 </span>            :     }
+<span class="lineNum">     473 </span>            :   }
+<span class="lineNum">     474 </span>            : 
+<span class="lineNum">     475 </span><span class="lineCov">      38841 :   return count;</span>
+<a name="476"><span class="lineNum">     476 </span>            : }</a>
+<span class="lineNum">     477 </span>            : 
+<span class="lineNum">     478 </span><span class="lineCov">        160 : DynamicAtom::~DynamicAtom()</span>
+<span class="lineNum">     479 </span>            : {
+<span class="lineNum">     480 </span><span class="lineCov">         80 :   nsStringBuffer::FromData(mString)-&gt;Release();</span>
+<span class="lineNum">     481 </span><span class="lineCov">         80 : }</span>
+<span class="lineNum">     482 </span>            : 
+<span class="lineNum">     483 </span>            : //----------------------------------------------------------------------
+<span class="lineNum">     484 </span>            : 
+<span class="lineNum">     485 </span>            : class StaticAtomEntry : public PLDHashEntryHdr
+<span class="lineNum">     486 </span>            : {
+<span class="lineNum">     487 </span>            : public:
+<span class="lineNum">     488 </span>            :   typedef const nsAString&amp; KeyType;
+<a name="489"><span class="lineNum">     489 </span>            :   typedef const nsAString* KeyTypePointer;</a>
+<span class="lineNum">     490 </span>            : 
+<span class="lineNum">     491 </span><span class="lineCov">       8013 :   explicit StaticAtomEntry(KeyTypePointer aKey) {}</span>
+<span class="lineNum">     492 </span>            :   StaticAtomEntry(const StaticAtomEntry&amp; aOther) : mAtom(aOther.mAtom) {}
+<span class="lineNum">     493 </span>            : 
+<span class="lineNum">     494 </span>            :   // We do not delete the atom because that's done when gAtomTable is
+<a name="495"><span class="lineNum">     495 </span>            :   // destroyed -- which happens immediately after gStaticAtomTable is destroyed</a>
+<span class="lineNum">     496 </span>            :   // -- in NS_PurgeAtomTable().
+<a name="497"><span class="lineNum">     497 </span><span class="lineNoCov">          0 :   ~StaticAtomEntry() {}</span></a>
+<span class="lineNum">     498 </span>            : 
+<span class="lineNum">     499 </span><span class="lineCov">        542 :   bool KeyEquals(KeyTypePointer aKey) const</span>
+<span class="lineNum">     500 </span>            :   {
+<span class="lineNum">     501 </span><span class="lineCov">        542 :     return mAtom-&gt;Equals(*aKey);</span>
+<a name="502"><span class="lineNum">     502 </span>            :   }</a>
+<a name="503"><span class="lineNum">     503 </span>            : </a>
+<span class="lineNum">     504 </span><span class="lineCov">       8555 :   static KeyTypePointer KeyToPointer(KeyType aKey) { return &amp;aKey; }</span>
+<span class="lineNum">     505 </span><span class="lineCov">       8555 :   static PLDHashNumber HashKey(KeyTypePointer aKey)</span>
+<span class="lineNum">     506 </span>            :   {
+<span class="lineNum">     507 </span><span class="lineCov">       8555 :     return HashString(*aKey);</span>
+<span class="lineNum">     508 </span>            :   }
+<span class="lineNum">     509 </span>            : 
+<span class="lineNum">     510 </span>            :   enum { ALLOW_MEMMOVE = true };
+<span class="lineNum">     511 </span>            : 
+<span class="lineNum">     512 </span>            :   // StaticAtoms aren't really refcounted. Because these entries live in a
+<span class="lineNum">     513 </span>            :   // global hashtable, this reference is essentially owning.
+<span class="lineNum">     514 </span>            :   StaticAtom* MOZ_OWNING_REF mAtom;
+<span class="lineNum">     515 </span>            : };
+<span class="lineNum">     516 </span>            : 
+<span class="lineNum">     517 </span>            : /**
+<span class="lineNum">     518 </span>            :  * A hashtable of static atoms that existed at app startup. This hashtable
+<span class="lineNum">     519 </span>            :  * helps nsHtml5AtomTable.
+<span class="lineNum">     520 </span>            :  */
+<span class="lineNum">     521 </span>            : typedef nsTHashtable&lt;StaticAtomEntry&gt; StaticAtomTable;
+<span class="lineNum">     522 </span>            : static StaticAtomTable* gStaticAtomTable = nullptr;
+<span class="lineNum">     523 </span>            : 
+<span class="lineNum">     524 </span>            : /**
+<span class="lineNum">     525 </span>            :  * Whether it is still OK to add atoms to gStaticAtomTable.
+<span class="lineNum">     526 </span>            :  */
+<span class="lineNum">     527 </span>            : static bool gStaticAtomTableSealed = false;
+<span class="lineNum">     528 </span>            : 
+<span class="lineNum">     529 </span>            : // The atom table very quickly gets 10,000+ entries in it (or even 100,000+).
+<span class="lineNum">     530 </span>            : // But choosing the best initial length has some subtleties: we add ~2700
+<span class="lineNum">     531 </span>            : // static atoms to the table at start-up, and then we start adding and removing
+<span class="lineNum">     532 </span>            : // dynamic atoms. If we make the table too big to start with, when the first
+<span class="lineNum">     533 </span>            : // dynamic atom gets removed the load factor will be &lt; 25% and so we will
+<span class="lineNum">     534 </span>            : // shrink it to 4096 entries.
+<span class="lineNum">     535 </span>            : //
+<span class="lineNum">     536 </span>            : // By choosing an initial length of 4096, we get an initial capacity of 8192.
+<span class="lineNum">     537 </span>            : // That's the biggest initial capacity that will let us be &gt; 25% full when the
+<span class="lineNum">     538 </span>            : // first dynamic atom is removed (when the count is ~2700), thus avoiding any
+<span class="lineNum">     539 </span>            : // shrinking.
+<span class="lineNum">     540 </span>            : #define ATOM_HASHTABLE_INITIAL_LENGTH  4096
+<a name="541"><span class="lineNum">     541 </span>            : </a>
+<span class="lineNum">     542 </span>            : void
+<span class="lineNum">     543 </span><span class="lineCov">          3 : NS_InitAtomTable()</span>
+<span class="lineNum">     544 </span>            : {
+<span class="lineNum">     545 </span><span class="lineCov">          3 :   MOZ_ASSERT(!gAtomTable);</span>
+<span class="lineNum">     546 </span><span class="lineCov">          3 :   gAtomTable = new PLDHashTable(&amp;AtomTableOps, sizeof(AtomTableEntry),</span>
+<span class="lineNum">     547 </span><span class="lineCov">          3 :                                 ATOM_HASHTABLE_INITIAL_LENGTH);</span>
+<span class="lineNum">     548 </span><span class="lineCov">          3 :   gAtomTableLock = new Mutex(&quot;Atom Table Lock&quot;);</span>
+<span class="lineNum">     549 </span>            : 
+<span class="lineNum">     550 </span>            :   // Bug 1340710 has caused us to generate an empty atom at arbitrary times
+<span class="lineNum">     551 </span>            :   // after startup.  If we end up creating one before nsGkAtoms::_empty is
+<span class="lineNum">     552 </span>            :   // registered, we get an assertion about transmuting a dynamic atom into a
+<span class="lineNum">     553 </span>            :   // static atom.  In order to avoid that, we register an empty string static
+<span class="lineNum">     554 </span>            :   // atom as soon as we initialize the atom table to guarantee that the empty
+<span class="lineNum">     555 </span>            :   // string atom will always be static.
+<span class="lineNum">     556 </span>            :   NS_STATIC_ATOM_BUFFER(empty, &quot;&quot;);
+<span class="lineNum">     557 </span>            :   static nsIAtom* empty_atom = nullptr;
+<span class="lineNum">     558 </span>            :   static const nsStaticAtom default_atoms[] = {
+<span class="lineNum">     559 </span>            :     NS_STATIC_ATOM(empty, &amp;empty_atom)
+<span class="lineNum">     560 </span>            :   };
+<span class="lineNum">     561 </span><span class="lineCov">          3 :   NS_RegisterStaticAtoms(default_atoms);</span>
+<span class="lineNum">     562 </span><span class="lineCov">          3 : }</span>
+<a name="563"><span class="lineNum">     563 </span>            : </a>
+<span class="lineNum">     564 </span>            : void
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 : NS_ShutdownAtomTable()</span>
+<span class="lineNum">     566 </span>            : {
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :   delete gStaticAtomTable;</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :   gStaticAtomTable = nullptr;</span>
+<span class="lineNum">     569 </span>            : 
+<span class="lineNum">     570 </span>            : #ifdef NS_FREE_PERMANENT_DATA
+<span class="lineNum">     571 </span>            :   // Do a final GC to satisfy leak checking. We skip this step in release
+<span class="lineNum">     572 </span>            :   // builds.
+<span class="lineNum">     573 </span>            :   {
+<span class="lineNum">     574 </span><span class="lineNoCov">          0 :     MutexAutoLock lock(*gAtomTableLock);</span>
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :     DynamicAtom::GCAtomTableLocked(lock, DynamicAtom::GCKind::Shutdown);</span>
+<span class="lineNum">     576 </span>            :   }
+<span class="lineNum">     577 </span>            : #endif
+<span class="lineNum">     578 </span>            : 
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :   delete gAtomTable;</span>
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :   gAtomTable = nullptr;</span>
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :   delete gAtomTableLock;</span>
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :   gAtomTableLock = nullptr;</span>
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 : }</span>
+<a name="584"><span class="lineNum">     584 </span>            : </a>
+<span class="lineNum">     585 </span>            : void
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 : NS_SizeOfAtomTablesIncludingThis(MallocSizeOf aMallocSizeOf,</span>
+<span class="lineNum">     587 </span>            :                                  size_t* aMain, size_t* aStatic)
+<span class="lineNum">     588 </span>            : {
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(*gAtomTableLock);</span>
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :   *aMain = gAtomTable-&gt;ShallowSizeOfIncludingThis(aMallocSizeOf);</span>
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :   for (auto iter = gAtomTable-&gt;Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">     592 </span><span class="lineNoCov">          0 :     auto entry = static_cast&lt;AtomTableEntry*&gt;(iter.Get());</span>
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :     *aMain += entry-&gt;mAtom-&gt;SizeOfIncludingThis(aMallocSizeOf);</span>
+<span class="lineNum">     594 </span>            :   }
+<span class="lineNum">     595 </span>            : 
+<span class="lineNum">     596 </span>            :   // The atoms pointed to by gStaticAtomTable are also pointed to by gAtomTable,
+<span class="lineNum">     597 </span>            :   // and they're measured by the loop above. So no need to measure them here.
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :   *aStatic = gStaticAtomTable</span>
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :            ? gStaticAtomTable-&gt;ShallowSizeOfIncludingThis(aMallocSizeOf)</span>
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :            : 0;</span>
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 : }</span>
+<a name="602"><span class="lineNum">     602 </span>            : </a>
+<span class="lineNum">     603 </span>            : static inline AtomTableEntry*
+<span class="lineNum">     604 </span><span class="lineCov">        844 : GetAtomHashEntry(const char* aString, uint32_t aLength, uint32_t* aHashOut)</span>
+<span class="lineNum">     605 </span>            : {
+<span class="lineNum">     606 </span><span class="lineCov">        844 :   gAtomTableLock-&gt;AssertCurrentThreadOwns();</span>
+<span class="lineNum">     607 </span><span class="lineCov">        844 :   AtomTableKey key(aString, aLength, aHashOut);</span>
+<span class="lineNum">     608 </span>            :   // This is an infallible add.
+<span class="lineNum">     609 </span><span class="lineCov">        844 :   return static_cast&lt;AtomTableEntry*&gt;(gAtomTable-&gt;Add(&amp;key));</span>
+<span class="lineNum">     610 </span>            : }
+<a name="611"><span class="lineNum">     611 </span>            : </a>
+<span class="lineNum">     612 </span>            : static inline AtomTableEntry*
+<span class="lineNum">     613 </span><span class="lineCov">      38711 : GetAtomHashEntry(const char16_t* aString, uint32_t aLength, uint32_t* aHashOut)</span>
+<span class="lineNum">     614 </span>            : {
+<span class="lineNum">     615 </span><span class="lineCov">      38711 :   gAtomTableLock-&gt;AssertCurrentThreadOwns();</span>
+<span class="lineNum">     616 </span><span class="lineCov">      38711 :   AtomTableKey key(aString, aLength, aHashOut);</span>
+<span class="lineNum">     617 </span>            :   // This is an infallible add.
+<span class="lineNum">     618 </span><span class="lineCov">      38711 :   return static_cast&lt;AtomTableEntry*&gt;(gAtomTable-&gt;Add(&amp;key));</span>
+<span class="lineNum">     619 </span>            : }
+<a name="620"><span class="lineNum">     620 </span>            : </a>
+<span class="lineNum">     621 </span>            : void
+<span class="lineNum">     622 </span><span class="lineCov">         27 : RegisterStaticAtoms(const nsStaticAtom* aAtoms, uint32_t aAtomCount)</span>
+<span class="lineNum">     623 </span>            : {
+<span class="lineNum">     624 </span><span class="lineCov">         54 :   MutexAutoLock lock(*gAtomTableLock);</span>
+<span class="lineNum">     625 </span>            : 
+<span class="lineNum">     626 </span><span class="lineCov">         27 :   MOZ_RELEASE_ASSERT(!gStaticAtomTableSealed,</span>
+<span class="lineNum">     627 </span>            :                      &quot;Atom table has already been sealed!&quot;);
+<span class="lineNum">     628 </span>            : 
+<span class="lineNum">     629 </span><span class="lineCov">         27 :   if (!gStaticAtomTable) {</span>
+<span class="lineNum">     630 </span><span class="lineCov">          3 :     gStaticAtomTable = new StaticAtomTable();</span>
+<span class="lineNum">     631 </span>            :   }
+<span class="lineNum">     632 </span>            : 
+<span class="lineNum">     633 </span><span class="lineCov">       8568 :   for (uint32_t i = 0; i &lt; aAtomCount; ++i) {</span>
+<span class="lineNum">     634 </span><span class="lineCov">       8541 :     nsStringBuffer* stringBuffer = aAtoms[i].mStringBuffer;</span>
+<span class="lineNum">     635 </span><span class="lineCov">       8541 :     nsIAtom** atomp = aAtoms[i].mAtom;</span>
+<span class="lineNum">     636 </span>            : 
+<span class="lineNum">     637 </span><span class="lineCov">       8541 :     MOZ_ASSERT(nsCRT::IsAscii(static_cast&lt;char16_t*&gt;(stringBuffer-&gt;Data())));</span>
+<span class="lineNum">     638 </span>            : 
+<span class="lineNum">     639 </span><span class="lineCov">       8541 :     uint32_t stringLen = stringBuffer-&gt;StorageSize() / sizeof(char16_t) - 1;</span>
+<span class="lineNum">     640 </span>            : 
+<span class="lineNum">     641 </span>            :     uint32_t hash;
+<span class="lineNum">     642 </span>            :     AtomTableEntry* he =
+<span class="lineNum">     643 </span><span class="lineCov">       8541 :       GetAtomHashEntry(static_cast&lt;char16_t*&gt;(stringBuffer-&gt;Data()),</span>
+<span class="lineNum">     644 </span><span class="lineCov">       8541 :                        stringLen, &amp;hash);</span>
+<span class="lineNum">     645 </span>            : 
+<span class="lineNum">     646 </span><span class="lineCov">       8541 :     nsIAtom* atom = he-&gt;mAtom;</span>
+<span class="lineNum">     647 </span><span class="lineCov">       8541 :     if (atom) {</span>
+<span class="lineNum">     648 </span>            :       // Disallow creating a dynamic atom, and then later, while the
+<span class="lineNum">     649 </span>            :       // dynamic atom is still alive, registering that same atom as a
+<span class="lineNum">     650 </span>            :       // static atom.  It causes subtle bugs, and we're programming in
+<span class="lineNum">     651 </span>            :       // C++ here, not Smalltalk.
+<span class="lineNum">     652 </span><span class="lineCov">        528 :       if (!atom-&gt;IsStaticAtom()) {</span>
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 :         nsAutoCString name;</span>
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 :         atom-&gt;ToUTF8String(name);</span>
+<span class="lineNum">     655 </span><span class="lineNoCov">          0 :         MOZ_CRASH_UNSAFE_PRINTF(</span>
+<span class="lineNum">     656 </span>            :           &quot;Static atom registration for %s should be pushed back&quot;, name.get());
+<span class="lineNum">     657 </span>            :       }
+<span class="lineNum">     658 </span>            :     } else {
+<span class="lineNum">     659 </span><span class="lineCov">       8013 :       atom = new StaticAtom(stringBuffer, stringLen, hash);</span>
+<span class="lineNum">     660 </span><span class="lineCov">       8013 :       he-&gt;mAtom = atom;</span>
+<span class="lineNum">     661 </span>            :     }
+<span class="lineNum">     662 </span><span class="lineCov">       8541 :     *atomp = atom;</span>
+<span class="lineNum">     663 </span>            : 
+<span class="lineNum">     664 </span><span class="lineCov">       8541 :     if (!gStaticAtomTableSealed) {</span>
+<span class="lineNum">     665 </span>            :       StaticAtomEntry* entry =
+<span class="lineNum">     666 </span><span class="lineCov">       8541 :         gStaticAtomTable-&gt;PutEntry(nsDependentAtomString(atom));</span>
+<span class="lineNum">     667 </span><span class="lineCov">       8541 :       MOZ_ASSERT(atom-&gt;IsStaticAtom());</span>
+<span class="lineNum">     668 </span><span class="lineCov">       8541 :       entry-&gt;mAtom = static_cast&lt;StaticAtom*&gt;(atom);</span>
+<span class="lineNum">     669 </span>            :     }
+<span class="lineNum">     670 </span>            :   }
+<span class="lineNum">     671 </span><span class="lineCov">         27 : }</span>
+<a name="672"><span class="lineNum">     672 </span>            : </a>
+<span class="lineNum">     673 </span>            : already_AddRefed&lt;nsIAtom&gt;
+<span class="lineNum">     674 </span><span class="lineCov">        145 : NS_Atomize(const char* aUTF8String)</span>
+<span class="lineNum">     675 </span>            : {
+<span class="lineNum">     676 </span><span class="lineCov">        145 :   return NS_Atomize(nsDependentCString(aUTF8String));</span>
+<span class="lineNum">     677 </span>            : }
+<a name="678"><span class="lineNum">     678 </span>            : </a>
+<span class="lineNum">     679 </span>            : already_AddRefed&lt;nsIAtom&gt;
+<span class="lineNum">     680 </span><span class="lineCov">        844 : NS_Atomize(const nsACString&amp; aUTF8String)</span>
+<span class="lineNum">     681 </span>            : {
+<span class="lineNum">     682 </span><span class="lineCov">       1688 :   MutexAutoLock lock(*gAtomTableLock);</span>
+<span class="lineNum">     683 </span>            :   uint32_t hash;
+<span class="lineNum">     684 </span><span class="lineCov">        844 :   AtomTableEntry* he = GetAtomHashEntry(aUTF8String.Data(),</span>
+<span class="lineNum">     685 </span>            :                                         aUTF8String.Length(),
+<span class="lineNum">     686 </span><span class="lineCov">        844 :                                         &amp;hash);</span>
+<span class="lineNum">     687 </span>            : 
+<span class="lineNum">     688 </span><span class="lineCov">        844 :   if (he-&gt;mAtom) {</span>
+<span class="lineNum">     689 </span><span class="lineCov">       1200 :     nsCOMPtr&lt;nsIAtom&gt; atom = he-&gt;mAtom;</span>
+<span class="lineNum">     690 </span>            : 
+<span class="lineNum">     691 </span><span class="lineCov">        600 :     return atom.forget();</span>
+<span class="lineNum">     692 </span>            :   }
+<span class="lineNum">     693 </span>            : 
+<span class="lineNum">     694 </span>            :   // This results in an extra addref/release of the nsStringBuffer.
+<span class="lineNum">     695 </span>            :   // Unfortunately there doesn't seem to be any APIs to avoid that.
+<span class="lineNum">     696 </span>            :   // Actually, now there is, sort of: ForgetSharedBuffer.
+<span class="lineNum">     697 </span><span class="lineCov">        488 :   nsString str;</span>
+<span class="lineNum">     698 </span><span class="lineCov">        244 :   CopyUTF8toUTF16(aUTF8String, str);</span>
+<span class="lineNum">     699 </span><span class="lineCov">        488 :   RefPtr&lt;DynamicAtom&gt; atom = DynamicAtom::Create(str, hash);</span>
+<span class="lineNum">     700 </span>            : 
+<span class="lineNum">     701 </span><span class="lineCov">        244 :   he-&gt;mAtom = atom;</span>
+<span class="lineNum">     702 </span>            : 
+<span class="lineNum">     703 </span><span class="lineCov">        244 :   return atom.forget();</span>
+<span class="lineNum">     704 </span>            : }
+<a name="705"><span class="lineNum">     705 </span>            : </a>
+<span class="lineNum">     706 </span>            : already_AddRefed&lt;nsIAtom&gt;
+<span class="lineNum">     707 </span><span class="lineCov">        428 : NS_Atomize(const char16_t* aUTF16String)</span>
+<span class="lineNum">     708 </span>            : {
+<span class="lineNum">     709 </span><span class="lineCov">        428 :   return NS_Atomize(nsDependentString(aUTF16String));</span>
+<span class="lineNum">     710 </span>            : }
+<a name="711"><span class="lineNum">     711 </span>            : </a>
+<span class="lineNum">     712 </span>            : already_AddRefed&lt;nsIAtom&gt;
+<span class="lineNum">     713 </span><span class="lineCov">      30170 : NS_Atomize(const nsAString&amp; aUTF16String)</span>
+<span class="lineNum">     714 </span>            : {
+<span class="lineNum">     715 </span><span class="lineCov">      60340 :   MutexAutoLock lock(*gAtomTableLock);</span>
+<span class="lineNum">     716 </span>            :   uint32_t hash;
+<span class="lineNum">     717 </span><span class="lineCov">      30170 :   AtomTableEntry* he = GetAtomHashEntry(aUTF16String.Data(),</span>
+<span class="lineNum">     718 </span>            :                                         aUTF16String.Length(),
+<span class="lineNum">     719 </span><span class="lineCov">      30170 :                                         &amp;hash);</span>
+<span class="lineNum">     720 </span>            : 
+<span class="lineNum">     721 </span><span class="lineCov">      30170 :   if (he-&gt;mAtom) {</span>
+<span class="lineNum">     722 </span><span class="lineCov">      55848 :     nsCOMPtr&lt;nsIAtom&gt; atom = he-&gt;mAtom;</span>
+<span class="lineNum">     723 </span>            : 
+<span class="lineNum">     724 </span><span class="lineCov">      27924 :     return atom.forget();</span>
+<span class="lineNum">     725 </span>            :   }
+<span class="lineNum">     726 </span>            : 
+<span class="lineNum">     727 </span><span class="lineCov">       4492 :   RefPtr&lt;DynamicAtom&gt; atom = DynamicAtom::Create(aUTF16String, hash);</span>
+<span class="lineNum">     728 </span><span class="lineCov">       2246 :   he-&gt;mAtom = atom;</span>
+<span class="lineNum">     729 </span>            : 
+<span class="lineNum">     730 </span><span class="lineCov">       2246 :   return atom.forget();</span>
+<span class="lineNum">     731 </span>            : }
+<a name="732"><span class="lineNum">     732 </span>            : </a>
+<span class="lineNum">     733 </span>            : already_AddRefed&lt;nsIAtom&gt;
+<span class="lineNum">     734 </span><span class="lineCov">       2209 : NS_AtomizeMainThread(const nsAString&amp; aUTF16String)</span>
+<span class="lineNum">     735 </span>            : {
+<span class="lineNum">     736 </span><span class="lineCov">       2209 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     737 </span><span class="lineCov">       4418 :   nsCOMPtr&lt;nsIAtom&gt; retVal;</span>
+<span class="lineNum">     738 </span>            :   uint32_t hash;
+<span class="lineNum">     739 </span><span class="lineCov">       2209 :   AtomTableKey key(aUTF16String.Data(), aUTF16String.Length(), &amp;hash);</span>
+<span class="lineNum">     740 </span><span class="lineCov">       2209 :   uint32_t index = hash % RECENTLY_USED_MAIN_THREAD_ATOM_CACHE_SIZE;</span>
+<span class="lineNum">     741 </span>            :   nsIAtom* atom =
+<span class="lineNum">     742 </span><span class="lineCov">       2209 :     sRecentlyUsedMainThreadAtoms[index];</span>
+<span class="lineNum">     743 </span><span class="lineCov">       2209 :   if (atom) {</span>
+<span class="lineNum">     744 </span><span class="lineCov">       2068 :     uint32_t length = atom-&gt;GetLength();</span>
+<span class="lineNum">     745 </span><span class="lineCov">       3305 :     if (length == key.mLength &amp;&amp;</span>
+<span class="lineNum">     746 </span><span class="lineCov">       2474 :         (memcmp(atom-&gt;GetUTF16String(),</span>
+<span class="lineNum">     747 </span><span class="lineCov">       1237 :                 key.mUTF16String, length * sizeof(char16_t)) == 0)) {</span>
+<span class="lineNum">     748 </span><span class="lineCov">       1206 :       retVal = atom;</span>
+<span class="lineNum">     749 </span><span class="lineCov">       1206 :       return retVal.forget();</span>
+<span class="lineNum">     750 </span>            :     }
+<span class="lineNum">     751 </span>            :   }
+<span class="lineNum">     752 </span>            : 
+<span class="lineNum">     753 </span><span class="lineCov">       2006 :   MutexAutoLock lock(*gAtomTableLock);</span>
+<span class="lineNum">     754 </span><span class="lineCov">       1003 :   AtomTableEntry* he = static_cast&lt;AtomTableEntry*&gt;(gAtomTable-&gt;Add(&amp;key));</span>
+<span class="lineNum">     755 </span>            : 
+<span class="lineNum">     756 </span><span class="lineCov">       1003 :   if (he-&gt;mAtom) {</span>
+<span class="lineNum">     757 </span><span class="lineCov">        639 :     retVal = he-&gt;mAtom;</span>
+<span class="lineNum">     758 </span>            :   } else {
+<span class="lineNum">     759 </span><span class="lineCov">        364 :     retVal = DynamicAtom::Create(aUTF16String, hash);</span>
+<span class="lineNum">     760 </span><span class="lineCov">        364 :     he-&gt;mAtom = retVal;</span>
+<span class="lineNum">     761 </span>            :   }
+<span class="lineNum">     762 </span>            : 
+<span class="lineNum">     763 </span><span class="lineCov">       1003 :   sRecentlyUsedMainThreadAtoms[index] = retVal;</span>
+<span class="lineNum">     764 </span><span class="lineCov">       1003 :   return retVal.forget();</span>
+<span class="lineNum">     765 </span>            : }
+<a name="766"><span class="lineNum">     766 </span>            : </a>
+<span class="lineNum">     767 </span>            : nsrefcnt
+<span class="lineNum">     768 </span><span class="lineNoCov">          0 : NS_GetNumberOfAtoms(void)</span>
+<span class="lineNum">     769 </span>            : {
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :   DynamicAtom::GCAtomTable(); // Trigger a GC so that we return a deterministic result.</span>
+<span class="lineNum">     771 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(*gAtomTableLock);</span>
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 :   return gAtomTable-&gt;EntryCount();</span>
+<span class="lineNum">     773 </span>            : }
+<a name="774"><span class="lineNum">     774 </span>            : </a>
+<span class="lineNum">     775 </span>            : nsIAtom*
+<span class="lineNum">     776 </span><span class="lineCov">         14 : NS_GetStaticAtom(const nsAString&amp; aUTF16String)</span>
+<span class="lineNum">     777 </span>            : {
+<span class="lineNum">     778 </span><span class="lineCov">         14 :   NS_PRECONDITION(gStaticAtomTable, &quot;Static atom table not created yet.&quot;);</span>
+<span class="lineNum">     779 </span><span class="lineCov">         14 :   NS_PRECONDITION(gStaticAtomTableSealed, &quot;Static atom table not sealed yet.&quot;);</span>
+<span class="lineNum">     780 </span><span class="lineCov">         14 :   StaticAtomEntry* entry = gStaticAtomTable-&gt;GetEntry(aUTF16String);</span>
+<span class="lineNum">     781 </span><span class="lineCov">         14 :   return entry ? entry-&gt;mAtom : nullptr;</span>
+<span class="lineNum">     782 </span>            : }
+<a name="783"><span class="lineNum">     783 </span>            : </a>
+<span class="lineNum">     784 </span>            : void
+<span class="lineNum">     785 </span><span class="lineCov">          3 : NS_SealStaticAtomTable()</span>
+<span class="lineNum">     786 </span>            : {
+<span class="lineNum">     787 </span><span class="lineCov">          3 :   gStaticAtomTableSealed = true;</span>
+<span class="lineNum">     788 </span><span class="lineCov">          3 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

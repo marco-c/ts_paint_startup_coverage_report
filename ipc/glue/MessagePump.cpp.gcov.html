@@ -1,0 +1,576 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - ipc/glue/MessagePump.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">ipc/glue</a> - MessagePump.cpp<span style="font-size: 80%;"> (source / <a href="MessagePump.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">85</td>
+            <td class="headerCovTableEntry">148</td>
+            <td class="headerCovTableEntryLo">57.4 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">11</td>
+            <td class="headerCovTableEntry">20</td>
+            <td class="headerCovTableEntryLo">55.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;MessagePump.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;nsIRunnable.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;nsIThread.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;nsITimer.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;nsICancelableRunnable.h&quot;
+<span class="lineNum">      13 </span>            : 
+<span class="lineNum">      14 </span>            : #include &quot;base/basictypes.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;base/logging.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;base/scoped_nsautorelease_pool.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;mozilla/Assertions.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;mozilla/DebugOnly.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;nsComponentManagerUtils.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;nsDebug.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;nsServiceManagerUtils.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;nsString.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;nsTimerImpl.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;nsXULAppAPI.h&quot;
+<span class="lineNum">      26 </span>            : #include &quot;prthread.h&quot;
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : using base::TimeTicks;
+<span class="lineNum">      29 </span>            : using namespace mozilla::ipc;
+<span class="lineNum">      30 </span>            : 
+<span class="lineNum">      31 </span>            : NS_DEFINE_NAMED_CID(NS_TIMER_CID);
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : #ifdef DEBUG
+<span class="lineNum">      34 </span>            : static MessagePump::Delegate* gFirstDelegate;
+<span class="lineNum">      35 </span>            : #endif
+<span class="lineNum">      36 </span>            : 
+<span class="lineNum">      37 </span>            : namespace mozilla {
+<span class="lineNum">      38 </span>            : namespace ipc {
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span>            : class DoWorkRunnable final : public CancelableRunnable,
+<span class="lineNum">      41 </span>            :                              public nsITimerCallback
+<a name="42"><span class="lineNum">      42 </span>            : {</a>
+<span class="lineNum">      43 </span>            : public:
+<span class="lineNum">      44 </span><span class="lineCov">         59 :   explicit DoWorkRunnable(MessagePump* aPump)</span>
+<span class="lineNum">      45 </span><span class="lineCov">         59 :     : CancelableRunnable(&quot;ipc::DoWorkRunnable&quot;)</span>
+<span class="lineNum">      46 </span><span class="lineCov">         59 :     , mPump(aPump)</span>
+<span class="lineNum">      47 </span>            :   {
+<span class="lineNum">      48 </span><span class="lineCov">         59 :     MOZ_ASSERT(aPump);</span>
+<span class="lineNum">      49 </span><span class="lineCov">         59 :   }</span>
+<span class="lineNum">      50 </span>            : 
+<span class="lineNum">      51 </span>            :   NS_DECL_ISUPPORTS_INHERITED
+<span class="lineNum">      52 </span>            :   NS_DECL_NSIRUNNABLE
+<span class="lineNum">      53 </span>            :   NS_DECL_NSITIMERCALLBACK
+<span class="lineNum">      54 </span>            :   nsresult Cancel() override;
+<a name="55"><span class="lineNum">      55 </span>            : </a>
+<span class="lineNum">      56 </span>            : private:
+<span class="lineNum">      57 </span><span class="lineCov">          2 :   ~DoWorkRunnable()</span>
+<span class="lineNum">      58 </span><span class="lineCov">          3 :   { }</span>
+<span class="lineNum">      59 </span>            : 
+<span class="lineNum">      60 </span>            :   MessagePump* mPump;
+<span class="lineNum">      61 </span>            :   // DoWorkRunnable is designed as a stateless singleton.  Do not add stateful
+<span class="lineNum">      62 </span>            :   // members here!
+<span class="lineNum">      63 </span>            : };
+<span class="lineNum">      64 </span>            : 
+<span class="lineNum">      65 </span>            : } /* namespace ipc */
+<a name="66"><span class="lineNum">      66 </span>            : } /* namespace mozilla */</a>
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span><span class="lineCov">         59 : MessagePump::MessagePump(nsIThread* aThread)</span>
+<span class="lineNum">      69 </span><span class="lineCov">         59 : : mThread(aThread)</span>
+<span class="lineNum">      70 </span>            : {
+<span class="lineNum">      71 </span><span class="lineCov">         59 :   mDoWorkEvent = new DoWorkRunnable(this);</span>
+<a name="72"><span class="lineNum">      72 </span><span class="lineCov">         59 : }</span></a>
+<span class="lineNum">      73 </span>            : 
+<span class="lineNum">      74 </span><span class="lineCov">          1 : MessagePump::~MessagePump()</span>
+<span class="lineNum">      75 </span>            : {
+<span class="lineNum">      76 </span><span class="lineCov">          1 : }</span>
+<a name="77"><span class="lineNum">      77 </span>            : </a>
+<span class="lineNum">      78 </span>            : void
+<span class="lineNum">      79 </span><span class="lineCov">          3 : MessagePump::Run(MessagePump::Delegate* aDelegate)</span>
+<span class="lineNum">      80 </span>            : {
+<span class="lineNum">      81 </span><span class="lineCov">          3 :   MOZ_ASSERT(keep_running_);</span>
+<span class="lineNum">      82 </span><span class="lineCov">          3 :   MOZ_RELEASE_ASSERT(NS_IsMainThread(),</span>
+<span class="lineNum">      83 </span>            :                      &quot;Use mozilla::ipc::MessagePumpForNonMainThreads instead!&quot;);
+<span class="lineNum">      84 </span><span class="lineCov">          3 :   MOZ_RELEASE_ASSERT(!mThread);</span>
+<span class="lineNum">      85 </span>            : 
+<span class="lineNum">      86 </span><span class="lineCov">          3 :   nsIThread* thisThread = NS_GetCurrentThread();</span>
+<span class="lineNum">      87 </span><span class="lineCov">          3 :   MOZ_ASSERT(thisThread);</span>
+<span class="lineNum">      88 </span>            : 
+<span class="lineNum">      89 </span><span class="lineCov">          3 :   mDelayedWorkTimer = do_CreateInstance(kNS_TIMER_CID);</span>
+<span class="lineNum">      90 </span><span class="lineCov">          3 :   MOZ_ASSERT(mDelayedWorkTimer);</span>
+<span class="lineNum">      91 </span>            : 
+<span class="lineNum">      92 </span><span class="lineCov">          3 :   base::ScopedNSAutoreleasePool autoReleasePool;</span>
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span>            :   for (;;) {
+<span class="lineNum">      95 </span><span class="lineCov">       1141 :     autoReleasePool.Recycle();</span>
+<span class="lineNum">      96 </span>            : 
+<span class="lineNum">      97 </span><span class="lineCov">       1141 :     bool did_work = NS_ProcessNextEvent(thisThread, false) ? true : false;</span>
+<span class="lineNum">      98 </span><span class="lineCov">       1139 :     if (!keep_running_)</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span>            :     // NB: it is crucial *not* to directly call |aDelegate-&gt;DoWork()|
+<span class="lineNum">     102 </span>            :     // here.  To ensure that MessageLoop tasks and XPCOM events have
+<span class="lineNum">     103 </span>            :     // equal priority, we sensitively rely on processing exactly one
+<span class="lineNum">     104 </span>            :     // Task per DoWorkRunnable XPCOM event.
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span><span class="lineCov">       1139 :     did_work |= aDelegate-&gt;DoDelayedWork(&amp;delayed_work_time_);</span>
+<span class="lineNum">     107 </span>            : 
+<span class="lineNum">     108 </span><span class="lineCov">       1139 : if (did_work &amp;&amp; delayed_work_time_.is_null())</span>
+<span class="lineNum">     109 </span><span class="lineCov">       1066 :       mDelayedWorkTimer-&gt;Cancel();</span>
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span><span class="lineCov">       1139 :     if (!keep_running_)</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span><span class="lineCov">       1139 :     if (did_work)</span>
+<span class="lineNum">     115 </span><span class="lineCov">       1066 :       continue;</span>
+<span class="lineNum">     116 </span>            : 
+<span class="lineNum">     117 </span><span class="lineCov">         73 :     did_work = aDelegate-&gt;DoIdleWork();</span>
+<span class="lineNum">     118 </span><span class="lineCov">         73 :     if (!keep_running_)</span>
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span><span class="lineCov">         73 :     if (did_work)</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     123 </span>            : 
+<span class="lineNum">     124 </span>            :     // This will either sleep or process an event.
+<span class="lineNum">     125 </span><span class="lineCov">         73 :     NS_ProcessNextEvent(thisThread, true);</span>
+<span class="lineNum">     126 </span><span class="lineCov">       1138 :   }</span>
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :     mDelayedWorkTimer-&gt;Cancel();</span>
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :   keep_running_ = true;</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 : }</span>
+<a name="132"><span class="lineNum">     132 </span>            : </a>
+<span class="lineNum">     133 </span>            : void
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 : MessagePump::ScheduleWork()</span>
+<span class="lineNum">     135 </span>            : {
+<span class="lineNum">     136 </span>            :   // Make sure the event loop wakes up.
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :   if (mThread) {</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :     mThread-&gt;Dispatch(mDoWorkEvent, NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     139 </span>            :   } else {
+<span class="lineNum">     140 </span>            :     // Some things (like xpcshell) don't use the app shell and so Run hasn't
+<span class="lineNum">     141 </span>            :     // been called. We still need to wake up the main thread.
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :     NS_DispatchToMainThread(mDoWorkEvent);</span>
+<span class="lineNum">     143 </span>            :   }
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :   event_.Signal();</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 : }</span>
+<a name="146"><span class="lineNum">     146 </span>            : </a>
+<span class="lineNum">     147 </span>            : void
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 : MessagePump::ScheduleWorkForNestedLoop()</span>
+<span class="lineNum">     149 </span>            : {
+<span class="lineNum">     150 </span>            :   // This method is called when our MessageLoop has just allowed
+<span class="lineNum">     151 </span>            :   // nested tasks.  In our setup, whenever that happens we know that
+<span class="lineNum">     152 </span>            :   // DoWork() will be called &quot;soon&quot;, so there's no need to pay the
+<span class="lineNum">     153 </span>            :   // cost of what will be a no-op nsThread::Dispatch(mDoWorkEvent).
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 : }</span>
+<a name="155"><span class="lineNum">     155 </span>            : </a>
+<span class="lineNum">     156 </span>            : void
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 : MessagePump::ScheduleDelayedWork(const base::TimeTicks&amp; aDelayedTime)</span>
+<span class="lineNum">     158 </span>            : {
+<span class="lineNum">     159 </span>            :   // To avoid racing on mDelayedWorkTimer, we need to be on the same thread as
+<span class="lineNum">     160 </span>            :   // ::Run().
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :   MOZ_RELEASE_ASSERT(NS_GetCurrentThread() == mThread ||</span>
+<span class="lineNum">     162 </span>            :                      (!mThread &amp;&amp; NS_IsMainThread()));
+<span class="lineNum">     163 </span>            : 
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :   if (!mDelayedWorkTimer) {</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :     mDelayedWorkTimer = do_CreateInstance(kNS_TIMER_CID);</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     if (!mDelayedWorkTimer) {</span>
+<span class="lineNum">     167 </span>            :         // Called before XPCOM has started up? We can't do this correctly.
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;Delayed task might not run!&quot;);</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :         delayed_work_time_ = aDelayedTime;</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     171 </span>            :     }
+<span class="lineNum">     172 </span>            :   }
+<span class="lineNum">     173 </span>            : 
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :   if (!delayed_work_time_.is_null()) {</span>
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :     mDelayedWorkTimer-&gt;Cancel();</span>
+<span class="lineNum">     176 </span>            :   }
+<span class="lineNum">     177 </span>            : 
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :   delayed_work_time_ = aDelayedTime;</span>
+<span class="lineNum">     179 </span>            : 
+<span class="lineNum">     180 </span>            :   // TimeDelta's constructor initializes to 0
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :   base::TimeDelta delay;</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :   if (aDelayedTime &gt; base::TimeTicks::Now())</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :     delay = aDelayedTime - base::TimeTicks::Now();</span>
+<span class="lineNum">     184 </span>            : 
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :   uint32_t delayMS = uint32_t(delay.InMilliseconds());</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :   mDelayedWorkTimer-&gt;InitWithCallback(mDoWorkEvent, delayMS,</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :                                       nsITimer::TYPE_ONE_SHOT);</span>
+<span class="lineNum">     188 </span>            : }
+<a name="189"><span class="lineNum">     189 </span>            : </a>
+<span class="lineNum">     190 </span>            : nsIEventTarget*
+<span class="lineNum">     191 </span><span class="lineCov">        268 : MessagePump::GetXPCOMThread()</span>
+<span class="lineNum">     192 </span>            : {
+<span class="lineNum">     193 </span><span class="lineCov">        268 :   if (mThread) {</span>
+<span class="lineNum">     194 </span><span class="lineCov">         40 :     return mThread;</span>
+<span class="lineNum">     195 </span>            :   }
+<span class="lineNum">     196 </span>            : 
+<span class="lineNum">     197 </span>            :   // Main thread
+<span class="lineNum">     198 </span><span class="lineCov">        456 :   nsCOMPtr&lt;nsIThread&gt; mainThread = do_GetMainThread();</span>
+<span class="lineNum">     199 </span><span class="lineCov">        228 :   return mainThread;</span>
+<span class="lineNum">     200 </span>            : }
+<a name="201"><span class="lineNum">     201 </span>            : </a>
+<span class="lineNum">     202 </span>            : void
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 : MessagePump::DoDelayedWork(base::MessagePump::Delegate* aDelegate)</span>
+<span class="lineNum">     204 </span>            : {
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :   aDelegate-&gt;DoDelayedWork(&amp;delayed_work_time_);</span>
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :   if (!delayed_work_time_.is_null()) {</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :     ScheduleDelayedWork(delayed_work_time_);</span>
+<span class="lineNum">     208 </span>            :   }
+<a name="209"><span class="lineNum">     209 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     210 </span>            : 
+<span class="lineNum">     211 </span><span class="lineCov">         60 : NS_IMPL_ISUPPORTS_INHERITED(DoWorkRunnable, CancelableRunnable,</span>
+<span class="lineNum">     212 </span>            :                             nsITimerCallback)
+<a name="213"><span class="lineNum">     213 </span>            : </a>
+<span class="lineNum">     214 </span>            : NS_IMETHODIMP
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 : DoWorkRunnable::Run()</span>
+<span class="lineNum">     216 </span>            : {
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :   MessageLoop* loop = MessageLoop::current();</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(loop);</span>
+<span class="lineNum">     219 </span>            : 
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :   bool nestableTasksAllowed = loop-&gt;NestableTasksAllowed();</span>
+<span class="lineNum">     221 </span>            : 
+<span class="lineNum">     222 </span>            :   // MessageLoop::RunTask() disallows nesting, but our Frankenventloop will
+<span class="lineNum">     223 </span>            :   // always dispatch DoWork() below from what looks to MessageLoop like a nested
+<span class="lineNum">     224 </span>            :   // context.  So we unconditionally allow nesting here.
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :   loop-&gt;SetNestableTasksAllowed(true);</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :   loop-&gt;DoWork();</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :   loop-&gt;SetNestableTasksAllowed(nestableTasksAllowed);</span>
+<span class="lineNum">     228 </span>            : 
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     230 </span>            : }
+<a name="231"><span class="lineNum">     231 </span>            : </a>
+<span class="lineNum">     232 </span>            : NS_IMETHODIMP
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 : DoWorkRunnable::Notify(nsITimer* aTimer)</span>
+<span class="lineNum">     234 </span>            : {
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :   MessageLoop* loop = MessageLoop::current();</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(loop);</span>
+<span class="lineNum">     237 </span>            : 
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :   bool nestableTasksAllowed = loop-&gt;NestableTasksAllowed();</span>
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :   loop-&gt;SetNestableTasksAllowed(true);</span>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :   mPump-&gt;DoDelayedWork(loop);</span>
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :   loop-&gt;SetNestableTasksAllowed(nestableTasksAllowed);</span>
+<span class="lineNum">     242 </span>            : 
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     244 </span>            : }
+<a name="245"><span class="lineNum">     245 </span>            : </a>
+<span class="lineNum">     246 </span>            : nsresult
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 : DoWorkRunnable::Cancel()</span>
+<span class="lineNum">     248 </span>            : {
+<span class="lineNum">     249 </span>            :   // Workers require cancelable runnables, but we can't really cancel cleanly
+<span class="lineNum">     250 </span>            :   // here.  If we don't process this runnable then we will leave something
+<span class="lineNum">     251 </span>            :   // unprocessed in the message_loop.  Therefore, eagerly complete our work
+<span class="lineNum">     252 </span>            :   // instead by immediately calling Run().  Run() should be called separately
+<span class="lineNum">     253 </span>            :   // after this.  Unfortunately we cannot use flags to verify this because
+<span class="lineNum">     254 </span>            :   // DoWorkRunnable is a stateless singleton that can be in the event queue
+<span class="lineNum">     255 </span>            :   // multiple times simultaneously.
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   MOZ_ALWAYS_SUCCEEDS(Run());</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     258 </span>            : }
+<a name="259"><span class="lineNum">     259 </span>            : </a>
+<span class="lineNum">     260 </span>            : void
+<span class="lineNum">     261 </span><span class="lineCov">          4 : MessagePumpForChildProcess::Run(base::MessagePump::Delegate* aDelegate)</span>
+<span class="lineNum">     262 </span>            : {
+<span class="lineNum">     263 </span><span class="lineCov">          4 :   if (mFirstRun) {</span>
+<span class="lineNum">     264 </span><span class="lineCov">          2 :     MOZ_ASSERT(aDelegate &amp;&amp; !gFirstDelegate);</span>
+<span class="lineNum">     265 </span>            : #ifdef DEBUG
+<span class="lineNum">     266 </span><span class="lineCov">          2 :     gFirstDelegate = aDelegate;</span>
+<span class="lineNum">     267 </span>            : #endif
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span><span class="lineCov">          2 :     mFirstRun = false;</span>
+<span class="lineNum">     270 </span><span class="lineCov">          2 :     if (NS_FAILED(XRE_RunAppShell())) {</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;Failed to run app shell?!&quot;);</span>
+<span class="lineNum">     272 </span>            :     }
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(aDelegate &amp;&amp; aDelegate == gFirstDelegate);</span>
+<span class="lineNum">     275 </span>            : #ifdef DEBUG
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :     gFirstDelegate = nullptr;</span>
+<span class="lineNum">     277 </span>            : #endif
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     280 </span>            :   }
+<span class="lineNum">     281 </span>            : 
+<span class="lineNum">     282 </span><span class="lineCov">          2 :   MOZ_ASSERT(aDelegate &amp;&amp; aDelegate == gFirstDelegate);</span>
+<span class="lineNum">     283 </span>            : 
+<span class="lineNum">     284 </span>            :   // We can get to this point in startup with Tasks in our loop's
+<span class="lineNum">     285 </span>            :   // incoming_queue_ or pending_queue_, but without a matching
+<span class="lineNum">     286 </span>            :   // DoWorkRunnable().  In MessagePump::Run() above, we sensitively
+<span class="lineNum">     287 </span>            :   // depend on *not* directly calling delegate-&gt;DoWork(), because that
+<span class="lineNum">     288 </span>            :   // prioritizes Tasks above XPCOM events.  However, from this point
+<span class="lineNum">     289 </span>            :   // forward, any Task posted to our loop is guaranteed to have a
+<span class="lineNum">     290 </span>            :   // DoWorkRunnable enqueued for it.
+<span class="lineNum">     291 </span>            :   //
+<span class="lineNum">     292 </span>            :   // So we just flush the pending work here and move on.
+<span class="lineNum">     293 </span><span class="lineCov">          2 :   MessageLoop* loop = MessageLoop::current();</span>
+<span class="lineNum">     294 </span><span class="lineCov">          2 :   bool nestableTasksAllowed = loop-&gt;NestableTasksAllowed();</span>
+<span class="lineNum">     295 </span><span class="lineCov">          2 :   loop-&gt;SetNestableTasksAllowed(true);</span>
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span><span class="lineCov">          2 :   while (aDelegate-&gt;DoWork());</span>
+<span class="lineNum">     298 </span>            : 
+<span class="lineNum">     299 </span><span class="lineCov">          2 :   loop-&gt;SetNestableTasksAllowed(nestableTasksAllowed);</span>
+<span class="lineNum">     300 </span>            : 
+<span class="lineNum">     301 </span>            :   // Really run.
+<span class="lineNum">     302 </span><span class="lineCov">          2 :   mozilla::ipc::MessagePump::Run(aDelegate);</span>
+<span class="lineNum">     303 </span>            : }
+<a name="304"><span class="lineNum">     304 </span>            : </a>
+<span class="lineNum">     305 </span>            : void
+<span class="lineNum">     306 </span><span class="lineCov">         56 : MessagePumpForNonMainThreads::Run(base::MessagePump::Delegate* aDelegate)</span>
+<span class="lineNum">     307 </span>            : {
+<span class="lineNum">     308 </span><span class="lineCov">         56 :   MOZ_ASSERT(keep_running_);</span>
+<span class="lineNum">     309 </span><span class="lineCov">         56 :   MOZ_RELEASE_ASSERT(!NS_IsMainThread(), &quot;Use mozilla::ipc::MessagePump instead!&quot;);</span>
+<span class="lineNum">     310 </span>            : 
+<span class="lineNum">     311 </span><span class="lineCov">         56 :   nsIThread* thread = NS_GetCurrentThread();</span>
+<span class="lineNum">     312 </span><span class="lineCov">         56 :   MOZ_RELEASE_ASSERT(mThread == thread);</span>
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span><span class="lineCov">         56 :   mDelayedWorkTimer = do_CreateInstance(kNS_TIMER_CID);</span>
+<span class="lineNum">     315 </span><span class="lineCov">         56 :   MOZ_ASSERT(mDelayedWorkTimer);</span>
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span><span class="lineCov">         56 :   if (NS_FAILED(mDelayedWorkTimer-&gt;SetTarget(thread))) {</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     MOZ_CRASH(&quot;Failed to set timer target!&quot;);</span>
+<span class="lineNum">     319 </span>            :   }
+<span class="lineNum">     320 </span>            : 
+<span class="lineNum">     321 </span>            :   // Chromium event notifications to be processed will be received by this
+<span class="lineNum">     322 </span>            :   // event loop as a DoWorkRunnables via ScheduleWork. Chromium events that
+<span class="lineNum">     323 </span>            :   // were received before our thread is valid, however, will not generate
+<span class="lineNum">     324 </span>            :   // runnable wrappers. We must process any of these before we enter this
+<span class="lineNum">     325 </span>            :   // loop, or we will forever have unprocessed chromium messages in our queue.
+<span class="lineNum">     326 </span>            :   //
+<span class="lineNum">     327 </span>            :   // Note we would like to request a flush of the chromium event queue
+<span class="lineNum">     328 </span>            :   // using a runnable on the xpcom side, but some thread implementations
+<span class="lineNum">     329 </span>            :   // (dom workers) get cranky if we call ScheduleWork here (ScheduleWork
+<span class="lineNum">     330 </span>            :   // calls dispatch on mThread) before the thread processes an event. As
+<span class="lineNum">     331 </span>            :   // such, clear the queue manually.
+<span class="lineNum">     332 </span><span class="lineCov">         56 :   while (aDelegate-&gt;DoWork()) {</span>
+<span class="lineNum">     333 </span>            :   }
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span><span class="lineCov">         56 :   base::ScopedNSAutoreleasePool autoReleasePool;</span>
+<span class="lineNum">     336 </span>            :   for (;;) {
+<span class="lineNum">     337 </span><span class="lineCov">        215 :     autoReleasePool.Recycle();</span>
+<span class="lineNum">     338 </span>            : 
+<span class="lineNum">     339 </span><span class="lineCov">        215 :     bool didWork = NS_ProcessNextEvent(thread, false) ? true : false;</span>
+<span class="lineNum">     340 </span><span class="lineCov">        186 :     if (!keep_running_) {</span>
+<span class="lineNum">     341 </span><span class="lineCov">          1 :       break;</span>
+<span class="lineNum">     342 </span>            :     }
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span><span class="lineCov">        186 :     didWork |= aDelegate-&gt;DoDelayedWork(&amp;delayed_work_time_);</span>
+<span class="lineNum">     345 </span>            : 
+<span class="lineNum">     346 </span><span class="lineCov">        186 :     if (didWork &amp;&amp; delayed_work_time_.is_null()) {</span>
+<span class="lineNum">     347 </span><span class="lineCov">         34 :       mDelayedWorkTimer-&gt;Cancel();</span>
+<span class="lineNum">     348 </span>            :     }
+<span class="lineNum">     349 </span>            : 
+<span class="lineNum">     350 </span><span class="lineCov">        186 :     if (!keep_running_) {</span>
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     352 </span>            :     }
+<span class="lineNum">     353 </span>            : 
+<span class="lineNum">     354 </span><span class="lineCov">        186 :     if (didWork) {</span>
+<span class="lineNum">     355 </span><span class="lineCov">         68 :       continue;</span>
+<span class="lineNum">     356 </span>            :     }
+<span class="lineNum">     357 </span>            : 
+<span class="lineNum">     358 </span><span class="lineCov">        277 :     DebugOnly&lt;bool&gt; didIdleWork = aDelegate-&gt;DoIdleWork();</span>
+<span class="lineNum">     359 </span><span class="lineCov">        152 :     MOZ_ASSERT(!didIdleWork);</span>
+<span class="lineNum">     360 </span><span class="lineCov">        152 :     if (!keep_running_) {</span>
+<span class="lineNum">     361 </span><span class="lineCov">          1 :       break;</span>
+<span class="lineNum">     362 </span>            :     }
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span><span class="lineCov">        151 :     if (didWork) {</span>
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     366 </span>            :     }
+<span class="lineNum">     367 </span>            : 
+<span class="lineNum">     368 </span>            :     // This will either sleep or process an event.
+<span class="lineNum">     369 </span><span class="lineCov">        151 :     NS_ProcessNextEvent(thread, true);</span>
+<span class="lineNum">     370 </span><span class="lineCov">        159 :   }</span>
+<span class="lineNum">     371 </span>            : 
+<span class="lineNum">     372 </span><span class="lineCov">          1 :   mDelayedWorkTimer-&gt;Cancel();</span>
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span><span class="lineCov">          1 :   keep_running_ = true;</span>
+<span class="lineNum">     375 </span><span class="lineCov">          1 : }</span>
+<span class="lineNum">     376 </span>            : 
+<span class="lineNum">     377 </span>            : #if defined(XP_WIN)
+<span class="lineNum">     378 </span>            : 
+<span class="lineNum">     379 </span>            : NS_IMPL_QUERY_INTERFACE(MessagePumpForNonMainUIThreads, nsIThreadObserver)
+<span class="lineNum">     380 </span>            : 
+<span class="lineNum">     381 </span>            : #define CHECK_QUIT_STATE { if (state_-&gt;should_quit) { break; } }
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span>            : void
+<span class="lineNum">     384 </span>            : MessagePumpForNonMainUIThreads::DoRunLoop()
+<span class="lineNum">     385 </span>            : {
+<span class="lineNum">     386 </span>            :   MOZ_RELEASE_ASSERT(!NS_IsMainThread(), &quot;Use mozilla::ipc::MessagePump instead!&quot;);
+<span class="lineNum">     387 </span>            : 
+<span class="lineNum">     388 </span>            :   // If this is a chromium thread and no nsThread is associated
+<span class="lineNum">     389 </span>            :   // with it, this call will create a new nsThread.
+<span class="lineNum">     390 </span>            :   nsIThread* thread = NS_GetCurrentThread();
+<span class="lineNum">     391 </span>            :   MOZ_ASSERT(thread);
+<span class="lineNum">     392 </span>            : 
+<span class="lineNum">     393 </span>            :   // Set the main thread observer so we can wake up when
+<span class="lineNum">     394 </span>            :   // xpcom events need to get processed.
+<span class="lineNum">     395 </span>            :   nsCOMPtr&lt;nsIThreadInternal&gt; ti(do_QueryInterface(thread));
+<span class="lineNum">     396 </span>            :   MOZ_ASSERT(ti);
+<span class="lineNum">     397 </span>            :   ti-&gt;SetObserver(this);
+<span class="lineNum">     398 </span>            : 
+<span class="lineNum">     399 </span>            :   base::ScopedNSAutoreleasePool autoReleasePool;
+<span class="lineNum">     400 </span>            :   for (;;) {
+<span class="lineNum">     401 </span>            :     autoReleasePool.Recycle();
+<span class="lineNum">     402 </span>            : 
+<span class="lineNum">     403 </span>            :     bool didWork = NS_ProcessNextEvent(thread, false);
+<span class="lineNum">     404 </span>            : 
+<span class="lineNum">     405 </span>            :     didWork |= ProcessNextWindowsMessage();
+<span class="lineNum">     406 </span>            :     CHECK_QUIT_STATE
+<span class="lineNum">     407 </span>            : 
+<span class="lineNum">     408 </span>            :     didWork |= state_-&gt;delegate-&gt;DoWork();
+<span class="lineNum">     409 </span>            :     CHECK_QUIT_STATE
+<span class="lineNum">     410 </span>            : 
+<span class="lineNum">     411 </span>            :     didWork |= state_-&gt;delegate-&gt;DoDelayedWork(&amp;delayed_work_time_);
+<span class="lineNum">     412 </span>            :     if (didWork &amp;&amp; delayed_work_time_.is_null()) {
+<span class="lineNum">     413 </span>            :       KillTimer(message_hwnd_, reinterpret_cast&lt;UINT_PTR&gt;(this));
+<span class="lineNum">     414 </span>            :     }
+<span class="lineNum">     415 </span>            :     CHECK_QUIT_STATE
+<span class="lineNum">     416 </span>            : 
+<span class="lineNum">     417 </span>            :     if (didWork) {
+<span class="lineNum">     418 </span>            :       continue;
+<span class="lineNum">     419 </span>            :     }
+<span class="lineNum">     420 </span>            : 
+<span class="lineNum">     421 </span>            :     DebugOnly&lt;bool&gt; didIdleWork = state_-&gt;delegate-&gt;DoIdleWork();
+<span class="lineNum">     422 </span>            :     MOZ_ASSERT(!didIdleWork);
+<span class="lineNum">     423 </span>            :     CHECK_QUIT_STATE
+<span class="lineNum">     424 </span>            : 
+<span class="lineNum">     425 </span>            :     SetInWait();
+<span class="lineNum">     426 </span>            :     bool hasWork = NS_HasPendingEvents(thread);
+<span class="lineNum">     427 </span>            :     if (didWork || hasWork) {
+<span class="lineNum">     428 </span>            :       ClearInWait();
+<span class="lineNum">     429 </span>            :       continue;
+<span class="lineNum">     430 </span>            :     }
+<span class="lineNum">     431 </span>            :     WaitForWork(); // Calls MsgWaitForMultipleObjectsEx(QS_ALLINPUT)
+<span class="lineNum">     432 </span>            :     ClearInWait();
+<span class="lineNum">     433 </span>            :   }
+<span class="lineNum">     434 </span>            : 
+<span class="lineNum">     435 </span>            :   ClearInWait();
+<span class="lineNum">     436 </span>            : 
+<span class="lineNum">     437 </span>            :   ti-&gt;SetObserver(nullptr);
+<span class="lineNum">     438 </span>            : }
+<span class="lineNum">     439 </span>            : 
+<span class="lineNum">     440 </span>            : NS_IMETHODIMP
+<span class="lineNum">     441 </span>            : MessagePumpForNonMainUIThreads::OnDispatchedEvent(nsIThreadInternal *thread)
+<span class="lineNum">     442 </span>            : {
+<span class="lineNum">     443 </span>            :   // If our thread is sleeping in DoRunLoop's call to WaitForWork() and an
+<span class="lineNum">     444 </span>            :   // event posts to the nsIThread event queue - break our thread out of
+<span class="lineNum">     445 </span>            :   // chromium's WaitForWork.
+<span class="lineNum">     446 </span>            :   if (GetInWait()) {
+<span class="lineNum">     447 </span>            :     ScheduleWork();
+<span class="lineNum">     448 </span>            :   }
+<span class="lineNum">     449 </span>            :   return NS_OK;
+<span class="lineNum">     450 </span>            : }
+<span class="lineNum">     451 </span>            : 
+<span class="lineNum">     452 </span>            : NS_IMETHODIMP
+<span class="lineNum">     453 </span>            : MessagePumpForNonMainUIThreads::OnProcessNextEvent(nsIThreadInternal *thread,
+<span class="lineNum">     454 </span>            :                                                    bool mayWait)
+<span class="lineNum">     455 </span>            : {
+<span class="lineNum">     456 </span>            :   return NS_OK;
+<span class="lineNum">     457 </span>            : }
+<span class="lineNum">     458 </span>            : 
+<span class="lineNum">     459 </span>            : NS_IMETHODIMP
+<span class="lineNum">     460 </span>            : MessagePumpForNonMainUIThreads::AfterProcessNextEvent(nsIThreadInternal *thread,
+<span class="lineNum">     461 </span>            :                                                       bool eventWasProcessed)
+<span class="lineNum">     462 </span>            : {
+<span class="lineNum">     463 </span>            :   return NS_OK;
+<span class="lineNum">     464 </span>            : }
+<span class="lineNum">     465 </span>            : 
+<span class="lineNum">     466 </span>            : #endif // XP_WIN
+<span class="lineNum">     467 </span>            : 
+<span class="lineNum">     468 </span>            : #if defined(MOZ_WIDGET_ANDROID)
+<span class="lineNum">     469 </span>            : void
+<span class="lineNum">     470 </span>            : MessagePumpForAndroidUI::Run(Delegate* delegate)
+<span class="lineNum">     471 </span>            : {
+<span class="lineNum">     472 </span>            :   MOZ_CRASH(&quot;MessagePumpForAndroidUI should never be Run.&quot;);
+<span class="lineNum">     473 </span>            : }
+<span class="lineNum">     474 </span>            : 
+<span class="lineNum">     475 </span>            : void
+<span class="lineNum">     476 </span>            : MessagePumpForAndroidUI::Quit()
+<span class="lineNum">     477 </span>            : {
+<span class="lineNum">     478 </span>            :   MOZ_CRASH(&quot;MessagePumpForAndroidUI should never be Quit.&quot;);
+<span class="lineNum">     479 </span>            : }
+<span class="lineNum">     480 </span>            : 
+<span class="lineNum">     481 </span>            : void
+<span class="lineNum">     482 </span>            : MessagePumpForAndroidUI::ScheduleWork()
+<span class="lineNum">     483 </span>            : {
+<span class="lineNum">     484 </span>            :   MOZ_CRASH(&quot;MessagePumpForAndroidUI should never ScheduleWork&quot;);
+<span class="lineNum">     485 </span>            : }
+<span class="lineNum">     486 </span>            : 
+<span class="lineNum">     487 </span>            : void
+<span class="lineNum">     488 </span>            : MessagePumpForAndroidUI::ScheduleDelayedWork(const TimeTicks&amp; delayed_work_time)
+<span class="lineNum">     489 </span>            : {
+<span class="lineNum">     490 </span>            :   MOZ_CRASH(&quot;MessagePumpForAndroidUI should never ScheduleDelayedWork&quot;);
+<span class="lineNum">     491 </span>            : }
+<span class="lineNum">     492 </span>            : #endif // defined(MOZ_WIDGET_ANDROID)
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

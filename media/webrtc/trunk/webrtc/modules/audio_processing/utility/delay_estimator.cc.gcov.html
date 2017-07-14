@@ -1,0 +1,787 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/audio_processing/utility/delay_estimator.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/audio_processing/utility</a> - delay_estimator.cc<span style="font-size: 80%;"> (source / <a href="delay_estimator.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">309</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">21</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;webrtc/modules/audio_processing/utility/delay_estimator.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &lt;stdlib.h&gt;
+<span class="lineNum">      14 </span>            : #include &lt;string.h&gt;
+<span class="lineNum">      15 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : // Number of right shifts for scaling is linearly depending on number of bits in
+<span class="lineNum">      20 </span>            : // the far-end binary spectrum.
+<span class="lineNum">      21 </span>            : static const int kShiftsAtZero = 13;  // Right shifts at zero binary spectrum.
+<span class="lineNum">      22 </span>            : static const int kShiftsLinearSlope = 3;
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : static const int32_t kProbabilityOffset = 1024;  // 2 in Q9.
+<span class="lineNum">      25 </span>            : static const int32_t kProbabilityLowerLimit = 8704;  // 17 in Q9.
+<span class="lineNum">      26 </span>            : static const int32_t kProbabilityMinSpread = 2816;  // 5.5 in Q9.
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : // Robust validation settings
+<span class="lineNum">      29 </span>            : static const float kHistogramMax = 3000.f;
+<span class="lineNum">      30 </span>            : static const float kLastHistogramMax = 250.f;
+<span class="lineNum">      31 </span>            : static const float kMinHistogramThreshold = 1.5f;
+<span class="lineNum">      32 </span>            : static const int kMinRequiredHits = 10;
+<span class="lineNum">      33 </span>            : static const int kMaxHitsWhenPossiblyNonCausal = 10;
+<span class="lineNum">      34 </span>            : static const int kMaxHitsWhenPossiblyCausal = 1000;
+<span class="lineNum">      35 </span>            : static const float kQ14Scaling = 1.f / (1 &lt;&lt; 14);  // Scaling by 2^14 to get Q0.
+<span class="lineNum">      36 </span>            : static const float kFractionSlope = 0.05f;
+<span class="lineNum">      37 </span>            : static const float kMinFractionWhenPossiblyCausal = 0.5f;
+<span class="lineNum">      38 </span>            : static const float kMinFractionWhenPossiblyNonCausal = 0.25f;
+<a name="39"><span class="lineNum">      39 </span>            : </a>
+<span class="lineNum">      40 </span>            : // Counts and returns number of bits of a 32-bit word.
+<span class="lineNum">      41 </span><span class="lineNoCov">          0 : static int BitCount(uint32_t u32) {</span>
+<span class="lineNum">      42 </span><span class="lineNoCov">          0 :   uint32_t tmp = u32 - ((u32 &gt;&gt; 1) &amp; 033333333333) -</span>
+<span class="lineNum">      43 </span><span class="lineNoCov">          0 :       ((u32 &gt;&gt; 2) &amp; 011111111111);</span>
+<span class="lineNum">      44 </span><span class="lineNoCov">          0 :   tmp = ((tmp + (tmp &gt;&gt; 3)) &amp; 030707070707);</span>
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 :   tmp = (tmp + (tmp &gt;&gt; 6));</span>
+<span class="lineNum">      46 </span><span class="lineNoCov">          0 :   tmp = (tmp + (tmp &gt;&gt; 12) + (tmp &gt;&gt; 24)) &amp; 077;</span>
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 :   return ((int) tmp);</span>
+<span class="lineNum">      49 </span>            : }
+<span class="lineNum">      50 </span>            : 
+<span class="lineNum">      51 </span>            : // Compares the |binary_vector| with all rows of the |binary_matrix| and counts
+<span class="lineNum">      52 </span>            : // per row the number of times they have the same value.
+<span class="lineNum">      53 </span>            : //
+<span class="lineNum">      54 </span>            : // Inputs:
+<span class="lineNum">      55 </span>            : //      - binary_vector     : binary &quot;vector&quot; stored in a long
+<span class="lineNum">      56 </span>            : //      - binary_matrix     : binary &quot;matrix&quot; stored as a vector of long
+<span class="lineNum">      57 </span>            : //      - matrix_size       : size of binary &quot;matrix&quot;
+<span class="lineNum">      58 </span>            : //
+<span class="lineNum">      59 </span>            : // Output:
+<span class="lineNum">      60 </span>            : //      - bit_counts        : &quot;Vector&quot; stored as a long, containing for each
+<span class="lineNum">      61 </span>            : //                            row the number of times the matrix row and the
+<a name="62"><span class="lineNum">      62 </span>            : //                            input vector have the same value</a>
+<span class="lineNum">      63 </span>            : //
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 : static void BitCountComparison(uint32_t binary_vector,</span>
+<span class="lineNum">      65 </span>            :                                const uint32_t* binary_matrix,
+<span class="lineNum">      66 </span>            :                                int matrix_size,
+<span class="lineNum">      67 </span>            :                                int32_t* bit_counts) {
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :   int n = 0;</span>
+<span class="lineNum">      69 </span>            : 
+<span class="lineNum">      70 </span>            :   // Compare |binary_vector| with all rows of the |binary_matrix|
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :   for (; n &lt; matrix_size; n++) {</span>
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :     bit_counts[n] = (int32_t) BitCount(binary_vector ^ binary_matrix[n]);</span>
+<span class="lineNum">      73 </span>            :   }
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">      75 </span>            : 
+<span class="lineNum">      76 </span>            : // Collects necessary statistics for the HistogramBasedValidation().  This
+<span class="lineNum">      77 </span>            : // function has to be called prior to calling HistogramBasedValidation().  The
+<span class="lineNum">      78 </span>            : // statistics updated and used by the HistogramBasedValidation() are:
+<span class="lineNum">      79 </span>            : //  1. the number of |candidate_hits|, which states for how long we have had the
+<span class="lineNum">      80 </span>            : //     same |candidate_delay|
+<span class="lineNum">      81 </span>            : //  2. the |histogram| of candidate delays over time.  This histogram is
+<span class="lineNum">      82 </span>            : //     weighted with respect to a reliability measure and time-varying to cope
+<span class="lineNum">      83 </span>            : //     with possible delay shifts.
+<span class="lineNum">      84 </span>            : // For further description see commented code.
+<span class="lineNum">      85 </span>            : //
+<span class="lineNum">      86 </span>            : // Inputs:
+<span class="lineNum">      87 </span>            : //  - candidate_delay   : The delay to validate.
+<span class="lineNum">      88 </span>            : //  - valley_depth_q14  : The cost function has a valley/minimum at the
+<span class="lineNum">      89 </span>            : //                        |candidate_delay| location.  |valley_depth_q14| is the
+<span class="lineNum">      90 </span>            : //                        cost function difference between the minimum and
+<a name="91"><span class="lineNum">      91 </span>            : //                        maximum locations.  The value is in the Q14 domain.</a>
+<span class="lineNum">      92 </span>            : //  - valley_level_q14  : Is the cost function value at the minimum, in Q14.
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 : static void UpdateRobustValidationStatistics(BinaryDelayEstimator* self,</span>
+<span class="lineNum">      94 </span>            :                                              int candidate_delay,
+<span class="lineNum">      95 </span>            :                                              int32_t valley_depth_q14,
+<span class="lineNum">      96 </span>            :                                              int32_t valley_level_q14) {
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   const float valley_depth = valley_depth_q14 * kQ14Scaling;</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :   float decrease_in_last_set = valley_depth;</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :   const int max_hits_for_slow_change = (candidate_delay &lt; self-&gt;last_delay) ?</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :       kMaxHitsWhenPossiblyNonCausal : kMaxHitsWhenPossiblyCausal;</span>
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :   int i = 0;</span>
+<span class="lineNum">     102 </span>            : 
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(self-&gt;history_size, self-&gt;farend-&gt;history_size);</span>
+<span class="lineNum">     104 </span>            :   // Reset |candidate_hits| if we have a new candidate.
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :   if (candidate_delay != self-&gt;last_candidate_delay) {</span>
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :     self-&gt;candidate_hits = 0;</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :     self-&gt;last_candidate_delay = candidate_delay;</span>
+<span class="lineNum">     108 </span>            :   }
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :   self-&gt;candidate_hits++;</span>
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span>            :   // The |histogram| is updated differently across the bins.
+<span class="lineNum">     112 </span>            :   // 1. The |candidate_delay| histogram bin is increased with the
+<span class="lineNum">     113 </span>            :   //    |valley_depth|, which is a simple measure of how reliable the
+<span class="lineNum">     114 </span>            :   //    |candidate_delay| is.  The histogram is not increased above
+<span class="lineNum">     115 </span>            :   //    |kHistogramMax|.
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :   self-&gt;histogram[candidate_delay] += valley_depth;</span>
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :   if (self-&gt;histogram[candidate_delay] &gt; kHistogramMax) {</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :     self-&gt;histogram[candidate_delay] = kHistogramMax;</span>
+<span class="lineNum">     119 </span>            :   }
+<span class="lineNum">     120 </span>            :   // 2. The histogram bins in the neighborhood of |candidate_delay| are
+<span class="lineNum">     121 </span>            :   //    unaffected.  The neighborhood is defined as x + {-2, -1, 0, 1}.
+<span class="lineNum">     122 </span>            :   // 3. The histogram bins in the neighborhood of |last_delay| are decreased
+<span class="lineNum">     123 </span>            :   //    with |decrease_in_last_set|.  This value equals the difference between
+<span class="lineNum">     124 </span>            :   //    the cost function values at the locations |candidate_delay| and
+<span class="lineNum">     125 </span>            :   //    |last_delay| until we reach |max_hits_for_slow_change| consecutive hits
+<span class="lineNum">     126 </span>            :   //    at the |candidate_delay|.  If we exceed this amount of hits the
+<span class="lineNum">     127 </span>            :   //    |candidate_delay| is a &quot;potential&quot; candidate and we start decreasing
+<span class="lineNum">     128 </span>            :   //    these histogram bins more rapidly with |valley_depth|.
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :   if (self-&gt;candidate_hits &lt; max_hits_for_slow_change) {</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :     decrease_in_last_set = (self-&gt;mean_bit_counts[self-&gt;compare_delay] -</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :         valley_level_q14) * kQ14Scaling;</span>
+<span class="lineNum">     132 </span>            :   }
+<span class="lineNum">     133 </span>            :   // 4. All other bins are decreased with |valley_depth|.
+<span class="lineNum">     134 </span>            :   // TODO(bjornv): Investigate how to make this loop more efficient.  Split up
+<span class="lineNum">     135 </span>            :   // the loop?  Remove parts that doesn't add too much.
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; self-&gt;history_size; ++i) {</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :     int is_in_last_set = (i &gt;= self-&gt;last_delay - 2) &amp;&amp;</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :         (i &lt;= self-&gt;last_delay + 1) &amp;&amp; (i != candidate_delay);</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :     int is_in_candidate_set = (i &gt;= candidate_delay - 2) &amp;&amp;</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :         (i &lt;= candidate_delay + 1);</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :     self-&gt;histogram[i] -= decrease_in_last_set * is_in_last_set +</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :         valley_depth * (!is_in_last_set &amp;&amp; !is_in_candidate_set);</span>
+<span class="lineNum">     143 </span>            :     // 5. No histogram bin can go below 0.
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :     if (self-&gt;histogram[i] &lt; 0) {</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :       self-&gt;histogram[i] = 0;</span>
+<span class="lineNum">     146 </span>            :     }
+<span class="lineNum">     147 </span>            :   }
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     149 </span>            : 
+<span class="lineNum">     150 </span>            : // Validates the |candidate_delay|, estimated in WebRtc_ProcessBinarySpectrum(),
+<span class="lineNum">     151 </span>            : // based on a mix of counting concurring hits with a modified histogram
+<span class="lineNum">     152 </span>            : // of recent delay estimates.  In brief a candidate is valid (returns 1) if it
+<span class="lineNum">     153 </span>            : // is the most likely according to the histogram.  There are a couple of
+<span class="lineNum">     154 </span>            : // exceptions that are worth mentioning:
+<span class="lineNum">     155 </span>            : //  1. If the |candidate_delay| &lt; |last_delay| it can be that we are in a
+<span class="lineNum">     156 </span>            : //     non-causal state, breaking a possible echo control algorithm.  Hence, we
+<span class="lineNum">     157 </span>            : //     open up for a quicker change by allowing the change even if the
+<span class="lineNum">     158 </span>            : //     |candidate_delay| is not the most likely one according to the histogram.
+<span class="lineNum">     159 </span>            : //  2. There's a minimum number of hits (kMinRequiredHits) and the histogram
+<span class="lineNum">     160 </span>            : //     value has to reached a minimum (kMinHistogramThreshold) to be valid.
+<span class="lineNum">     161 </span>            : //  3. The action is also depending on the filter length used for echo control.
+<span class="lineNum">     162 </span>            : //     If the delay difference is larger than what the filter can capture, we
+<span class="lineNum">     163 </span>            : //     also move quicker towards a change.
+<span class="lineNum">     164 </span>            : // For further description see commented code.
+<span class="lineNum">     165 </span>            : //
+<span class="lineNum">     166 </span>            : // Input:
+<span class="lineNum">     167 </span>            : //  - candidate_delay     : The delay to validate.
+<span class="lineNum">     168 </span>            : //
+<span class="lineNum">     169 </span>            : // Return value:
+<a name="170"><span class="lineNum">     170 </span>            : //  - is_histogram_valid  : 1 - The |candidate_delay| is valid.</a>
+<span class="lineNum">     171 </span>            : //                          0 - Otherwise.
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 : static int HistogramBasedValidation(const BinaryDelayEstimator* self,</span>
+<span class="lineNum">     173 </span>            :                                     int candidate_delay) {
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :   float fraction = 1.f;</span>
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :   float histogram_threshold = self-&gt;histogram[self-&gt;compare_delay];</span>
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :   const int delay_difference = candidate_delay - self-&gt;last_delay;</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :   int is_histogram_valid = 0;</span>
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span>            :   // The histogram based validation of |candidate_delay| is done by comparing
+<span class="lineNum">     180 </span>            :   // the |histogram| at bin |candidate_delay| with a |histogram_threshold|.
+<span class="lineNum">     181 </span>            :   // This |histogram_threshold| equals a |fraction| of the |histogram| at bin
+<span class="lineNum">     182 </span>            :   // |last_delay|.  The |fraction| is a piecewise linear function of the
+<span class="lineNum">     183 </span>            :   // |delay_difference| between the |candidate_delay| and the |last_delay|
+<span class="lineNum">     184 </span>            :   // allowing for a quicker move if
+<span class="lineNum">     185 </span>            :   //  i) a potential echo control filter can not handle these large differences.
+<span class="lineNum">     186 </span>            :   // ii) keeping |last_delay| instead of updating to |candidate_delay| could
+<span class="lineNum">     187 </span>            :   //     force an echo control into a non-causal state.
+<span class="lineNum">     188 </span>            :   // We further require the histogram to have reached a minimum value of
+<span class="lineNum">     189 </span>            :   // |kMinHistogramThreshold|.  In addition, we also require the number of
+<span class="lineNum">     190 </span>            :   // |candidate_hits| to be more than |kMinRequiredHits| to remove spurious
+<span class="lineNum">     191 </span>            :   // values.
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span>            :   // Calculate a comparison histogram value (|histogram_threshold|) that is
+<span class="lineNum">     194 </span>            :   // depending on the distance between the |candidate_delay| and |last_delay|.
+<span class="lineNum">     195 </span>            :   // TODO(bjornv): How much can we gain by turning the fraction calculation
+<span class="lineNum">     196 </span>            :   // into tables?
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   if (delay_difference &gt; self-&gt;allowed_offset) {</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :     fraction = 1.f - kFractionSlope * (delay_difference - self-&gt;allowed_offset);</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :     fraction = (fraction &gt; kMinFractionWhenPossiblyCausal ? fraction :</span>
+<span class="lineNum">     200 </span>            :         kMinFractionWhenPossiblyCausal);
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :   } else if (delay_difference &lt; 0) {</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :     fraction = kMinFractionWhenPossiblyNonCausal -</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :         kFractionSlope * delay_difference;</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :     fraction = (fraction &gt; 1.f ? 1.f : fraction);</span>
+<span class="lineNum">     205 </span>            :   }
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :   histogram_threshold *= fraction;</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :   histogram_threshold = (histogram_threshold &gt; kMinHistogramThreshold ?</span>
+<span class="lineNum">     208 </span>            :       histogram_threshold : kMinHistogramThreshold);
+<span class="lineNum">     209 </span>            : 
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :   is_histogram_valid =</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :       (self-&gt;histogram[candidate_delay] &gt;= histogram_threshold) &amp;&amp;</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :       (self-&gt;candidate_hits &gt; kMinRequiredHits);</span>
+<span class="lineNum">     213 </span>            : 
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :   return is_histogram_valid;</span>
+<span class="lineNum">     215 </span>            : }
+<span class="lineNum">     216 </span>            : 
+<span class="lineNum">     217 </span>            : // Performs a robust validation of the |candidate_delay| estimated in
+<span class="lineNum">     218 </span>            : // WebRtc_ProcessBinarySpectrum().  The algorithm takes the
+<span class="lineNum">     219 </span>            : // |is_instantaneous_valid| and the |is_histogram_valid| and combines them
+<span class="lineNum">     220 </span>            : // into a robust validation.  The HistogramBasedValidation() has to be called
+<span class="lineNum">     221 </span>            : // prior to this call.
+<span class="lineNum">     222 </span>            : // For further description on how the combination is done, see commented code.
+<span class="lineNum">     223 </span>            : //
+<span class="lineNum">     224 </span>            : // Inputs:
+<span class="lineNum">     225 </span>            : //  - candidate_delay         : The delay to validate.
+<span class="lineNum">     226 </span>            : //  - is_instantaneous_valid  : The instantaneous validation performed in
+<span class="lineNum">     227 </span>            : //                              WebRtc_ProcessBinarySpectrum().
+<span class="lineNum">     228 </span>            : //  - is_histogram_valid      : The histogram based validation.
+<span class="lineNum">     229 </span>            : //
+<span class="lineNum">     230 </span>            : // Return value:
+<span class="lineNum">     231 </span>            : //  - is_robust               : 1 - The candidate_delay is valid according to a
+<a name="232"><span class="lineNum">     232 </span>            : //                                  combination of the two inputs.</a>
+<span class="lineNum">     233 </span>            : //                            : 0 - Otherwise.
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 : static int RobustValidation(const BinaryDelayEstimator* self,</span>
+<span class="lineNum">     235 </span>            :                             int candidate_delay,
+<span class="lineNum">     236 </span>            :                             int is_instantaneous_valid,
+<span class="lineNum">     237 </span>            :                             int is_histogram_valid) {
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :   int is_robust = 0;</span>
+<span class="lineNum">     239 </span>            : 
+<span class="lineNum">     240 </span>            :   // The final robust validation is based on the two algorithms; 1) the
+<span class="lineNum">     241 </span>            :   // |is_instantaneous_valid| and 2) the histogram based with result stored in
+<span class="lineNum">     242 </span>            :   // |is_histogram_valid|.
+<span class="lineNum">     243 </span>            :   //   i) Before we actually have a valid estimate (|last_delay| == -2), we say
+<span class="lineNum">     244 </span>            :   //      a candidate is valid if either algorithm states so
+<span class="lineNum">     245 </span>            :   //      (|is_instantaneous_valid| OR |is_histogram_valid|).
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   is_robust = (self-&gt;last_delay &lt; 0) &amp;&amp;</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :       (is_instantaneous_valid || is_histogram_valid);</span>
+<span class="lineNum">     248 </span>            :   //  ii) Otherwise, we need both algorithms to be certain
+<span class="lineNum">     249 </span>            :   //      (|is_instantaneous_valid| AND |is_histogram_valid|)
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   is_robust |= is_instantaneous_valid &amp;&amp; is_histogram_valid;</span>
+<span class="lineNum">     251 </span>            :   // iii) With one exception, i.e., the histogram based algorithm can overrule
+<span class="lineNum">     252 </span>            :   //      the instantaneous one if |is_histogram_valid| = 1 and the histogram
+<span class="lineNum">     253 </span>            :   //      is significantly strong.
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :   is_robust |= is_histogram_valid &amp;&amp;</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :       (self-&gt;histogram[candidate_delay] &gt; self-&gt;last_delay_histogram);</span>
+<span class="lineNum">     256 </span>            : 
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :   return is_robust;</span>
+<a name="258"><span class="lineNum">     258 </span>            : }</a>
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 : void WebRtc_FreeBinaryDelayEstimatorFarend(BinaryDelayEstimatorFarend* self) {</span>
+<span class="lineNum">     261 </span>            : 
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   if (self == NULL) {</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     264 </span>            :   }
+<span class="lineNum">     265 </span>            : 
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :   free(self-&gt;binary_far_history);</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :   self-&gt;binary_far_history = NULL;</span>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :   free(self-&gt;far_bit_counts);</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :   self-&gt;far_bit_counts = NULL;</span>
+<span class="lineNum">     271 </span>            : 
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :   free(self);</span>
+<a name="273"><span class="lineNum">     273 </span>            : }</a>
+<span class="lineNum">     274 </span>            : 
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 : BinaryDelayEstimatorFarend* WebRtc_CreateBinaryDelayEstimatorFarend(</span>
+<span class="lineNum">     276 </span>            :     int history_size) {
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   BinaryDelayEstimatorFarend* self = NULL;</span>
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :   if (history_size &gt; 1) {</span>
+<span class="lineNum">     280 </span>            :     // Sanity conditions fulfilled.
+<span class="lineNum">     281 </span>            :     self = static_cast&lt;BinaryDelayEstimatorFarend*&gt;(
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :         malloc(sizeof(BinaryDelayEstimatorFarend)));</span>
+<span class="lineNum">     283 </span>            :   }
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :   if (self == NULL) {</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :     return NULL;</span>
+<span class="lineNum">     286 </span>            :   }
+<span class="lineNum">     287 </span>            : 
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :   self-&gt;history_size = 0;</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   self-&gt;binary_far_history = NULL;</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   self-&gt;far_bit_counts = NULL;</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   if (WebRtc_AllocateFarendBufferMemory(self, history_size) == 0) {</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :     WebRtc_FreeBinaryDelayEstimatorFarend(self);</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :     self = NULL;</span>
+<span class="lineNum">     294 </span>            :   }
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :   return self;</span>
+<a name="296"><span class="lineNum">     296 </span>            : }</a>
+<span class="lineNum">     297 </span>            : 
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 : int WebRtc_AllocateFarendBufferMemory(BinaryDelayEstimatorFarend* self,</span>
+<span class="lineNum">     299 </span>            :                                       int history_size) {
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :   RTC_DCHECK(self);</span>
+<span class="lineNum">     301 </span>            :   // (Re-)Allocate memory for history buffers.
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :   self-&gt;binary_far_history = static_cast&lt;uint32_t*&gt;(</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :       realloc(self-&gt;binary_far_history,</span>
+<span class="lineNum">     304 </span>            :               history_size * sizeof(*self-&gt;binary_far_history)));
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :   self-&gt;far_bit_counts = static_cast&lt;int*&gt;(</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :       realloc(self-&gt;far_bit_counts,</span>
+<span class="lineNum">     307 </span>            :               history_size * sizeof(*self-&gt;far_bit_counts)));
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :   if ((self-&gt;binary_far_history == NULL) || (self-&gt;far_bit_counts == NULL)) {</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     history_size = 0;</span>
+<span class="lineNum">     310 </span>            :   }
+<span class="lineNum">     311 </span>            :   // Fill with zeros if we have expanded the buffers.
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :   if (history_size &gt; self-&gt;history_size) {</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :     int size_diff = history_size - self-&gt;history_size;</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :     memset(&amp;self-&gt;binary_far_history[self-&gt;history_size],</span>
+<span class="lineNum">     315 </span>            :            0,
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :            sizeof(*self-&gt;binary_far_history) * size_diff);</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :     memset(&amp;self-&gt;far_bit_counts[self-&gt;history_size],</span>
+<span class="lineNum">     318 </span>            :            0,
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :            sizeof(*self-&gt;far_bit_counts) * size_diff);</span>
+<span class="lineNum">     320 </span>            :   }
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :   self-&gt;history_size = history_size;</span>
+<span class="lineNum">     322 </span>            : 
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :   return self-&gt;history_size;</span>
+<a name="324"><span class="lineNum">     324 </span>            : }</a>
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 : void WebRtc_InitBinaryDelayEstimatorFarend(BinaryDelayEstimatorFarend* self) {</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :   RTC_DCHECK(self);</span>
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :   memset(self-&gt;binary_far_history, 0, sizeof(uint32_t) * self-&gt;history_size);</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :   memset(self-&gt;far_bit_counts, 0, sizeof(int) * self-&gt;history_size);</span>
+<a name="330"><span class="lineNum">     330 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 : void WebRtc_SoftResetBinaryDelayEstimatorFarend(</span>
+<span class="lineNum">     333 </span>            :     BinaryDelayEstimatorFarend* self, int delay_shift) {
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :   int abs_shift = abs(delay_shift);</span>
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :   int shift_size = 0;</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :   int dest_index = 0;</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :   int src_index = 0;</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :   int padding_index = 0;</span>
+<span class="lineNum">     339 </span>            : 
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :   RTC_DCHECK(self);</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :   shift_size = self-&gt;history_size - abs_shift;</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GT(shift_size, 0);</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :   if (delay_shift == 0) {</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :   } else if (delay_shift &gt; 0) {</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :     dest_index = abs_shift;</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :   } else if (delay_shift &lt; 0) {</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :     src_index = abs_shift;</span>
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :     padding_index = shift_size;</span>
+<span class="lineNum">     350 </span>            :   }
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span>            :   // Shift and zero pad buffers.
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :   memmove(&amp;self-&gt;binary_far_history[dest_index],</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :           &amp;self-&gt;binary_far_history[src_index],</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :           sizeof(*self-&gt;binary_far_history) * shift_size);</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :   memset(&amp;self-&gt;binary_far_history[padding_index], 0,</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :          sizeof(*self-&gt;binary_far_history) * abs_shift);</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :   memmove(&amp;self-&gt;far_bit_counts[dest_index],</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :           &amp;self-&gt;far_bit_counts[src_index],</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :           sizeof(*self-&gt;far_bit_counts) * shift_size);</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :   memset(&amp;self-&gt;far_bit_counts[padding_index], 0,</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :          sizeof(*self-&gt;far_bit_counts) * abs_shift);</span>
+<a name="363"><span class="lineNum">     363 </span>            : }</a>
+<span class="lineNum">     364 </span>            : 
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 : void WebRtc_AddBinaryFarSpectrum(BinaryDelayEstimatorFarend* handle,</span>
+<span class="lineNum">     366 </span>            :                                  uint32_t binary_far_spectrum) {
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :   RTC_DCHECK(handle);</span>
+<span class="lineNum">     368 </span>            :   // Shift binary spectrum history and insert current |binary_far_spectrum|.
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :   memmove(&amp;(handle-&gt;binary_far_history[1]), &amp;(handle-&gt;binary_far_history[0]),</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :           (handle-&gt;history_size - 1) * sizeof(uint32_t));</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :   handle-&gt;binary_far_history[0] = binary_far_spectrum;</span>
+<span class="lineNum">     372 </span>            : 
+<span class="lineNum">     373 </span>            :   // Shift history of far-end binary spectrum bit counts and insert bit count
+<span class="lineNum">     374 </span>            :   // of current |binary_far_spectrum|.
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :   memmove(&amp;(handle-&gt;far_bit_counts[1]), &amp;(handle-&gt;far_bit_counts[0]),</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :           (handle-&gt;history_size - 1) * sizeof(int));</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :   handle-&gt;far_bit_counts[0] = BitCount(binary_far_spectrum);</span>
+<a name="378"><span class="lineNum">     378 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     379 </span>            : 
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 : void WebRtc_FreeBinaryDelayEstimator(BinaryDelayEstimator* self) {</span>
+<span class="lineNum">     381 </span>            : 
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :   if (self == NULL) {</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     384 </span>            :   }
+<span class="lineNum">     385 </span>            : 
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :   free(self-&gt;mean_bit_counts);</span>
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :   self-&gt;mean_bit_counts = NULL;</span>
+<span class="lineNum">     388 </span>            : 
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :   free(self-&gt;bit_counts);</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :   self-&gt;bit_counts = NULL;</span>
+<span class="lineNum">     391 </span>            : 
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :   free(self-&gt;binary_near_history);</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :   self-&gt;binary_near_history = NULL;</span>
+<span class="lineNum">     394 </span>            : 
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :   free(self-&gt;histogram);</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :   self-&gt;histogram = NULL;</span>
+<span class="lineNum">     397 </span>            : 
+<span class="lineNum">     398 </span>            :   // BinaryDelayEstimator does not have ownership of |farend|, hence we do not
+<span class="lineNum">     399 </span>            :   // free the memory here. That should be handled separately by the user.
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :   self-&gt;farend = NULL;</span>
+<span class="lineNum">     401 </span>            : 
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :   free(self);</span>
+<a name="403"><span class="lineNum">     403 </span>            : }</a>
+<span class="lineNum">     404 </span>            : 
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 : BinaryDelayEstimator* WebRtc_CreateBinaryDelayEstimator(</span>
+<span class="lineNum">     406 </span>            :     BinaryDelayEstimatorFarend* farend, int max_lookahead) {
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :   BinaryDelayEstimator* self = NULL;</span>
+<span class="lineNum">     408 </span>            : 
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :   if ((farend != NULL) &amp;&amp; (max_lookahead &gt;= 0)) {</span>
+<span class="lineNum">     410 </span>            :     // Sanity conditions fulfilled.
+<span class="lineNum">     411 </span>            :     self = static_cast&lt;BinaryDelayEstimator*&gt;(
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :         malloc(sizeof(BinaryDelayEstimator)));</span>
+<span class="lineNum">     413 </span>            :   }
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :   if (self == NULL) {</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :     return NULL;</span>
+<span class="lineNum">     416 </span>            :   }
+<span class="lineNum">     417 </span>            : 
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :   self-&gt;farend = farend;</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :   self-&gt;near_history_size = max_lookahead + 1;</span>
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :   self-&gt;history_size = 0;</span>
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :   self-&gt;robust_validation_enabled = 0;  // Disabled by default.</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :   self-&gt;allowed_offset = 0;</span>
+<span class="lineNum">     423 </span>            : 
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :   self-&gt;lookahead = max_lookahead;</span>
+<span class="lineNum">     425 </span>            : 
+<span class="lineNum">     426 </span>            :   // Allocate memory for spectrum and history buffers.
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :   self-&gt;mean_bit_counts = NULL;</span>
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :   self-&gt;bit_counts = NULL;</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :   self-&gt;histogram = NULL;</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :   self-&gt;binary_near_history = static_cast&lt;uint32_t*&gt;(</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :       malloc((max_lookahead + 1) * sizeof(*self-&gt;binary_near_history)));</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :   if (self-&gt;binary_near_history == NULL ||</span>
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :       WebRtc_AllocateHistoryBufferMemory(self, farend-&gt;history_size) == 0) {</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :     WebRtc_FreeBinaryDelayEstimator(self);</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :     self = NULL;</span>
+<span class="lineNum">     436 </span>            :   }
+<span class="lineNum">     437 </span>            : 
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :   return self;</span>
+<a name="439"><span class="lineNum">     439 </span>            : }</a>
+<span class="lineNum">     440 </span>            : 
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 : int WebRtc_AllocateHistoryBufferMemory(BinaryDelayEstimator* self,</span>
+<span class="lineNum">     442 </span>            :                                        int history_size) {
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :   BinaryDelayEstimatorFarend* farend = self-&gt;farend;</span>
+<span class="lineNum">     444 </span>            :   // (Re-)Allocate memory for spectrum and history buffers.
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :   if (history_size != farend-&gt;history_size) {</span>
+<span class="lineNum">     446 </span>            :     // Only update far-end buffers if we need.
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :     history_size = WebRtc_AllocateFarendBufferMemory(farend, history_size);</span>
+<span class="lineNum">     448 </span>            :   }
+<span class="lineNum">     449 </span>            :   // The extra array element in |mean_bit_counts| and |histogram| is a dummy
+<span class="lineNum">     450 </span>            :   // element only used while |last_delay| == -2, i.e., before we have a valid
+<span class="lineNum">     451 </span>            :   // estimate.
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :   self-&gt;mean_bit_counts = static_cast&lt;int32_t*&gt;(</span>
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :       realloc(self-&gt;mean_bit_counts,</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :               (history_size + 1) * sizeof(*self-&gt;mean_bit_counts)));</span>
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :   self-&gt;bit_counts = static_cast&lt;int32_t*&gt;(</span>
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 :       realloc(self-&gt;bit_counts, history_size * sizeof(*self-&gt;bit_counts)));</span>
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :   self-&gt;histogram = static_cast&lt;float*&gt;(</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :       realloc(self-&gt;histogram, (history_size + 1) * sizeof(*self-&gt;histogram)));</span>
+<span class="lineNum">     459 </span>            : 
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :   if ((self-&gt;mean_bit_counts == NULL) ||</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :       (self-&gt;bit_counts == NULL) ||</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :       (self-&gt;histogram == NULL)) {</span>
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :     history_size = 0;</span>
+<span class="lineNum">     464 </span>            :   }
+<span class="lineNum">     465 </span>            :   // Fill with zeros if we have expanded the buffers.
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :   if (history_size &gt; self-&gt;history_size) {</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :     int size_diff = history_size - self-&gt;history_size;</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :     memset(&amp;self-&gt;mean_bit_counts[self-&gt;history_size],</span>
+<span class="lineNum">     469 </span>            :            0,
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :            sizeof(*self-&gt;mean_bit_counts) * size_diff);</span>
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :     memset(&amp;self-&gt;bit_counts[self-&gt;history_size],</span>
+<span class="lineNum">     472 </span>            :            0,
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :            sizeof(*self-&gt;bit_counts) * size_diff);</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :     memset(&amp;self-&gt;histogram[self-&gt;history_size],</span>
+<span class="lineNum">     475 </span>            :            0,
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :            sizeof(*self-&gt;histogram) * size_diff);</span>
+<span class="lineNum">     477 </span>            :   }
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :   self-&gt;history_size = history_size;</span>
+<span class="lineNum">     479 </span>            : 
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :   return self-&gt;history_size;</span>
+<a name="481"><span class="lineNum">     481 </span>            : }</a>
+<span class="lineNum">     482 </span>            : 
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 : void WebRtc_InitBinaryDelayEstimator(BinaryDelayEstimator* self) {</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :   int i = 0;</span>
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :   RTC_DCHECK(self);</span>
+<span class="lineNum">     486 </span>            : 
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :   memset(self-&gt;bit_counts, 0, sizeof(int32_t) * self-&gt;history_size);</span>
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :   memset(self-&gt;binary_near_history,</span>
+<span class="lineNum">     489 </span>            :          0,
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :          sizeof(uint32_t) * self-&gt;near_history_size);</span>
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt;= self-&gt;history_size; ++i) {</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :     self-&gt;mean_bit_counts[i] = (20 &lt;&lt; 9);  // 20 in Q9.</span>
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :     self-&gt;histogram[i] = 0.f;</span>
+<span class="lineNum">     494 </span>            :   }
+<span class="lineNum">     495 </span><span class="lineNoCov">          0 :   self-&gt;minimum_probability = kMaxBitCountsQ9;  // 32 in Q9.</span>
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :   self-&gt;last_delay_probability = (int) kMaxBitCountsQ9;  // 32 in Q9.</span>
+<span class="lineNum">     497 </span>            : 
+<span class="lineNum">     498 </span>            :   // Default return value if we're unable to estimate. -1 is used for errors.
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :   self-&gt;last_delay = -2;</span>
+<span class="lineNum">     500 </span>            : 
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :   self-&gt;last_candidate_delay = -2;</span>
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :   self-&gt;compare_delay = self-&gt;history_size;</span>
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :   self-&gt;candidate_hits = 0;</span>
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :   self-&gt;last_delay_histogram = 0.f;</span>
+<a name="505"><span class="lineNum">     505 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     506 </span>            : 
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 : int WebRtc_SoftResetBinaryDelayEstimator(BinaryDelayEstimator* self,</span>
+<span class="lineNum">     508 </span>            :                                          int delay_shift) {
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :   int lookahead = 0;</span>
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :   RTC_DCHECK(self);</span>
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :   lookahead = self-&gt;lookahead;</span>
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :   self-&gt;lookahead -= delay_shift;</span>
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :   if (self-&gt;lookahead &lt; 0) {</span>
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 :     self-&gt;lookahead = 0;</span>
+<span class="lineNum">     515 </span>            :   }
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :   if (self-&gt;lookahead &gt; self-&gt;near_history_size - 1) {</span>
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :     self-&gt;lookahead = self-&gt;near_history_size - 1;</span>
+<span class="lineNum">     518 </span>            :   }
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :   return lookahead - self-&gt;lookahead;</span>
+<a name="520"><span class="lineNum">     520 </span>            : }</a>
+<span class="lineNum">     521 </span>            : 
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 : int WebRtc_ProcessBinarySpectrum(BinaryDelayEstimator* self,</span>
+<span class="lineNum">     523 </span>            :                                  uint32_t binary_near_spectrum) {
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :   int i = 0;</span>
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :   int candidate_delay = -1;</span>
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :   int valid_candidate = 0;</span>
+<span class="lineNum">     527 </span>            : 
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :   int32_t value_best_candidate = kMaxBitCountsQ9;</span>
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :   int32_t value_worst_candidate = 0;</span>
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 :   int32_t valley_depth = 0;</span>
+<span class="lineNum">     531 </span>            : 
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :   RTC_DCHECK(self);</span>
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :   if (self-&gt;farend-&gt;history_size != self-&gt;history_size) {</span>
+<span class="lineNum">     534 </span>            :     // Non matching history sizes.
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     536 </span>            :   }
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :   if (self-&gt;near_history_size &gt; 1) {</span>
+<span class="lineNum">     538 </span>            :     // If we apply lookahead, shift near-end binary spectrum history. Insert
+<span class="lineNum">     539 </span>            :     // current |binary_near_spectrum| and pull out the delayed one.
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :     memmove(&amp;(self-&gt;binary_near_history[1]), &amp;(self-&gt;binary_near_history[0]),</span>
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :             (self-&gt;near_history_size - 1) * sizeof(uint32_t));</span>
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :     self-&gt;binary_near_history[0] = binary_near_spectrum;</span>
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :     binary_near_spectrum = self-&gt;binary_near_history[self-&gt;lookahead];</span>
+<span class="lineNum">     544 </span>            :   }
+<span class="lineNum">     545 </span>            : 
+<span class="lineNum">     546 </span>            :   // Compare with delayed spectra and store the |bit_counts| for each delay.
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :   BitCountComparison(binary_near_spectrum, self-&gt;farend-&gt;binary_far_history,</span>
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :                      self-&gt;history_size, self-&gt;bit_counts);</span>
+<span class="lineNum">     549 </span>            : 
+<span class="lineNum">     550 </span>            :   // Update |mean_bit_counts|, which is the smoothed version of |bit_counts|.
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; self-&gt;history_size; i++) {</span>
+<span class="lineNum">     552 </span>            :     // |bit_counts| is constrained to [0, 32], meaning we can smooth with a
+<span class="lineNum">     553 </span>            :     // factor up to 2^26. We use Q9.
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :     int32_t bit_count = (self-&gt;bit_counts[i] &lt;&lt; 9);  // Q9.</span>
+<span class="lineNum">     555 </span>            : 
+<span class="lineNum">     556 </span>            :     // Update |mean_bit_counts| only when far-end signal has something to
+<span class="lineNum">     557 </span>            :     // contribute. If |far_bit_counts| is zero the far-end signal is weak and
+<span class="lineNum">     558 </span>            :     // we likely have a poor echo condition, hence don't update.
+<span class="lineNum">     559 </span><span class="lineNoCov">          0 :     if (self-&gt;farend-&gt;far_bit_counts[i] &gt; 0) {</span>
+<span class="lineNum">     560 </span>            :       // Make number of right shifts piecewise linear w.r.t. |far_bit_counts|.
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 :       int shifts = kShiftsAtZero;</span>
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :       shifts -= (kShiftsLinearSlope * self-&gt;farend-&gt;far_bit_counts[i]) &gt;&gt; 4;</span>
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :       WebRtc_MeanEstimatorFix(bit_count, shifts, &amp;(self-&gt;mean_bit_counts[i]));</span>
+<span class="lineNum">     564 </span>            :     }
+<span class="lineNum">     565 </span>            :   }
+<span class="lineNum">     566 </span>            : 
+<span class="lineNum">     567 </span>            :   // Find |candidate_delay|, |value_best_candidate| and |value_worst_candidate|
+<span class="lineNum">     568 </span>            :   // of |mean_bit_counts|.
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; self-&gt;history_size; i++) {</span>
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :     if (self-&gt;mean_bit_counts[i] &lt; value_best_candidate) {</span>
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :       value_best_candidate = self-&gt;mean_bit_counts[i];</span>
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :       candidate_delay = i;</span>
+<span class="lineNum">     573 </span>            :     }
+<span class="lineNum">     574 </span><span class="lineNoCov">          0 :     if (self-&gt;mean_bit_counts[i] &gt; value_worst_candidate) {</span>
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :       value_worst_candidate = self-&gt;mean_bit_counts[i];</span>
+<span class="lineNum">     576 </span>            :     }
+<span class="lineNum">     577 </span>            :   }
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :   valley_depth = value_worst_candidate - value_best_candidate;</span>
+<span class="lineNum">     579 </span>            : 
+<span class="lineNum">     580 </span>            :   // The |value_best_candidate| is a good indicator on the probability of
+<span class="lineNum">     581 </span>            :   // |candidate_delay| being an accurate delay (a small |value_best_candidate|
+<span class="lineNum">     582 </span>            :   // means a good binary match). In the following sections we make a decision
+<span class="lineNum">     583 </span>            :   // whether to update |last_delay| or not.
+<span class="lineNum">     584 </span>            :   // 1) If the difference bit counts between the best and the worst delay
+<span class="lineNum">     585 </span>            :   //    candidates is too small we consider the situation to be unreliable and
+<span class="lineNum">     586 </span>            :   //    don't update |last_delay|.
+<span class="lineNum">     587 </span>            :   // 2) If the situation is reliable we update |last_delay| if the value of the
+<span class="lineNum">     588 </span>            :   //    best candidate delay has a value less than
+<span class="lineNum">     589 </span>            :   //     i) an adaptive threshold |minimum_probability|, or
+<span class="lineNum">     590 </span>            :   //    ii) this corresponding value |last_delay_probability|, but updated at
+<span class="lineNum">     591 </span>            :   //        this time instant.
+<span class="lineNum">     592 </span>            : 
+<span class="lineNum">     593 </span>            :   // Update |minimum_probability|.
+<span class="lineNum">     594 </span><span class="lineNoCov">          0 :   if ((self-&gt;minimum_probability &gt; kProbabilityLowerLimit) &amp;&amp;</span>
+<span class="lineNum">     595 </span>            :       (valley_depth &gt; kProbabilityMinSpread)) {
+<span class="lineNum">     596 </span>            :     // The &quot;hard&quot; threshold can't be lower than 17 (in Q9).
+<span class="lineNum">     597 </span>            :     // The valley in the curve also has to be distinct, i.e., the
+<span class="lineNum">     598 </span>            :     // difference between |value_worst_candidate| and |value_best_candidate| has
+<span class="lineNum">     599 </span>            :     // to be large enough.
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :     int32_t threshold = value_best_candidate + kProbabilityOffset;</span>
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :     if (threshold &lt; kProbabilityLowerLimit) {</span>
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :       threshold = kProbabilityLowerLimit;</span>
+<span class="lineNum">     603 </span>            :     }
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :     if (self-&gt;minimum_probability &gt; threshold) {</span>
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :       self-&gt;minimum_probability = threshold;</span>
+<span class="lineNum">     606 </span>            :     }
+<span class="lineNum">     607 </span>            :   }
+<span class="lineNum">     608 </span>            :   // Update |last_delay_probability|.
+<span class="lineNum">     609 </span>            :   // We use a Markov type model, i.e., a slowly increasing level over time.
+<span class="lineNum">     610 </span><span class="lineNoCov">          0 :   self-&gt;last_delay_probability++;</span>
+<span class="lineNum">     611 </span>            :   // Validate |candidate_delay|.  We have a reliable instantaneous delay
+<span class="lineNum">     612 </span>            :   // estimate if
+<span class="lineNum">     613 </span>            :   //  1) The valley is distinct enough (|valley_depth| &gt; |kProbabilityOffset|)
+<span class="lineNum">     614 </span>            :   // and
+<span class="lineNum">     615 </span>            :   //  2) The depth of the valley is deep enough
+<span class="lineNum">     616 </span>            :   //      (|value_best_candidate| &lt; |minimum_probability|)
+<span class="lineNum">     617 </span>            :   //     and deeper than the best estimate so far
+<span class="lineNum">     618 </span>            :   //      (|value_best_candidate| &lt; |last_delay_probability|)
+<span class="lineNum">     619 </span><span class="lineNoCov">          0 :   valid_candidate = ((valley_depth &gt; kProbabilityOffset) &amp;&amp;</span>
+<span class="lineNum">     620 </span><span class="lineNoCov">          0 :       ((value_best_candidate &lt; self-&gt;minimum_probability) ||</span>
+<span class="lineNum">     621 </span><span class="lineNoCov">          0 :           (value_best_candidate &lt; self-&gt;last_delay_probability)));</span>
+<span class="lineNum">     622 </span>            : 
+<span class="lineNum">     623 </span>            :   // Check for nonstationary farend signal.
+<span class="lineNum">     624 </span>            :   const bool non_stationary_farend =
+<a name="625"><span class="lineNum">     625 </span><span class="lineNoCov">          0 :       std::any_of(self-&gt;farend-&gt;far_bit_counts,</span></a>
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :                   self-&gt;farend-&gt;far_bit_counts + self-&gt;history_size,</span>
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :                   [](int a) { return a &gt; 0; });</span>
+<span class="lineNum">     628 </span>            : 
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :   if (non_stationary_farend) {</span>
+<span class="lineNum">     630 </span>            :     // Only update the validation statistics when the farend is nonstationary
+<span class="lineNum">     631 </span>            :     // as the underlying estimates are otherwise frozen.
+<span class="lineNum">     632 </span>            :     UpdateRobustValidationStatistics(self, candidate_delay, valley_depth,
+<span class="lineNum">     633 </span><span class="lineNoCov">          0 :                                      value_best_candidate);</span>
+<span class="lineNum">     634 </span>            :   }
+<span class="lineNum">     635 </span>            : 
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :   if (self-&gt;robust_validation_enabled) {</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :     int is_histogram_valid = HistogramBasedValidation(self, candidate_delay);</span>
+<span class="lineNum">     638 </span>            :     valid_candidate = RobustValidation(self, candidate_delay, valid_candidate,
+<span class="lineNum">     639 </span><span class="lineNoCov">          0 :                                        is_histogram_valid);</span>
+<span class="lineNum">     640 </span>            : 
+<span class="lineNum">     641 </span>            :   }
+<span class="lineNum">     642 </span>            : 
+<span class="lineNum">     643 </span>            :   // Only update the delay estimate when the farend is nonstationary and when
+<span class="lineNum">     644 </span>            :   // a valid delay candidate is available.
+<span class="lineNum">     645 </span><span class="lineNoCov">          0 :   if (non_stationary_farend &amp;&amp; valid_candidate) {</span>
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 :     if (candidate_delay != self-&gt;last_delay) {</span>
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :       self-&gt;last_delay_histogram =</span>
+<span class="lineNum">     648 </span><span class="lineNoCov">          0 :           (self-&gt;histogram[candidate_delay] &gt; kLastHistogramMax ?</span>
+<span class="lineNum">     649 </span><span class="lineNoCov">          0 :               kLastHistogramMax : self-&gt;histogram[candidate_delay]);</span>
+<span class="lineNum">     650 </span>            :       // Adjust the histogram if we made a change to |last_delay|, though it was
+<span class="lineNum">     651 </span>            :       // not the most likely one according to the histogram.
+<span class="lineNum">     652 </span><span class="lineNoCov">          0 :       if (self-&gt;histogram[candidate_delay] &lt;</span>
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 :           self-&gt;histogram[self-&gt;compare_delay]) {</span>
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 :         self-&gt;histogram[self-&gt;compare_delay] = self-&gt;histogram[candidate_delay];</span>
+<span class="lineNum">     655 </span>            :       }
+<span class="lineNum">     656 </span>            :     }
+<span class="lineNum">     657 </span><span class="lineNoCov">          0 :     self-&gt;last_delay = candidate_delay;</span>
+<span class="lineNum">     658 </span><span class="lineNoCov">          0 :     if (value_best_candidate &lt; self-&gt;last_delay_probability) {</span>
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :       self-&gt;last_delay_probability = value_best_candidate;</span>
+<span class="lineNum">     660 </span>            :     }
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :     self-&gt;compare_delay = self-&gt;last_delay;</span>
+<span class="lineNum">     662 </span>            :   }
+<span class="lineNum">     663 </span>            : 
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :   return self-&gt;last_delay;</span>
+<a name="665"><span class="lineNum">     665 </span>            : }</a>
+<span class="lineNum">     666 </span>            : 
+<span class="lineNum">     667 </span><span class="lineNoCov">          0 : int WebRtc_binary_last_delay(BinaryDelayEstimator* self) {</span>
+<span class="lineNum">     668 </span><span class="lineNoCov">          0 :   RTC_DCHECK(self);</span>
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :   return self-&gt;last_delay;</span>
+<a name="670"><span class="lineNum">     670 </span>            : }</a>
+<span class="lineNum">     671 </span>            : 
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 : float WebRtc_binary_last_delay_quality(BinaryDelayEstimator* self) {</span>
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :   float quality = 0;</span>
+<span class="lineNum">     674 </span><span class="lineNoCov">          0 :   RTC_DCHECK(self);</span>
+<span class="lineNum">     675 </span>            : 
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :   if (self-&gt;robust_validation_enabled) {</span>
+<span class="lineNum">     677 </span>            :     // Simply a linear function of the histogram height at delay estimate.
+<span class="lineNum">     678 </span><span class="lineNoCov">          0 :     quality = self-&gt;histogram[self-&gt;compare_delay] / kHistogramMax;</span>
+<span class="lineNum">     679 </span>            :   } else {
+<span class="lineNum">     680 </span>            :     // Note that |last_delay_probability| states how deep the minimum of the
+<span class="lineNum">     681 </span>            :     // cost function is, so it is rather an error probability.
+<span class="lineNum">     682 </span><span class="lineNoCov">          0 :     quality = (float) (kMaxBitCountsQ9 - self-&gt;last_delay_probability) /</span>
+<span class="lineNum">     683 </span>            :         kMaxBitCountsQ9;
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :     if (quality &lt; 0) {</span>
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :       quality = 0;</span>
+<span class="lineNum">     686 </span>            :     }
+<span class="lineNum">     687 </span>            :   }
+<span class="lineNum">     688 </span><span class="lineNoCov">          0 :   return quality;</span>
+<a name="689"><span class="lineNum">     689 </span>            : }</a>
+<span class="lineNum">     690 </span>            : 
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 : void WebRtc_MeanEstimatorFix(int32_t new_value,</span>
+<span class="lineNum">     692 </span>            :                              int factor,
+<span class="lineNum">     693 </span>            :                              int32_t* mean_value) {
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :   int32_t diff = new_value - *mean_value;</span>
+<span class="lineNum">     695 </span>            : 
+<span class="lineNum">     696 </span>            :   // mean_new = mean_value + ((new_value - mean_value) &gt;&gt; factor);
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :   if (diff &lt; 0) {</span>
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :     diff = -((-diff) &gt;&gt; factor);</span>
+<span class="lineNum">     699 </span>            :   } else {
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :     diff = (diff &gt;&gt; factor);</span>
+<span class="lineNum">     701 </span>            :   }
+<span class="lineNum">     702 </span><span class="lineNoCov">          0 :   *mean_value += diff;</span>
+<span class="lineNum">     703 </span><span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,563 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - dom/media/encoder/OpusTrackEncoder.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">dom/media/encoder</a> - OpusTrackEncoder.cpp<span style="font-size: 80%;"> (source / <a href="OpusTrackEncoder.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">189</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">14</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-*/</a>
+<span class="lineNum">       2 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       3 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+<span class="lineNum">       4 </span>            :  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       5 </span>            : #include &quot;OpusTrackEncoder.h&quot;
+<span class="lineNum">       6 </span>            : #include &quot;nsString.h&quot;
+<span class="lineNum">       7 </span>            : #include &quot;GeckoProfiler.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;mozilla/CheckedInt.h&quot;
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &lt;opus/opus.h&gt;
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : #undef LOG
+<span class="lineNum">      13 </span>            : #ifdef MOZ_WIDGET_GONK
+<span class="lineNum">      14 </span>            : #include &lt;android/log.h&gt;
+<span class="lineNum">      15 </span>            : #define LOG(args...) __android_log_print(ANDROID_LOG_INFO, &quot;MediaEncoder&quot;, ## args);
+<span class="lineNum">      16 </span>            : #else
+<span class="lineNum">      17 </span>            : #define LOG(args, ...)
+<span class="lineNum">      18 </span>            : #endif
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : namespace mozilla {
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : // The Opus format supports up to 8 channels, and supports multitrack audio up
+<span class="lineNum">      23 </span>            : // to 255 channels, but the current implementation supports only mono and
+<span class="lineNum">      24 </span>            : // stereo, and downmixes any more than that.
+<span class="lineNum">      25 </span>            : static const int MAX_SUPPORTED_AUDIO_CHANNELS = 8;
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : // http://www.opus-codec.org/docs/html_api-1.0.2/group__opus__encoder.html
+<span class="lineNum">      28 </span>            : // In section &quot;opus_encoder_init&quot;, channels must be 1 or 2 of input signal.
+<span class="lineNum">      29 </span>            : static const int MAX_CHANNELS = 2;
+<span class="lineNum">      30 </span>            : 
+<span class="lineNum">      31 </span>            : // A maximum data bytes for Opus to encode.
+<span class="lineNum">      32 </span>            : static const int MAX_DATA_BYTES = 4096;
+<span class="lineNum">      33 </span>            : 
+<span class="lineNum">      34 </span>            : // http://tools.ietf.org/html/draft-ietf-codec-oggopus-00#section-4
+<span class="lineNum">      35 </span>            : // Second paragraph, &quot; The granule position of an audio data page is in units
+<span class="lineNum">      36 </span>            : // of PCM audio samples at a fixed rate of 48 kHz.&quot;
+<span class="lineNum">      37 </span>            : static const int kOpusSamplingRate = 48000;
+<span class="lineNum">      38 </span>            : 
+<span class="lineNum">      39 </span>            : // The duration of an Opus frame, and it must be 2.5, 5, 10, 20, 40 or 60 ms.
+<span class="lineNum">      40 </span>            : static const int kFrameDurationMs  = 20;
+<span class="lineNum">      41 </span>            : 
+<span class="lineNum">      42 </span>            : // The supported sampling rate of input signal (Hz),
+<span class="lineNum">      43 </span>            : // must be one of the following. Will resampled to 48kHz otherwise.
+<span class="lineNum">      44 </span>            : static const int kOpusSupportedInputSamplingRates[] =
+<span class="lineNum">      45 </span>            :                    {8000, 12000, 16000, 24000, 48000};
+<span class="lineNum">      46 </span>            : 
+<span class="lineNum">      47 </span>            : namespace {
+<span class="lineNum">      48 </span>            : 
+<span class="lineNum">      49 </span>            : // An endian-neutral serialization of integers. Serializing T in little endian
+<span class="lineNum">      50 </span>            : // format to aOutput, where T is a 16 bits or 32 bits integer.
+<a name="51"><span class="lineNum">      51 </span>            : template&lt;typename T&gt;</a>
+<span class="lineNum">      52 </span>            : static void
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 : SerializeToBuffer(T aValue, nsTArray&lt;uint8_t&gt;* aOutput)</span>
+<span class="lineNum">      54 </span>            : {
+<span class="lineNum">      55 </span><span class="lineNoCov">          0 :   for (uint32_t i = 0; i &lt; sizeof(T); i++) {</span>
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :     aOutput-&gt;AppendElement((uint8_t)(0x000000ff &amp; (aValue &gt;&gt; (i * 8))));</span>
+<span class="lineNum">      57 </span>            :   }
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 : }</span>
+<a name="59"><span class="lineNum">      59 </span>            : </a>
+<span class="lineNum">      60 </span>            : static inline void
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 : SerializeToBuffer(const nsCString&amp; aComment, nsTArray&lt;uint8_t&gt;* aOutput)</span>
+<span class="lineNum">      62 </span>            : {
+<span class="lineNum">      63 </span>            :   // Format of serializing a string to buffer is, the length of string (32 bits,
+<span class="lineNum">      64 </span>            :   // little endian), and the string.
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :   SerializeToBuffer((uint32_t)(aComment.Length()), aOutput);</span>
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 :   aOutput-&gt;AppendElements(aComment.get(), aComment.Length());</span>
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">      68 </span>            : 
+<a name="69"><span class="lineNum">      69 </span>            : </a>
+<span class="lineNum">      70 </span>            : static void
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 : SerializeOpusIdHeader(uint8_t aChannelCount, uint16_t aPreskip,</span>
+<span class="lineNum">      72 </span>            :                       uint32_t aInputSampleRate, nsTArray&lt;uint8_t&gt;* aOutput)
+<span class="lineNum">      73 </span>            : {
+<span class="lineNum">      74 </span>            :   // The magic signature, null terminator has to be stripped off from strings.
+<span class="lineNum">      75 </span>            :   static const uint8_t magic[] = &quot;OpusHead&quot;;
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :   aOutput-&gt;AppendElements(magic, sizeof(magic) - 1);</span>
+<span class="lineNum">      77 </span>            : 
+<span class="lineNum">      78 </span>            :   // The version must always be 1 (8 bits, unsigned).
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :   aOutput-&gt;AppendElement(1);</span>
+<span class="lineNum">      80 </span>            : 
+<span class="lineNum">      81 </span>            :   // Number of output channels (8 bits, unsigned).
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :   aOutput-&gt;AppendElement(aChannelCount);</span>
+<span class="lineNum">      83 </span>            : 
+<span class="lineNum">      84 </span>            :   // Number of samples (at 48 kHz) to discard from the decoder output when
+<span class="lineNum">      85 </span>            :   // starting playback (16 bits, unsigned, little endian).
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :   SerializeToBuffer(aPreskip, aOutput);</span>
+<span class="lineNum">      87 </span>            : 
+<span class="lineNum">      88 </span>            :   // The sampling rate of input source (32 bits, unsigned, little endian).
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :   SerializeToBuffer(aInputSampleRate, aOutput);</span>
+<span class="lineNum">      90 </span>            : 
+<span class="lineNum">      91 </span>            :   // Output gain, an encoder should set this field to zero (16 bits, signed,
+<span class="lineNum">      92 </span>            :   // little endian).
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :   SerializeToBuffer((int16_t)0, aOutput);</span>
+<span class="lineNum">      94 </span>            : 
+<span class="lineNum">      95 </span>            :   // Channel mapping family. Family 0 allows only 1 or 2 channels (8 bits,
+<span class="lineNum">      96 </span>            :   // unsigned).
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   aOutput-&gt;AppendElement(0);</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 : }</span>
+<a name="99"><span class="lineNum">      99 </span>            : </a>
+<span class="lineNum">     100 </span>            : static void
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 : SerializeOpusCommentHeader(const nsCString&amp; aVendor,</span>
+<span class="lineNum">     102 </span>            :                            const nsTArray&lt;nsCString&gt;&amp; aComments,
+<span class="lineNum">     103 </span>            :                            nsTArray&lt;uint8_t&gt;* aOutput)
+<span class="lineNum">     104 </span>            : {
+<span class="lineNum">     105 </span>            :   // The magic signature, null terminator has to be stripped off.
+<span class="lineNum">     106 </span>            :   static const uint8_t magic[] = &quot;OpusTags&quot;;
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :   aOutput-&gt;AppendElements(magic, sizeof(magic) - 1);</span>
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span>            :   // The vendor; Should append in the following order:
+<span class="lineNum">     110 </span>            :   // vendor string length (32 bits, unsigned, little endian)
+<span class="lineNum">     111 </span>            :   // vendor string.
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :   SerializeToBuffer(aVendor, aOutput);</span>
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span>            :   // Add comments; Should append in the following order:
+<span class="lineNum">     115 </span>            :   // comment list length (32 bits, unsigned, little endian)
+<span class="lineNum">     116 </span>            :   // comment #0 string length (32 bits, unsigned, little endian)
+<span class="lineNum">     117 </span>            :   // comment #0 string
+<span class="lineNum">     118 </span>            :   // comment #1 string length (32 bits, unsigned, little endian)
+<span class="lineNum">     119 </span>            :   // comment #1 string ...
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :   SerializeToBuffer((uint32_t)aComments.Length(), aOutput);</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :   for (uint32_t i = 0; i &lt; aComments.Length(); ++i) {</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :     SerializeToBuffer(aComments[i], aOutput);</span>
+<span class="lineNum">     123 </span>            :   }
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     125 </span>            : 
+<a name="126"><span class="lineNum">     126 </span>            : }  // Anonymous namespace.</a>
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 : OpusTrackEncoder::OpusTrackEncoder()</span>
+<span class="lineNum">     129 </span>            :   : AudioTrackEncoder()
+<span class="lineNum">     130 </span>            :   , mEncoder(nullptr)
+<span class="lineNum">     131 </span>            :   , mLookahead(0)
+<span class="lineNum">     132 </span>            :   , mResampler(nullptr)
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :   , mOutputTimeStamp(0)</span>
+<span class="lineNum">     134 </span>            : {
+<a name="135"><span class="lineNum">     135 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     136 </span>            : 
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 : OpusTrackEncoder::~OpusTrackEncoder()</span>
+<span class="lineNum">     138 </span>            : {
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   if (mEncoder) {</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     opus_encoder_destroy(mEncoder);</span>
+<span class="lineNum">     141 </span>            :   }
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   if (mResampler) {</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :     speex_resampler_destroy(mResampler);</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :     mResampler = nullptr;</span>
+<span class="lineNum">     145 </span>            :   }
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 : }</span>
+<a name="147"><span class="lineNum">     147 </span>            : </a>
+<span class="lineNum">     148 </span>            : nsresult
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 : OpusTrackEncoder::Init(int aChannels, int aSamplingRate)</span>
+<span class="lineNum">     150 </span>            : {
+<span class="lineNum">     151 </span>            :   // This monitor is used to wake up other methods that are waiting for encoder
+<span class="lineNum">     152 </span>            :   // to be completely initialized.
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :   ReentrantMonitorAutoEnter mon(mReentrantMonitor);</span>
+<span class="lineNum">     154 </span>            : 
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE((aChannels &lt;= MAX_SUPPORTED_AUDIO_CHANNELS) &amp;&amp; (aChannels &gt; 0),</span>
+<span class="lineNum">     156 </span>            :                  NS_ERROR_FAILURE);
+<span class="lineNum">     157 </span>            : 
+<span class="lineNum">     158 </span>            :   // This version of encoder API only support 1 or 2 channels,
+<span class="lineNum">     159 </span>            :   // So set the mChannels less or equal 2 and
+<span class="lineNum">     160 </span>            :   // let InterleaveTrackData downmix pcm data.
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :   mChannels = aChannels &gt; MAX_CHANNELS ? MAX_CHANNELS : aChannels;</span>
+<span class="lineNum">     162 </span>            : 
+<span class="lineNum">     163 </span>            :   // Reject non-audio sample rates.
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE(aSamplingRate &gt;= 8000, NS_ERROR_INVALID_ARG);</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE(aSamplingRate &lt;= 192000, NS_ERROR_INVALID_ARG);</span>
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span>            :   // According to www.opus-codec.org, creating an opus encoder requires the
+<span class="lineNum">     168 </span>            :   // sampling rate of source signal be one of 8000, 12000, 16000, 24000, or
+<span class="lineNum">     169 </span>            :   // 48000. If this constraint is not satisfied, we resample the input to 48kHz.
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :   nsTArray&lt;int&gt; supportedSamplingRates;</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :   supportedSamplingRates.AppendElements(kOpusSupportedInputSamplingRates,</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :                          ArrayLength(kOpusSupportedInputSamplingRates));</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :   if (!supportedSamplingRates.Contains(aSamplingRate)) {</span>
+<span class="lineNum">     174 </span>            :     int error;
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :     mResampler = speex_resampler_init(mChannels,</span>
+<span class="lineNum">     176 </span>            :                                       aSamplingRate,
+<span class="lineNum">     177 </span>            :                                       kOpusSamplingRate,
+<span class="lineNum">     178 </span>            :                                       SPEEX_RESAMPLER_QUALITY_DEFAULT,
+<span class="lineNum">     179 </span>            :                                       &amp;error);
+<span class="lineNum">     180 </span>            : 
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :     if (error != RESAMPLER_ERR_SUCCESS) {</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :       return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     183 </span>            :     }
+<span class="lineNum">     184 </span>            :   }
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :   mSamplingRate = aSamplingRate;</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE(mSamplingRate &gt; 0, NS_ERROR_FAILURE);</span>
+<span class="lineNum">     187 </span>            : 
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   int error = 0;</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :   mEncoder = opus_encoder_create(GetOutputSampleRate(), mChannels,</span>
+<span class="lineNum">     190 </span>            :                                  OPUS_APPLICATION_AUDIO, &amp;error);
+<span class="lineNum">     191 </span>            : 
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :   mInitialized = (error == OPUS_OK);</span>
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :   if (mAudioBitrate) {</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :     opus_encoder_ctl(mEncoder, OPUS_SET_BITRATE(static_cast&lt;int&gt;(mAudioBitrate)));</span>
+<span class="lineNum">     197 </span>            :   }
+<span class="lineNum">     198 </span>            : 
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :   mReentrantMonitor.NotifyAll();</span>
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :   return error == OPUS_OK ? NS_OK : NS_ERROR_FAILURE;</span>
+<span class="lineNum">     202 </span>            : }
+<a name="203"><span class="lineNum">     203 </span>            : </a>
+<span class="lineNum">     204 </span>            : int
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 : OpusTrackEncoder::GetOutputSampleRate()</span>
+<span class="lineNum">     206 </span>            : {
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :   return mResampler ? kOpusSamplingRate : mSamplingRate;</span>
+<span class="lineNum">     208 </span>            : }
+<a name="209"><span class="lineNum">     209 </span>            : </a>
+<span class="lineNum">     210 </span>            : int
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 : OpusTrackEncoder::GetPacketDuration()</span>
+<span class="lineNum">     212 </span>            : {
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   return GetOutputSampleRate() * kFrameDurationMs / 1000;</span>
+<span class="lineNum">     214 </span>            : }
+<a name="215"><span class="lineNum">     215 </span>            : </a>
+<span class="lineNum">     216 </span>            : already_AddRefed&lt;TrackMetadataBase&gt;
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 : OpusTrackEncoder::GetMetadata()</span>
+<span class="lineNum">     218 </span>            : {
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :   AUTO_PROFILER_LABEL(&quot;OpusTrackEncoder::GetMetadata&quot;, OTHER);</span>
+<span class="lineNum">     220 </span>            :   {
+<span class="lineNum">     221 </span>            :     // Wait if mEncoder is not initialized.
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :     ReentrantMonitorAutoEnter mon(mReentrantMonitor);</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :     while (!mCanceled &amp;&amp; !mInitialized) {</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :       mReentrantMonitor.Wait();</span>
+<span class="lineNum">     225 </span>            :     }
+<span class="lineNum">     226 </span>            :   }
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :   if (mCanceled || mEncodingComplete) {</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     230 </span>            :   }
+<span class="lineNum">     231 </span>            : 
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   RefPtr&lt;OpusMetadata&gt; meta = new OpusMetadata();</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :   meta-&gt;mChannels = mChannels;</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :   meta-&gt;mSamplingFrequency = mSamplingRate;</span>
+<span class="lineNum">     235 </span>            : 
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :   mLookahead = 0;</span>
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :   int error = opus_encoder_ctl(mEncoder, OPUS_GET_LOOKAHEAD(&amp;mLookahead));</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :   if (error != OPUS_OK) {</span>
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :     mLookahead = 0;</span>
+<span class="lineNum">     240 </span>            :   }
+<span class="lineNum">     241 </span>            : 
+<span class="lineNum">     242 </span>            :   // The ogg time stamping and pre-skip is always timed at 48000.
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   SerializeOpusIdHeader(mChannels, mLookahead * (kOpusSamplingRate /</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :                         GetOutputSampleRate()), mSamplingRate,</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :                         &amp;meta-&gt;mIdHeader);</span>
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   nsCString vendor;</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   vendor.AppendASCII(opus_get_version_string());</span>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   nsTArray&lt;nsCString&gt; comments;</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :   comments.AppendElement(NS_LITERAL_CSTRING(&quot;ENCODER=Mozilla&quot; MOZ_APP_UA_VERSION));</span>
+<span class="lineNum">     252 </span>            : 
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :   SerializeOpusCommentHeader(vendor, comments,</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :                              &amp;meta-&gt;mCommentHeader);</span>
+<span class="lineNum">     255 </span>            : 
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   return meta.forget();</span>
+<span class="lineNum">     257 </span>            : }
+<a name="258"><span class="lineNum">     258 </span>            : </a>
+<span class="lineNum">     259 </span>            : nsresult
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 : OpusTrackEncoder::GetEncodedTrack(EncodedFrameContainer&amp; aData)</span>
+<span class="lineNum">     261 </span>            : {
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   AUTO_PROFILER_LABEL(&quot;OpusTrackEncoder::GetEncodedTrack&quot;, OTHER);</span>
+<span class="lineNum">     263 </span>            :   {
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     ReentrantMonitorAutoEnter mon(mReentrantMonitor);</span>
+<span class="lineNum">     265 </span>            :     // Wait until initialized or cancelled.
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :     while (!mCanceled &amp;&amp; !mInitialized) {</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :       mReentrantMonitor.Wait();</span>
+<span class="lineNum">     268 </span>            :     }
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :     if (mCanceled || mEncodingComplete) {</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :       return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     271 </span>            :     }
+<span class="lineNum">     272 </span>            :   }
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span>            :   // calculation below depends on the truth that mInitialized is true.
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mInitialized);</span>
+<span class="lineNum">     276 </span>            : 
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   bool wait = true;</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :   int result = 0;</span>
+<span class="lineNum">     279 </span>            :   // Only wait once, then loop until we run out of packets of input data
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :   while (result &gt;= 0 &amp;&amp; !mEncodingComplete) {</span>
+<span class="lineNum">     281 </span>            :     // re-sampled frames left last time which didn't fit into an Opus packet duration.
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :     const int framesLeft = mResampledLeftover.Length() / mChannels;</span>
+<span class="lineNum">     283 </span>            :     // When framesLeft is 0, (GetPacketDuration() - framesLeft) is a multiple
+<span class="lineNum">     284 </span>            :     // of kOpusSamplingRate. There is not precision loss in the integer division
+<span class="lineNum">     285 </span>            :     // in computing framesToFetch. If frameLeft &gt; 0, we need to add 1 to
+<span class="lineNum">     286 </span>            :     // framesToFetch to ensure there will be at least n frames after re-sampling.
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :     const int frameRoundUp = framesLeft ? 1 : 0;</span>
+<span class="lineNum">     288 </span>            : 
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(GetPacketDuration() &gt;= framesLeft);</span>
+<span class="lineNum">     290 </span>            :     // Try to fetch m frames such that there will be n frames
+<span class="lineNum">     291 </span>            :     // where (n + frameLeft) &gt;= GetPacketDuration() after re-sampling.
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :     const int framesToFetch = !mResampler ? GetPacketDuration()</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :                               : (GetPacketDuration() - framesLeft) * mSamplingRate / kOpusSamplingRate</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :                               + frameRoundUp;</span>
+<span class="lineNum">     295 </span>            :     {
+<span class="lineNum">     296 </span>            :       // Move all the samples from mRawSegment to mSourceSegment. We only hold
+<span class="lineNum">     297 </span>            :       // the monitor in this block.
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :       ReentrantMonitorAutoEnter mon(mReentrantMonitor);</span>
+<span class="lineNum">     299 </span>            : 
+<span class="lineNum">     300 </span>            :       // Wait until enough raw data, end of stream or cancelled.
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :       while (!mCanceled &amp;&amp; mRawSegment.GetDuration() +</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :              mSourceSegment.GetDuration() &lt; framesToFetch &amp;&amp;</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :              !mEndOfStream) {</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :         if (wait) {</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :           mReentrantMonitor.Wait();</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :           wait = false;</span>
+<span class="lineNum">     307 </span>            :         } else {
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :           goto done; // nested while's...</span>
+<span class="lineNum">     309 </span>            :         }
+<span class="lineNum">     310 </span>            :       }
+<span class="lineNum">     311 </span>            : 
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :       if (mCanceled) {</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :         return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     314 </span>            :       }
+<span class="lineNum">     315 </span>            : 
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :       mSourceSegment.AppendFrom(&amp;mRawSegment);</span>
+<span class="lineNum">     317 </span>            : 
+<span class="lineNum">     318 </span>            :       // Pad |mLookahead| samples to the end of source stream to prevent lost of
+<span class="lineNum">     319 </span>            :       // original data, the pcm duration will be calculated at rate 48K later.
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :       if (mEndOfStream &amp;&amp; !mEosSetInEncoder) {</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :         mEosSetInEncoder = true;</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :         mSourceSegment.AppendNullData(mLookahead);</span>
+<span class="lineNum">     323 </span>            :       }
+<span class="lineNum">     324 </span>            :     }
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span>            :     // Start encoding data.
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :     AutoTArray&lt;AudioDataValue, 9600&gt; pcm;</span>
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :     pcm.SetLength(GetPacketDuration() * mChannels);</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :     AudioSegment::ChunkIterator iter(mSourceSegment);</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :     int frameCopied = 0;</span>
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     while (!iter.IsEnded() &amp;&amp; frameCopied &lt; framesToFetch) {</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :       AudioChunk chunk = *iter;</span>
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span>            :       // Chunk to the required frame size.
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :       StreamTime frameToCopy = chunk.GetDuration();</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :       if (frameToCopy &gt; framesToFetch - frameCopied) {</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :         frameToCopy = framesToFetch - frameCopied;</span>
+<span class="lineNum">     339 </span>            :       }
+<span class="lineNum">     340 </span>            :       // Possible greatest value of framesToFetch = 3844: see
+<span class="lineNum">     341 </span>            :       // https://bugzilla.mozilla.org/show_bug.cgi?id=1349421#c8. frameToCopy
+<span class="lineNum">     342 </span>            :       // should not be able to exceed this value.
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(frameToCopy &lt;= 3844, &quot;frameToCopy exceeded expected range&quot;);</span>
+<span class="lineNum">     344 </span>            : 
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :       if (!chunk.IsNull()) {</span>
+<span class="lineNum">     346 </span>            :         // Append the interleaved data to the end of pcm buffer.
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :         AudioTrackEncoder::InterleaveTrackData(chunk, frameToCopy, mChannels,</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :                                                pcm.Elements() + frameCopied * mChannels);</span>
+<span class="lineNum">     349 </span>            :       } else {
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :         CheckedInt&lt;int&gt; memsetLength = CheckedInt&lt;int&gt;(frameToCopy) *</span>
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :                                        mChannels *</span>
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :                                        sizeof(AudioDataValue);</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :         if (!memsetLength.isValid()) {</span>
+<span class="lineNum">     354 </span>            :           // This should never happen, but we use a defensive check because
+<span class="lineNum">     355 </span>            :           // we really don't want a bad memset
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :           MOZ_ASSERT_UNREACHABLE(&quot;memsetLength invalid!&quot;);</span>
+<span class="lineNum">     357 </span>            :           return NS_ERROR_FAILURE;
+<span class="lineNum">     358 </span>            :         }
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :         memset(pcm.Elements() + frameCopied * mChannels, 0,</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :                memsetLength.value());</span>
+<span class="lineNum">     361 </span>            :       }
+<span class="lineNum">     362 </span>            : 
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :       frameCopied += frameToCopy;</span>
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :       iter.Next();</span>
+<span class="lineNum">     365 </span>            :     }
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span>            :     // Possible greatest value of framesToFetch = 3844: see
+<span class="lineNum">     368 </span>            :     // https://bugzilla.mozilla.org/show_bug.cgi?id=1349421#c8. frameCopied
+<span class="lineNum">     369 </span>            :     // should not be able to exceed this value.
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(frameCopied &lt;= 3844, &quot;frameCopied exceeded expected range&quot;);</span>
+<span class="lineNum">     371 </span>            : 
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :     RefPtr&lt;EncodedFrame&gt; audiodata = new EncodedFrame();</span>
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :     audiodata-&gt;SetFrameType(EncodedFrame::OPUS_AUDIO_FRAME);</span>
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :     int framesInPCM = frameCopied;</span>
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :     if (mResampler) {</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :       AutoTArray&lt;AudioDataValue, 9600&gt; resamplingDest;</span>
+<span class="lineNum">     377 </span>            :       // We want to consume all the input data, so we slightly oversize the
+<span class="lineNum">     378 </span>            :       // resampled data buffer so we can fit the output data in. We cannot really
+<span class="lineNum">     379 </span>            :       // predict the output frame count at each call.
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :       uint32_t outframes = frameCopied * kOpusSamplingRate / mSamplingRate + 1;</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :       uint32_t inframes = frameCopied;</span>
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :       resamplingDest.SetLength(outframes * mChannels);</span>
+<span class="lineNum">     384 </span>            : 
+<span class="lineNum">     385 </span>            : #if MOZ_SAMPLE_TYPE_S16
+<span class="lineNum">     386 </span>            :       short* in = reinterpret_cast&lt;short*&gt;(pcm.Elements());
+<span class="lineNum">     387 </span>            :       short* out = reinterpret_cast&lt;short*&gt;(resamplingDest.Elements());
+<span class="lineNum">     388 </span>            :       speex_resampler_process_interleaved_int(mResampler, in, &amp;inframes,
+<span class="lineNum">     389 </span>            :                                               out, &amp;outframes);
+<span class="lineNum">     390 </span>            : #else
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :       float* in = reinterpret_cast&lt;float*&gt;(pcm.Elements());</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :       float* out = reinterpret_cast&lt;float*&gt;(resamplingDest.Elements());</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :       speex_resampler_process_interleaved_float(mResampler, in, &amp;inframes,</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :                                                 out, &amp;outframes);</span>
+<span class="lineNum">     395 </span>            : #endif
+<span class="lineNum">     396 </span>            : 
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(pcm.Length() &gt;= mResampledLeftover.Length());</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :       PodCopy(pcm.Elements(), mResampledLeftover.Elements(),</span>
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :               mResampledLeftover.Length());</span>
+<span class="lineNum">     400 </span>            : 
+<span class="lineNum">     401 </span>            :       uint32_t outframesToCopy = std::min(outframes,
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :                                           static_cast&lt;uint32_t&gt;(GetPacketDuration() - framesLeft));</span>
+<span class="lineNum">     403 </span>            : 
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(pcm.Length() - mResampledLeftover.Length() &gt;=</span>
+<span class="lineNum">     405 </span>            :                  outframesToCopy * mChannels);
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :       PodCopy(pcm.Elements() + mResampledLeftover.Length(),</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :               resamplingDest.Elements(), outframesToCopy * mChannels);</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :       int frameLeftover = outframes - outframesToCopy;</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :       mResampledLeftover.SetLength(frameLeftover * mChannels);</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :       PodCopy(mResampledLeftover.Elements(),</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :               resamplingDest.Elements() + outframesToCopy * mChannels,</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :               mResampledLeftover.Length());</span>
+<span class="lineNum">     413 </span>            :       // This is always at 48000Hz.
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :       framesInPCM = framesLeft + outframesToCopy;</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :       audiodata-&gt;SetDuration(framesInPCM);</span>
+<span class="lineNum">     416 </span>            :     } else {
+<span class="lineNum">     417 </span>            :       // The ogg time stamping and pre-skip is always timed at 48000.
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :       audiodata-&gt;SetDuration(frameCopied * (kOpusSamplingRate / mSamplingRate));</span>
+<span class="lineNum">     419 </span>            :     }
+<span class="lineNum">     420 </span>            : 
+<span class="lineNum">     421 </span>            :     // Remove the raw data which has been pulled to pcm buffer.
+<span class="lineNum">     422 </span>            :     // The value of frameCopied should equal to (or smaller than, if eos)
+<span class="lineNum">     423 </span>            :     // GetPacketDuration().
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :     mSourceSegment.RemoveLeading(frameCopied);</span>
+<span class="lineNum">     425 </span>            : 
+<span class="lineNum">     426 </span>            :     // Has reached the end of input stream and all queued data has pulled for
+<span class="lineNum">     427 </span>            :     // encoding.
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :     if (mSourceSegment.GetDuration() == 0 &amp;&amp; mEosSetInEncoder) {</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :       mEncodingComplete = true;</span>
+<span class="lineNum">     430 </span>            :       LOG(&quot;[Opus] Done encoding.&quot;);
+<span class="lineNum">     431 </span>            :     }
+<span class="lineNum">     432 </span>            : 
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mEosSetInEncoder || framesInPCM == GetPacketDuration());</span>
+<span class="lineNum">     434 </span>            : 
+<span class="lineNum">     435 </span>            :     // Append null data to pcm buffer if the leftover data is not enough for
+<span class="lineNum">     436 </span>            :     // opus encoder.
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :     if (framesInPCM &lt; GetPacketDuration() &amp;&amp; mEosSetInEncoder) {</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :       PodZero(pcm.Elements() + framesInPCM * mChannels,</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :               (GetPacketDuration() - framesInPCM) * mChannels);</span>
+<span class="lineNum">     440 </span>            :     }
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :     nsTArray&lt;uint8_t&gt; frameData;</span>
+<span class="lineNum">     442 </span>            :     // Encode the data with Opus Encoder.
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :     frameData.SetLength(MAX_DATA_BYTES);</span>
+<span class="lineNum">     444 </span>            :     // result is returned as opus error code if it is negative.
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :     result = 0;</span>
+<span class="lineNum">     446 </span>            : #ifdef MOZ_SAMPLE_TYPE_S16
+<span class="lineNum">     447 </span>            :     const opus_int16* pcmBuf = static_cast&lt;opus_int16*&gt;(pcm.Elements());
+<span class="lineNum">     448 </span>            :     result = opus_encode(mEncoder, pcmBuf, GetPacketDuration(),
+<span class="lineNum">     449 </span>            :                          frameData.Elements(), MAX_DATA_BYTES);
+<span class="lineNum">     450 </span>            : #else
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :     const float* pcmBuf = static_cast&lt;float*&gt;(pcm.Elements());</span>
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :     result = opus_encode_float(mEncoder, pcmBuf, GetPacketDuration(),</span>
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :                                frameData.Elements(), MAX_DATA_BYTES);</span>
+<span class="lineNum">     454 </span>            : #endif
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :     frameData.SetLength(result &gt;= 0 ? result : 0);</span>
+<span class="lineNum">     456 </span>            : 
+<span class="lineNum">     457 </span>            :     if (result &lt; 0) {
+<span class="lineNum">     458 </span>            :       LOG(&quot;[Opus] Fail to encode data! Result: %s.&quot;, opus_strerror(result));
+<span class="lineNum">     459 </span>            :     }
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :     if (mEncodingComplete) {</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :       if (mResampler) {</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :         speex_resampler_destroy(mResampler);</span>
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :         mResampler = nullptr;</span>
+<span class="lineNum">     464 </span>            :       }
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :       mResampledLeftover.SetLength(0);</span>
+<span class="lineNum">     466 </span>            :     }
+<span class="lineNum">     467 </span>            : 
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :     audiodata-&gt;SwapInFrameData(frameData);</span>
+<span class="lineNum">     469 </span>            :     // timestamp should be the time of the first sample
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :     audiodata-&gt;SetTimeStamp(mOutputTimeStamp);</span>
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :     mOutputTimeStamp += FramesToUsecs(GetPacketDuration(), kOpusSamplingRate).value();</span>
+<span class="lineNum">     472 </span>            :     LOG(&quot;[Opus] mOutputTimeStamp %lld.&quot;,mOutputTimeStamp);
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :     aData.AppendEncodedFrame(audiodata);</span>
+<span class="lineNum">     474 </span>            :   }
+<span class="lineNum">     475 </span>            : done:
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :   return result &gt;= 0 ? NS_OK : NS_ERROR_FAILURE;</span>
+<span class="lineNum">     477 </span>            : }
+<span class="lineNum">     478 </span>            : 
+<span class="lineNum">     479 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

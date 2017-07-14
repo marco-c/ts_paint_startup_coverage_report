@@ -1,0 +1,1356 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - mozglue/misc/StackWalk.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">mozglue/misc</a> - StackWalk.cpp<span style="font-size: 80%;"> (source / <a href="StackWalk.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">3</td>
+            <td class="headerCovTableEntry">96</td>
+            <td class="headerCovTableEntryLo">3.1 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">1</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntryLo">11.1 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : /* API for getting a stack trace of the C/C++ stack on the current thread */
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/ArrayUtils.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/Assertions.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/IntegerPrintfMacros.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/StackWalk.h&quot;
+<span class="lineNum">      13 </span>            : 
+<span class="lineNum">      14 </span>            : #include &lt;string.h&gt;
+<span class="lineNum">      15 </span>            : 
+<span class="lineNum">      16 </span>            : using namespace mozilla;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : // The presence of this address is the stack must stop the stack walk. If
+<span class="lineNum">      19 </span>            : // there is no such address, the structure will be {nullptr, true}.
+<span class="lineNum">      20 </span>            : struct CriticalAddress
+<span class="lineNum">      21 </span>            : {
+<span class="lineNum">      22 </span>            :   void* mAddr;
+<span class="lineNum">      23 </span>            :   bool mInit;
+<span class="lineNum">      24 </span>            : };
+<span class="lineNum">      25 </span>            : static CriticalAddress gCriticalAddress;
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : // for _Unwind_Backtrace from libcxxrt or libunwind
+<span class="lineNum">      28 </span>            : // cxxabi.h from libcxxrt implicitly includes unwind.h first
+<span class="lineNum">      29 </span>            : #if defined(HAVE__UNWIND_BACKTRACE) &amp;&amp; !defined(_GNU_SOURCE)
+<span class="lineNum">      30 </span>            : #define _GNU_SOURCE
+<span class="lineNum">      31 </span>            : #endif
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : #if defined(HAVE_DLOPEN) || defined(XP_DARWIN)
+<span class="lineNum">      34 </span>            : #include &lt;dlfcn.h&gt;
+<span class="lineNum">      35 </span>            : #endif
+<span class="lineNum">      36 </span>            : 
+<span class="lineNum">      37 </span>            : #if (defined(XP_DARWIN) &amp;&amp; \
+<span class="lineNum">      38 </span>            :      (defined(__i386) || defined(__ppc__) || defined(HAVE__UNWIND_BACKTRACE)))
+<span class="lineNum">      39 </span>            : #define MOZ_STACKWALK_SUPPORTS_MACOSX 1
+<span class="lineNum">      40 </span>            : #else
+<span class="lineNum">      41 </span>            : #define MOZ_STACKWALK_SUPPORTS_MACOSX 0
+<span class="lineNum">      42 </span>            : #endif
+<span class="lineNum">      43 </span>            : 
+<span class="lineNum">      44 </span>            : #if (defined(linux) &amp;&amp; \
+<span class="lineNum">      45 </span>            :      ((defined(__GNUC__) &amp;&amp; (defined(__i386) || defined(PPC))) || \
+<span class="lineNum">      46 </span>            :       defined(HAVE__UNWIND_BACKTRACE)))
+<span class="lineNum">      47 </span>            : #define MOZ_STACKWALK_SUPPORTS_LINUX 1
+<span class="lineNum">      48 </span>            : #else
+<span class="lineNum">      49 </span>            : #define MOZ_STACKWALK_SUPPORTS_LINUX 0
+<span class="lineNum">      50 </span>            : #endif
+<span class="lineNum">      51 </span>            : 
+<span class="lineNum">      52 </span>            : #if __GLIBC__ &gt; 2 || (__GLIBC__ == 2 &amp;&amp; __GLIBC_MINOR__ &gt;= 1)
+<span class="lineNum">      53 </span>            : #define HAVE___LIBC_STACK_END 1
+<span class="lineNum">      54 </span>            : #else
+<span class="lineNum">      55 </span>            : #define HAVE___LIBC_STACK_END 0
+<span class="lineNum">      56 </span>            : #endif
+<span class="lineNum">      57 </span>            : 
+<span class="lineNum">      58 </span>            : #if HAVE___LIBC_STACK_END
+<span class="lineNum">      59 </span>            : extern MOZ_EXPORT void* __libc_stack_end; // from ld-linux.so
+<span class="lineNum">      60 </span>            : #endif
+<span class="lineNum">      61 </span>            : 
+<span class="lineNum">      62 </span>            : #ifdef ANDROID
+<span class="lineNum">      63 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      64 </span>            : #include &lt;unistd.h&gt;
+<span class="lineNum">      65 </span>            : #include &lt;pthread.h&gt;
+<span class="lineNum">      66 </span>            : #endif
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span>            : #if MOZ_STACKWALK_SUPPORTS_MACOSX
+<span class="lineNum">      69 </span>            : #include &lt;pthread.h&gt;
+<span class="lineNum">      70 </span>            : #include &lt;sys/errno.h&gt;
+<span class="lineNum">      71 </span>            : #ifdef MOZ_WIDGET_COCOA
+<span class="lineNum">      72 </span>            : #include &lt;CoreServices/CoreServices.h&gt;
+<span class="lineNum">      73 </span>            : #endif
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span>            : typedef void
+<span class="lineNum">      76 </span>            : malloc_logger_t(uint32_t aType,
+<span class="lineNum">      77 </span>            :                 uintptr_t aArg1, uintptr_t aArg2, uintptr_t aArg3,
+<span class="lineNum">      78 </span>            :                 uintptr_t aResult, uint32_t aNumHotFramesToSkip);
+<span class="lineNum">      79 </span>            : extern malloc_logger_t* malloc_logger;
+<span class="lineNum">      80 </span>            : 
+<span class="lineNum">      81 </span>            : static void
+<span class="lineNum">      82 </span>            : stack_callback(uint32_t aFrameNumber, void* aPc, void* aSp, void* aClosure)
+<span class="lineNum">      83 </span>            : {
+<span class="lineNum">      84 </span>            :   const char* name = static_cast&lt;char*&gt;(aClosure);
+<span class="lineNum">      85 </span>            :   Dl_info info;
+<span class="lineNum">      86 </span>            : 
+<span class="lineNum">      87 </span>            :   // On Leopard dladdr returns the wrong value for &quot;new_sem_from_pool&quot;. The
+<span class="lineNum">      88 </span>            :   // stack shows up as having two pthread_cond_wait$UNIX2003 frames. The
+<span class="lineNum">      89 </span>            :   // correct one is the first that we find on our way up, so the
+<span class="lineNum">      90 </span>            :   // following check for gCriticalAddress.mAddr is critical.
+<span class="lineNum">      91 </span>            :   if (gCriticalAddress.mAddr || dladdr(aPc, &amp;info) == 0  ||
+<span class="lineNum">      92 </span>            :       !info.dli_sname || strcmp(info.dli_sname, name) != 0) {
+<span class="lineNum">      93 </span>            :     return;
+<span class="lineNum">      94 </span>            :   }
+<span class="lineNum">      95 </span>            :   gCriticalAddress.mAddr = aPc;
+<span class="lineNum">      96 </span>            : }
+<span class="lineNum">      97 </span>            : 
+<span class="lineNum">      98 </span>            : static void
+<span class="lineNum">      99 </span>            : my_malloc_logger(uint32_t aType,
+<span class="lineNum">     100 </span>            :                  uintptr_t aArg1, uintptr_t aArg2, uintptr_t aArg3,
+<span class="lineNum">     101 </span>            :                  uintptr_t aResult, uint32_t aNumHotFramesToSkip)
+<span class="lineNum">     102 </span>            : {
+<span class="lineNum">     103 </span>            :   static bool once = false;
+<span class="lineNum">     104 </span>            :   if (once) {
+<span class="lineNum">     105 </span>            :     return;
+<span class="lineNum">     106 </span>            :   }
+<span class="lineNum">     107 </span>            :   once = true;
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span>            :   // On Leopard dladdr returns the wrong value for &quot;new_sem_from_pool&quot;. The
+<span class="lineNum">     110 </span>            :   // stack shows up as having two pthread_cond_wait$UNIX2003 frames.
+<span class="lineNum">     111 </span>            :   const char* name = &quot;new_sem_from_pool&quot;;
+<span class="lineNum">     112 </span>            :   MozStackWalk(stack_callback, /* skipFrames */ 0, /* maxFrames */ 0,
+<span class="lineNum">     113 </span>            :                const_cast&lt;char*&gt;(name), 0, nullptr);
+<span class="lineNum">     114 </span>            : }
+<span class="lineNum">     115 </span>            : 
+<span class="lineNum">     116 </span>            : // This is called from NS_LogInit() and from the stack walking functions, but
+<span class="lineNum">     117 </span>            : // only the first call has any effect.  We need to call this function from both
+<span class="lineNum">     118 </span>            : // places because it must run before any mutexes are created, and also before
+<span class="lineNum">     119 </span>            : // any objects whose refcounts we're logging are created.  Running this
+<span class="lineNum">     120 </span>            : // function during NS_LogInit() ensures that we meet the first criterion, and
+<span class="lineNum">     121 </span>            : // running this function during the stack walking functions ensures we meet the
+<span class="lineNum">     122 </span>            : // second criterion.
+<span class="lineNum">     123 </span>            : MFBT_API void
+<span class="lineNum">     124 </span>            : StackWalkInitCriticalAddress()
+<span class="lineNum">     125 </span>            : {
+<span class="lineNum">     126 </span>            :   if (gCriticalAddress.mInit) {
+<span class="lineNum">     127 </span>            :     return;
+<span class="lineNum">     128 </span>            :   }
+<span class="lineNum">     129 </span>            :   gCriticalAddress.mInit = true;
+<span class="lineNum">     130 </span>            :   // We must not do work when 'new_sem_from_pool' calls realloc, since
+<span class="lineNum">     131 </span>            :   // it holds a non-reentrant spin-lock and we will quickly deadlock.
+<span class="lineNum">     132 </span>            :   // new_sem_from_pool is not directly accessible using dlsym, so
+<span class="lineNum">     133 </span>            :   // we force a situation where new_sem_from_pool is on the stack and
+<span class="lineNum">     134 </span>            :   // use dladdr to check the addresses.
+<span class="lineNum">     135 </span>            : 
+<span class="lineNum">     136 </span>            :   // malloc_logger can be set by external tools like 'Instruments' or 'leaks'
+<span class="lineNum">     137 </span>            :   malloc_logger_t* old_malloc_logger = malloc_logger;
+<span class="lineNum">     138 </span>            :   malloc_logger = my_malloc_logger;
+<span class="lineNum">     139 </span>            : 
+<span class="lineNum">     140 </span>            :   pthread_cond_t cond;
+<span class="lineNum">     141 </span>            :   int r = pthread_cond_init(&amp;cond, 0);
+<span class="lineNum">     142 </span>            :   MOZ_ASSERT(r == 0);
+<span class="lineNum">     143 </span>            :   pthread_mutex_t mutex;
+<span class="lineNum">     144 </span>            :   r = pthread_mutex_init(&amp;mutex, 0);
+<span class="lineNum">     145 </span>            :   MOZ_ASSERT(r == 0);
+<span class="lineNum">     146 </span>            :   r = pthread_mutex_lock(&amp;mutex);
+<span class="lineNum">     147 </span>            :   MOZ_ASSERT(r == 0);
+<span class="lineNum">     148 </span>            :   struct timespec abstime = { 0, 1 };
+<span class="lineNum">     149 </span>            :   r = pthread_cond_timedwait_relative_np(&amp;cond, &amp;mutex, &amp;abstime);
+<span class="lineNum">     150 </span>            : 
+<span class="lineNum">     151 </span>            :   // restore the previous malloc logger
+<span class="lineNum">     152 </span>            :   malloc_logger = old_malloc_logger;
+<span class="lineNum">     153 </span>            : 
+<span class="lineNum">     154 </span>            :   MOZ_ASSERT(r == ETIMEDOUT);
+<span class="lineNum">     155 </span>            :   r = pthread_mutex_unlock(&amp;mutex);
+<span class="lineNum">     156 </span>            :   MOZ_ASSERT(r == 0);
+<span class="lineNum">     157 </span>            :   r = pthread_mutex_destroy(&amp;mutex);
+<span class="lineNum">     158 </span>            :   MOZ_ASSERT(r == 0);
+<span class="lineNum">     159 </span>            :   r = pthread_cond_destroy(&amp;cond);
+<span class="lineNum">     160 </span>            :   MOZ_ASSERT(r == 0);
+<span class="lineNum">     161 </span>            : }
+<span class="lineNum">     162 </span>            : 
+<span class="lineNum">     163 </span>            : static bool
+<span class="lineNum">     164 </span>            : IsCriticalAddress(void* aPC)
+<span class="lineNum">     165 </span>            : {
+<span class="lineNum">     166 </span>            :   return gCriticalAddress.mAddr == aPC;
+<span class="lineNum">     167 </span>            : }
+<a name="168"><span class="lineNum">     168 </span>            : #else</a>
+<span class="lineNum">     169 </span>            : static bool
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 : IsCriticalAddress(void* aPC)</span>
+<span class="lineNum">     171 </span>            : {
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :   return false;</span>
+<span class="lineNum">     173 </span>            : }
+<span class="lineNum">     174 </span>            : // We still initialize gCriticalAddress.mInit so that this code behaves
+<span class="lineNum">     175 </span>            : // the same on all platforms. Otherwise a failure to init would be visible
+<a name="176"><span class="lineNum">     176 </span>            : // only on OS X.</a>
+<span class="lineNum">     177 </span>            : MFBT_API void
+<span class="lineNum">     178 </span><span class="lineCov">         11 : StackWalkInitCriticalAddress()</span>
+<span class="lineNum">     179 </span>            : {
+<span class="lineNum">     180 </span><span class="lineCov">         11 :   gCriticalAddress.mInit = true;</span>
+<span class="lineNum">     181 </span><span class="lineCov">         11 : }</span>
+<span class="lineNum">     182 </span>            : #endif
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span>            : #if defined(_WIN32) &amp;&amp; (defined(_M_IX86) || defined(_M_AMD64) || defined(_M_IA64)) // WIN32 x86 stack walking code
+<span class="lineNum">     185 </span>            : 
+<span class="lineNum">     186 </span>            : #include &lt;windows.h&gt;
+<span class="lineNum">     187 </span>            : #include &lt;process.h&gt;
+<span class="lineNum">     188 </span>            : #include &lt;stdio.h&gt;
+<span class="lineNum">     189 </span>            : #include &lt;malloc.h&gt;
+<span class="lineNum">     190 </span>            : #include &quot;mozilla/ArrayUtils.h&quot;
+<span class="lineNum">     191 </span>            : #include &quot;mozilla/Atomics.h&quot;
+<span class="lineNum">     192 </span>            : #include &quot;mozilla/StackWalk_windows.h&quot;
+<span class="lineNum">     193 </span>            : #include &quot;mozilla/WindowsVersion.h&quot;
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span>            : #include &lt;imagehlp.h&gt;
+<span class="lineNum">     196 </span>            : // We need a way to know if we are building for WXP (or later), as if we are, we
+<span class="lineNum">     197 </span>            : // need to use the newer 64-bit APIs. API_VERSION_NUMBER seems to fit the bill.
+<span class="lineNum">     198 </span>            : // A value of 9 indicates we want to use the new APIs.
+<span class="lineNum">     199 </span>            : #if API_VERSION_NUMBER &lt; 9
+<span class="lineNum">     200 </span>            : #error Too old imagehlp.h
+<span class="lineNum">     201 </span>            : #endif
+<span class="lineNum">     202 </span>            : 
+<span class="lineNum">     203 </span>            : struct WalkStackData
+<span class="lineNum">     204 </span>            : {
+<span class="lineNum">     205 </span>            :   // Are we walking the stack of the calling thread? Note that we need to avoid
+<span class="lineNum">     206 </span>            :   // calling fprintf and friends if this is false, in order to avoid deadlocks.
+<span class="lineNum">     207 </span>            :   bool walkCallingThread;
+<span class="lineNum">     208 </span>            :   uint32_t skipFrames;
+<span class="lineNum">     209 </span>            :   HANDLE thread;
+<span class="lineNum">     210 </span>            :   HANDLE process;
+<span class="lineNum">     211 </span>            :   HANDLE eventStart;
+<span class="lineNum">     212 </span>            :   HANDLE eventEnd;
+<span class="lineNum">     213 </span>            :   void** pcs;
+<span class="lineNum">     214 </span>            :   uint32_t pc_size;
+<span class="lineNum">     215 </span>            :   uint32_t pc_count;
+<span class="lineNum">     216 </span>            :   uint32_t pc_max;
+<span class="lineNum">     217 </span>            :   void** sps;
+<span class="lineNum">     218 </span>            :   uint32_t sp_size;
+<span class="lineNum">     219 </span>            :   uint32_t sp_count;
+<span class="lineNum">     220 </span>            :   void* platformData;
+<span class="lineNum">     221 </span>            : };
+<span class="lineNum">     222 </span>            : 
+<span class="lineNum">     223 </span>            : DWORD gStackWalkThread;
+<span class="lineNum">     224 </span>            : CRITICAL_SECTION gDbgHelpCS;
+<span class="lineNum">     225 </span>            : 
+<span class="lineNum">     226 </span>            : #ifdef _M_AMD64
+<span class="lineNum">     227 </span>            : // Because various Win64 APIs acquire function-table locks, we need a way of
+<span class="lineNum">     228 </span>            : // preventing stack walking while those APIs are being called. Otherwise, the
+<span class="lineNum">     229 </span>            : // stack walker may suspend a thread holding such a lock, and deadlock when the
+<span class="lineNum">     230 </span>            : // stack unwind code attempts to wait for that lock.
+<span class="lineNum">     231 </span>            : //
+<span class="lineNum">     232 </span>            : // We're using an atomic counter rather than a critical section because we
+<span class="lineNum">     233 </span>            : // don't require mutual exclusion with the stack walker. If the stack walker
+<span class="lineNum">     234 </span>            : // determines that it's safe to start unwinding the suspended thread (i.e.
+<span class="lineNum">     235 </span>            : // there are no suppressions when the unwind begins), then it's safe to
+<span class="lineNum">     236 </span>            : // continue unwinding that thread even if other threads request suppressions
+<span class="lineNum">     237 </span>            : // in the meantime, because we can't deadlock with those other threads.
+<span class="lineNum">     238 </span>            : //
+<span class="lineNum">     239 </span>            : // XXX: This global variable is a larger-than-necessary hammer. A more scoped
+<span class="lineNum">     240 </span>            : // solution would be to maintain a counter per thread, but then it would be
+<span class="lineNum">     241 </span>            : // more difficult for WalkStackMain64 to read the suspended thread's counter.
+<span class="lineNum">     242 </span>            : static Atomic&lt;size_t&gt; sStackWalkSuppressions;
+<span class="lineNum">     243 </span>            : 
+<span class="lineNum">     244 </span>            : MFBT_API
+<span class="lineNum">     245 </span>            : AutoSuppressStackWalking::AutoSuppressStackWalking()
+<span class="lineNum">     246 </span>            : {
+<span class="lineNum">     247 </span>            :   ++sStackWalkSuppressions;
+<span class="lineNum">     248 </span>            : }
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span>            : MFBT_API
+<span class="lineNum">     251 </span>            : AutoSuppressStackWalking::~AutoSuppressStackWalking()
+<span class="lineNum">     252 </span>            : {
+<span class="lineNum">     253 </span>            :   --sStackWalkSuppressions;
+<span class="lineNum">     254 </span>            : }
+<span class="lineNum">     255 </span>            : 
+<span class="lineNum">     256 </span>            : static uint8_t* sJitCodeRegionStart;
+<span class="lineNum">     257 </span>            : static size_t sJitCodeRegionSize;
+<span class="lineNum">     258 </span>            : uint8_t* sMsMpegJitCodeRegionStart;
+<span class="lineNum">     259 </span>            : size_t sMsMpegJitCodeRegionSize;
+<span class="lineNum">     260 </span>            : 
+<span class="lineNum">     261 </span>            : MFBT_API void
+<span class="lineNum">     262 </span>            : RegisterJitCodeRegion(uint8_t* aStart, size_t aSize)
+<span class="lineNum">     263 </span>            : {
+<span class="lineNum">     264 </span>            :   // Currently we can only handle one JIT code region at a time
+<span class="lineNum">     265 </span>            :   MOZ_RELEASE_ASSERT(!sJitCodeRegionStart);
+<span class="lineNum">     266 </span>            : 
+<span class="lineNum">     267 </span>            :   sJitCodeRegionStart = aStart;
+<span class="lineNum">     268 </span>            :   sJitCodeRegionSize = aSize;
+<span class="lineNum">     269 </span>            : }
+<span class="lineNum">     270 </span>            : 
+<span class="lineNum">     271 </span>            : MFBT_API void
+<span class="lineNum">     272 </span>            : UnregisterJitCodeRegion(uint8_t* aStart, size_t aSize)
+<span class="lineNum">     273 </span>            : {
+<span class="lineNum">     274 </span>            :   // Currently we can only handle one JIT code region at a time
+<span class="lineNum">     275 </span>            :   MOZ_RELEASE_ASSERT(sJitCodeRegionStart &amp;&amp;
+<span class="lineNum">     276 </span>            :                      sJitCodeRegionStart == aStart &amp;&amp;
+<span class="lineNum">     277 </span>            :                      sJitCodeRegionSize == aSize);
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span>            :   sJitCodeRegionStart = nullptr;
+<span class="lineNum">     280 </span>            :   sJitCodeRegionSize = 0;
+<span class="lineNum">     281 </span>            : }
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span>            : #endif // _M_AMD64
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span>            : // Routine to print an error message to standard error.
+<span class="lineNum">     286 </span>            : static void
+<span class="lineNum">     287 </span>            : PrintError(const char* aPrefix)
+<span class="lineNum">     288 </span>            : {
+<span class="lineNum">     289 </span>            :   LPSTR lpMsgBuf;
+<span class="lineNum">     290 </span>            :   DWORD lastErr = GetLastError();
+<span class="lineNum">     291 </span>            :   FormatMessageA(
+<span class="lineNum">     292 </span>            :     FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+<span class="lineNum">     293 </span>            :     nullptr,
+<span class="lineNum">     294 </span>            :     lastErr,
+<span class="lineNum">     295 </span>            :     MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
+<span class="lineNum">     296 </span>            :     (LPSTR)&amp;lpMsgBuf,
+<span class="lineNum">     297 </span>            :     0,
+<span class="lineNum">     298 </span>            :     nullptr
+<span class="lineNum">     299 </span>            :   );
+<span class="lineNum">     300 </span>            :   fprintf(stderr, &quot;### ERROR: %s: %s&quot;,
+<span class="lineNum">     301 </span>            :           aPrefix, lpMsgBuf ? lpMsgBuf : &quot;(null)\n&quot;);
+<span class="lineNum">     302 </span>            :   fflush(stderr);
+<span class="lineNum">     303 </span>            :   LocalFree(lpMsgBuf);
+<span class="lineNum">     304 </span>            : }
+<span class="lineNum">     305 </span>            : 
+<span class="lineNum">     306 </span>            : static void
+<span class="lineNum">     307 </span>            : InitializeDbgHelpCriticalSection()
+<span class="lineNum">     308 </span>            : {
+<span class="lineNum">     309 </span>            :   static bool initialized = false;
+<span class="lineNum">     310 </span>            :   if (initialized) {
+<span class="lineNum">     311 </span>            :     return;
+<span class="lineNum">     312 </span>            :   }
+<span class="lineNum">     313 </span>            :   ::InitializeCriticalSection(&amp;gDbgHelpCS);
+<span class="lineNum">     314 </span>            :   initialized = true;
+<span class="lineNum">     315 </span>            : }
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span>            : static unsigned int WINAPI WalkStackThread(void* aData);
+<span class="lineNum">     318 </span>            : 
+<span class="lineNum">     319 </span>            : static bool
+<span class="lineNum">     320 </span>            : EnsureWalkThreadReady()
+<span class="lineNum">     321 </span>            : {
+<span class="lineNum">     322 </span>            :   static bool walkThreadReady = false;
+<span class="lineNum">     323 </span>            :   static HANDLE stackWalkThread = nullptr;
+<span class="lineNum">     324 </span>            :   static HANDLE readyEvent = nullptr;
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span>            :   if (walkThreadReady) {
+<span class="lineNum">     327 </span>            :     return walkThreadReady;
+<span class="lineNum">     328 </span>            :   }
+<span class="lineNum">     329 </span>            : 
+<span class="lineNum">     330 </span>            :   if (!stackWalkThread) {
+<span class="lineNum">     331 </span>            :     readyEvent = ::CreateEvent(nullptr, FALSE /* auto-reset*/,
+<span class="lineNum">     332 </span>            :                                FALSE /* initially non-signaled */,
+<span class="lineNum">     333 </span>            :                                nullptr);
+<span class="lineNum">     334 </span>            :     if (!readyEvent) {
+<span class="lineNum">     335 </span>            :       PrintError(&quot;CreateEvent&quot;);
+<span class="lineNum">     336 </span>            :       return false;
+<span class="lineNum">     337 </span>            :     }
+<span class="lineNum">     338 </span>            : 
+<span class="lineNum">     339 </span>            :     unsigned int threadID;
+<span class="lineNum">     340 </span>            :     stackWalkThread = (HANDLE)_beginthreadex(nullptr, 0, WalkStackThread,
+<span class="lineNum">     341 </span>            :                                              (void*)readyEvent, 0, &amp;threadID);
+<span class="lineNum">     342 </span>            :     if (!stackWalkThread) {
+<span class="lineNum">     343 </span>            :       PrintError(&quot;CreateThread&quot;);
+<span class="lineNum">     344 </span>            :       ::CloseHandle(readyEvent);
+<span class="lineNum">     345 </span>            :       readyEvent = nullptr;
+<span class="lineNum">     346 </span>            :       return false;
+<span class="lineNum">     347 </span>            :     }
+<span class="lineNum">     348 </span>            :     gStackWalkThread = threadID;
+<span class="lineNum">     349 </span>            :     ::CloseHandle(stackWalkThread);
+<span class="lineNum">     350 </span>            :   }
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span>            :   MOZ_ASSERT((stackWalkThread &amp;&amp; readyEvent) ||
+<span class="lineNum">     353 </span>            :              (!stackWalkThread &amp;&amp; !readyEvent));
+<span class="lineNum">     354 </span>            : 
+<span class="lineNum">     355 </span>            :   // The thread was created. Try to wait an arbitrary amount of time (1 second
+<span class="lineNum">     356 </span>            :   // should be enough) for its event loop to start before posting events to it.
+<span class="lineNum">     357 </span>            :   DWORD waitRet = ::WaitForSingleObject(readyEvent, 1000);
+<span class="lineNum">     358 </span>            :   if (waitRet == WAIT_TIMEOUT) {
+<span class="lineNum">     359 </span>            :     // We get a timeout if we're called during static initialization because
+<span class="lineNum">     360 </span>            :     // the thread will only start executing after we return so it couldn't
+<span class="lineNum">     361 </span>            :     // have signalled the event. If that is the case, give up for now and
+<span class="lineNum">     362 </span>            :     // try again next time we're called.
+<span class="lineNum">     363 </span>            :     return false;
+<span class="lineNum">     364 </span>            :   }
+<span class="lineNum">     365 </span>            :   ::CloseHandle(readyEvent);
+<span class="lineNum">     366 </span>            :   stackWalkThread = nullptr;
+<span class="lineNum">     367 </span>            :   readyEvent = nullptr;
+<span class="lineNum">     368 </span>            : 
+<span class="lineNum">     369 </span>            :   return walkThreadReady = true;
+<span class="lineNum">     370 </span>            : }
+<span class="lineNum">     371 </span>            : 
+<span class="lineNum">     372 </span>            : static void
+<span class="lineNum">     373 </span>            : WalkStackMain64(struct WalkStackData* aData)
+<span class="lineNum">     374 </span>            : {
+<span class="lineNum">     375 </span>            :   // Get a context for the specified thread.
+<span class="lineNum">     376 </span>            :   CONTEXT context;
+<span class="lineNum">     377 </span>            :   if (!aData-&gt;platformData) {
+<span class="lineNum">     378 </span>            :     memset(&amp;context, 0, sizeof(CONTEXT));
+<span class="lineNum">     379 </span>            :     context.ContextFlags = CONTEXT_FULL;
+<span class="lineNum">     380 </span>            :     if (!GetThreadContext(aData-&gt;thread, &amp;context)) {
+<span class="lineNum">     381 </span>            :       if (aData-&gt;walkCallingThread) {
+<span class="lineNum">     382 </span>            :         PrintError(&quot;GetThreadContext&quot;);
+<span class="lineNum">     383 </span>            :       }
+<span class="lineNum">     384 </span>            :       return;
+<span class="lineNum">     385 </span>            :     }
+<span class="lineNum">     386 </span>            :   } else {
+<span class="lineNum">     387 </span>            :     context = *static_cast&lt;CONTEXT*&gt;(aData-&gt;platformData);
+<span class="lineNum">     388 </span>            :   }
+<span class="lineNum">     389 </span>            : 
+<span class="lineNum">     390 </span>            : #if defined(_M_IX86) || defined(_M_IA64)
+<span class="lineNum">     391 </span>            :   // Setup initial stack frame to walk from.
+<span class="lineNum">     392 </span>            :   STACKFRAME64 frame64;
+<span class="lineNum">     393 </span>            :   memset(&amp;frame64, 0, sizeof(frame64));
+<span class="lineNum">     394 </span>            : #ifdef _M_IX86
+<span class="lineNum">     395 </span>            :   frame64.AddrPC.Offset    = context.Eip;
+<span class="lineNum">     396 </span>            :   frame64.AddrStack.Offset = context.Esp;
+<span class="lineNum">     397 </span>            :   frame64.AddrFrame.Offset = context.Ebp;
+<span class="lineNum">     398 </span>            : #elif defined _M_IA64
+<span class="lineNum">     399 </span>            :   frame64.AddrPC.Offset    = context.StIIP;
+<span class="lineNum">     400 </span>            :   frame64.AddrStack.Offset = context.SP;
+<span class="lineNum">     401 </span>            :   frame64.AddrFrame.Offset = context.RsBSP;
+<span class="lineNum">     402 </span>            : #endif
+<span class="lineNum">     403 </span>            :   frame64.AddrPC.Mode      = AddrModeFlat;
+<span class="lineNum">     404 </span>            :   frame64.AddrStack.Mode   = AddrModeFlat;
+<span class="lineNum">     405 </span>            :   frame64.AddrFrame.Mode   = AddrModeFlat;
+<span class="lineNum">     406 </span>            :   frame64.AddrReturn.Mode  = AddrModeFlat;
+<span class="lineNum">     407 </span>            : #endif
+<span class="lineNum">     408 </span>            : 
+<span class="lineNum">     409 </span>            : #ifdef _WIN64
+<span class="lineNum">     410 </span>            :   // If there are any active suppressions, then at least one thread (we don't
+<span class="lineNum">     411 </span>            :   // know which) is holding a lock that can deadlock RtlVirtualUnwind. Since
+<span class="lineNum">     412 </span>            :   // that thread may be the one that we're trying to unwind, we can't proceed.
+<span class="lineNum">     413 </span>            :   //
+<span class="lineNum">     414 </span>            :   // But if there are no suppressions, then our target thread can't be holding
+<span class="lineNum">     415 </span>            :   // a lock, and it's safe to proceed. By virtue of being suspended, the target
+<span class="lineNum">     416 </span>            :   // thread can't acquire any new locks during the unwind process, so we only
+<span class="lineNum">     417 </span>            :   // need to do this check once. After that, sStackWalkSuppressions can be
+<span class="lineNum">     418 </span>            :   // changed by other threads while we're unwinding, and that's fine because
+<span class="lineNum">     419 </span>            :   // we can't deadlock with those threads.
+<span class="lineNum">     420 </span>            :   if (sStackWalkSuppressions) {
+<span class="lineNum">     421 </span>            :     return;
+<span class="lineNum">     422 </span>            :   }
+<span class="lineNum">     423 </span>            : #endif
+<span class="lineNum">     424 </span>            : 
+<span class="lineNum">     425 </span>            : #ifdef _M_AMD64
+<span class="lineNum">     426 </span>            :   bool firstFrame = true;
+<span class="lineNum">     427 </span>            : #endif
+<span class="lineNum">     428 </span>            : 
+<span class="lineNum">     429 </span>            :   // Skip our own stack walking frames.
+<span class="lineNum">     430 </span>            :   int skip = (aData-&gt;walkCallingThread ? 3 : 0) + aData-&gt;skipFrames;
+<span class="lineNum">     431 </span>            : 
+<span class="lineNum">     432 </span>            :   // Now walk the stack.
+<span class="lineNum">     433 </span>            :   while (true) {
+<span class="lineNum">     434 </span>            :     DWORD64 addr;
+<span class="lineNum">     435 </span>            :     DWORD64 spaddr;
+<span class="lineNum">     436 </span>            : 
+<span class="lineNum">     437 </span>            : #if defined(_M_IX86) || defined(_M_IA64)
+<span class="lineNum">     438 </span>            :     // 32-bit frame unwinding.
+<span class="lineNum">     439 </span>            :     // Debug routines are not threadsafe, so grab the lock.
+<span class="lineNum">     440 </span>            :     EnterCriticalSection(&amp;gDbgHelpCS);
+<span class="lineNum">     441 </span>            :     BOOL ok = StackWalk64(
+<span class="lineNum">     442 </span>            : #if defined _M_IA64
+<span class="lineNum">     443 </span>            :       IMAGE_FILE_MACHINE_IA64,
+<span class="lineNum">     444 </span>            : #elif defined _M_IX86
+<span class="lineNum">     445 </span>            :       IMAGE_FILE_MACHINE_I386,
+<span class="lineNum">     446 </span>            : #endif
+<span class="lineNum">     447 </span>            :       aData-&gt;process,
+<span class="lineNum">     448 </span>            :       aData-&gt;thread,
+<span class="lineNum">     449 </span>            :       &amp;frame64,
+<span class="lineNum">     450 </span>            :       &amp;context,
+<span class="lineNum">     451 </span>            :       nullptr,
+<span class="lineNum">     452 </span>            :       SymFunctionTableAccess64, // function table access routine
+<span class="lineNum">     453 </span>            :       SymGetModuleBase64,       // module base routine
+<span class="lineNum">     454 </span>            :       0
+<span class="lineNum">     455 </span>            :     );
+<span class="lineNum">     456 </span>            :     LeaveCriticalSection(&amp;gDbgHelpCS);
+<span class="lineNum">     457 </span>            : 
+<span class="lineNum">     458 </span>            :     if (ok) {
+<span class="lineNum">     459 </span>            :       addr = frame64.AddrPC.Offset;
+<span class="lineNum">     460 </span>            :       spaddr = frame64.AddrStack.Offset;
+<span class="lineNum">     461 </span>            :     } else {
+<span class="lineNum">     462 </span>            :       addr = 0;
+<span class="lineNum">     463 </span>            :       spaddr = 0;
+<span class="lineNum">     464 </span>            :       if (aData-&gt;walkCallingThread) {
+<span class="lineNum">     465 </span>            :         PrintError(&quot;WalkStack64&quot;);
+<span class="lineNum">     466 </span>            :       }
+<span class="lineNum">     467 </span>            :     }
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span>            :     if (!ok) {
+<span class="lineNum">     470 </span>            :       break;
+<span class="lineNum">     471 </span>            :     }
+<span class="lineNum">     472 </span>            : 
+<span class="lineNum">     473 </span>            : #elif defined(_M_AMD64)
+<span class="lineNum">     474 </span>            :     // If we reach a frame in JIT code, we don't have enough information to
+<span class="lineNum">     475 </span>            :     // unwind, so we have to give up.
+<span class="lineNum">     476 </span>            :     if (sJitCodeRegionStart &amp;&amp;
+<span class="lineNum">     477 </span>            :         (uint8_t*)context.Rip &gt;= sJitCodeRegionStart &amp;&amp;
+<span class="lineNum">     478 </span>            :         (uint8_t*)context.Rip &lt; sJitCodeRegionStart + sJitCodeRegionSize) {
+<span class="lineNum">     479 </span>            :       break;
+<span class="lineNum">     480 </span>            :     }
+<span class="lineNum">     481 </span>            : 
+<span class="lineNum">     482 </span>            :     // We must also avoid msmpeg2vdec.dll's JIT region: they don't generate
+<span class="lineNum">     483 </span>            :     // unwind data, so their JIT unwind callback just throws up its hands and
+<span class="lineNum">     484 </span>            :     // terminates the process.
+<span class="lineNum">     485 </span>            :     if (sMsMpegJitCodeRegionStart &amp;&amp;
+<span class="lineNum">     486 </span>            :         (uint8_t*)context.Rip &gt;= sMsMpegJitCodeRegionStart &amp;&amp;
+<span class="lineNum">     487 </span>            :         (uint8_t*)context.Rip &lt; sMsMpegJitCodeRegionStart + sMsMpegJitCodeRegionSize) {
+<span class="lineNum">     488 </span>            :       break;
+<span class="lineNum">     489 </span>            :     }
+<span class="lineNum">     490 </span>            : 
+<span class="lineNum">     491 </span>            :     // 64-bit frame unwinding.
+<span class="lineNum">     492 </span>            :     // Try to look up unwind metadata for the current function.
+<span class="lineNum">     493 </span>            :     ULONG64 imageBase;
+<span class="lineNum">     494 </span>            :     PRUNTIME_FUNCTION runtimeFunction =
+<span class="lineNum">     495 </span>            :       RtlLookupFunctionEntry(context.Rip, &amp;imageBase, NULL);
+<span class="lineNum">     496 </span>            : 
+<span class="lineNum">     497 </span>            :     if (runtimeFunction) {
+<span class="lineNum">     498 </span>            :       PVOID dummyHandlerData;
+<span class="lineNum">     499 </span>            :       ULONG64 dummyEstablisherFrame;
+<span class="lineNum">     500 </span>            :       RtlVirtualUnwind(UNW_FLAG_NHANDLER,
+<span class="lineNum">     501 </span>            :                        imageBase,
+<span class="lineNum">     502 </span>            :                        context.Rip,
+<span class="lineNum">     503 </span>            :                        runtimeFunction,
+<span class="lineNum">     504 </span>            :                        &amp;context,
+<span class="lineNum">     505 </span>            :                        &amp;dummyHandlerData,
+<span class="lineNum">     506 </span>            :                        &amp;dummyEstablisherFrame,
+<span class="lineNum">     507 </span>            :                        nullptr);
+<span class="lineNum">     508 </span>            :     } else if (firstFrame) {
+<span class="lineNum">     509 </span>            :       // Leaf functions can be unwound by hand.
+<span class="lineNum">     510 </span>            :       context.Rip = *reinterpret_cast&lt;DWORD64*&gt;(context.Rsp);
+<span class="lineNum">     511 </span>            :       context.Rsp += sizeof(void*);
+<span class="lineNum">     512 </span>            :     } else {
+<span class="lineNum">     513 </span>            :       // Something went wrong.
+<span class="lineNum">     514 </span>            :       break;
+<span class="lineNum">     515 </span>            :     }
+<span class="lineNum">     516 </span>            : 
+<span class="lineNum">     517 </span>            :     addr = context.Rip;
+<span class="lineNum">     518 </span>            :     spaddr = context.Rsp;
+<span class="lineNum">     519 </span>            :     firstFrame = false;
+<span class="lineNum">     520 </span>            : #else
+<span class="lineNum">     521 </span>            : #error &quot;unknown platform&quot;
+<span class="lineNum">     522 </span>            : #endif
+<span class="lineNum">     523 </span>            : 
+<span class="lineNum">     524 </span>            :     if (addr == 0) {
+<span class="lineNum">     525 </span>            :       break;
+<span class="lineNum">     526 </span>            :     }
+<span class="lineNum">     527 </span>            : 
+<span class="lineNum">     528 </span>            :     if (skip-- &gt; 0) {
+<span class="lineNum">     529 </span>            :       continue;
+<span class="lineNum">     530 </span>            :     }
+<span class="lineNum">     531 </span>            : 
+<span class="lineNum">     532 </span>            :     if (aData-&gt;pc_count &lt; aData-&gt;pc_size) {
+<span class="lineNum">     533 </span>            :       aData-&gt;pcs[aData-&gt;pc_count] = (void*)addr;
+<span class="lineNum">     534 </span>            :     }
+<span class="lineNum">     535 </span>            :     ++aData-&gt;pc_count;
+<span class="lineNum">     536 </span>            : 
+<span class="lineNum">     537 </span>            :     if (aData-&gt;sp_count &lt; aData-&gt;sp_size) {
+<span class="lineNum">     538 </span>            :       aData-&gt;sps[aData-&gt;sp_count] = (void*)spaddr;
+<span class="lineNum">     539 </span>            :     }
+<span class="lineNum">     540 </span>            :     ++aData-&gt;sp_count;
+<span class="lineNum">     541 </span>            : 
+<span class="lineNum">     542 </span>            :     if (aData-&gt;pc_max != 0 &amp;&amp; aData-&gt;pc_count == aData-&gt;pc_max) {
+<span class="lineNum">     543 </span>            :       break;
+<span class="lineNum">     544 </span>            :     }
+<span class="lineNum">     545 </span>            : 
+<span class="lineNum">     546 </span>            : #if defined(_M_IX86) || defined(_M_IA64)
+<span class="lineNum">     547 </span>            :     if (frame64.AddrReturn.Offset == 0) {
+<span class="lineNum">     548 </span>            :       break;
+<span class="lineNum">     549 </span>            :     }
+<span class="lineNum">     550 </span>            : #endif
+<span class="lineNum">     551 </span>            :   }
+<span class="lineNum">     552 </span>            : }
+<span class="lineNum">     553 </span>            : 
+<span class="lineNum">     554 </span>            : static unsigned int WINAPI
+<span class="lineNum">     555 </span>            : WalkStackThread(void* aData)
+<span class="lineNum">     556 </span>            : {
+<span class="lineNum">     557 </span>            :   BOOL msgRet;
+<span class="lineNum">     558 </span>            :   MSG msg;
+<span class="lineNum">     559 </span>            : 
+<span class="lineNum">     560 </span>            :   // Call PeekMessage to force creation of a message queue so that
+<span class="lineNum">     561 </span>            :   // other threads can safely post events to us.
+<span class="lineNum">     562 </span>            :   ::PeekMessage(&amp;msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
+<span class="lineNum">     563 </span>            : 
+<span class="lineNum">     564 </span>            :   // and tell the thread that created us that we're ready.
+<span class="lineNum">     565 </span>            :   HANDLE readyEvent = (HANDLE)aData;
+<span class="lineNum">     566 </span>            :   ::SetEvent(readyEvent);
+<span class="lineNum">     567 </span>            : 
+<span class="lineNum">     568 </span>            :   while ((msgRet = ::GetMessage(&amp;msg, (HWND)-1, 0, 0)) != 0) {
+<span class="lineNum">     569 </span>            :     if (msgRet == -1) {
+<span class="lineNum">     570 </span>            :       PrintError(&quot;GetMessage&quot;);
+<span class="lineNum">     571 </span>            :     } else {
+<span class="lineNum">     572 </span>            :       DWORD ret;
+<span class="lineNum">     573 </span>            : 
+<span class="lineNum">     574 </span>            :       struct WalkStackData* data = (WalkStackData*)msg.lParam;
+<span class="lineNum">     575 </span>            :       if (!data) {
+<span class="lineNum">     576 </span>            :         continue;
+<span class="lineNum">     577 </span>            :       }
+<span class="lineNum">     578 </span>            : 
+<span class="lineNum">     579 </span>            :       // Don't suspend the calling thread until it's waiting for
+<span class="lineNum">     580 </span>            :       // us; otherwise the number of frames on the stack could vary.
+<span class="lineNum">     581 </span>            :       ret = ::WaitForSingleObject(data-&gt;eventStart, INFINITE);
+<span class="lineNum">     582 </span>            :       if (ret != WAIT_OBJECT_0) {
+<span class="lineNum">     583 </span>            :         PrintError(&quot;WaitForSingleObject&quot;);
+<span class="lineNum">     584 </span>            :       }
+<span class="lineNum">     585 </span>            : 
+<span class="lineNum">     586 </span>            :       // Suspend the calling thread, dump his stack, and then resume him.
+<span class="lineNum">     587 </span>            :       // He's currently waiting for us to finish so now should be a good time.
+<span class="lineNum">     588 </span>            :       ret = ::SuspendThread(data-&gt;thread);
+<span class="lineNum">     589 </span>            :       if (ret == (DWORD)-1) {
+<span class="lineNum">     590 </span>            :         PrintError(&quot;ThreadSuspend&quot;);
+<span class="lineNum">     591 </span>            :       } else {
+<span class="lineNum">     592 </span>            :         WalkStackMain64(data);
+<span class="lineNum">     593 </span>            : 
+<span class="lineNum">     594 </span>            :         ret = ::ResumeThread(data-&gt;thread);
+<span class="lineNum">     595 </span>            :         if (ret == (DWORD)-1) {
+<span class="lineNum">     596 </span>            :           PrintError(&quot;ThreadResume&quot;);
+<span class="lineNum">     597 </span>            :         }
+<span class="lineNum">     598 </span>            :       }
+<span class="lineNum">     599 </span>            : 
+<span class="lineNum">     600 </span>            :       ::SetEvent(data-&gt;eventEnd);
+<span class="lineNum">     601 </span>            :     }
+<span class="lineNum">     602 </span>            :   }
+<span class="lineNum">     603 </span>            : 
+<span class="lineNum">     604 </span>            :   return 0;
+<span class="lineNum">     605 </span>            : }
+<span class="lineNum">     606 </span>            : 
+<span class="lineNum">     607 </span>            : /**
+<span class="lineNum">     608 </span>            :  * Walk the stack, translating PC's found into strings and recording the
+<span class="lineNum">     609 </span>            :  * chain in aBuffer. For this to work properly, the DLLs must be rebased
+<span class="lineNum">     610 </span>            :  * so that the address in the file agrees with the address in memory.
+<span class="lineNum">     611 </span>            :  * Otherwise StackWalk will return FALSE when it hits a frame in a DLL
+<span class="lineNum">     612 </span>            :  * whose in memory address doesn't match its in-file address.
+<span class="lineNum">     613 </span>            :  */
+<span class="lineNum">     614 </span>            : 
+<span class="lineNum">     615 </span>            : MFBT_API bool
+<span class="lineNum">     616 </span>            : MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
+<span class="lineNum">     617 </span>            :              uint32_t aMaxFrames, void* aClosure, uintptr_t aThread,
+<span class="lineNum">     618 </span>            :              void* aPlatformData)
+<span class="lineNum">     619 </span>            : {
+<span class="lineNum">     620 </span>            :   StackWalkInitCriticalAddress();
+<span class="lineNum">     621 </span>            :   static HANDLE myProcess = nullptr;
+<span class="lineNum">     622 </span>            :   HANDLE myThread;
+<span class="lineNum">     623 </span>            :   DWORD walkerReturn;
+<span class="lineNum">     624 </span>            :   struct WalkStackData data;
+<span class="lineNum">     625 </span>            : 
+<span class="lineNum">     626 </span>            :   InitializeDbgHelpCriticalSection();
+<span class="lineNum">     627 </span>            : 
+<span class="lineNum">     628 </span>            :   // EnsureWalkThreadReady's _beginthreadex takes a heap lock and must be
+<span class="lineNum">     629 </span>            :   // avoided if we're walking another (i.e. suspended) thread.
+<span class="lineNum">     630 </span>            :   if (!aThread &amp;&amp; !EnsureWalkThreadReady()) {
+<span class="lineNum">     631 </span>            :     return false;
+<span class="lineNum">     632 </span>            :   }
+<span class="lineNum">     633 </span>            : 
+<span class="lineNum">     634 </span>            :   HANDLE currentThread = ::GetCurrentThread();
+<span class="lineNum">     635 </span>            :   HANDLE targetThread =
+<span class="lineNum">     636 </span>            :     aThread ? reinterpret_cast&lt;HANDLE&gt;(aThread) : currentThread;
+<span class="lineNum">     637 </span>            :   data.walkCallingThread = (targetThread == currentThread);
+<span class="lineNum">     638 </span>            : 
+<span class="lineNum">     639 </span>            :   // Have to duplicate handle to get a real handle.
+<span class="lineNum">     640 </span>            :   if (!myProcess) {
+<span class="lineNum">     641 </span>            :     if (!::DuplicateHandle(::GetCurrentProcess(),
+<span class="lineNum">     642 </span>            :                            ::GetCurrentProcess(),
+<span class="lineNum">     643 </span>            :                            ::GetCurrentProcess(),
+<span class="lineNum">     644 </span>            :                            &amp;myProcess,
+<span class="lineNum">     645 </span>            :                            PROCESS_ALL_ACCESS, FALSE, 0)) {
+<span class="lineNum">     646 </span>            :       if (data.walkCallingThread) {
+<span class="lineNum">     647 </span>            :         PrintError(&quot;DuplicateHandle (process)&quot;);
+<span class="lineNum">     648 </span>            :       }
+<span class="lineNum">     649 </span>            :       return false;
+<span class="lineNum">     650 </span>            :     }
+<span class="lineNum">     651 </span>            :   }
+<span class="lineNum">     652 </span>            :   if (!::DuplicateHandle(::GetCurrentProcess(),
+<span class="lineNum">     653 </span>            :                          targetThread,
+<span class="lineNum">     654 </span>            :                          ::GetCurrentProcess(),
+<span class="lineNum">     655 </span>            :                          &amp;myThread,
+<span class="lineNum">     656 </span>            :                          THREAD_ALL_ACCESS, FALSE, 0)) {
+<span class="lineNum">     657 </span>            :     if (data.walkCallingThread) {
+<span class="lineNum">     658 </span>            :       PrintError(&quot;DuplicateHandle (thread)&quot;);
+<span class="lineNum">     659 </span>            :     }
+<span class="lineNum">     660 </span>            :     return false;
+<span class="lineNum">     661 </span>            :   }
+<span class="lineNum">     662 </span>            : 
+<span class="lineNum">     663 </span>            :   data.skipFrames = aSkipFrames;
+<span class="lineNum">     664 </span>            :   data.thread = myThread;
+<span class="lineNum">     665 </span>            :   data.process = myProcess;
+<span class="lineNum">     666 </span>            :   void* local_pcs[1024];
+<span class="lineNum">     667 </span>            :   data.pcs = local_pcs;
+<span class="lineNum">     668 </span>            :   data.pc_count = 0;
+<span class="lineNum">     669 </span>            :   data.pc_size = ArrayLength(local_pcs);
+<span class="lineNum">     670 </span>            :   data.pc_max = aMaxFrames;
+<span class="lineNum">     671 </span>            :   void* local_sps[1024];
+<span class="lineNum">     672 </span>            :   data.sps = local_sps;
+<span class="lineNum">     673 </span>            :   data.sp_count = 0;
+<span class="lineNum">     674 </span>            :   data.sp_size = ArrayLength(local_sps);
+<span class="lineNum">     675 </span>            :   data.platformData = aPlatformData;
+<span class="lineNum">     676 </span>            : 
+<span class="lineNum">     677 </span>            :   if (aThread) {
+<span class="lineNum">     678 </span>            :     // If we're walking the stack of another thread, we don't need to
+<span class="lineNum">     679 </span>            :     // use a separate walker thread.
+<span class="lineNum">     680 </span>            :     WalkStackMain64(&amp;data);
+<span class="lineNum">     681 </span>            : 
+<span class="lineNum">     682 </span>            :     if (data.pc_count &gt; data.pc_size) {
+<span class="lineNum">     683 </span>            :       data.pcs = (void**)_alloca(data.pc_count * sizeof(void*));
+<span class="lineNum">     684 </span>            :       data.pc_size = data.pc_count;
+<span class="lineNum">     685 </span>            :       data.pc_count = 0;
+<span class="lineNum">     686 </span>            :       data.sps = (void**)_alloca(data.sp_count * sizeof(void*));
+<span class="lineNum">     687 </span>            :       data.sp_size = data.sp_count;
+<span class="lineNum">     688 </span>            :       data.sp_count = 0;
+<span class="lineNum">     689 </span>            :       WalkStackMain64(&amp;data);
+<span class="lineNum">     690 </span>            :     }
+<span class="lineNum">     691 </span>            :   } else {
+<span class="lineNum">     692 </span>            :     data.eventStart = ::CreateEvent(nullptr, FALSE /* auto-reset*/,
+<span class="lineNum">     693 </span>            :                                     FALSE /* initially non-signaled */, nullptr);
+<span class="lineNum">     694 </span>            :     data.eventEnd = ::CreateEvent(nullptr, FALSE /* auto-reset*/,
+<span class="lineNum">     695 </span>            :                                   FALSE /* initially non-signaled */, nullptr);
+<span class="lineNum">     696 </span>            : 
+<span class="lineNum">     697 </span>            :     ::PostThreadMessage(gStackWalkThread, WM_USER, 0, (LPARAM)&amp;data);
+<span class="lineNum">     698 </span>            : 
+<span class="lineNum">     699 </span>            :     walkerReturn = ::SignalObjectAndWait(data.eventStart,
+<span class="lineNum">     700 </span>            :                                          data.eventEnd, INFINITE, FALSE);
+<span class="lineNum">     701 </span>            :     if (walkerReturn != WAIT_OBJECT_0 &amp;&amp; data.walkCallingThread) {
+<span class="lineNum">     702 </span>            :       PrintError(&quot;SignalObjectAndWait (1)&quot;);
+<span class="lineNum">     703 </span>            :     }
+<span class="lineNum">     704 </span>            :     if (data.pc_count &gt; data.pc_size) {
+<span class="lineNum">     705 </span>            :       data.pcs = (void**)_alloca(data.pc_count * sizeof(void*));
+<span class="lineNum">     706 </span>            :       data.pc_size = data.pc_count;
+<span class="lineNum">     707 </span>            :       data.pc_count = 0;
+<span class="lineNum">     708 </span>            :       data.sps = (void**)_alloca(data.sp_count * sizeof(void*));
+<span class="lineNum">     709 </span>            :       data.sp_size = data.sp_count;
+<span class="lineNum">     710 </span>            :       data.sp_count = 0;
+<span class="lineNum">     711 </span>            :       ::PostThreadMessage(gStackWalkThread, WM_USER, 0, (LPARAM)&amp;data);
+<span class="lineNum">     712 </span>            :       walkerReturn = ::SignalObjectAndWait(data.eventStart,
+<span class="lineNum">     713 </span>            :                                            data.eventEnd, INFINITE, FALSE);
+<span class="lineNum">     714 </span>            :       if (walkerReturn != WAIT_OBJECT_0 &amp;&amp; data.walkCallingThread) {
+<span class="lineNum">     715 </span>            :         PrintError(&quot;SignalObjectAndWait (2)&quot;);
+<span class="lineNum">     716 </span>            :       }
+<span class="lineNum">     717 </span>            :     }
+<span class="lineNum">     718 </span>            : 
+<span class="lineNum">     719 </span>            :     ::CloseHandle(data.eventStart);
+<span class="lineNum">     720 </span>            :     ::CloseHandle(data.eventEnd);
+<span class="lineNum">     721 </span>            :   }
+<span class="lineNum">     722 </span>            : 
+<span class="lineNum">     723 </span>            :   ::CloseHandle(myThread);
+<span class="lineNum">     724 </span>            : 
+<span class="lineNum">     725 </span>            :   for (uint32_t i = 0; i &lt; data.pc_count; ++i) {
+<span class="lineNum">     726 </span>            :     (*aCallback)(i + 1, data.pcs[i], data.sps[i], aClosure);
+<span class="lineNum">     727 </span>            :   }
+<span class="lineNum">     728 </span>            : 
+<span class="lineNum">     729 </span>            :   return data.pc_count != 0;
+<span class="lineNum">     730 </span>            : }
+<span class="lineNum">     731 </span>            : 
+<span class="lineNum">     732 </span>            : 
+<span class="lineNum">     733 </span>            : static BOOL CALLBACK
+<span class="lineNum">     734 </span>            : callbackEspecial64(
+<span class="lineNum">     735 </span>            :   PCSTR aModuleName,
+<span class="lineNum">     736 </span>            :   DWORD64 aModuleBase,
+<span class="lineNum">     737 </span>            :   ULONG aModuleSize,
+<span class="lineNum">     738 </span>            :   PVOID aUserContext)
+<span class="lineNum">     739 </span>            : {
+<span class="lineNum">     740 </span>            :   BOOL retval = TRUE;
+<span class="lineNum">     741 </span>            :   DWORD64 addr = *(DWORD64*)aUserContext;
+<span class="lineNum">     742 </span>            : 
+<span class="lineNum">     743 </span>            :   /*
+<span class="lineNum">     744 </span>            :    * You'll want to control this if we are running on an
+<span class="lineNum">     745 </span>            :    *  architecture where the addresses go the other direction.
+<span class="lineNum">     746 </span>            :    * Not sure this is even a realistic consideration.
+<span class="lineNum">     747 </span>            :    */
+<span class="lineNum">     748 </span>            :   const BOOL addressIncreases = TRUE;
+<span class="lineNum">     749 </span>            : 
+<span class="lineNum">     750 </span>            :   /*
+<span class="lineNum">     751 </span>            :    * If it falls in side the known range, load the symbols.
+<span class="lineNum">     752 </span>            :    */
+<span class="lineNum">     753 </span>            :   if (addressIncreases
+<span class="lineNum">     754 </span>            :       ? (addr &gt;= aModuleBase &amp;&amp; addr &lt;= (aModuleBase + aModuleSize))
+<span class="lineNum">     755 </span>            :       : (addr &lt;= aModuleBase &amp;&amp; addr &gt;= (aModuleBase - aModuleSize))
+<span class="lineNum">     756 </span>            :      ) {
+<span class="lineNum">     757 </span>            :     retval = !!SymLoadModule64(GetCurrentProcess(), nullptr,
+<span class="lineNum">     758 </span>            :                                (PSTR)aModuleName, nullptr,
+<span class="lineNum">     759 </span>            :                                aModuleBase, aModuleSize);
+<span class="lineNum">     760 </span>            :     if (!retval) {
+<span class="lineNum">     761 </span>            :       PrintError(&quot;SymLoadModule64&quot;);
+<span class="lineNum">     762 </span>            :     }
+<span class="lineNum">     763 </span>            :   }
+<span class="lineNum">     764 </span>            : 
+<span class="lineNum">     765 </span>            :   return retval;
+<span class="lineNum">     766 </span>            : }
+<span class="lineNum">     767 </span>            : 
+<span class="lineNum">     768 </span>            : /*
+<span class="lineNum">     769 </span>            :  * SymGetModuleInfoEspecial
+<span class="lineNum">     770 </span>            :  *
+<span class="lineNum">     771 </span>            :  * Attempt to determine the module information.
+<span class="lineNum">     772 </span>            :  * Bug 112196 says this DLL may not have been loaded at the time
+<span class="lineNum">     773 </span>            :  *  SymInitialize was called, and thus the module information
+<span class="lineNum">     774 </span>            :  *  and symbol information is not available.
+<span class="lineNum">     775 </span>            :  * This code rectifies that problem.
+<span class="lineNum">     776 </span>            :  */
+<span class="lineNum">     777 </span>            : 
+<span class="lineNum">     778 </span>            : // New members were added to IMAGEHLP_MODULE64 (that show up in the
+<span class="lineNum">     779 </span>            : // Platform SDK that ships with VC8, but not the Platform SDK that ships
+<span class="lineNum">     780 </span>            : // with VC7.1, i.e., between DbgHelp 6.0 and 6.1), but we don't need to
+<span class="lineNum">     781 </span>            : // use them, and it's useful to be able to function correctly with the
+<span class="lineNum">     782 </span>            : // older library.  (Stock Windows XP SP2 seems to ship with dbghelp.dll
+<span class="lineNum">     783 </span>            : // version 5.1.)  Since Platform SDK version need not correspond to
+<span class="lineNum">     784 </span>            : // compiler version, and the version number in debughlp.h was NOT bumped
+<span class="lineNum">     785 </span>            : // when these changes were made, ifdef based on a constant that was
+<span class="lineNum">     786 </span>            : // added between these versions.
+<span class="lineNum">     787 </span>            : #ifdef SSRVOPT_SETCONTEXT
+<span class="lineNum">     788 </span>            : #define NS_IMAGEHLP_MODULE64_SIZE (((offsetof(IMAGEHLP_MODULE64, LoadedPdbName) + sizeof(DWORD64) - 1) / sizeof(DWORD64)) * sizeof(DWORD64))
+<span class="lineNum">     789 </span>            : #else
+<span class="lineNum">     790 </span>            : #define NS_IMAGEHLP_MODULE64_SIZE sizeof(IMAGEHLP_MODULE64)
+<span class="lineNum">     791 </span>            : #endif
+<span class="lineNum">     792 </span>            : 
+<span class="lineNum">     793 </span>            : BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
+<span class="lineNum">     794 </span>            :                                 PIMAGEHLP_MODULE64 aModuleInfo,
+<span class="lineNum">     795 </span>            :                                 PIMAGEHLP_LINE64 aLineInfo)
+<span class="lineNum">     796 </span>            : {
+<span class="lineNum">     797 </span>            :   BOOL retval = FALSE;
+<span class="lineNum">     798 </span>            : 
+<span class="lineNum">     799 </span>            :   /*
+<span class="lineNum">     800 </span>            :    * Init the vars if we have em.
+<span class="lineNum">     801 </span>            :    */
+<span class="lineNum">     802 </span>            :   aModuleInfo-&gt;SizeOfStruct = NS_IMAGEHLP_MODULE64_SIZE;
+<span class="lineNum">     803 </span>            :   if (aLineInfo) {
+<span class="lineNum">     804 </span>            :     aLineInfo-&gt;SizeOfStruct = sizeof(IMAGEHLP_LINE64);
+<span class="lineNum">     805 </span>            :   }
+<span class="lineNum">     806 </span>            : 
+<span class="lineNum">     807 </span>            :   /*
+<span class="lineNum">     808 </span>            :    * Give it a go.
+<span class="lineNum">     809 </span>            :    * It may already be loaded.
+<span class="lineNum">     810 </span>            :    */
+<span class="lineNum">     811 </span>            :   retval = SymGetModuleInfo64(aProcess, aAddr, aModuleInfo);
+<span class="lineNum">     812 </span>            :   if (retval == FALSE) {
+<span class="lineNum">     813 </span>            :     /*
+<span class="lineNum">     814 </span>            :      * Not loaded, here's the magic.
+<span class="lineNum">     815 </span>            :      * Go through all the modules.
+<span class="lineNum">     816 </span>            :      */
+<span class="lineNum">     817 </span>            :     // Need to cast to PENUMLOADED_MODULES_CALLBACK64 because the
+<span class="lineNum">     818 </span>            :     // constness of the first parameter of
+<span class="lineNum">     819 </span>            :     // PENUMLOADED_MODULES_CALLBACK64 varies over SDK versions (from
+<span class="lineNum">     820 </span>            :     // non-const to const over time).  See bug 391848 and bug
+<span class="lineNum">     821 </span>            :     // 415426.
+<span class="lineNum">     822 </span>            :     BOOL enumRes = EnumerateLoadedModules64(
+<span class="lineNum">     823 </span>            :       aProcess,
+<span class="lineNum">     824 </span>            :       (PENUMLOADED_MODULES_CALLBACK64)callbackEspecial64,
+<span class="lineNum">     825 </span>            :       (PVOID)&amp;aAddr);
+<span class="lineNum">     826 </span>            :     if (enumRes != FALSE) {
+<span class="lineNum">     827 </span>            :       /*
+<span class="lineNum">     828 </span>            :        * One final go.
+<span class="lineNum">     829 </span>            :        * If it fails, then well, we have other problems.
+<span class="lineNum">     830 </span>            :        */
+<span class="lineNum">     831 </span>            :       retval = SymGetModuleInfo64(aProcess, aAddr, aModuleInfo);
+<span class="lineNum">     832 </span>            :     }
+<span class="lineNum">     833 </span>            :   }
+<span class="lineNum">     834 </span>            : 
+<span class="lineNum">     835 </span>            :   /*
+<span class="lineNum">     836 </span>            :    * If we got module info, we may attempt line info as well.
+<span class="lineNum">     837 </span>            :    * We will not report failure if this does not work.
+<span class="lineNum">     838 </span>            :    */
+<span class="lineNum">     839 </span>            :   if (retval != FALSE &amp;&amp; aLineInfo) {
+<span class="lineNum">     840 </span>            :     DWORD displacement = 0;
+<span class="lineNum">     841 </span>            :     BOOL lineRes = FALSE;
+<span class="lineNum">     842 </span>            :     lineRes = SymGetLineFromAddr64(aProcess, aAddr, &amp;displacement, aLineInfo);
+<span class="lineNum">     843 </span>            :     if (!lineRes) {
+<span class="lineNum">     844 </span>            :       // Clear out aLineInfo to indicate that it's not valid
+<span class="lineNum">     845 </span>            :       memset(aLineInfo, 0, sizeof(*aLineInfo));
+<span class="lineNum">     846 </span>            :     }
+<span class="lineNum">     847 </span>            :   }
+<span class="lineNum">     848 </span>            : 
+<span class="lineNum">     849 </span>            :   return retval;
+<span class="lineNum">     850 </span>            : }
+<span class="lineNum">     851 </span>            : 
+<span class="lineNum">     852 </span>            : static bool
+<span class="lineNum">     853 </span>            : EnsureSymInitialized()
+<span class="lineNum">     854 </span>            : {
+<span class="lineNum">     855 </span>            :   static bool gInitialized = false;
+<span class="lineNum">     856 </span>            :   bool retStat;
+<span class="lineNum">     857 </span>            : 
+<span class="lineNum">     858 </span>            :   if (gInitialized) {
+<span class="lineNum">     859 </span>            :     return gInitialized;
+<span class="lineNum">     860 </span>            :   }
+<span class="lineNum">     861 </span>            : 
+<span class="lineNum">     862 </span>            :   InitializeDbgHelpCriticalSection();
+<span class="lineNum">     863 </span>            : 
+<span class="lineNum">     864 </span>            :   SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
+<span class="lineNum">     865 </span>            :   retStat = SymInitialize(GetCurrentProcess(), nullptr, TRUE);
+<span class="lineNum">     866 </span>            :   if (!retStat) {
+<span class="lineNum">     867 </span>            :     PrintError(&quot;SymInitialize&quot;);
+<span class="lineNum">     868 </span>            :   }
+<span class="lineNum">     869 </span>            : 
+<span class="lineNum">     870 </span>            :   gInitialized = retStat;
+<span class="lineNum">     871 </span>            :   /* XXX At some point we need to arrange to call SymCleanup */
+<span class="lineNum">     872 </span>            : 
+<span class="lineNum">     873 </span>            :   return retStat;
+<span class="lineNum">     874 </span>            : }
+<span class="lineNum">     875 </span>            : 
+<span class="lineNum">     876 </span>            : 
+<span class="lineNum">     877 </span>            : MFBT_API bool
+<span class="lineNum">     878 </span>            : MozDescribeCodeAddress(void* aPC, MozCodeAddressDetails* aDetails)
+<span class="lineNum">     879 </span>            : {
+<span class="lineNum">     880 </span>            :   aDetails-&gt;library[0] = '\0';
+<span class="lineNum">     881 </span>            :   aDetails-&gt;loffset = 0;
+<span class="lineNum">     882 </span>            :   aDetails-&gt;filename[0] = '\0';
+<span class="lineNum">     883 </span>            :   aDetails-&gt;lineno = 0;
+<span class="lineNum">     884 </span>            :   aDetails-&gt;function[0] = '\0';
+<span class="lineNum">     885 </span>            :   aDetails-&gt;foffset = 0;
+<span class="lineNum">     886 </span>            : 
+<span class="lineNum">     887 </span>            :   if (!EnsureSymInitialized()) {
+<span class="lineNum">     888 </span>            :     return false;
+<span class="lineNum">     889 </span>            :   }
+<span class="lineNum">     890 </span>            : 
+<span class="lineNum">     891 </span>            :   HANDLE myProcess = ::GetCurrentProcess();
+<span class="lineNum">     892 </span>            :   BOOL ok;
+<span class="lineNum">     893 </span>            : 
+<span class="lineNum">     894 </span>            :   // debug routines are not threadsafe, so grab the lock.
+<span class="lineNum">     895 </span>            :   EnterCriticalSection(&amp;gDbgHelpCS);
+<span class="lineNum">     896 </span>            : 
+<span class="lineNum">     897 </span>            :   //
+<span class="lineNum">     898 </span>            :   // Attempt to load module info before we attempt to resolve the symbol.
+<span class="lineNum">     899 </span>            :   // This just makes sure we get good info if available.
+<span class="lineNum">     900 </span>            :   //
+<span class="lineNum">     901 </span>            : 
+<span class="lineNum">     902 </span>            :   DWORD64 addr = (DWORD64)aPC;
+<span class="lineNum">     903 </span>            :   IMAGEHLP_MODULE64 modInfo;
+<span class="lineNum">     904 </span>            :   IMAGEHLP_LINE64 lineInfo;
+<span class="lineNum">     905 </span>            :   BOOL modInfoRes;
+<span class="lineNum">     906 </span>            :   modInfoRes = SymGetModuleInfoEspecial64(myProcess, addr, &amp;modInfo, &amp;lineInfo);
+<span class="lineNum">     907 </span>            : 
+<span class="lineNum">     908 </span>            :   if (modInfoRes) {
+<span class="lineNum">     909 </span>            :     strncpy(aDetails-&gt;library, modInfo.LoadedImageName,
+<span class="lineNum">     910 </span>            :                 sizeof(aDetails-&gt;library));
+<span class="lineNum">     911 </span>            :     aDetails-&gt;library[mozilla::ArrayLength(aDetails-&gt;library) - 1] = '\0';
+<span class="lineNum">     912 </span>            :     aDetails-&gt;loffset = (char*)aPC - (char*)modInfo.BaseOfImage;
+<span class="lineNum">     913 </span>            : 
+<span class="lineNum">     914 </span>            :     if (lineInfo.FileName) {
+<span class="lineNum">     915 </span>            :       strncpy(aDetails-&gt;filename, lineInfo.FileName,
+<span class="lineNum">     916 </span>            :                   sizeof(aDetails-&gt;filename));
+<span class="lineNum">     917 </span>            :       aDetails-&gt;filename[mozilla::ArrayLength(aDetails-&gt;filename) - 1] = '\0';
+<span class="lineNum">     918 </span>            :       aDetails-&gt;lineno = lineInfo.LineNumber;
+<span class="lineNum">     919 </span>            :     }
+<span class="lineNum">     920 </span>            :   }
+<span class="lineNum">     921 </span>            : 
+<span class="lineNum">     922 </span>            :   ULONG64 buffer[(sizeof(SYMBOL_INFO) +
+<span class="lineNum">     923 </span>            :     MAX_SYM_NAME * sizeof(TCHAR) + sizeof(ULONG64) - 1) / sizeof(ULONG64)];
+<span class="lineNum">     924 </span>            :   PSYMBOL_INFO pSymbol = (PSYMBOL_INFO)buffer;
+<span class="lineNum">     925 </span>            :   pSymbol-&gt;SizeOfStruct = sizeof(SYMBOL_INFO);
+<span class="lineNum">     926 </span>            :   pSymbol-&gt;MaxNameLen = MAX_SYM_NAME;
+<span class="lineNum">     927 </span>            : 
+<span class="lineNum">     928 </span>            :   DWORD64 displacement;
+<span class="lineNum">     929 </span>            :   ok = SymFromAddr(myProcess, addr, &amp;displacement, pSymbol);
+<span class="lineNum">     930 </span>            : 
+<span class="lineNum">     931 </span>            :   if (ok) {
+<span class="lineNum">     932 </span>            :     strncpy(aDetails-&gt;function, pSymbol-&gt;Name,
+<span class="lineNum">     933 </span>            :                 sizeof(aDetails-&gt;function));
+<span class="lineNum">     934 </span>            :     aDetails-&gt;function[mozilla::ArrayLength(aDetails-&gt;function) - 1] = '\0';
+<span class="lineNum">     935 </span>            :     aDetails-&gt;foffset = static_cast&lt;ptrdiff_t&gt;(displacement);
+<span class="lineNum">     936 </span>            :   }
+<span class="lineNum">     937 </span>            : 
+<span class="lineNum">     938 </span>            :   LeaveCriticalSection(&amp;gDbgHelpCS); // release our lock
+<span class="lineNum">     939 </span>            :   return true;
+<span class="lineNum">     940 </span>            : }
+<span class="lineNum">     941 </span>            : 
+<span class="lineNum">     942 </span>            : // i386 or PPC Linux stackwalking code
+<span class="lineNum">     943 </span>            : #elif HAVE_DLADDR &amp;&amp; (HAVE__UNWIND_BACKTRACE || MOZ_STACKWALK_SUPPORTS_LINUX || MOZ_STACKWALK_SUPPORTS_MACOSX)
+<span class="lineNum">     944 </span>            : 
+<span class="lineNum">     945 </span>            : #include &lt;stdlib.h&gt;
+<span class="lineNum">     946 </span>            : #include &lt;string.h&gt;
+<span class="lineNum">     947 </span>            : #include &lt;stdio.h&gt;
+<span class="lineNum">     948 </span>            : 
+<span class="lineNum">     949 </span>            : // On glibc 2.1, the Dl_info api defined in &lt;dlfcn.h&gt; is only exposed
+<span class="lineNum">     950 </span>            : // if __USE_GNU is defined.  I suppose its some kind of standards
+<span class="lineNum">     951 </span>            : // adherence thing.
+<span class="lineNum">     952 </span>            : //
+<span class="lineNum">     953 </span>            : #if (__GLIBC_MINOR__ &gt;= 1) &amp;&amp; !defined(__USE_GNU)
+<span class="lineNum">     954 </span>            : #define __USE_GNU
+<span class="lineNum">     955 </span>            : #endif
+<span class="lineNum">     956 </span>            : 
+<span class="lineNum">     957 </span>            : // This thing is exported by libstdc++
+<span class="lineNum">     958 </span>            : // Yes, this is a gcc only hack
+<span class="lineNum">     959 </span>            : #if defined(MOZ_DEMANGLE_SYMBOLS)
+<span class="lineNum">     960 </span>            : #include &lt;cxxabi.h&gt;
+<a name="961"><span class="lineNum">     961 </span>            : #endif // MOZ_DEMANGLE_SYMBOLS</a>
+<span class="lineNum">     962 </span>            : 
+<span class="lineNum">     963 </span><span class="lineNoCov">          0 : void DemangleSymbol(const char* aSymbol,</span>
+<span class="lineNum">     964 </span>            :                     char* aBuffer,
+<span class="lineNum">     965 </span>            :                     int aBufLen)
+<span class="lineNum">     966 </span>            : {
+<span class="lineNum">     967 </span><span class="lineNoCov">          0 :   aBuffer[0] = '\0';</span>
+<span class="lineNum">     968 </span>            : 
+<span class="lineNum">     969 </span>            : #if defined(MOZ_DEMANGLE_SYMBOLS)
+<span class="lineNum">     970 </span>            :   /* See demangle.h in the gcc source for the voodoo */
+<span class="lineNum">     971 </span><span class="lineNoCov">          0 :   char* demangled = abi::__cxa_demangle(aSymbol, 0, 0, 0);</span>
+<span class="lineNum">     972 </span>            : 
+<span class="lineNum">     973 </span><span class="lineNoCov">          0 :   if (demangled) {</span>
+<span class="lineNum">     974 </span><span class="lineNoCov">          0 :     strncpy(aBuffer, demangled, aBufLen);</span>
+<span class="lineNum">     975 </span><span class="lineNoCov">          0 :     aBuffer[aBufLen - 1] = '\0';</span>
+<span class="lineNum">     976 </span><span class="lineNoCov">          0 :     free(demangled);</span>
+<span class="lineNum">     977 </span>            :   }
+<span class="lineNum">     978 </span>            : #endif // MOZ_DEMANGLE_SYMBOLS
+<span class="lineNum">     979 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     980 </span>            : 
+<span class="lineNum">     981 </span>            : // {x86, ppc} x {Linux, Mac} stackwalking code.
+<span class="lineNum">     982 </span>            : #if ((defined(__i386) || defined(PPC) || defined(__ppc__)) &amp;&amp; \
+<span class="lineNum">     983 </span>            :      (MOZ_STACKWALK_SUPPORTS_MACOSX || MOZ_STACKWALK_SUPPORTS_LINUX))
+<span class="lineNum">     984 </span>            : 
+<span class="lineNum">     985 </span>            : MFBT_API bool
+<span class="lineNum">     986 </span>            : MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
+<span class="lineNum">     987 </span>            :              uint32_t aMaxFrames, void* aClosure, uintptr_t aThread,
+<span class="lineNum">     988 </span>            :              void* aPlatformData)
+<span class="lineNum">     989 </span>            : {
+<span class="lineNum">     990 </span>            :   MOZ_ASSERT(!aThread);
+<span class="lineNum">     991 </span>            :   MOZ_ASSERT(!aPlatformData);
+<span class="lineNum">     992 </span>            :   StackWalkInitCriticalAddress();
+<span class="lineNum">     993 </span>            : 
+<span class="lineNum">     994 </span>            :   // Get the frame pointer
+<span class="lineNum">     995 </span>            :   void** bp = (void**)__builtin_frame_address(0);
+<span class="lineNum">     996 </span>            : 
+<span class="lineNum">     997 </span>            :   void* stackEnd;
+<span class="lineNum">     998 </span>            : #if HAVE___LIBC_STACK_END
+<span class="lineNum">     999 </span>            :   stackEnd = __libc_stack_end;
+<span class="lineNum">    1000 </span>            : #elif defined(XP_DARWIN)
+<span class="lineNum">    1001 </span>            :   stackEnd = pthread_get_stackaddr_np(pthread_self());
+<span class="lineNum">    1002 </span>            : #elif defined(ANDROID)
+<span class="lineNum">    1003 </span>            :   pthread_attr_t sattr;
+<span class="lineNum">    1004 </span>            :   pthread_attr_init(&amp;sattr);
+<span class="lineNum">    1005 </span>            :   pthread_getattr_np(pthread_self(), &amp;sattr);
+<span class="lineNum">    1006 </span>            :   void* stackBase = stackEnd = nullptr;
+<span class="lineNum">    1007 </span>            :   size_t stackSize = 0;
+<span class="lineNum">    1008 </span>            :   if (gettid() != getpid()) {
+<span class="lineNum">    1009 </span>            :     // bionic's pthread_attr_getstack doesn't tell the truth for the main
+<span class="lineNum">    1010 </span>            :     // thread (see bug 846670). So don't use it for the main thread.
+<span class="lineNum">    1011 </span>            :     if (!pthread_attr_getstack(&amp;sattr, &amp;stackBase, &amp;stackSize)) {
+<span class="lineNum">    1012 </span>            :       stackEnd = static_cast&lt;char*&gt;(stackBase) + stackSize;
+<span class="lineNum">    1013 </span>            :     } else {
+<span class="lineNum">    1014 </span>            :       stackEnd = nullptr;
+<span class="lineNum">    1015 </span>            :     }
+<span class="lineNum">    1016 </span>            :   }
+<span class="lineNum">    1017 </span>            :   if (!stackEnd) {
+<span class="lineNum">    1018 </span>            :     // So consider the current frame pointer + an arbitrary size of 8MB
+<span class="lineNum">    1019 </span>            :     // (modulo overflow ; not really arbitrary as it's the default stack
+<span class="lineNum">    1020 </span>            :     // size for the main thread) if pthread_attr_getstack failed for
+<span class="lineNum">    1021 </span>            :     // some reason (or was skipped).
+<span class="lineNum">    1022 </span>            :     static const uintptr_t kMaxStackSize = 8 * 1024 * 1024;
+<span class="lineNum">    1023 </span>            :     uintptr_t maxStackStart = uintptr_t(-1) - kMaxStackSize;
+<span class="lineNum">    1024 </span>            :     uintptr_t stackStart = std::max(maxStackStart, uintptr_t(bp));
+<span class="lineNum">    1025 </span>            :     stackEnd = reinterpret_cast&lt;void*&gt;(stackStart + kMaxStackSize);
+<span class="lineNum">    1026 </span>            :   }
+<span class="lineNum">    1027 </span>            : #else
+<span class="lineNum">    1028 </span>            : #  error Unsupported configuration
+<span class="lineNum">    1029 </span>            : #endif
+<span class="lineNum">    1030 </span>            :   return FramePointerStackWalk(aCallback, aSkipFrames, aMaxFrames,
+<span class="lineNum">    1031 </span>            :                                aClosure, bp, stackEnd);
+<span class="lineNum">    1032 </span>            : }
+<span class="lineNum">    1033 </span>            : 
+<span class="lineNum">    1034 </span>            : #elif defined(HAVE__UNWIND_BACKTRACE)
+<span class="lineNum">    1035 </span>            : 
+<span class="lineNum">    1036 </span>            : // libgcc_s.so symbols _Unwind_Backtrace@@GCC_3.3 and _Unwind_GetIP@@GCC_3.0
+<span class="lineNum">    1037 </span>            : #include &lt;unwind.h&gt;
+<span class="lineNum">    1038 </span>            : 
+<span class="lineNum">    1039 </span>            : struct unwind_info
+<span class="lineNum">    1040 </span>            : {
+<span class="lineNum">    1041 </span>            :   MozWalkStackCallback callback;
+<span class="lineNum">    1042 </span>            :   int skip;
+<span class="lineNum">    1043 </span>            :   int maxFrames;
+<span class="lineNum">    1044 </span>            :   int numFrames;
+<span class="lineNum">    1045 </span>            :   bool isCriticalAbort;
+<span class="lineNum">    1046 </span>            :   void* closure;
+<span class="lineNum">    1047 </span>            : };
+<a name="1048"><span class="lineNum">    1048 </span>            : </a>
+<span class="lineNum">    1049 </span>            : static _Unwind_Reason_Code
+<span class="lineNum">    1050 </span><span class="lineNoCov">          0 : unwind_callback(struct _Unwind_Context* context, void* closure)</span>
+<span class="lineNum">    1051 </span>            : {
+<span class="lineNum">    1052 </span><span class="lineNoCov">          0 :   unwind_info* info = static_cast&lt;unwind_info*&gt;(closure);</span>
+<span class="lineNum">    1053 </span><span class="lineNoCov">          0 :   void* pc = reinterpret_cast&lt;void*&gt;(_Unwind_GetIP(context));</span>
+<span class="lineNum">    1054 </span>            :   // TODO Use something like '_Unwind_GetGR()' to get the stack pointer.
+<span class="lineNum">    1055 </span><span class="lineNoCov">          0 :   if (IsCriticalAddress(pc)) {</span>
+<span class="lineNum">    1056 </span><span class="lineNoCov">          0 :     info-&gt;isCriticalAbort = true;</span>
+<span class="lineNum">    1057 </span>            :     // We just want to stop the walk, so any error code will do.  Using
+<span class="lineNum">    1058 </span>            :     // _URC_NORMAL_STOP would probably be the most accurate, but it is not
+<span class="lineNum">    1059 </span>            :     // defined on Android for ARM.
+<span class="lineNum">    1060 </span><span class="lineNoCov">          0 :     return _URC_FOREIGN_EXCEPTION_CAUGHT;</span>
+<span class="lineNum">    1061 </span>            :   }
+<span class="lineNum">    1062 </span><span class="lineNoCov">          0 :   if (--info-&gt;skip &lt; 0) {</span>
+<span class="lineNum">    1063 </span><span class="lineNoCov">          0 :     info-&gt;numFrames++;</span>
+<span class="lineNum">    1064 </span><span class="lineNoCov">          0 :     (*info-&gt;callback)(info-&gt;numFrames, pc, nullptr, info-&gt;closure);</span>
+<span class="lineNum">    1065 </span><span class="lineNoCov">          0 :     if (info-&gt;maxFrames != 0 &amp;&amp; info-&gt;numFrames == info-&gt;maxFrames) {</span>
+<span class="lineNum">    1066 </span>            :       // Again, any error code that stops the walk will do.
+<span class="lineNum">    1067 </span><span class="lineNoCov">          0 :       return _URC_FOREIGN_EXCEPTION_CAUGHT;</span>
+<span class="lineNum">    1068 </span>            :     }
+<span class="lineNum">    1069 </span>            :   }
+<span class="lineNum">    1070 </span><span class="lineNoCov">          0 :   return _URC_NO_REASON;</span>
+<span class="lineNum">    1071 </span>            : }
+<a name="1072"><span class="lineNum">    1072 </span>            : </a>
+<span class="lineNum">    1073 </span>            : MFBT_API bool
+<span class="lineNum">    1074 </span><span class="lineNoCov">          0 : MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,</span>
+<span class="lineNum">    1075 </span>            :              uint32_t aMaxFrames, void* aClosure, uintptr_t aThread,
+<span class="lineNum">    1076 </span>            :              void* aPlatformData)
+<span class="lineNum">    1077 </span>            : {
+<span class="lineNum">    1078 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!aThread);</span>
+<span class="lineNum">    1079 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!aPlatformData);</span>
+<span class="lineNum">    1080 </span><span class="lineNoCov">          0 :   StackWalkInitCriticalAddress();</span>
+<span class="lineNum">    1081 </span>            :   unwind_info info;
+<span class="lineNum">    1082 </span><span class="lineNoCov">          0 :   info.callback = aCallback;</span>
+<span class="lineNum">    1083 </span><span class="lineNoCov">          0 :   info.skip = aSkipFrames + 1;</span>
+<span class="lineNum">    1084 </span><span class="lineNoCov">          0 :   info.maxFrames = aMaxFrames;</span>
+<span class="lineNum">    1085 </span><span class="lineNoCov">          0 :   info.numFrames = 0;</span>
+<span class="lineNum">    1086 </span><span class="lineNoCov">          0 :   info.isCriticalAbort = false;</span>
+<span class="lineNum">    1087 </span><span class="lineNoCov">          0 :   info.closure = aClosure;</span>
+<span class="lineNum">    1088 </span>            : 
+<span class="lineNum">    1089 </span><span class="lineNoCov">          0 :   (void)_Unwind_Backtrace(unwind_callback, &amp;info);</span>
+<span class="lineNum">    1090 </span>            : 
+<span class="lineNum">    1091 </span>            :   // We ignore the return value from _Unwind_Backtrace and instead determine
+<span class="lineNum">    1092 </span>            :   // the outcome from |info|.  There are two main reasons for this:
+<span class="lineNum">    1093 </span>            :   // - On ARM/Android bionic's _Unwind_Backtrace usually (always?) returns
+<span class="lineNum">    1094 </span>            :   //   _URC_FAILURE.  See
+<span class="lineNum">    1095 </span>            :   //   https://bugzilla.mozilla.org/show_bug.cgi?id=717853#c110.
+<span class="lineNum">    1096 </span>            :   // - If aMaxFrames != 0, we want to stop early, and the only way to do that
+<span class="lineNum">    1097 </span>            :   //   is to make unwind_callback return something other than _URC_NO_REASON,
+<span class="lineNum">    1098 </span>            :   //   which causes _Unwind_Backtrace to return a non-success code.
+<span class="lineNum">    1099 </span><span class="lineNoCov">          0 :   if (info.isCriticalAbort) {</span>
+<span class="lineNum">    1100 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">    1101 </span>            :   }
+<span class="lineNum">    1102 </span><span class="lineNoCov">          0 :   return info.numFrames != 0;</span>
+<span class="lineNum">    1103 </span>            : }
+<span class="lineNum">    1104 </span>            : 
+<span class="lineNum">    1105 </span>            : #endif
+<a name="1106"><span class="lineNum">    1106 </span>            : </a>
+<span class="lineNum">    1107 </span>            : bool MFBT_API
+<span class="lineNum">    1108 </span><span class="lineNoCov">          0 : MozDescribeCodeAddress(void* aPC, MozCodeAddressDetails* aDetails)</span>
+<span class="lineNum">    1109 </span>            : {
+<span class="lineNum">    1110 </span><span class="lineNoCov">          0 :   aDetails-&gt;library[0] = '\0';</span>
+<span class="lineNum">    1111 </span><span class="lineNoCov">          0 :   aDetails-&gt;loffset = 0;</span>
+<span class="lineNum">    1112 </span><span class="lineNoCov">          0 :   aDetails-&gt;filename[0] = '\0';</span>
+<span class="lineNum">    1113 </span><span class="lineNoCov">          0 :   aDetails-&gt;lineno = 0;</span>
+<span class="lineNum">    1114 </span><span class="lineNoCov">          0 :   aDetails-&gt;function[0] = '\0';</span>
+<span class="lineNum">    1115 </span><span class="lineNoCov">          0 :   aDetails-&gt;foffset = 0;</span>
+<span class="lineNum">    1116 </span>            : 
+<span class="lineNum">    1117 </span>            :   Dl_info info;
+<span class="lineNum">    1118 </span><span class="lineNoCov">          0 :   int ok = dladdr(aPC, &amp;info);</span>
+<span class="lineNum">    1119 </span><span class="lineNoCov">          0 :   if (!ok) {</span>
+<span class="lineNum">    1120 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">    1121 </span>            :   }
+<span class="lineNum">    1122 </span>            : 
+<span class="lineNum">    1123 </span><span class="lineNoCov">          0 :   strncpy(aDetails-&gt;library, info.dli_fname, sizeof(aDetails-&gt;library));</span>
+<span class="lineNum">    1124 </span><span class="lineNoCov">          0 :   aDetails-&gt;library[mozilla::ArrayLength(aDetails-&gt;library) - 1] = '\0';</span>
+<span class="lineNum">    1125 </span><span class="lineNoCov">          0 :   aDetails-&gt;loffset = (char*)aPC - (char*)info.dli_fbase;</span>
+<span class="lineNum">    1126 </span>            : 
+<span class="lineNum">    1127 </span><span class="lineNoCov">          0 :   const char* symbol = info.dli_sname;</span>
+<span class="lineNum">    1128 </span><span class="lineNoCov">          0 :   if (!symbol || symbol[0] == '\0') {</span>
+<span class="lineNum">    1129 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">    1130 </span>            :   }
+<span class="lineNum">    1131 </span>            : 
+<span class="lineNum">    1132 </span><span class="lineNoCov">          0 :   DemangleSymbol(symbol, aDetails-&gt;function, sizeof(aDetails-&gt;function));</span>
+<span class="lineNum">    1133 </span>            : 
+<span class="lineNum">    1134 </span><span class="lineNoCov">          0 :   if (aDetails-&gt;function[0] == '\0') {</span>
+<span class="lineNum">    1135 </span>            :     // Just use the mangled symbol if demangling failed.
+<span class="lineNum">    1136 </span><span class="lineNoCov">          0 :     strncpy(aDetails-&gt;function, symbol, sizeof(aDetails-&gt;function));</span>
+<span class="lineNum">    1137 </span><span class="lineNoCov">          0 :     aDetails-&gt;function[mozilla::ArrayLength(aDetails-&gt;function) - 1] = '\0';</span>
+<span class="lineNum">    1138 </span>            :   }
+<span class="lineNum">    1139 </span>            : 
+<span class="lineNum">    1140 </span><span class="lineNoCov">          0 :   aDetails-&gt;foffset = (char*)aPC - (char*)info.dli_saddr;</span>
+<span class="lineNum">    1141 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">    1142 </span>            : }
+<span class="lineNum">    1143 </span>            : 
+<span class="lineNum">    1144 </span>            : #else // unsupported platform.
+<span class="lineNum">    1145 </span>            : 
+<span class="lineNum">    1146 </span>            : MFBT_API bool
+<span class="lineNum">    1147 </span>            : MozStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
+<span class="lineNum">    1148 </span>            :              uint32_t aMaxFrames, void* aClosure, uintptr_t aThread,
+<span class="lineNum">    1149 </span>            :              void* aPlatformData)
+<span class="lineNum">    1150 </span>            : {
+<span class="lineNum">    1151 </span>            :   MOZ_ASSERT(!aThread);
+<span class="lineNum">    1152 </span>            :   MOZ_ASSERT(!aPlatformData);
+<span class="lineNum">    1153 </span>            :   return false;
+<span class="lineNum">    1154 </span>            : }
+<span class="lineNum">    1155 </span>            : 
+<span class="lineNum">    1156 </span>            : MFBT_API bool
+<span class="lineNum">    1157 </span>            : MozDescribeCodeAddress(void* aPC, MozCodeAddressDetails* aDetails)
+<span class="lineNum">    1158 </span>            : {
+<span class="lineNum">    1159 </span>            :   aDetails-&gt;library[0] = '\0';
+<span class="lineNum">    1160 </span>            :   aDetails-&gt;loffset = 0;
+<span class="lineNum">    1161 </span>            :   aDetails-&gt;filename[0] = '\0';
+<span class="lineNum">    1162 </span>            :   aDetails-&gt;lineno = 0;
+<span class="lineNum">    1163 </span>            :   aDetails-&gt;function[0] = '\0';
+<span class="lineNum">    1164 </span>            :   aDetails-&gt;foffset = 0;
+<span class="lineNum">    1165 </span>            :   return false;
+<span class="lineNum">    1166 </span>            : }
+<span class="lineNum">    1167 </span>            : 
+<span class="lineNum">    1168 </span>            : #endif
+<span class="lineNum">    1169 </span>            : 
+<span class="lineNum">    1170 </span>            : #if defined(XP_WIN) || defined (XP_MACOSX) || defined (XP_LINUX)
+<a name="1171"><span class="lineNum">    1171 </span>            : namespace mozilla {</a>
+<span class="lineNum">    1172 </span>            : bool
+<span class="lineNum">    1173 </span><span class="lineNoCov">          0 : FramePointerStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,</span>
+<span class="lineNum">    1174 </span>            :                       uint32_t aMaxFrames, void* aClosure, void** bp,
+<span class="lineNum">    1175 </span>            :                       void* aStackEnd)
+<span class="lineNum">    1176 </span>            : {
+<span class="lineNum">    1177 </span>            :   // Stack walking code courtesy Kipp's &quot;leaky&quot;.
+<span class="lineNum">    1178 </span>            : 
+<span class="lineNum">    1179 </span><span class="lineNoCov">          0 :   int32_t skip = aSkipFrames;</span>
+<span class="lineNum">    1180 </span><span class="lineNoCov">          0 :   uint32_t numFrames = 0;</span>
+<span class="lineNum">    1181 </span><span class="lineNoCov">          0 :   while (bp) {</span>
+<span class="lineNum">    1182 </span><span class="lineNoCov">          0 :     void** next = (void**)*bp;</span>
+<span class="lineNum">    1183 </span>            :     // bp may not be a frame pointer on i386 if code was compiled with
+<span class="lineNum">    1184 </span>            :     // -fomit-frame-pointer, so do some sanity checks.
+<span class="lineNum">    1185 </span>            :     // (bp should be a frame pointer on ppc(64) but checking anyway may help
+<span class="lineNum">    1186 </span>            :     // a little if the stack has been corrupted.)
+<span class="lineNum">    1187 </span>            :     // We don't need to check against the begining of the stack because
+<span class="lineNum">    1188 </span>            :     // we can assume that bp &gt; sp
+<span class="lineNum">    1189 </span><span class="lineNoCov">          0 :     if (next &lt;= bp ||</span>
+<span class="lineNum">    1190 </span><span class="lineNoCov">          0 :         next &gt; aStackEnd ||</span>
+<span class="lineNum">    1191 </span><span class="lineNoCov">          0 :         (uintptr_t(next) &amp; 3)) {</span>
+<span class="lineNum">    1192 </span>            :       break;
+<span class="lineNum">    1193 </span>            :     }
+<span class="lineNum">    1194 </span>            : #if (defined(__ppc__) &amp;&amp; defined(XP_MACOSX)) || defined(__powerpc64__)
+<span class="lineNum">    1195 </span>            :     // ppc mac or powerpc64 linux
+<span class="lineNum">    1196 </span>            :     void* pc = *(bp + 2);
+<span class="lineNum">    1197 </span>            :     bp += 3;
+<span class="lineNum">    1198 </span>            : #else // i386 or powerpc32 linux
+<span class="lineNum">    1199 </span><span class="lineNoCov">          0 :     void* pc = *(bp + 1);</span>
+<span class="lineNum">    1200 </span><span class="lineNoCov">          0 :     bp += 2;</span>
+<span class="lineNum">    1201 </span>            : #endif
+<span class="lineNum">    1202 </span><span class="lineNoCov">          0 :     if (IsCriticalAddress(pc)) {</span>
+<span class="lineNum">    1203 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">    1204 </span>            :     }
+<span class="lineNum">    1205 </span><span class="lineNoCov">          0 :     if (--skip &lt; 0) {</span>
+<span class="lineNum">    1206 </span>            :       // Assume that the SP points to the BP of the function
+<span class="lineNum">    1207 </span>            :       // it called. We can't know the exact location of the SP
+<span class="lineNum">    1208 </span>            :       // but this should be sufficient for our use the SP
+<span class="lineNum">    1209 </span>            :       // to order elements on the stack.
+<span class="lineNum">    1210 </span><span class="lineNoCov">          0 :       numFrames++;</span>
+<span class="lineNum">    1211 </span><span class="lineNoCov">          0 :       (*aCallback)(numFrames, pc, bp, aClosure);</span>
+<span class="lineNum">    1212 </span><span class="lineNoCov">          0 :       if (aMaxFrames != 0 &amp;&amp; numFrames == aMaxFrames) {</span>
+<span class="lineNum">    1213 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">    1214 </span>            :       }
+<span class="lineNum">    1215 </span>            :     }
+<span class="lineNum">    1216 </span><span class="lineNoCov">          0 :     bp = next;</span>
+<span class="lineNum">    1217 </span>            :   }
+<span class="lineNum">    1218 </span><span class="lineNoCov">          0 :   return numFrames != 0;</span>
+<span class="lineNum">    1219 </span>            : }
+<span class="lineNum">    1220 </span>            : } // namespace mozilla
+<span class="lineNum">    1221 </span>            : 
+<span class="lineNum">    1222 </span>            : #else
+<span class="lineNum">    1223 </span>            : 
+<span class="lineNum">    1224 </span>            : namespace mozilla {
+<span class="lineNum">    1225 </span>            : MFBT_API bool
+<span class="lineNum">    1226 </span>            : FramePointerStackWalk(MozWalkStackCallback aCallback, uint32_t aSkipFrames,
+<span class="lineNum">    1227 </span>            :                       void* aClosure, void** aBp)
+<span class="lineNum">    1228 </span>            : {
+<span class="lineNum">    1229 </span>            :   return false;
+<span class="lineNum">    1230 </span>            : }
+<span class="lineNum">    1231 </span>            : }
+<span class="lineNum">    1232 </span>            : 
+<span class="lineNum">    1233 </span>            : #endif
+<a name="1234"><span class="lineNum">    1234 </span>            : </a>
+<span class="lineNum">    1235 </span>            : MFBT_API void
+<span class="lineNum">    1236 </span><span class="lineNoCov">          0 : MozFormatCodeAddressDetails(char* aBuffer, uint32_t aBufferSize,</span>
+<span class="lineNum">    1237 </span>            :                             uint32_t aFrameNumber, void* aPC,
+<span class="lineNum">    1238 </span>            :                             const MozCodeAddressDetails* aDetails)
+<span class="lineNum">    1239 </span>            : {
+<span class="lineNum">    1240 </span><span class="lineNoCov">          0 :   MozFormatCodeAddress(aBuffer, aBufferSize,</span>
+<span class="lineNum">    1241 </span>            :                        aFrameNumber, aPC, aDetails-&gt;function,
+<span class="lineNum">    1242 </span><span class="lineNoCov">          0 :                        aDetails-&gt;library, aDetails-&gt;loffset,</span>
+<span class="lineNum">    1243 </span><span class="lineNoCov">          0 :                        aDetails-&gt;filename, aDetails-&gt;lineno);</span>
+<span class="lineNum">    1244 </span><span class="lineNoCov">          0 : }</span>
+<a name="1245"><span class="lineNum">    1245 </span>            : </a>
+<span class="lineNum">    1246 </span>            : MFBT_API void
+<span class="lineNum">    1247 </span><span class="lineNoCov">          0 : MozFormatCodeAddress(char* aBuffer, uint32_t aBufferSize, uint32_t aFrameNumber,</span>
+<span class="lineNum">    1248 </span>            :                      const void* aPC, const char* aFunction,
+<span class="lineNum">    1249 </span>            :                      const char* aLibrary, ptrdiff_t aLOffset,
+<span class="lineNum">    1250 </span>            :                      const char* aFileName, uint32_t aLineNo)
+<span class="lineNum">    1251 </span>            : {
+<span class="lineNum">    1252 </span><span class="lineNoCov">          0 :   const char* function = aFunction &amp;&amp; aFunction[0] ? aFunction : &quot;???&quot;;</span>
+<span class="lineNum">    1253 </span><span class="lineNoCov">          0 :   if (aFileName &amp;&amp; aFileName[0]) {</span>
+<span class="lineNum">    1254 </span>            :     // We have a filename and (presumably) a line number. Use them.
+<span class="lineNum">    1255 </span><span class="lineNoCov">          0 :     snprintf(aBuffer, aBufferSize,</span>
+<span class="lineNum">    1256 </span>            :              &quot;#%02u: %s (%s:%u)&quot;,
+<span class="lineNum">    1257 </span><span class="lineNoCov">          0 :              aFrameNumber, function, aFileName, aLineNo);</span>
+<span class="lineNum">    1258 </span><span class="lineNoCov">          0 :   } else if (aLibrary &amp;&amp; aLibrary[0]) {</span>
+<span class="lineNum">    1259 </span>            :     // We have no filename, but we do have a library name. Use it and the
+<span class="lineNum">    1260 </span>            :     // library offset, and print them in a way that scripts like
+<span class="lineNum">    1261 </span>            :     // fix_{linux,macosx}_stacks.py can easily post-process.
+<span class="lineNum">    1262 </span><span class="lineNoCov">          0 :     snprintf(aBuffer, aBufferSize,</span>
+<span class="lineNum">    1263 </span>            :              &quot;#%02u: %s[%s +0x%&quot; PRIxPTR &quot;]&quot;,
+<span class="lineNum">    1264 </span><span class="lineNoCov">          0 :              aFrameNumber, function, aLibrary, static_cast&lt;uintptr_t&gt;(aLOffset));</span>
+<span class="lineNum">    1265 </span>            :   } else {
+<span class="lineNum">    1266 </span>            :     // We have nothing useful to go on. (The format string is split because
+<span class="lineNum">    1267 </span>            :     // '??)' is a trigraph and causes a warning, sigh.)
+<span class="lineNum">    1268 </span><span class="lineNoCov">          0 :     snprintf(aBuffer, aBufferSize,</span>
+<span class="lineNum">    1269 </span>            :              &quot;#%02u: ??? (???:???&quot; &quot;)&quot;,
+<span class="lineNum">    1270 </span><span class="lineNoCov">          0 :              aFrameNumber);</span>
+<span class="lineNum">    1271 </span>            :   }
+<span class="lineNum">    1272 </span><span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

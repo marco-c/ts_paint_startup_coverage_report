@@ -1,0 +1,638 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - nsprpub/pr/src/io/prlog.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">nsprpub/pr/src/io</a> - prlog.c<span style="font-size: 80%;"> (source / <a href="prlog.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">18</td>
+            <td class="headerCovTableEntry">159</td>
+            <td class="headerCovTableEntryLo">11.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">2</td>
+            <td class="headerCovTableEntry">3</td>
+            <td class="headerCovTableEntryLo">66.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : 
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;primpl.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;prenv.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;prprf.h&quot;
+<span class="lineNum">      10 </span>            : #include &lt;string.h&gt;
+<span class="lineNum">      11 </span>            : #ifdef ANDROID
+<span class="lineNum">      12 </span>            : #include &lt;android/log.h&gt;
+<span class="lineNum">      13 </span>            : #endif
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : /*
+<span class="lineNum">      16 </span>            :  * Lock used to lock the log.
+<span class="lineNum">      17 </span>            :  *
+<span class="lineNum">      18 </span>            :  * We can't define _PR_LOCK_LOG simply as PR_Lock because PR_Lock may
+<span class="lineNum">      19 </span>            :  * contain assertions.  We have to avoid assertions in _PR_LOCK_LOG
+<span class="lineNum">      20 </span>            :  * because PR_ASSERT calls PR_LogPrint, which in turn calls _PR_LOCK_LOG.
+<span class="lineNum">      21 </span>            :  * This can lead to infinite recursion.
+<span class="lineNum">      22 </span>            :  */
+<span class="lineNum">      23 </span>            : static PRLock *_pr_logLock;
+<span class="lineNum">      24 </span>            : #if defined(_PR_PTHREADS) || defined(_PR_BTHREADS)
+<span class="lineNum">      25 </span>            : #define _PR_LOCK_LOG() PR_Lock(_pr_logLock);
+<span class="lineNum">      26 </span>            : #define _PR_UNLOCK_LOG() PR_Unlock(_pr_logLock);
+<span class="lineNum">      27 </span>            : #elif defined(_PR_GLOBAL_THREADS_ONLY)
+<span class="lineNum">      28 </span>            : #define _PR_LOCK_LOG() { _PR_LOCK_LOCK(_pr_logLock)
+<span class="lineNum">      29 </span>            : #define _PR_UNLOCK_LOG() _PR_LOCK_UNLOCK(_pr_logLock); }
+<span class="lineNum">      30 </span>            : #else
+<span class="lineNum">      31 </span>            : 
+<span class="lineNum">      32 </span>            : #define _PR_LOCK_LOG() \
+<span class="lineNum">      33 </span>            : { \
+<span class="lineNum">      34 </span>            :     PRIntn _is; \
+<span class="lineNum">      35 </span>            :     PRThread *_me = _PR_MD_CURRENT_THREAD(); \
+<span class="lineNum">      36 </span>            :     if (!_PR_IS_NATIVE_THREAD(_me)) \
+<span class="lineNum">      37 </span>            :         _PR_INTSOFF(_is); \
+<span class="lineNum">      38 </span>            :     _PR_LOCK_LOCK(_pr_logLock)
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span>            : #define _PR_UNLOCK_LOG() \
+<span class="lineNum">      41 </span>            :     _PR_LOCK_UNLOCK(_pr_logLock); \
+<span class="lineNum">      42 </span>            :     PR_ASSERT(_me == _PR_MD_CURRENT_THREAD()); \
+<span class="lineNum">      43 </span>            :     if (!_PR_IS_NATIVE_THREAD(_me)) \
+<span class="lineNum">      44 </span>            :         _PR_INTSON(_is); \
+<span class="lineNum">      45 </span>            : }
+<span class="lineNum">      46 </span>            : 
+<span class="lineNum">      47 </span>            : #endif
+<span class="lineNum">      48 </span>            : 
+<span class="lineNum">      49 </span>            : #if defined(XP_PC)
+<span class="lineNum">      50 </span>            : #define strcasecmp stricmp
+<span class="lineNum">      51 </span>            : #endif
+<span class="lineNum">      52 </span>            : 
+<span class="lineNum">      53 </span>            : /*
+<span class="lineNum">      54 </span>            :  * On NT, we can't define _PUT_LOG as PR_Write or _PR_MD_WRITE,
+<span class="lineNum">      55 </span>            :  * because every asynchronous file io operation leads to a fiber context
+<span class="lineNum">      56 </span>            :  * switch.  So we define _PUT_LOG as fputs (from stdio.h).  A side
+<span class="lineNum">      57 </span>            :  * benefit is that fputs handles the LF-&gt;CRLF translation.  This
+<span class="lineNum">      58 </span>            :  * code can also be used on other platforms with file stream io.
+<span class="lineNum">      59 </span>            :  */
+<span class="lineNum">      60 </span>            : #if defined(WIN32) || defined(XP_OS2)
+<span class="lineNum">      61 </span>            : #define _PR_USE_STDIO_FOR_LOGGING
+<span class="lineNum">      62 </span>            : #endif
+<span class="lineNum">      63 </span>            : 
+<span class="lineNum">      64 </span>            : /*
+<span class="lineNum">      65 </span>            : ** Coerce Win32 log output to use OutputDebugString() when
+<span class="lineNum">      66 </span>            : ** NSPR_LOG_FILE is set to &quot;WinDebug&quot;.
+<span class="lineNum">      67 </span>            : */
+<span class="lineNum">      68 </span>            : #if defined(XP_PC)
+<span class="lineNum">      69 </span>            : #define WIN32_DEBUG_FILE (FILE*)-2
+<span class="lineNum">      70 </span>            : #endif
+<span class="lineNum">      71 </span>            : 
+<span class="lineNum">      72 </span>            : #ifdef WINCE
+<span class="lineNum">      73 </span>            : static void OutputDebugStringA(const char* msg) {
+<span class="lineNum">      74 </span>            :     int len = MultiByteToWideChar(CP_ACP, 0, msg, -1, 0, 0);
+<span class="lineNum">      75 </span>            :     WCHAR *wMsg = (WCHAR *)PR_Malloc(len * sizeof(WCHAR));
+<span class="lineNum">      76 </span>            :     MultiByteToWideChar(CP_ACP, 0, msg, -1, wMsg, len);
+<span class="lineNum">      77 </span>            :     OutputDebugStringW(wMsg);
+<span class="lineNum">      78 </span>            :     PR_Free(wMsg);
+<span class="lineNum">      79 </span>            : }
+<span class="lineNum">      80 </span>            : #endif
+<span class="lineNum">      81 </span>            : 
+<span class="lineNum">      82 </span>            : /* Macros used to reduce #ifdef pollution */
+<span class="lineNum">      83 </span>            : 
+<span class="lineNum">      84 </span>            : #if defined(_PR_USE_STDIO_FOR_LOGGING) &amp;&amp; defined(XP_PC)
+<span class="lineNum">      85 </span>            : #define _PUT_LOG(fd, buf, nb) \
+<span class="lineNum">      86 </span>            :     PR_BEGIN_MACRO \
+<span class="lineNum">      87 </span>            :     if (logFile == WIN32_DEBUG_FILE) { \
+<span class="lineNum">      88 </span>            :         char savebyte = buf[nb]; \
+<span class="lineNum">      89 </span>            :         buf[nb] = '\0'; \
+<span class="lineNum">      90 </span>            :         OutputDebugStringA(buf); \
+<span class="lineNum">      91 </span>            :         buf[nb] = savebyte; \
+<span class="lineNum">      92 </span>            :     } else { \
+<span class="lineNum">      93 </span>            :         fwrite(buf, 1, nb, fd); \
+<span class="lineNum">      94 </span>            :         fflush(fd); \
+<span class="lineNum">      95 </span>            :     } \
+<span class="lineNum">      96 </span>            :     PR_END_MACRO
+<span class="lineNum">      97 </span>            : #elif defined(_PR_USE_STDIO_FOR_LOGGING)
+<span class="lineNum">      98 </span>            : #define _PUT_LOG(fd, buf, nb) {fwrite(buf, 1, nb, fd); fflush(fd);}
+<span class="lineNum">      99 </span>            : #elif defined(ANDROID)
+<span class="lineNum">     100 </span>            : #define _PUT_LOG(fd, buf, nb)                                \
+<span class="lineNum">     101 </span>            :     PR_BEGIN_MACRO                                           \
+<span class="lineNum">     102 </span>            :     if (fd == _pr_stderr) {                                  \
+<span class="lineNum">     103 </span>            :         char savebyte = buf[nb];                             \
+<span class="lineNum">     104 </span>            :         buf[nb] = '\0';                                      \
+<span class="lineNum">     105 </span>            :         __android_log_write(ANDROID_LOG_INFO, &quot;PRLog&quot;, buf); \
+<span class="lineNum">     106 </span>            :         buf[nb] = savebyte;                                  \
+<span class="lineNum">     107 </span>            :     } else {                                                 \
+<span class="lineNum">     108 </span>            :         PR_Write(fd, buf, nb);                               \
+<span class="lineNum">     109 </span>            :     }                                                        \
+<span class="lineNum">     110 </span>            :     PR_END_MACRO
+<span class="lineNum">     111 </span>            : #elif defined(_PR_PTHREADS)
+<span class="lineNum">     112 </span>            : #define _PUT_LOG(fd, buf, nb) PR_Write(fd, buf, nb)
+<span class="lineNum">     113 </span>            : #else
+<span class="lineNum">     114 </span>            : #define _PUT_LOG(fd, buf, nb) _PR_MD_WRITE(fd, buf, nb)
+<span class="lineNum">     115 </span>            : #endif
+<span class="lineNum">     116 </span>            : 
+<span class="lineNum">     117 </span>            : /************************************************************************/
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span>            : static PRLogModuleInfo *logModules;
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span>            : static char *logBuf = NULL;
+<span class="lineNum">     122 </span>            : static char *logp;
+<span class="lineNum">     123 </span>            : static char *logEndp;
+<span class="lineNum">     124 </span>            : #ifdef _PR_USE_STDIO_FOR_LOGGING
+<span class="lineNum">     125 </span>            : static FILE *logFile = NULL;
+<span class="lineNum">     126 </span>            : #else
+<span class="lineNum">     127 </span>            : static PRFileDesc *logFile = 0;
+<span class="lineNum">     128 </span>            : #endif
+<span class="lineNum">     129 </span>            : static PRBool outputTimeStamp = PR_FALSE;
+<span class="lineNum">     130 </span>            : static PRBool appendToLog = PR_FALSE;
+<span class="lineNum">     131 </span>            : 
+<span class="lineNum">     132 </span>            : #define LINE_BUF_SIZE           512
+<span class="lineNum">     133 </span>            : #define DEFAULT_BUF_SIZE        16384
+<span class="lineNum">     134 </span>            : 
+<span class="lineNum">     135 </span>            : #ifdef _PR_NEED_STRCASECMP
+<span class="lineNum">     136 </span>            : 
+<span class="lineNum">     137 </span>            : /*
+<span class="lineNum">     138 </span>            :  * strcasecmp is defined in /usr/ucblib/libucb.a on some platforms
+<span class="lineNum">     139 </span>            :  * such as NCR and Unixware.  Linking with both libc and libucb
+<span class="lineNum">     140 </span>            :  * may cause some problem, so I just provide our own implementation
+<span class="lineNum">     141 </span>            :  * of strcasecmp here.
+<span class="lineNum">     142 </span>            :  */
+<span class="lineNum">     143 </span>            : 
+<span class="lineNum">     144 </span>            : static const unsigned char uc[] =
+<span class="lineNum">     145 </span>            : {
+<span class="lineNum">     146 </span>            :     '\000', '\001', '\002', '\003', '\004', '\005', '\006', '\007',
+<span class="lineNum">     147 </span>            :     '\010', '\011', '\012', '\013', '\014', '\015', '\016', '\017',
+<span class="lineNum">     148 </span>            :     '\020', '\021', '\022', '\023', '\024', '\025', '\026', '\027',
+<span class="lineNum">     149 </span>            :     '\030', '\031', '\032', '\033', '\034', '\035', '\036', '\037',
+<span class="lineNum">     150 </span>            :     ' ',    '!',    '&quot;',    '#',    '$',    '%',    '&amp;',    '\'',
+<span class="lineNum">     151 </span>            :     '(',    ')',    '*',    '+',    ',',    '-',    '.',    '/',
+<span class="lineNum">     152 </span>            :     '0',    '1',    '2',    '3',    '4',    '5',    '6',    '7',
+<span class="lineNum">     153 </span>            :     '8',    '9',    ':',    ';',    '&lt;',    '=',    '&gt;',    '?',
+<span class="lineNum">     154 </span>            :     '@',    'A',    'B',    'C',    'D',    'E',    'F',    'G',
+<span class="lineNum">     155 </span>            :     'H',    'I',    'J',    'K',    'L',    'M',    'N',    'O',
+<span class="lineNum">     156 </span>            :     'P',    'Q',    'R',    'S',    'T',    'U',    'V',    'W',
+<span class="lineNum">     157 </span>            :     'X',    'Y',    'Z',    '[',    '\\',   ']',    '^',    '_',
+<span class="lineNum">     158 </span>            :     '`',    'A',    'B',    'C',    'D',    'E',    'F',    'G',
+<span class="lineNum">     159 </span>            :     'H',    'I',    'J',    'K',    'L',    'M',    'N',    'O',
+<span class="lineNum">     160 </span>            :     'P',    'Q',    'R',    'S',    'T',    'U',    'V',    'W',
+<span class="lineNum">     161 </span>            :     'X',    'Y',    'Z',    '{',    '|',    '}',    '~',    '\177'
+<span class="lineNum">     162 </span>            : };
+<span class="lineNum">     163 </span>            : 
+<span class="lineNum">     164 </span>            : PRIntn strcasecmp(const char *a, const char *b)
+<span class="lineNum">     165 </span>            : {
+<span class="lineNum">     166 </span>            :     const unsigned char *ua = (const unsigned char *)a;
+<span class="lineNum">     167 </span>            :     const unsigned char *ub = (const unsigned char *)b;
+<span class="lineNum">     168 </span>            : 
+<span class="lineNum">     169 </span>            :     if( ((const char *)0 == a) || (const char *)0 == b ) 
+<span class="lineNum">     170 </span>            :         return (PRIntn)(a-b);
+<span class="lineNum">     171 </span>            : 
+<span class="lineNum">     172 </span>            :     while( (uc[*ua] == uc[*ub]) &amp;&amp; ('\0' != *a) )
+<span class="lineNum">     173 </span>            :     {
+<span class="lineNum">     174 </span>            :         a++;
+<span class="lineNum">     175 </span>            :         ua++;
+<span class="lineNum">     176 </span>            :         ub++;
+<span class="lineNum">     177 </span>            :     }
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span>            :     return (PRIntn)(uc[*ua] - uc[*ub]);
+<span class="lineNum">     180 </span>            : }
+<span class="lineNum">     181 </span>            : 
+<a name="182"><span class="lineNum">     182 </span>            : #endif /* _PR_NEED_STRCASECMP */</a>
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span><span class="lineCov">          3 : void _PR_InitLog(void)</span>
+<span class="lineNum">     185 </span>            : {
+<span class="lineNum">     186 </span>            :     char *ev;
+<span class="lineNum">     187 </span>            : 
+<span class="lineNum">     188 </span><span class="lineCov">          3 :     _pr_logLock = PR_NewLock();</span>
+<span class="lineNum">     189 </span>            : 
+<span class="lineNum">     190 </span><span class="lineCov">          3 :     ev = PR_GetEnv(&quot;NSPR_LOG_MODULES&quot;);</span>
+<span class="lineNum">     191 </span><span class="lineCov">          3 :     if (ev &amp;&amp; ev[0]) {</span>
+<span class="lineNum">     192 </span>            :         char module[64];  /* Security-Critical: If you change this
+<span class="lineNum">     193 </span>            :                            * size, you must also change the sscanf
+<span class="lineNum">     194 </span>            :                            * format string to be size-1.
+<span class="lineNum">     195 </span>            :                            */
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :         PRBool isSync = PR_FALSE;</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :         PRIntn evlen = strlen(ev), pos = 0;</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :         PRInt32 bufSize = DEFAULT_BUF_SIZE;</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :         while (pos &lt; evlen) {</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :             PRIntn level = 1, count = 0, delta = 0;</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :             count = sscanf(&amp;ev[pos], &quot;%63[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]%n:%d%n&quot;,</span>
+<span class="lineNum">     202 </span>            :                            module, &amp;delta, &amp;level, &amp;delta);
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :             pos += delta;</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :             if (count == 0) break;</span>
+<span class="lineNum">     205 </span>            : 
+<span class="lineNum">     206 </span>            :             /*
+<span class="lineNum">     207 </span>            :             ** If count == 2, then we got module and level. If count
+<span class="lineNum">     208 </span>            :             ** == 1, then level defaults to 1 (module enabled).
+<span class="lineNum">     209 </span>            :             */
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :             if (strcasecmp(module, &quot;sync&quot;) == 0) {</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :                 isSync = PR_TRUE;</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :             } else if (strcasecmp(module, &quot;bufsize&quot;) == 0) {</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :                 if (level &gt;= LINE_BUF_SIZE) {</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :                     bufSize = level;</span>
+<span class="lineNum">     215 </span>            :                 }
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :             } else if (strcasecmp(module, &quot;timestamp&quot;) == 0) {</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :                 outputTimeStamp = PR_TRUE;</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :             } else if (strcasecmp(module, &quot;append&quot;) == 0) {</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :                 appendToLog = PR_TRUE;</span>
+<span class="lineNum">     220 </span>            :             } else {
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :                 PRLogModuleInfo *lm = logModules;</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :                 PRBool skip_modcheck =</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :                     (0 == strcasecmp (module, &quot;all&quot;)) ? PR_TRUE : PR_FALSE;</span>
+<span class="lineNum">     224 </span>            : 
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :                 while (lm != NULL) {</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :                     if (skip_modcheck) lm -&gt; level = (PRLogModuleLevel)level;</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :                     else if (strcasecmp(module, lm-&gt;name) == 0) {</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :                         lm-&gt;level = (PRLogModuleLevel)level;</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :                         break;</span>
+<span class="lineNum">     230 </span>            :                     }
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :                     lm = lm-&gt;next;</span>
+<span class="lineNum">     232 </span>            :                 }
+<span class="lineNum">     233 </span>            :             }
+<span class="lineNum">     234 </span>            :             /*found:*/
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :             count = sscanf(&amp;ev[pos], &quot; , %n&quot;, &amp;delta);</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :             pos += delta;</span>
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :             if (count == EOF) break;</span>
+<span class="lineNum">     238 </span>            :         }
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :         PR_SetLogBuffering(isSync ? 0 : bufSize);</span>
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :         ev = PR_GetEnvSecure(&quot;NSPR_LOG_FILE&quot;);</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :         if (ev &amp;&amp; ev[0]) {</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :             if (!PR_SetLogFile(ev)) {</span>
+<span class="lineNum">     244 </span>            : #ifdef XP_PC
+<span class="lineNum">     245 </span>            :                 char* str = PR_smprintf(&quot;Unable to create nspr log file '%s'\n&quot;, ev);
+<span class="lineNum">     246 </span>            :                 if (str) {
+<span class="lineNum">     247 </span>            :                     OutputDebugStringA(str);
+<span class="lineNum">     248 </span>            :                     PR_smprintf_free(str);
+<span class="lineNum">     249 </span>            :                 }
+<span class="lineNum">     250 </span>            : #else
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :                 fprintf(stderr, &quot;Unable to create nspr log file '%s'\n&quot;, ev);</span>
+<span class="lineNum">     252 </span>            : #endif
+<span class="lineNum">     253 </span>            :             }
+<span class="lineNum">     254 </span>            :         } else {
+<span class="lineNum">     255 </span>            : #ifdef _PR_USE_STDIO_FOR_LOGGING
+<span class="lineNum">     256 </span>            :             logFile = stderr;
+<span class="lineNum">     257 </span>            : #else
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :             logFile = _pr_stderr;</span>
+<span class="lineNum">     259 </span>            : #endif
+<span class="lineNum">     260 </span>            :         }
+<span class="lineNum">     261 </span>            :     }
+<a name="262"><span class="lineNum">     262 </span><span class="lineCov">          3 : }</span></a>
+<span class="lineNum">     263 </span>            : 
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 : void _PR_LogCleanup(void)</span>
+<span class="lineNum">     265 </span>            : {
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :     PRLogModuleInfo *lm = logModules;</span>
+<span class="lineNum">     267 </span>            : 
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :     PR_LogFlush();</span>
+<span class="lineNum">     269 </span>            : 
+<span class="lineNum">     270 </span>            : #ifdef _PR_USE_STDIO_FOR_LOGGING
+<span class="lineNum">     271 </span>            :     if (logFile
+<span class="lineNum">     272 </span>            :         &amp;&amp; logFile != stdout
+<span class="lineNum">     273 </span>            :         &amp;&amp; logFile != stderr
+<span class="lineNum">     274 </span>            : #ifdef XP_PC
+<span class="lineNum">     275 </span>            :         &amp;&amp; logFile != WIN32_DEBUG_FILE
+<span class="lineNum">     276 </span>            : #endif
+<span class="lineNum">     277 </span>            :         ) {
+<span class="lineNum">     278 </span>            :         fclose(logFile);
+<span class="lineNum">     279 </span>            :     }
+<span class="lineNum">     280 </span>            : #else
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     if (logFile &amp;&amp; logFile != _pr_stdout &amp;&amp; logFile != _pr_stderr) {</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :         PR_Close(logFile);</span>
+<span class="lineNum">     283 </span>            :     }
+<span class="lineNum">     284 </span>            : #endif
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :     logFile = NULL;</span>
+<span class="lineNum">     286 </span>            : 
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :     if (logBuf)</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :         PR_DELETE(logBuf);</span>
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :     while (lm != NULL) {</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :         PRLogModuleInfo *next = lm-&gt;next;</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :         free((/*const*/ char *)lm-&gt;name);</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :         PR_Free(lm);</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :         lm = next;</span>
+<span class="lineNum">     295 </span>            :     }
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :     logModules = NULL;</span>
+<span class="lineNum">     297 </span>            : 
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :     if (_pr_logLock) {</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :         PR_DestroyLock(_pr_logLock);</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :         _pr_logLock = NULL;</span>
+<span class="lineNum">     301 </span>            :     }
+<a name="302"><span class="lineNum">     302 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span><span class="lineCov">         33 : static void _PR_SetLogModuleLevel( PRLogModuleInfo *lm )</span>
+<span class="lineNum">     305 </span>            : {
+<span class="lineNum">     306 </span>            :     char *ev;
+<span class="lineNum">     307 </span>            : 
+<span class="lineNum">     308 </span><span class="lineCov">         33 :     ev = PR_GetEnv(&quot;NSPR_LOG_MODULES&quot;);</span>
+<span class="lineNum">     309 </span><span class="lineCov">         33 :     if (ev &amp;&amp; ev[0]) {</span>
+<span class="lineNum">     310 </span>            :         char module[64];  /* Security-Critical: If you change this
+<span class="lineNum">     311 </span>            :                            * size, you must also change the sscanf
+<span class="lineNum">     312 </span>            :                            * format string to be size-1.
+<span class="lineNum">     313 </span>            :                            */
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :         PRIntn evlen = strlen(ev), pos = 0;</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :         while (pos &lt; evlen) {</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :             PRIntn level = 1, count = 0, delta = 0;</span>
+<span class="lineNum">     317 </span>            : 
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :             count = sscanf(&amp;ev[pos], &quot;%63[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]%n:%d%n&quot;,</span>
+<span class="lineNum">     319 </span>            :                            module, &amp;delta, &amp;level, &amp;delta);
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :             pos += delta;</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :             if (count == 0) break;</span>
+<span class="lineNum">     322 </span>            : 
+<span class="lineNum">     323 </span>            :             /*
+<span class="lineNum">     324 </span>            :             ** If count == 2, then we got module and level. If count
+<span class="lineNum">     325 </span>            :             ** == 1, then level defaults to 1 (module enabled).
+<span class="lineNum">     326 </span>            :             */
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :             if (lm != NULL)</span>
+<span class="lineNum">     328 </span>            :             {
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :                 if ((strcasecmp(module, &quot;all&quot;) == 0)</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :                     || (strcasecmp(module, lm-&gt;name) == 0))</span>
+<span class="lineNum">     331 </span>            :                 {
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :                     lm-&gt;level = (PRLogModuleLevel)level;</span>
+<span class="lineNum">     333 </span>            :                 }
+<span class="lineNum">     334 </span>            :             }
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :             count = sscanf(&amp;ev[pos], &quot; , %n&quot;, &amp;delta);</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :             pos += delta;</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :             if (count == EOF) break;</span>
+<span class="lineNum">     338 </span>            :         }
+<span class="lineNum">     339 </span>            :     }
+<span class="lineNum">     340 </span><span class="lineCov">         33 : } /* end _PR_SetLogModuleLevel() */</span>
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span>            : PR_IMPLEMENT(PRLogModuleInfo*) PR_NewLogModule(const char *name)
+<span class="lineNum">     343 </span>            : {
+<span class="lineNum">     344 </span>            :     PRLogModuleInfo *lm;
+<span class="lineNum">     345 </span>            : 
+<span class="lineNum">     346 </span><span class="lineCov">         33 :         if (!_pr_initialized) _PR_ImplicitInitialization();</span>
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span><span class="lineCov">         33 :     lm = PR_NEWZAP(PRLogModuleInfo);</span>
+<span class="lineNum">     349 </span><span class="lineCov">         33 :     if (lm) {</span>
+<span class="lineNum">     350 </span><span class="lineCov">         33 :         lm-&gt;name = strdup(name);</span>
+<span class="lineNum">     351 </span><span class="lineCov">         33 :         lm-&gt;level = PR_LOG_NONE;</span>
+<span class="lineNum">     352 </span><span class="lineCov">         33 :         lm-&gt;next = logModules;</span>
+<span class="lineNum">     353 </span><span class="lineCov">         33 :         logModules = lm;</span>
+<span class="lineNum">     354 </span><span class="lineCov">         33 :         _PR_SetLogModuleLevel(lm);</span>
+<span class="lineNum">     355 </span>            :     }
+<span class="lineNum">     356 </span><span class="lineCov">         33 :     return lm;</span>
+<span class="lineNum">     357 </span>            : }
+<span class="lineNum">     358 </span>            : 
+<span class="lineNum">     359 </span>            : PR_IMPLEMENT(PRBool) PR_SetLogFile(const char *file)
+<span class="lineNum">     360 </span>            : {
+<span class="lineNum">     361 </span>            : #ifdef _PR_USE_STDIO_FOR_LOGGING
+<span class="lineNum">     362 </span>            :     FILE *newLogFile;
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span>            : #ifdef XP_PC
+<span class="lineNum">     365 </span>            :     if ( strcmp( file, &quot;WinDebug&quot;) == 0)
+<span class="lineNum">     366 </span>            :     {
+<span class="lineNum">     367 </span>            :         newLogFile = WIN32_DEBUG_FILE;
+<span class="lineNum">     368 </span>            :     }
+<span class="lineNum">     369 </span>            :     else
+<span class="lineNum">     370 </span>            : #endif
+<span class="lineNum">     371 </span>            :     {
+<span class="lineNum">     372 </span>            :         const char *mode = appendToLog ? &quot;a&quot; : &quot;w&quot;;
+<span class="lineNum">     373 </span>            :         newLogFile = fopen(file, mode);
+<span class="lineNum">     374 </span>            :         if (!newLogFile)
+<span class="lineNum">     375 </span>            :             return PR_FALSE;
+<span class="lineNum">     376 </span>            : 
+<span class="lineNum">     377 </span>            : #ifndef WINCE  /* _IONBF does not exist in the Windows Mobile 6 SDK. */
+<span class="lineNum">     378 </span>            :         /* We do buffering ourselves. */
+<span class="lineNum">     379 </span>            :         setvbuf(newLogFile, NULL, _IONBF, 0);
+<span class="lineNum">     380 </span>            : #endif
+<span class="lineNum">     381 </span>            :     }
+<span class="lineNum">     382 </span>            :     if (logFile
+<span class="lineNum">     383 </span>            :         &amp;&amp; logFile != stdout
+<span class="lineNum">     384 </span>            :         &amp;&amp; logFile != stderr
+<span class="lineNum">     385 </span>            : #ifdef XP_PC
+<span class="lineNum">     386 </span>            :         &amp;&amp; logFile != WIN32_DEBUG_FILE
+<span class="lineNum">     387 </span>            : #endif
+<span class="lineNum">     388 </span>            :         ) {
+<span class="lineNum">     389 </span>            :         fclose(logFile);
+<span class="lineNum">     390 </span>            :     }
+<span class="lineNum">     391 </span>            :     logFile = newLogFile;
+<span class="lineNum">     392 </span>            :     return PR_TRUE;
+<span class="lineNum">     393 </span>            : #else
+<span class="lineNum">     394 </span>            :     PRFileDesc *newLogFile;
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :     PRIntn flags = PR_WRONLY|PR_CREATE_FILE;</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :     if (appendToLog) {</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :         flags |= PR_APPEND;</span>
+<span class="lineNum">     398 </span>            :     } else {
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :         flags |= PR_TRUNCATE;</span>
+<span class="lineNum">     400 </span>            :     }
+<span class="lineNum">     401 </span>            : 
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :     newLogFile = PR_Open(file, flags, 0666);</span>
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :     if (newLogFile) {</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :         if (logFile &amp;&amp; logFile != _pr_stdout &amp;&amp; logFile != _pr_stderr) {</span>
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :             PR_Close(logFile);</span>
+<span class="lineNum">     406 </span>            :         }
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :         logFile = newLogFile;</span>
+<span class="lineNum">     408 </span>            :     }
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :     return (PRBool) (newLogFile != 0);</span>
+<span class="lineNum">     410 </span>            : #endif /* _PR_USE_STDIO_FOR_LOGGING */
+<span class="lineNum">     411 </span>            : }
+<span class="lineNum">     412 </span>            : 
+<span class="lineNum">     413 </span>            : PR_IMPLEMENT(void) PR_SetLogBuffering(PRIntn buffer_size)
+<span class="lineNum">     414 </span>            : {
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :     PR_LogFlush();</span>
+<span class="lineNum">     416 </span>            : 
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :     if (logBuf)</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :         PR_DELETE(logBuf);</span>
+<span class="lineNum">     419 </span>            : 
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :     if (buffer_size &gt;= LINE_BUF_SIZE) {</span>
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :         logp = logBuf = (char*) PR_MALLOC(buffer_size);</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :         logEndp = logp + buffer_size;</span>
+<span class="lineNum">     423 </span>            :     }
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     425 </span>            : 
+<span class="lineNum">     426 </span>            : PR_IMPLEMENT(void) PR_LogPrint(const char *fmt, ...)
+<span class="lineNum">     427 </span>            : {
+<span class="lineNum">     428 </span>            :     va_list ap;
+<span class="lineNum">     429 </span>            :     char line[LINE_BUF_SIZE];
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :     char *line_long = NULL;</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :     PRUint32 nb_tid = 0, nb;</span>
+<span class="lineNum">     432 </span>            :     PRThread *me;
+<span class="lineNum">     433 </span>            :     PRExplodedTime now;
+<span class="lineNum">     434 </span>            : 
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :     if (!_pr_initialized) _PR_ImplicitInitialization();</span>
+<span class="lineNum">     436 </span>            : 
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :     if (!logFile) {</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     439 </span>            :     }
+<span class="lineNum">     440 </span>            : 
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :     if (outputTimeStamp) {</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :         PR_ExplodeTime(PR_Now(), PR_GMTParameters, &amp;now);</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :         nb_tid = PR_snprintf(line, sizeof(line)-1,</span>
+<span class="lineNum">     444 </span>            :                              &quot;%04d-%02d-%02d %02d:%02d:%02d.%06d UTC - &quot;,
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :                              now.tm_year, now.tm_month + 1, now.tm_mday,</span>
+<span class="lineNum">     446 </span>            :                              now.tm_hour, now.tm_min, now.tm_sec,
+<span class="lineNum">     447 </span>            :                              now.tm_usec);
+<span class="lineNum">     448 </span>            :     }
+<span class="lineNum">     449 </span>            : 
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :     me = PR_GetCurrentThread();</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :     nb_tid += PR_snprintf(line+nb_tid, sizeof(line)-nb_tid-1, &quot;%ld[%p]: &quot;,</span>
+<span class="lineNum">     452 </span>            : #if defined(_PR_BTHREADS)
+<span class="lineNum">     453 </span>            :                           me, me);
+<span class="lineNum">     454 </span>            : #else
+<span class="lineNum">     455 </span>            :                           me ? me-&gt;id : 0L, me);
+<span class="lineNum">     456 </span>            : #endif
+<span class="lineNum">     457 </span>            : 
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :     va_start(ap, fmt);</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :     nb = nb_tid + PR_vsnprintf(line+nb_tid, sizeof(line)-nb_tid-1, fmt, ap);</span>
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :     va_end(ap);</span>
+<span class="lineNum">     461 </span>            : 
+<span class="lineNum">     462 </span>            :     /*
+<span class="lineNum">     463 </span>            :      * Check if we might have run out of buffer space (in case we have a
+<span class="lineNum">     464 </span>            :      * long line), and malloc a buffer just this once.
+<span class="lineNum">     465 </span>            :      */
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :     if (nb == sizeof(line)-2) {</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :         va_start(ap, fmt);</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :         line_long = PR_vsmprintf(fmt, ap);</span>
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :         va_end(ap);</span>
+<span class="lineNum">     470 </span>            :         /* If this failed, we'll fall back to writing the truncated line. */
+<span class="lineNum">     471 </span>            :     }
+<span class="lineNum">     472 </span>            : 
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :     if (line_long) {</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :         nb = strlen(line_long);</span>
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :         _PR_LOCK_LOG();</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :         if (logBuf != 0) {</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :             _PUT_LOG(logFile, logBuf, logp - logBuf);</span>
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :             logp = logBuf;</span>
+<span class="lineNum">     479 </span>            :         }
+<span class="lineNum">     480 </span>            :         /*
+<span class="lineNum">     481 </span>            :          * Write out the thread id (with an optional timestamp) and the
+<span class="lineNum">     482 </span>            :          * malloc'ed buffer.
+<span class="lineNum">     483 </span>            :          */
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :         _PUT_LOG(logFile, line, nb_tid);</span>
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :         _PUT_LOG(logFile, line_long, nb);</span>
+<span class="lineNum">     486 </span>            :         /* Ensure there is a trailing newline. */
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :         if (!nb || (line_long[nb-1] != '\n')) {</span>
+<span class="lineNum">     488 </span>            :             char eol[2];
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :             eol[0] = '\n';</span>
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :             eol[1] = '\0';</span>
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :             _PUT_LOG(logFile, eol, 1);</span>
+<span class="lineNum">     492 </span>            :         }
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :         _PR_UNLOCK_LOG();</span>
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :         PR_smprintf_free(line_long);</span>
+<span class="lineNum">     495 </span>            :     } else {
+<span class="lineNum">     496 </span>            :         /* Ensure there is a trailing newline. */
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 :         if (nb &amp;&amp; (line[nb-1] != '\n')) {</span>
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :             line[nb++] = '\n';</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :             line[nb] = '\0';</span>
+<span class="lineNum">     500 </span>            :         }
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :         _PR_LOCK_LOG();</span>
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :         if (logBuf == 0) {</span>
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :             _PUT_LOG(logFile, line, nb);</span>
+<span class="lineNum">     504 </span>            :         } else {
+<span class="lineNum">     505 </span>            :             /* If nb can't fit into logBuf, write out logBuf first. */
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :             if (logp + nb &gt; logEndp) {</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :                 _PUT_LOG(logFile, logBuf, logp - logBuf);</span>
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :                 logp = logBuf;</span>
+<span class="lineNum">     509 </span>            :             }
+<span class="lineNum">     510 </span>            :             /* nb is guaranteed to fit into logBuf. */
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :             memcpy(logp, line, nb);</span>
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :             logp += nb;</span>
+<span class="lineNum">     513 </span>            :         }
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 :         _PR_UNLOCK_LOG();</span>
+<span class="lineNum">     515 </span>            :     }
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :     PR_LogFlush();</span>
+<span class="lineNum">     517 </span>            : }
+<span class="lineNum">     518 </span>            : 
+<span class="lineNum">     519 </span>            : PR_IMPLEMENT(void) PR_LogFlush(void)
+<span class="lineNum">     520 </span>            : {
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :     if (logBuf &amp;&amp; logFile) {</span>
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :         _PR_LOCK_LOG();</span>
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :             if (logp &gt; logBuf) {</span>
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :                 _PUT_LOG(logFile, logBuf, logp - logBuf);</span>
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :                 logp = logBuf;</span>
+<span class="lineNum">     526 </span>            :             }
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :         _PR_UNLOCK_LOG();</span>
+<span class="lineNum">     528 </span>            :     }
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     530 </span>            : 
+<span class="lineNum">     531 </span>            : PR_IMPLEMENT(void) PR_Abort(void)
+<span class="lineNum">     532 </span>            : {
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :     PR_LogPrint(&quot;Aborting&quot;);</span>
+<span class="lineNum">     534 </span>            : #ifdef ANDROID
+<span class="lineNum">     535 </span>            :     __android_log_write(ANDROID_LOG_ERROR, &quot;PRLog&quot;, &quot;Aborting&quot;);
+<span class="lineNum">     536 </span>            : #endif
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :     abort();</span>
+<span class="lineNum">     538 </span>            : }
+<span class="lineNum">     539 </span>            : 
+<span class="lineNum">     540 </span>            : PR_IMPLEMENT(void) PR_Assert(const char *s, const char *file, PRIntn ln)
+<span class="lineNum">     541 </span>            : {
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :     PR_LogPrint(&quot;Assertion failure: %s, at %s:%d\n&quot;, s, file, ln);</span>
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :     fprintf(stderr, &quot;Assertion failure: %s, at %s:%d\n&quot;, s, file, ln);</span>
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :     fflush(stderr);</span>
+<span class="lineNum">     545 </span>            : #ifdef WIN32
+<span class="lineNum">     546 </span>            :     DebugBreak();
+<span class="lineNum">     547 </span>            : #elif defined(XP_OS2)
+<span class="lineNum">     548 </span>            :     asm(&quot;int $3&quot;);
+<span class="lineNum">     549 </span>            : #elif defined(ANDROID)
+<span class="lineNum">     550 </span>            :     __android_log_assert(NULL, &quot;PRLog&quot;, &quot;Assertion failure: %s, at %s:%d\n&quot;,
+<span class="lineNum">     551 </span>            :                          s, file, ln);
+<span class="lineNum">     552 </span>            : #endif
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :     abort();</span>
+<span class="lineNum">     554 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

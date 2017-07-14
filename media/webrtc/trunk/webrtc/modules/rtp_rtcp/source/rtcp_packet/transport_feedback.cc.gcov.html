@@ -1,0 +1,751 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/rtp_rtcp/source/rtcp_packet/transport_feedback.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/rtp_rtcp/source/rtcp_packet</a> - transport_feedback.cc<span style="font-size: 80%;"> (source / <a href="transport_feedback.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">359</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">33</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2015 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/rtcp_packet/transport_feedback.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;webrtc/base/logging.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;webrtc/modules/include/module_common_types.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/byte_io.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/rtcp_packet/common_header.h&quot;
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : namespace webrtc {
+<span class="lineNum">      22 </span>            : namespace rtcp {
+<span class="lineNum">      23 </span>            : namespace {
+<span class="lineNum">      24 </span>            : // Header size:
+<span class="lineNum">      25 </span>            : // * 4 bytes Common RTCP Packet Header
+<span class="lineNum">      26 </span>            : // * 8 bytes Common Packet Format for RTCP Feedback Messages
+<span class="lineNum">      27 </span>            : // * 8 bytes FeedbackPacket header
+<span class="lineNum">      28 </span>            : constexpr size_t kTransportFeedbackHeaderSizeBytes = 4 + 8 + 8;
+<span class="lineNum">      29 </span>            : constexpr size_t kChunkSizeBytes = 2;
+<span class="lineNum">      30 </span>            : // TODO(sprang): Add support for dynamic max size for easier fragmentation,
+<span class="lineNum">      31 </span>            : // eg. set it to what's left in the buffer or IP_PACKET_SIZE.
+<span class="lineNum">      32 </span>            : // Size constraint imposed by RTCP common header: 16bit size field interpreted
+<span class="lineNum">      33 </span>            : // as number of four byte words minus the first header word.
+<span class="lineNum">      34 </span>            : constexpr size_t kMaxSizeBytes = (1 &lt;&lt; 16) * 4;
+<span class="lineNum">      35 </span>            : // Payload size:
+<span class="lineNum">      36 </span>            : // * 8 bytes Common Packet Format for RTCP Feedback Messages
+<span class="lineNum">      37 </span>            : // * 8 bytes FeedbackPacket header.
+<span class="lineNum">      38 </span>            : // * 2 bytes for one chunk.
+<span class="lineNum">      39 </span>            : constexpr size_t kMinPayloadSizeBytes = 8 + 8 + 2;
+<span class="lineNum">      40 </span>            : constexpr size_t kBaseScaleFactor =
+<span class="lineNum">      41 </span>            :     TransportFeedback::kDeltaScaleFactor * (1 &lt;&lt; 8);
+<span class="lineNum">      42 </span>            : constexpr int64_t kTimeWrapPeriodUs = (1ll &lt;&lt; 24) * kBaseScaleFactor;
+<span class="lineNum">      43 </span>            : 
+<span class="lineNum">      44 </span>            : //    Message format
+<span class="lineNum">      45 </span>            : //
+<span class="lineNum">      46 </span>            : //     0                   1                   2                   3
+<span class="lineNum">      47 </span>            : //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+<span class="lineNum">      48 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      49 </span>            : //    |V=2|P|  FMT=15 |    PT=205     |           length              |
+<span class="lineNum">      50 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      51 </span>            : //  0 |                     SSRC of packet sender                     |
+<span class="lineNum">      52 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      53 </span>            : //  4 |                      SSRC of media source                     |
+<span class="lineNum">      54 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      55 </span>            : //  8 |      base sequence number     |      packet status count      |
+<span class="lineNum">      56 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      57 </span>            : // 12 |                 reference time                | fb pkt. count |
+<span class="lineNum">      58 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      59 </span>            : // 16 |          packet chunk         |         packet chunk          |
+<span class="lineNum">      60 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      61 </span>            : //    .                                                               .
+<span class="lineNum">      62 </span>            : //    .                                                               .
+<span class="lineNum">      63 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      64 </span>            : //    |         packet chunk          |  recv delta   |  recv delta   |
+<span class="lineNum">      65 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      66 </span>            : //    .                                                               .
+<span class="lineNum">      67 </span>            : //    .                                                               .
+<span class="lineNum">      68 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      69 </span>            : //    |           recv delta          |  recv delta   | zero padding  |
+<span class="lineNum">      70 </span>            : //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">      71 </span>            : }  // namespace
+<span class="lineNum">      72 </span>            : constexpr uint8_t TransportFeedback::kFeedbackMessageType;
+<span class="lineNum">      73 </span>            : constexpr size_t TransportFeedback::kMaxReportedPackets;
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span>            : // Keep delta_sizes that can be encoded into single chunk if it is last chunk.
+<span class="lineNum">      76 </span>            : class TransportFeedback::LastChunk {
+<span class="lineNum">      77 </span>            :  public:
+<span class="lineNum">      78 </span>            :   using DeltaSize = TransportFeedback::DeltaSize;
+<span class="lineNum">      79 </span>            : 
+<span class="lineNum">      80 </span>            :   LastChunk();
+<span class="lineNum">      81 </span>            : 
+<span class="lineNum">      82 </span>            :   bool Empty() const;
+<span class="lineNum">      83 </span>            :   void Clear();
+<span class="lineNum">      84 </span>            :   // Return if delta sizes still can be encoded into single chunk with added
+<span class="lineNum">      85 </span>            :   // |delta_size|.
+<span class="lineNum">      86 </span>            :   bool CanAdd(DeltaSize delta_size) const;
+<span class="lineNum">      87 </span>            :   // Add |delta_size|, assumes |CanAdd(delta_size)|,
+<span class="lineNum">      88 </span>            :   void Add(DeltaSize delta_size);
+<span class="lineNum">      89 </span>            : 
+<span class="lineNum">      90 </span>            :   // Encode chunk as large as possible removing encoded delta sizes.
+<span class="lineNum">      91 </span>            :   // Assume CanAdd() == false for some valid delta_size.
+<span class="lineNum">      92 </span>            :   uint16_t Emit();
+<span class="lineNum">      93 </span>            :   // Encode all stored delta_sizes into single chunk, pad with 0s if needed.
+<span class="lineNum">      94 </span>            :   uint16_t EncodeLast() const;
+<span class="lineNum">      95 </span>            : 
+<span class="lineNum">      96 </span>            :   // Decode up to |max_size| delta sizes from |chunk|.
+<span class="lineNum">      97 </span>            :   void Decode(uint16_t chunk, size_t max_size);
+<span class="lineNum">      98 </span>            :   // Appends content of the Lastchunk to |deltas|.
+<span class="lineNum">      99 </span>            :   void AppendTo(std::vector&lt;DeltaSize&gt;* deltas) const;
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span>            :  private:
+<span class="lineNum">     102 </span>            :   static constexpr size_t kMaxRunLengthCapacity = 0x1fff;
+<span class="lineNum">     103 </span>            :   static constexpr size_t kMaxOneBitCapacity = 14;
+<span class="lineNum">     104 </span>            :   static constexpr size_t kMaxTwoBitCapacity = 7;
+<span class="lineNum">     105 </span>            :   static constexpr size_t kMaxVectorCapacity = kMaxOneBitCapacity;
+<span class="lineNum">     106 </span>            :   static constexpr DeltaSize kLarge = 2;
+<span class="lineNum">     107 </span>            : 
+<span class="lineNum">     108 </span>            :   uint16_t EncodeOneBit() const;
+<span class="lineNum">     109 </span>            :   void DecodeOneBit(uint16_t chunk, size_t max_size);
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span>            :   uint16_t EncodeTwoBit(size_t size) const;
+<span class="lineNum">     112 </span>            :   void DecodeTwoBit(uint16_t chunk, size_t max_size);
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span>            :   uint16_t EncodeRunLength() const;
+<span class="lineNum">     115 </span>            :   void DecodeRunLength(uint16_t chunk, size_t max_size);
+<span class="lineNum">     116 </span>            : 
+<span class="lineNum">     117 </span>            :   DeltaSize delta_sizes_[kMaxVectorCapacity];
+<span class="lineNum">     118 </span>            :   uint16_t size_;
+<span class="lineNum">     119 </span>            :   bool all_same_;
+<span class="lineNum">     120 </span>            :   bool has_large_delta_;
+<span class="lineNum">     121 </span>            : };
+<span class="lineNum">     122 </span>            : constexpr size_t TransportFeedback::LastChunk::kMaxRunLengthCapacity;
+<span class="lineNum">     123 </span>            : constexpr size_t TransportFeedback::LastChunk::kMaxOneBitCapacity;
+<span class="lineNum">     124 </span>            : constexpr size_t TransportFeedback::LastChunk::kMaxTwoBitCapacity;
+<a name="125"><span class="lineNum">     125 </span>            : constexpr size_t TransportFeedback::LastChunk::kMaxVectorCapacity;</a>
+<span class="lineNum">     126 </span>            : 
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 : TransportFeedback::LastChunk::LastChunk() {</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :   Clear();</span>
+<a name="129"><span class="lineNum">     129 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     130 </span>            : 
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 : bool TransportFeedback::LastChunk::Empty() const {</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :   return size_ == 0;</span>
+<a name="133"><span class="lineNum">     133 </span>            : }</a>
+<span class="lineNum">     134 </span>            : 
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 : void TransportFeedback::LastChunk::Clear() {</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :   size_ = 0;</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :   all_same_ = true;</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :   has_large_delta_ = false;</span>
+<a name="139"><span class="lineNum">     139 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     140 </span>            : 
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 : bool TransportFeedback::LastChunk::CanAdd(DeltaSize delta_size) const {</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(delta_size, 2);</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :   if (size_ &lt; kMaxTwoBitCapacity)</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :   if (size_ &lt; kMaxOneBitCapacity &amp;&amp; !has_large_delta_ &amp;&amp; delta_size != kLarge)</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :   if (size_ &lt; kMaxRunLengthCapacity &amp;&amp; all_same_ &amp;&amp;</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :       delta_sizes_[0] == delta_size)</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :   return false;</span>
+<a name="151"><span class="lineNum">     151 </span>            : }</a>
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 : void TransportFeedback::LastChunk::Add(DeltaSize delta_size) {</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :   RTC_DCHECK(CanAdd(delta_size));</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :   if (size_ &lt; kMaxVectorCapacity)</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :     delta_sizes_[size_] = delta_size;</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :   size_++;</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :   all_same_ = all_same_ &amp;&amp; delta_size == delta_sizes_[0];</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :   has_large_delta_ = has_large_delta_ || delta_size == kLarge;</span>
+<a name="160"><span class="lineNum">     160 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 : uint16_t TransportFeedback::LastChunk::Emit() {</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!CanAdd(0) || !CanAdd(1) || !CanAdd(2));</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :   if (all_same_) {</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :     uint16_t chunk = EncodeRunLength();</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     Clear();</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :     return chunk;</span>
+<span class="lineNum">     168 </span>            :   }
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :   if (size_ == kMaxOneBitCapacity) {</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :     uint16_t chunk = EncodeOneBit();</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :     Clear();</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :     return chunk;</span>
+<span class="lineNum">     173 </span>            :   }
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GE(size_, kMaxTwoBitCapacity);</span>
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :   uint16_t chunk = EncodeTwoBit(kMaxTwoBitCapacity);</span>
+<span class="lineNum">     176 </span>            :   // Remove |kMaxTwoBitCapacity| encoded delta sizes:
+<span class="lineNum">     177 </span>            :   // Shift remaining delta sizes and recalculate all_same_ &amp;&amp; has_large_delta_.
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :   size_ -= kMaxTwoBitCapacity;</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   all_same_ = true;</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :   has_large_delta_ = false;</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; size_; ++i) {</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :     DeltaSize delta_size = delta_sizes_[kMaxTwoBitCapacity + i];</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :     delta_sizes_[i] = delta_size;</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :     all_same_ = all_same_ &amp;&amp; delta_size == delta_sizes_[0];</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :     has_large_delta_ = has_large_delta_ || delta_size == kLarge;</span>
+<span class="lineNum">     186 </span>            :   }
+<span class="lineNum">     187 </span>            : 
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   return chunk;</span>
+<a name="189"><span class="lineNum">     189 </span>            : }</a>
+<span class="lineNum">     190 </span>            : 
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 : uint16_t TransportFeedback::LastChunk::EncodeLast() const {</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GT(size_, 0);</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :   if (all_same_)</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :     return EncodeRunLength();</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :   if (size_ &lt;= kMaxTwoBitCapacity)</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :     return EncodeTwoBit(size_);</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   return EncodeOneBit();</span>
+<span class="lineNum">     198 </span>            : }
+<a name="199"><span class="lineNum">     199 </span>            : </a>
+<span class="lineNum">     200 </span>            : // Appends content of the Lastchunk to |deltas|.
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 : void TransportFeedback::LastChunk::AppendTo(</span>
+<span class="lineNum">     202 </span>            :     std::vector&lt;DeltaSize&gt;* deltas) const {
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :   if (all_same_) {</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :     deltas-&gt;insert(deltas-&gt;end(), size_, delta_sizes_[0]);</span>
+<span class="lineNum">     205 </span>            :   } else {
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :     deltas-&gt;insert(deltas-&gt;end(), delta_sizes_, delta_sizes_ + size_);</span>
+<span class="lineNum">     207 </span>            :   }
+<a name="208"><span class="lineNum">     208 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     209 </span>            : 
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 : void TransportFeedback::LastChunk::Decode(uint16_t chunk, size_t max_size) {</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :   if ((chunk &amp; 0x8000) == 0) {</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :     DecodeRunLength(chunk, max_size);</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   } else if ((chunk &amp; 0x4000) == 0) {</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :     DecodeOneBit(chunk, max_size);</span>
+<span class="lineNum">     215 </span>            :   } else {
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :     DecodeTwoBit(chunk, max_size);</span>
+<span class="lineNum">     217 </span>            :   }
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     219 </span>            : 
+<span class="lineNum">     220 </span>            : //  One Bit Status Vector Chunk
+<span class="lineNum">     221 </span>            : //
+<span class="lineNum">     222 </span>            : //  0                   1
+<span class="lineNum">     223 </span>            : //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+<span class="lineNum">     224 </span>            : //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">     225 </span>            : //  |T|S|       symbol list         |
+<span class="lineNum">     226 </span>            : //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">     227 </span>            : //
+<span class="lineNum">     228 </span>            : //  T = 1
+<a name="229"><span class="lineNum">     229 </span>            : //  S = 0</a>
+<span class="lineNum">     230 </span>            : //  Symbol list = 14 entries where 0 = not received, 1 = received 1-byte delta.
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 : uint16_t TransportFeedback::LastChunk::EncodeOneBit() const {</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!has_large_delta_);</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(size_, kMaxOneBitCapacity);</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :   uint16_t chunk = 0x8000;</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; size_; ++i)</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :     chunk |= delta_sizes_[i] &lt;&lt; (kMaxOneBitCapacity - 1 - i);</span>
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :   return chunk;</span>
+<a name="238"><span class="lineNum">     238 </span>            : }</a>
+<span class="lineNum">     239 </span>            : 
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 : void TransportFeedback::LastChunk::DecodeOneBit(uint16_t chunk,</span>
+<span class="lineNum">     241 </span>            :                                                 size_t max_size) {
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(chunk &amp; 0xc000, 0x8000);</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   size_ = std::min(kMaxOneBitCapacity, max_size);</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   has_large_delta_ = false;</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :   all_same_ = false;</span>
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; size_; ++i)</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :     delta_sizes_[i] = (chunk &gt;&gt; (kMaxOneBitCapacity - 1 - i)) &amp; 0x01;</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span>            : //  Two Bit Status Vector Chunk
+<span class="lineNum">     251 </span>            : //
+<span class="lineNum">     252 </span>            : //  0                   1
+<span class="lineNum">     253 </span>            : //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+<span class="lineNum">     254 </span>            : //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">     255 </span>            : //  |T|S|       symbol list         |
+<span class="lineNum">     256 </span>            : //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">     257 </span>            : //
+<span class="lineNum">     258 </span>            : //  T = 1
+<a name="259"><span class="lineNum">     259 </span>            : //  S = 1</a>
+<span class="lineNum">     260 </span>            : //  symbol list = 7 entries of two bits each.
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 : uint16_t TransportFeedback::LastChunk::EncodeTwoBit(size_t size) const {</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(size, size_);</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :   uint16_t chunk = 0xc000;</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; size; ++i)</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :     chunk |= delta_sizes_[i] &lt;&lt; 2 * (kMaxTwoBitCapacity - 1 - i);</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :   return chunk;</span>
+<a name="267"><span class="lineNum">     267 </span>            : }</a>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 : void TransportFeedback::LastChunk::DecodeTwoBit(uint16_t chunk,</span>
+<span class="lineNum">     270 </span>            :                                                 size_t max_size) {
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(chunk &amp; 0xc000, 0xc000);</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :   size_ = std::min(kMaxTwoBitCapacity, max_size);</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :   has_large_delta_ = true;</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :   all_same_ = false;</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; size_; ++i)</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :     delta_sizes_[i] = (chunk &gt;&gt; 2 * (kMaxTwoBitCapacity - 1 - i)) &amp; 0x03;</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span>            : //  Run Length Status Vector Chunk
+<span class="lineNum">     280 </span>            : //
+<span class="lineNum">     281 </span>            : //  0                   1
+<span class="lineNum">     282 </span>            : //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+<span class="lineNum">     283 </span>            : //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">     284 </span>            : //  |T| S |       Run Length        |
+<span class="lineNum">     285 </span>            : //  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+<span class="lineNum">     286 </span>            : //
+<span class="lineNum">     287 </span>            : //  T = 0
+<a name="288"><span class="lineNum">     288 </span>            : //  S = symbol</a>
+<span class="lineNum">     289 </span>            : //  Run Length = Unsigned integer denoting the run length of the symbol
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 : uint16_t TransportFeedback::LastChunk::EncodeRunLength() const {</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   RTC_DCHECK(all_same_);</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(size_, kMaxRunLengthCapacity);</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :   return (delta_sizes_[0] &lt;&lt; 13) | size_;</span>
+<a name="294"><span class="lineNum">     294 </span>            : }</a>
+<span class="lineNum">     295 </span>            : 
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 : void TransportFeedback::LastChunk::DecodeRunLength(uint16_t chunk,</span>
+<span class="lineNum">     297 </span>            :                                                    size_t max_count) {
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(chunk &amp; 0x8000, 0);</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :   size_ = std::min&lt;size_t&gt;(chunk &amp; 0x1fff, max_count);</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :   size_t delta_size = (chunk &gt;&gt; 13) &amp; 0x03;</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :   has_large_delta_ = delta_size &gt;= kLarge;</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :   all_same_ = true;</span>
+<span class="lineNum">     303 </span>            :   // To make it consistent with Add function, populate delta_sizes_ beyound 1st.
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; std::min&lt;size_t&gt;(size_, kMaxVectorCapacity); ++i)</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :     delta_sizes_[i] = delta_size;</span>
+<a name="306"><span class="lineNum">     306 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     307 </span>            : 
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 : TransportFeedback::TransportFeedback()</span>
+<span class="lineNum">     309 </span>            :     : base_seq_no_(0),
+<span class="lineNum">     310 </span>            :       num_seq_no_(0),
+<span class="lineNum">     311 </span>            :       base_time_ticks_(0),
+<span class="lineNum">     312 </span>            :       feedback_seq_(0),
+<span class="lineNum">     313 </span>            :       last_timestamp_us_(0),
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :       last_chunk_(new LastChunk()),</span>
+<a name="315"><span class="lineNum">     315 </span><span class="lineNoCov">          0 :       size_bytes_(kTransportFeedbackHeaderSizeBytes) {}</span></a>
+<span class="lineNum">     316 </span>            : 
+<a name="317"><span class="lineNum">     317 </span><span class="lineNoCov">          0 : TransportFeedback::~TransportFeedback() {}</span></a>
+<span class="lineNum">     318 </span>            : 
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 : void TransportFeedback::SetBase(uint16_t base_sequence,</span>
+<span class="lineNum">     320 </span>            :                                 int64_t ref_timestamp_us) {
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(num_seq_no_, 0);</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GE(ref_timestamp_us, 0);</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :   base_seq_no_ = base_sequence;</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :   base_time_ticks_ = (ref_timestamp_us % kTimeWrapPeriodUs) / kBaseScaleFactor;</span>
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :   last_timestamp_us_ = GetBaseTimeUs();</span>
+<a name="326"><span class="lineNum">     326 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     327 </span>            : 
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 : void TransportFeedback::SetFeedbackSequenceNumber(uint8_t feedback_sequence) {</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :   feedback_seq_ = feedback_sequence;</span>
+<a name="330"><span class="lineNum">     330 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 : bool TransportFeedback::AddReceivedPacket(uint16_t sequence_number,</span>
+<span class="lineNum">     333 </span>            :                                           int64_t timestamp_us) {
+<span class="lineNum">     334 </span>            :   // Convert to ticks and round.
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :   int64_t delta_full = (timestamp_us - last_timestamp_us_) % kTimeWrapPeriodUs;</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :   if (delta_full &gt; kTimeWrapPeriodUs / 2)</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :     delta_full -= kTimeWrapPeriodUs;</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :   delta_full +=</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :       delta_full &lt; 0 ? -(kDeltaScaleFactor / 2) : kDeltaScaleFactor / 2;</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :   delta_full /= kDeltaScaleFactor;</span>
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :   int16_t delta = static_cast&lt;int16_t&gt;(delta_full);</span>
+<span class="lineNum">     343 </span>            :   // If larger than 16bit signed, we can't represent it - need new fb packet.
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :   if (delta != delta_full) {</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :     LOG(LS_WARNING) &lt;&lt; &quot;Delta value too large ( &gt;= 2^16 ticks )&quot;;</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     347 </span>            :   }
+<span class="lineNum">     348 </span>            : 
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :   uint16_t next_seq_no = base_seq_no_ + num_seq_no_;</span>
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :   if (sequence_number != next_seq_no) {</span>
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :     uint16_t last_seq_no = next_seq_no - 1;</span>
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :     if (!IsNewerSequenceNumber(sequence_number, last_seq_no))</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :     for (; next_seq_no != sequence_number; ++next_seq_no)</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :       if (!AddDeltaSize(0))</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     357 </span>            :   }
+<span class="lineNum">     358 </span>            : 
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :   DeltaSize delta_size = (delta &gt;= 0 &amp;&amp; delta &lt;= 0xff) ? 1 : 2;</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   if (!AddDeltaSize(delta_size))</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     362 </span>            : 
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :   packets_.emplace_back(sequence_number, delta);</span>
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :   last_timestamp_us_ += delta * kDeltaScaleFactor;</span>
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :   size_bytes_ += delta_size;</span>
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="367"><span class="lineNum">     367 </span>            : }</a>
+<span class="lineNum">     368 </span>            : 
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 : uint16_t TransportFeedback::GetBaseSequence() const {</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :   return base_seq_no_;</span>
+<span class="lineNum">     371 </span>            : }
+<a name="372"><span class="lineNum">     372 </span>            : </a>
+<span class="lineNum">     373 </span>            : std::vector&lt;TransportFeedback::StatusSymbol&gt;
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 : TransportFeedback::GetStatusVector() const {</span>
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :   std::vector&lt;TransportFeedback::StatusSymbol&gt; symbols;</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :   uint16_t seq_no = GetBaseSequence();</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :   for (const auto&amp; packet : packets_) {</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :     for (; seq_no != packet.sequence_number; ++seq_no)</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :       symbols.push_back(StatusSymbol::kNotReceived);</span>
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :     if (packet.delta_ticks &gt;= 0x00 &amp;&amp; packet.delta_ticks &lt;= 0xff) {</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :       symbols.push_back(StatusSymbol::kReceivedSmallDelta);</span>
+<span class="lineNum">     382 </span>            :     } else {
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :       symbols.push_back(StatusSymbol::kReceivedLargeDelta);</span>
+<span class="lineNum">     384 </span>            :     }
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :     ++seq_no;</span>
+<span class="lineNum">     386 </span>            :   }
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :   return symbols;</span>
+<a name="388"><span class="lineNum">     388 </span>            : }</a>
+<span class="lineNum">     389 </span>            : 
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 : std::vector&lt;int16_t&gt; TransportFeedback::GetReceiveDeltas() const {</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :   std::vector&lt;int16_t&gt; deltas;</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :   for (const auto&amp; packet : packets_)</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :     deltas.push_back(packet.delta_ticks);</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :   return deltas;</span>
+<a name="395"><span class="lineNum">     395 </span>            : }</a>
+<span class="lineNum">     396 </span>            : 
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 : int64_t TransportFeedback::GetBaseTimeUs() const {</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :   return static_cast&lt;int64_t&gt;(base_time_ticks_) * kBaseScaleFactor;</span>
+<a name="399"><span class="lineNum">     399 </span>            : }</a>
+<span class="lineNum">     400 </span>            : 
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 : std::vector&lt;int64_t&gt; TransportFeedback::GetReceiveDeltasUs() const {</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :   std::vector&lt;int64_t&gt; us_deltas;</span>
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :   for (const auto&amp; packet : packets_)</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :     us_deltas.push_back(packet.delta_ticks * kDeltaScaleFactor);</span>
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :   return us_deltas;</span>
+<span class="lineNum">     406 </span>            : }
+<a name="407"><span class="lineNum">     407 </span>            : </a>
+<span class="lineNum">     408 </span>            : // De-serialize packet.
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 : bool TransportFeedback::Parse(const CommonHeader&amp; packet) {</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(packet.type(), kPacketType);</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(packet.fmt(), kFeedbackMessageType);</span>
+<span class="lineNum">     412 </span>            : 
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :   if (packet.payload_size_bytes() &lt; kMinPayloadSizeBytes) {</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :     LOG(LS_WARNING) &lt;&lt; &quot;Buffer too small (&quot; &lt;&lt; packet.payload_size_bytes()</span>
+<span class="lineNum">     415 </span>            :                     &lt;&lt; &quot; bytes) to fit a &quot;
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :                        &quot;FeedbackPacket. Minimum size = &quot;</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :                     &lt;&lt; kMinPayloadSizeBytes;</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     419 </span>            :   }
+<span class="lineNum">     420 </span>            : 
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :   const uint8_t* const payload = packet.payload();</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :   ParseCommonFeedback(payload);</span>
+<span class="lineNum">     423 </span>            : 
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :   base_seq_no_ = ByteReader&lt;uint16_t&gt;::ReadBigEndian(&amp;payload[8]);</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :   size_t status_count = ByteReader&lt;uint16_t&gt;::ReadBigEndian(&amp;payload[10]);</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :   base_time_ticks_ = ByteReader&lt;int32_t, 3&gt;::ReadBigEndian(&amp;payload[12]);</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :   feedback_seq_ = payload[15];</span>
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :   Clear();</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :   size_t index = 16;</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :   const size_t end_index = packet.payload_size_bytes();</span>
+<span class="lineNum">     431 </span>            : 
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :   if (status_count == 0) {</span>
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :     LOG(LS_WARNING) &lt;&lt; &quot;Empty feedback messages not allowed.&quot;;</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     435 </span>            :   }
+<span class="lineNum">     436 </span>            : 
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :   std::vector&lt;uint8_t&gt; delta_sizes;</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :   delta_sizes.reserve(status_count);</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :   while (delta_sizes.size() &lt; status_count) {</span>
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :     if (index + kChunkSizeBytes &gt; end_index) {</span>
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :       LOG(LS_WARNING) &lt;&lt; &quot;Buffer overflow while parsing packet.&quot;;</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :       Clear();</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     444 </span>            :     }
+<span class="lineNum">     445 </span>            : 
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :     uint16_t chunk = ByteReader&lt;uint16_t&gt;::ReadBigEndian(&amp;payload[index]);</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :     index += kChunkSizeBytes;</span>
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :     encoded_chunks_.push_back(chunk);</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :     last_chunk_-&gt;Decode(chunk, status_count - delta_sizes.size());</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :     last_chunk_-&gt;AppendTo(&amp;delta_sizes);</span>
+<span class="lineNum">     451 </span>            :   }
+<span class="lineNum">     452 </span>            :   // Last chunk is stored in the |last_chunk_|.
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :   encoded_chunks_.pop_back();</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(delta_sizes.size(), status_count);</span>
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :   num_seq_no_ = status_count;</span>
+<span class="lineNum">     456 </span>            : 
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :   uint16_t seq_no = base_seq_no_;</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :   for (size_t delta_size : delta_sizes) {</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :     if (index + delta_size &gt; end_index) {</span>
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :       LOG(LS_WARNING) &lt;&lt; &quot;Buffer overflow while parsing packet.&quot;;</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :       Clear();</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     463 </span>            :     }
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :     switch (delta_size) {</span>
+<span class="lineNum">     465 </span>            :       case 0:
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     467 </span>            :       case 1: {
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :         int16_t delta = payload[index];</span>
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :         packets_.emplace_back(seq_no, delta);</span>
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :         last_timestamp_us_ += delta * kDeltaScaleFactor;</span>
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :         index += delta_size;</span>
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     473 </span>            :       }
+<span class="lineNum">     474 </span>            :       case 2: {
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :         int16_t delta = ByteReader&lt;int16_t&gt;::ReadBigEndian(&amp;payload[index]);</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :         packets_.emplace_back(seq_no, delta);</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :         last_timestamp_us_ += delta * kDeltaScaleFactor;</span>
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :         index += delta_size;</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     480 </span>            :       }
+<span class="lineNum">     481 </span>            :       case 3:
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :         Clear();</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :         LOG(LS_WARNING) &lt;&lt; &quot;Invalid delta_size for seq_no &quot; &lt;&lt; seq_no;</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     485 </span>            :       default:
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :         RTC_NOTREACHED();</span>
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     488 </span>            :     }
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :     ++seq_no;</span>
+<span class="lineNum">     490 </span>            :   }
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :   size_bytes_ = RtcpPacket::kHeaderLength + index;</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(index, end_index);</span>
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="494"><span class="lineNum">     494 </span>            : }</a>
+<span class="lineNum">     495 </span>            : 
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 : std::unique_ptr&lt;TransportFeedback&gt; TransportFeedback::ParseFrom(</span>
+<span class="lineNum">     497 </span>            :     const uint8_t* buffer,
+<span class="lineNum">     498 </span>            :     size_t length) {
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :   CommonHeader header;</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :   if (!header.Parse(buffer, length))</span>
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :   if (header.type() != kPacketType || header.fmt() != kFeedbackMessageType)</span>
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :   std::unique_ptr&lt;TransportFeedback&gt; parsed(new TransportFeedback);</span>
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :   if (!parsed-&gt;Parse(header))</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :   return parsed;</span>
+<a name="508"><span class="lineNum">     508 </span>            : }</a>
+<span class="lineNum">     509 </span>            : 
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 : bool TransportFeedback::IsConsistent() const {</span>
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :   size_t packet_size = kTransportFeedbackHeaderSizeBytes;</span>
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :   std::vector&lt;DeltaSize&gt; delta_sizes;</span>
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :   LastChunk chunk_decoder;</span>
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 :   for (uint16_t chunk : encoded_chunks_) {</span>
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :     chunk_decoder.Decode(chunk, kMaxReportedPackets);</span>
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :     chunk_decoder.AppendTo(&amp;delta_sizes);</span>
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :     packet_size += kChunkSizeBytes;</span>
+<span class="lineNum">     518 </span>            :   }
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :   if (!last_chunk_-&gt;Empty()) {</span>
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :     last_chunk_-&gt;AppendTo(&amp;delta_sizes);</span>
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :     packet_size += kChunkSizeBytes;</span>
+<span class="lineNum">     522 </span>            :   }
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :   if (num_seq_no_ != delta_sizes.size()) {</span>
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; delta_sizes.size() &lt;&lt; &quot; packets encoded. Expected &quot;</span>
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :                   &lt;&lt; num_seq_no_;</span>
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     527 </span>            :   }
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :   int64_t timestamp_us = base_time_ticks_ * kBaseScaleFactor;</span>
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :   auto packet_it = packets_.begin();</span>
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 :   uint16_t seq_no = base_seq_no_;</span>
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :   for (DeltaSize delta_size : delta_sizes) {</span>
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :     if (delta_size &gt; 0) {</span>
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :       if (packet_it == packets_.end()) {</span>
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :         LOG(LS_ERROR) &lt;&lt; &quot;Failed to find delta for seq_no &quot; &lt;&lt; seq_no;</span>
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     536 </span>            :       }
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :       if (packet_it-&gt;sequence_number != seq_no) {</span>
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :         LOG(LS_ERROR) &lt;&lt; &quot;Expected to find delta for seq_no &quot; &lt;&lt; seq_no</span>
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :                       &lt;&lt; &quot;. Next delta is for &quot; &lt;&lt; packet_it-&gt;sequence_number;</span>
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     541 </span>            :       }
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :       if (delta_size == 1 &amp;&amp;</span>
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :           (packet_it-&gt;delta_ticks &lt; 0 || packet_it-&gt;delta_ticks &gt; 0xff)) {</span>
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :         LOG(LS_ERROR) &lt;&lt; &quot;Delta &quot; &lt;&lt; packet_it-&gt;delta_ticks &lt;&lt; &quot; for seq_no &quot;</span>
+<span class="lineNum">     545 </span><span class="lineNoCov">          0 :                       &lt;&lt; seq_no &lt;&lt; &quot; doesn't fit into one byte&quot;;</span>
+<span class="lineNum">     546 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     547 </span>            :       }
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :       timestamp_us += packet_it-&gt;delta_ticks * kDeltaScaleFactor;</span>
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :       ++packet_it;</span>
+<span class="lineNum">     550 </span>            :     }
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :     packet_size += delta_size;</span>
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     ++seq_no;</span>
+<span class="lineNum">     553 </span>            :   }
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :   if (packet_it != packets_.end()) {</span>
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;Unencoded delta for seq_no &quot;</span>
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :                   &lt;&lt; packet_it-&gt;sequence_number;</span>
+<span class="lineNum">     557 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     558 </span>            :   }
+<span class="lineNum">     559 </span><span class="lineNoCov">          0 :   if (timestamp_us != last_timestamp_us_) {</span>
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;Last timestamp mismatch. Calculated: &quot; &lt;&lt; timestamp_us</span>
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 :                   &lt;&lt; &quot;. Saved: &quot; &lt;&lt; last_timestamp_us_;</span>
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     563 </span>            :   }
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :   if (size_bytes_ != packet_size) {</span>
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;Rtcp packet size mismatch. Calculated: &quot; &lt;&lt; packet_size</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :                   &lt;&lt; &quot;. Saved: &quot; &lt;&lt; size_bytes_;</span>
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     568 </span>            :   }
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">     570 </span>            : }
+<a name="571"><span class="lineNum">     571 </span>            : </a>
+<span class="lineNum">     572 </span>            : // Serialize packet.
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 : bool TransportFeedback::Create(uint8_t* packet,</span>
+<span class="lineNum">     574 </span>            :                                size_t* position,
+<span class="lineNum">     575 </span>            :                                size_t max_length,
+<span class="lineNum">     576 </span>            :                                PacketReadyCallback* callback) const {
+<span class="lineNum">     577 </span><span class="lineNoCov">          0 :   if (num_seq_no_ == 0)</span>
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     579 </span>            : 
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :   while (*position + BlockLength() &gt; max_length) {</span>
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :     if (!OnBufferFull(packet, position, callback))</span>
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     583 </span>            :   }
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 :   const size_t position_end = *position + BlockLength();</span>
+<span class="lineNum">     585 </span>            : 
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :   CreateHeader(kFeedbackMessageType, kPacketType, HeaderLength(), packet,</span>
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :                position);</span>
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :   CreateCommonFeedback(packet + *position);</span>
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 :   *position += kCommonFeedbackLength;</span>
+<span class="lineNum">     590 </span>            : 
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :   ByteWriter&lt;uint16_t&gt;::WriteBigEndian(&amp;packet[*position], base_seq_no_);</span>
+<span class="lineNum">     592 </span><span class="lineNoCov">          0 :   *position += 2;</span>
+<span class="lineNum">     593 </span>            : 
+<span class="lineNum">     594 </span><span class="lineNoCov">          0 :   ByteWriter&lt;uint16_t&gt;::WriteBigEndian(&amp;packet[*position], num_seq_no_);</span>
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :   *position += 2;</span>
+<span class="lineNum">     596 </span>            : 
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 :   ByteWriter&lt;int32_t, 3&gt;::WriteBigEndian(&amp;packet[*position], base_time_ticks_);</span>
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :   *position += 3;</span>
+<span class="lineNum">     599 </span>            : 
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :   packet[(*position)++] = feedback_seq_;</span>
+<span class="lineNum">     601 </span>            : 
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :   for (uint16_t chunk : encoded_chunks_) {</span>
+<span class="lineNum">     603 </span><span class="lineNoCov">          0 :     ByteWriter&lt;uint16_t&gt;::WriteBigEndian(&amp;packet[*position], chunk);</span>
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :     *position += 2;</span>
+<span class="lineNum">     605 </span>            :   }
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :   if (!last_chunk_-&gt;Empty()) {</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :     uint16_t chunk = last_chunk_-&gt;EncodeLast();</span>
+<span class="lineNum">     608 </span><span class="lineNoCov">          0 :     ByteWriter&lt;uint16_t&gt;::WriteBigEndian(&amp;packet[*position], chunk);</span>
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :     *position += 2;</span>
+<span class="lineNum">     610 </span>            :   }
+<span class="lineNum">     611 </span>            : 
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :   for (const auto&amp; received_packet : packets_) {</span>
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 :     int16_t delta = received_packet.delta_ticks;</span>
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :     if (delta &gt;= 0 &amp;&amp; delta &lt;= 0xFF) {</span>
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :       packet[(*position)++] = delta;</span>
+<span class="lineNum">     616 </span>            :     } else {
+<span class="lineNum">     617 </span><span class="lineNoCov">          0 :       ByteWriter&lt;int16_t&gt;::WriteBigEndian(&amp;packet[*position], delta);</span>
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 :       *position += 2;</span>
+<span class="lineNum">     619 </span>            :     }
+<span class="lineNum">     620 </span>            :   }
+<span class="lineNum">     621 </span>            : 
+<span class="lineNum">     622 </span><span class="lineNoCov">          0 :   while ((*position % 4) != 0)</span>
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 :     packet[(*position)++] = 0;</span>
+<span class="lineNum">     624 </span>            : 
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(*position, position_end);</span>
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="627"><span class="lineNum">     627 </span>            : }</a>
+<span class="lineNum">     628 </span>            : 
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 : size_t TransportFeedback::BlockLength() const {</span>
+<span class="lineNum">     630 </span>            :   // Round size_bytes_ up to multiple of 32bits.
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :   return (size_bytes_ + 3) &amp; (~static_cast&lt;size_t&gt;(3));</span>
+<a name="632"><span class="lineNum">     632 </span>            : }</a>
+<span class="lineNum">     633 </span>            : 
+<span class="lineNum">     634 </span><span class="lineNoCov">          0 : void TransportFeedback::Clear() {</span>
+<span class="lineNum">     635 </span><span class="lineNoCov">          0 :   num_seq_no_ = 0;</span>
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :   last_timestamp_us_ = GetBaseTimeUs();</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :   packets_.clear();</span>
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 :   encoded_chunks_.clear();</span>
+<span class="lineNum">     639 </span><span class="lineNoCov">          0 :   last_chunk_-&gt;Clear();</span>
+<span class="lineNum">     640 </span><span class="lineNoCov">          0 :   size_bytes_ = kTransportFeedbackHeaderSizeBytes;</span>
+<a name="641"><span class="lineNum">     641 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     642 </span>            : 
+<span class="lineNum">     643 </span><span class="lineNoCov">          0 : bool TransportFeedback::AddDeltaSize(DeltaSize delta_size) {</span>
+<span class="lineNum">     644 </span><span class="lineNoCov">          0 :   if (num_seq_no_ == kMaxReportedPackets)</span>
+<span class="lineNum">     645 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 :   size_t add_chunk_size = last_chunk_-&gt;Empty() ? kChunkSizeBytes : 0;</span>
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :   if (size_bytes_ + delta_size + add_chunk_size &gt; kMaxSizeBytes)</span>
+<span class="lineNum">     648 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     649 </span>            : 
+<span class="lineNum">     650 </span><span class="lineNoCov">          0 :   if (last_chunk_-&gt;CanAdd(delta_size)) {</span>
+<span class="lineNum">     651 </span><span class="lineNoCov">          0 :     size_bytes_ += add_chunk_size;</span>
+<span class="lineNum">     652 </span><span class="lineNoCov">          0 :     last_chunk_-&gt;Add(delta_size);</span>
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 :     ++num_seq_no_;</span>
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     655 </span>            :   }
+<span class="lineNum">     656 </span><span class="lineNoCov">          0 :   if (size_bytes_ + delta_size + kChunkSizeBytes &gt; kMaxSizeBytes)</span>
+<span class="lineNum">     657 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     658 </span>            : 
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :   encoded_chunks_.push_back(last_chunk_-&gt;Emit());</span>
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :   size_bytes_ += kChunkSizeBytes;</span>
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :   last_chunk_-&gt;Add(delta_size);</span>
+<span class="lineNum">     662 </span><span class="lineNoCov">          0 :   ++num_seq_no_;</span>
+<span class="lineNum">     663 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">     664 </span>            : }
+<span class="lineNum">     665 </span>            : 
+<span class="lineNum">     666 </span>            : }  // namespace rtcp
+<span class="lineNum">     667 </span>            : }  // namespace webrtc
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

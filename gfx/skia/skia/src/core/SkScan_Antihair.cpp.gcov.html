@@ -1,0 +1,1088 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - gfx/skia/skia/src/core/SkScan_Antihair.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../index.html">top level</a> - <a href="index.html">gfx/skia/skia/src/core</a> - SkScan_Antihair.cpp<span style="font-size: 80%;"> (source / <a href="SkScan_Antihair.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">73</td>
+            <td class="headerCovTableEntry">503</td>
+            <td class="headerCovTableEntryLo">14.5 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">8</td>
+            <td class="headerCovTableEntry">54</td>
+            <td class="headerCovTableEntryLo">14.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * Copyright 2011 The Android Open Source Project
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * Use of this source code is governed by a BSD-style license that can be
+<span class="lineNum">       5 </span>            :  * found in the LICENSE file.
+<span class="lineNum">       6 </span>            :  */
+<span class="lineNum">       7 </span>            : 
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;SkScan.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;SkBlitter.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;SkColorPriv.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;SkLineClipper.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;SkRasterClip.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;SkFDot6.h&quot;
+<span class="lineNum">      15 </span>            : 
+<span class="lineNum">      16 </span>            : /*  Our attempt to compute the worst case &quot;bounds&quot; for the horizontal and
+<span class="lineNum">      17 </span>            :     vertical cases has some numerical bug in it, and we sometimes undervalue
+<span class="lineNum">      18 </span>            :     our extends. The bug is that when this happens, we will set the clip to
+<span class="lineNum">      19 </span>            :     nullptr (for speed), and thus draw outside of the clip by a pixel, which might
+<span class="lineNum">      20 </span>            :     only look bad, but it might also access memory outside of the valid range
+<span class="lineNum">      21 </span>            :     allcoated for the device bitmap.
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            :     This define enables our fix to outset our &quot;bounds&quot; by 1, thus avoiding the
+<span class="lineNum">      24 </span>            :     chance of the bug, but at the cost of sometimes taking the rectblitter
+<span class="lineNum">      25 </span>            :     case (i.e. not setting the clip to nullptr) when we might not actually need
+<span class="lineNum">      26 </span>            :     to. If we can improve/fix the actual calculations, then we can remove this
+<span class="lineNum">      27 </span>            :     step.
+<span class="lineNum">      28 </span>            :  */
+<span class="lineNum">      29 </span>            : #define OUTSET_BEFORE_CLIP_TEST     true
+<span class="lineNum">      30 </span>            : 
+<a name="31"><span class="lineNum">      31 </span>            : #define HLINE_STACK_BUFFER      100</a>
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span><span class="lineNoCov">          0 : static inline int SmallDot6Scale(int value, int dot6) {</span>
+<span class="lineNum">      34 </span><span class="lineNoCov">          0 :     SkASSERT((int16_t)value == value);</span>
+<span class="lineNum">      35 </span><span class="lineNoCov">          0 :     SkASSERT((unsigned)dot6 &lt;= 64);</span>
+<span class="lineNum">      36 </span><span class="lineNoCov">          0 :     return (value * dot6) &gt;&gt; 6;</span>
+<span class="lineNum">      37 </span>            : }
+<span class="lineNum">      38 </span>            : 
+<span class="lineNum">      39 </span>            : //#define TEST_GAMMA
+<span class="lineNum">      40 </span>            : 
+<span class="lineNum">      41 </span>            : #ifdef TEST_GAMMA
+<span class="lineNum">      42 </span>            :     static uint8_t gGammaTable[256];
+<span class="lineNum">      43 </span>            :     #define ApplyGamma(table, alpha)    (table)[alpha]
+<span class="lineNum">      44 </span>            : 
+<span class="lineNum">      45 </span>            :     static void build_gamma_table() {
+<span class="lineNum">      46 </span>            :         static bool gInit = false;
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span>            :         if (gInit == false) {
+<span class="lineNum">      49 </span>            :             for (int i = 0; i &lt; 256; i++) {
+<span class="lineNum">      50 </span>            :                 SkFixed n = i * 257;
+<span class="lineNum">      51 </span>            :                 n += n &gt;&gt; 15;
+<span class="lineNum">      52 </span>            :                 SkASSERT(n &gt;= 0 &amp;&amp; n &lt;= SK_Fixed1);
+<span class="lineNum">      53 </span>            :                 n = SkFixedSqrt(n);
+<span class="lineNum">      54 </span>            :                 n = n * 255 &gt;&gt; 16;
+<span class="lineNum">      55 </span>            :             //  SkDebugf(&quot;morph %d -&gt; %d\n&quot;, i, n);
+<span class="lineNum">      56 </span>            :                 gGammaTable[i] = SkToU8(n);
+<span class="lineNum">      57 </span>            :             }
+<span class="lineNum">      58 </span>            :             gInit = true;
+<span class="lineNum">      59 </span>            :         }
+<span class="lineNum">      60 </span>            :     }
+<span class="lineNum">      61 </span>            : #else
+<span class="lineNum">      62 </span>            :     #define ApplyGamma(table, alpha)    SkToU8(alpha)
+<span class="lineNum">      63 </span>            : #endif
+<span class="lineNum">      64 </span>            : 
+<a name="65"><span class="lineNum">      65 </span>            : ///////////////////////////////////////////////////////////////////////////////</a>
+<span class="lineNum">      66 </span>            : 
+<span class="lineNum">      67 </span><span class="lineCov">         10 : static void call_hline_blitter(SkBlitter* blitter, int x, int y, int count,</span>
+<span class="lineNum">      68 </span>            :                                U8CPU alpha) {
+<span class="lineNum">      69 </span><span class="lineCov">         10 :     SkASSERT(count &gt; 0);</span>
+<span class="lineNum">      70 </span>            : 
+<span class="lineNum">      71 </span>            :     int16_t runs[HLINE_STACK_BUFFER + 1];
+<span class="lineNum">      72 </span>            :     uint8_t  aa[HLINE_STACK_BUFFER];
+<span class="lineNum">      73 </span>            : 
+<span class="lineNum">      74 </span><span class="lineCov">         10 :     aa[0] = ApplyGamma(gGammaTable, alpha);</span>
+<span class="lineNum">      75 </span><span class="lineCov">          2 :     do {</span>
+<span class="lineNum">      76 </span><span class="lineCov">         12 :         int n = count;</span>
+<span class="lineNum">      77 </span><span class="lineCov">         12 :         if (n &gt; HLINE_STACK_BUFFER) {</span>
+<span class="lineNum">      78 </span><span class="lineCov">          2 :             n = HLINE_STACK_BUFFER;</span>
+<span class="lineNum">      79 </span>            :         }
+<span class="lineNum">      80 </span><span class="lineCov">         12 :         runs[0] = SkToS16(n);</span>
+<span class="lineNum">      81 </span><span class="lineCov">         12 :         runs[n] = 0;</span>
+<span class="lineNum">      82 </span><span class="lineCov">         12 :         blitter-&gt;blitAntiH(x, y, aa, runs);</span>
+<span class="lineNum">      83 </span><span class="lineCov">         12 :         x += n;</span>
+<span class="lineNum">      84 </span><span class="lineCov">         12 :         count -= n;</span>
+<span class="lineNum">      85 </span><span class="lineCov">         12 :     } while (count &gt; 0);</span>
+<span class="lineNum">      86 </span><span class="lineCov">         10 : }</span>
+<span class="lineNum">      87 </span>            : 
+<a name="88"><span class="lineNum">      88 </span>            : class SkAntiHairBlitter {</a>
+<a name="89"><span class="lineNum">      89 </span>            : public:</a>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :     SkAntiHairBlitter() : fBlitter(nullptr) {}</span>
+<a name="91"><span class="lineNum">      91 </span><span class="lineNoCov">          0 :     virtual ~SkAntiHairBlitter() {}</span></a>
+<span class="lineNum">      92 </span>            : 
+<a name="93"><span class="lineNum">      93 </span><span class="lineNoCov">          0 :     SkBlitter* getBlitter() const { return fBlitter; }</span></a>
+<span class="lineNum">      94 </span>            : 
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :     void setup(SkBlitter* blitter) {</span>
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :         fBlitter = blitter;</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">      98 </span>            : 
+<span class="lineNum">      99 </span>            :     virtual SkFixed drawCap(int x, SkFixed fy, SkFixed slope, int mod64) = 0;
+<span class="lineNum">     100 </span>            :     virtual SkFixed drawLine(int x, int stopx, SkFixed fy, SkFixed slope) = 0;
+<span class="lineNum">     101 </span>            : 
+<span class="lineNum">     102 </span>            : private:
+<span class="lineNum">     103 </span>            :     SkBlitter*  fBlitter;
+<a name="104"><span class="lineNum">     104 </span>            : };</a>
+<span class="lineNum">     105 </span>            : 
+<a name="106"><span class="lineNum">     106 </span><span class="lineNoCov">          0 : class HLine_SkAntiHairBlitter : public SkAntiHairBlitter {</span></a>
+<span class="lineNum">     107 </span>            : public:
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :     SkFixed drawCap(int x, SkFixed fy, SkFixed slope, int mod64) override {</span>
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :         fy += SK_Fixed1/2;</span>
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :         int y = fy &gt;&gt; 16;</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :         uint8_t  a = (uint8_t)(fy &gt;&gt; 8);</span>
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span>            :         // lower line
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :         unsigned ma = SmallDot6Scale(a, mod64);</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :         if (ma) {</span>
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :             call_hline_blitter(this-&gt;getBlitter(), x, y, 1, ma);</span>
+<span class="lineNum">     118 </span>            :         }
+<span class="lineNum">     119 </span>            : 
+<span class="lineNum">     120 </span>            :         // upper line
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :         ma = SmallDot6Scale(255 - a, mod64);</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :         if (ma) {</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :             call_hline_blitter(this-&gt;getBlitter(), x, y - 1, 1, ma);</span>
+<span class="lineNum">     124 </span>            :         }
+<span class="lineNum">     125 </span>            : 
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :         return fy - SK_Fixed1/2;</span>
+<a name="127"><span class="lineNum">     127 </span>            :     }</a>
+<span class="lineNum">     128 </span>            : 
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :     virtual SkFixed drawLine(int x, int stopx, SkFixed fy,</span>
+<span class="lineNum">     130 </span>            :                              SkFixed slope) override {
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :         SkASSERT(x &lt; stopx);</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :         int count = stopx - x;</span>
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :         fy += SK_Fixed1/2;</span>
+<span class="lineNum">     134 </span>            : 
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :         int y = fy &gt;&gt; 16;</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :         uint8_t  a = (uint8_t)(fy &gt;&gt; 8);</span>
+<span class="lineNum">     137 </span>            : 
+<span class="lineNum">     138 </span>            :         // lower line
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :         if (a) {</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :             call_hline_blitter(this-&gt;getBlitter(), x, y, count, a);</span>
+<span class="lineNum">     141 </span>            :         }
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span>            :         // upper line
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :         a = 255 - a;</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :         if (a) {</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :             call_hline_blitter(this-&gt;getBlitter(), x, y - 1, count, a);</span>
+<span class="lineNum">     147 </span>            :         }
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :         return fy - SK_Fixed1/2;</span>
+<span class="lineNum">     150 </span>            :     }
+<a name="151"><span class="lineNum">     151 </span>            : };</a>
+<span class="lineNum">     152 </span>            : 
+<a name="153"><span class="lineNum">     153 </span><span class="lineNoCov">          0 : class Horish_SkAntiHairBlitter : public SkAntiHairBlitter {</span></a>
+<span class="lineNum">     154 </span>            : public:
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :     SkFixed drawCap(int x, SkFixed fy, SkFixed dy, int mod64) override {</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :         fy += SK_Fixed1/2;</span>
+<span class="lineNum">     157 </span>            : 
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :         int lower_y = fy &gt;&gt; 16;</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :         uint8_t  a = (uint8_t)(fy &gt;&gt; 8);</span>
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :         unsigned a0 = SmallDot6Scale(255 - a, mod64);</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :         unsigned a1 = SmallDot6Scale(a, mod64);</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :         this-&gt;getBlitter()-&gt;blitAntiV2(x, lower_y - 1, a0, a1);</span>
+<span class="lineNum">     163 </span>            : 
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :         return fy + dy - SK_Fixed1/2;</span>
+<a name="165"><span class="lineNum">     165 </span>            :     }</a>
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :     SkFixed drawLine(int x, int stopx, SkFixed fy, SkFixed dy) override {</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :         SkASSERT(x &lt; stopx);</span>
+<span class="lineNum">     169 </span>            : 
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :         fy += SK_Fixed1/2;</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :         SkBlitter* blitter = this-&gt;getBlitter();</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :         do {</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :             int lower_y = fy &gt;&gt; 16;</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :             uint8_t  a = (uint8_t)(fy &gt;&gt; 8);</span>
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :             blitter-&gt;blitAntiV2(x, lower_y - 1, 255 - a, a);</span>
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :             fy += dy;</span>
+<span class="lineNum">     177 </span>            :         } while (++x &lt; stopx);
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :         return fy - SK_Fixed1/2;</span>
+<span class="lineNum">     180 </span>            :     }
+<a name="181"><span class="lineNum">     181 </span>            : };</a>
+<span class="lineNum">     182 </span>            : 
+<a name="183"><span class="lineNum">     183 </span><span class="lineNoCov">          0 : class VLine_SkAntiHairBlitter : public SkAntiHairBlitter {</span></a>
+<span class="lineNum">     184 </span>            : public:
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :     SkFixed drawCap(int y, SkFixed fx, SkFixed dx, int mod64) override {</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :         SkASSERT(0 == dx);</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :         fx += SK_Fixed1/2;</span>
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :         int x = fx &gt;&gt; 16;</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :         int a = (uint8_t)(fx &gt;&gt; 8);</span>
+<span class="lineNum">     191 </span>            : 
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :         unsigned ma = SmallDot6Scale(a, mod64);</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :         if (ma) {</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :             this-&gt;getBlitter()-&gt;blitV(x, y, 1, ma);</span>
+<span class="lineNum">     195 </span>            :         }
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :         ma = SmallDot6Scale(255 - a, mod64);</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :         if (ma) {</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :             this-&gt;getBlitter()-&gt;blitV(x - 1, y, 1, ma);</span>
+<span class="lineNum">     199 </span>            :         }
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :         return fx - SK_Fixed1/2;</span>
+<a name="202"><span class="lineNum">     202 </span>            :     }</a>
+<span class="lineNum">     203 </span>            : 
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :     SkFixed drawLine(int y, int stopy, SkFixed fx, SkFixed dx) override {</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :         SkASSERT(y &lt; stopy);</span>
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :         SkASSERT(0 == dx);</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :         fx += SK_Fixed1/2;</span>
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :         int x = fx &gt;&gt; 16;</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :         int a = (uint8_t)(fx &gt;&gt; 8);</span>
+<span class="lineNum">     211 </span>            : 
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :         if (a) {</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :             this-&gt;getBlitter()-&gt;blitV(x, y, stopy - y, a);</span>
+<span class="lineNum">     214 </span>            :         }
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :         a = 255 - a;</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :         if (a) {</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :             this-&gt;getBlitter()-&gt;blitV(x - 1, y, stopy - y, a);</span>
+<span class="lineNum">     218 </span>            :         }
+<span class="lineNum">     219 </span>            : 
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :         return fx - SK_Fixed1/2;</span>
+<span class="lineNum">     221 </span>            :     }
+<a name="222"><span class="lineNum">     222 </span>            : };</a>
+<span class="lineNum">     223 </span>            : 
+<a name="224"><span class="lineNum">     224 </span><span class="lineNoCov">          0 : class Vertish_SkAntiHairBlitter : public SkAntiHairBlitter {</span></a>
+<span class="lineNum">     225 </span>            : public:
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :     SkFixed drawCap(int y, SkFixed fx, SkFixed dx, int mod64) override {</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :         fx += SK_Fixed1/2;</span>
+<span class="lineNum">     228 </span>            : 
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :         int x = fx &gt;&gt; 16;</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :         uint8_t a = (uint8_t)(fx &gt;&gt; 8);</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :         this-&gt;getBlitter()-&gt;blitAntiH2(x - 1, y,</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :                                        SmallDot6Scale(255 - a, mod64), SmallDot6Scale(a, mod64));</span>
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :         return fx + dx - SK_Fixed1/2;</span>
+<a name="235"><span class="lineNum">     235 </span>            :     }</a>
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :     SkFixed drawLine(int y, int stopy, SkFixed fx, SkFixed dx) override {</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :         SkASSERT(y &lt; stopy);</span>
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :         fx += SK_Fixed1/2;</span>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :         do {</span>
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :             int x = fx &gt;&gt; 16;</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :             uint8_t a = (uint8_t)(fx &gt;&gt; 8);</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :             this-&gt;getBlitter()-&gt;blitAntiH2(x - 1, y, 255 - a, a);</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :             fx += dx;</span>
+<span class="lineNum">     245 </span>            :         } while (++y &lt; stopy);
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :         return fx - SK_Fixed1/2;</span>
+<span class="lineNum">     248 </span>            :     }
+<a name="249"><span class="lineNum">     249 </span>            : };</a>
+<span class="lineNum">     250 </span>            : 
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 : static inline SkFixed fastfixdiv(SkFDot6 a, SkFDot6 b) {</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     SkASSERT((SkLeftShift(a, 16) &gt;&gt; 16) == a);</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :     SkASSERT(b != 0);</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :     return SkLeftShift(a, 16) / b;</span>
+<span class="lineNum">     255 </span>            : }
+<span class="lineNum">     256 </span>            : 
+<span class="lineNum">     257 </span>            : #define SkBITCOUNT(x)   (sizeof(x) &lt;&lt; 3)
+<span class="lineNum">     258 </span>            : 
+<a name="259"><span class="lineNum">     259 </span>            : #if 1</a>
+<span class="lineNum">     260 </span>            : // returns high-bit set iff x==0x8000...
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 : static inline int bad_int(int x) {</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :     return x &amp; -x;</span>
+<a name="263"><span class="lineNum">     263 </span>            : }</a>
+<span class="lineNum">     264 </span>            : 
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 : static int any_bad_ints(int a, int b, int c, int d) {</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :     return (bad_int(a) | bad_int(b) | bad_int(c) | bad_int(d)) &gt;&gt; (SkBITCOUNT(int) - 1);</span>
+<span class="lineNum">     267 </span>            : }
+<span class="lineNum">     268 </span>            : #else
+<span class="lineNum">     269 </span>            : static inline int good_int(int x) {
+<span class="lineNum">     270 </span>            :     return x ^ (1 &lt;&lt; (SkBITCOUNT(x) - 1));
+<span class="lineNum">     271 </span>            : }
+<span class="lineNum">     272 </span>            : 
+<span class="lineNum">     273 </span>            : static int any_bad_ints(int a, int b, int c, int d) {
+<span class="lineNum">     274 </span>            :     return !(good_int(a) &amp; good_int(b) &amp; good_int(c) &amp; good_int(d));
+<span class="lineNum">     275 </span>            : }
+<span class="lineNum">     276 </span>            : #endif
+<a name="277"><span class="lineNum">     277 </span>            : </a>
+<span class="lineNum">     278 </span>            : #ifdef SK_DEBUG
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 : static bool canConvertFDot6ToFixed(SkFDot6 x) {</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :     const int maxDot6 = SK_MaxS32 &gt;&gt; (16 - 6);</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     return SkAbs32(x) &lt;= maxDot6;</span>
+<span class="lineNum">     282 </span>            : }
+<span class="lineNum">     283 </span>            : #endif
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span>            : /*
+<span class="lineNum">     286 </span>            :  *  We want the fractional part of ordinate, but we want multiples of 64 to
+<span class="lineNum">     287 </span>            :  *  return 64, not 0, so we can't just say (ordinate &amp; 63).
+<span class="lineNum">     288 </span>            :  *  We basically want to compute those bits, and if they're 0, return 64.
+<a name="289"><span class="lineNum">     289 </span>            :  *  We can do that w/o a branch with an extra sub and add.</a>
+<span class="lineNum">     290 </span>            :  */
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 : static int contribution_64(SkFDot6 ordinate) {</span>
+<span class="lineNum">     292 </span>            : #if 0
+<span class="lineNum">     293 </span>            :     int result = ordinate &amp; 63;
+<span class="lineNum">     294 </span>            :     if (0 == result) {
+<span class="lineNum">     295 </span>            :         result = 64;
+<span class="lineNum">     296 </span>            :     }
+<span class="lineNum">     297 </span>            : #else
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :     int result = ((ordinate - 1) &amp; 63) + 1;</span>
+<span class="lineNum">     299 </span>            : #endif
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :     SkASSERT(result &gt; 0 &amp;&amp; result &lt;= 64);</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :     return result;</span>
+<a name="302"><span class="lineNum">     302 </span>            : }</a>
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 : static void do_anti_hairline(SkFDot6 x0, SkFDot6 y0, SkFDot6 x1, SkFDot6 y1,</span>
+<span class="lineNum">     305 </span>            :                              const SkIRect* clip, SkBlitter* blitter) {
+<span class="lineNum">     306 </span>            :     // check for integer NaN (0x80000000) which we can't handle (can't negate it)
+<span class="lineNum">     307 </span>            :     // It appears typically from a huge float (inf or nan) being converted to int.
+<span class="lineNum">     308 </span>            :     // If we see it, just don't draw.
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     if (any_bad_ints(x0, y0, x1, y1)) {</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     311 </span>            :     }
+<span class="lineNum">     312 </span>            : 
+<span class="lineNum">     313 </span>            :     // The caller must clip the line to [-32767.0 ... 32767.0] ahead of time
+<span class="lineNum">     314 </span>            :     // (in dot6 format)
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :     SkASSERT(canConvertFDot6ToFixed(x0));</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :     SkASSERT(canConvertFDot6ToFixed(y0));</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :     SkASSERT(canConvertFDot6ToFixed(x1));</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     SkASSERT(canConvertFDot6ToFixed(y1));</span>
+<span class="lineNum">     319 </span>            : 
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     if (SkAbs32(x1 - x0) &gt; SkIntToFDot6(511) || SkAbs32(y1 - y0) &gt; SkIntToFDot6(511)) {</span>
+<span class="lineNum">     321 </span>            :         /*  instead of (x0 + x1) &gt;&gt; 1, we shift each separately. This is less
+<span class="lineNum">     322 </span>            :             precise, but avoids overflowing the intermediate result if the
+<span class="lineNum">     323 </span>            :             values are huge. A better fix might be to clip the original pts
+<span class="lineNum">     324 </span>            :             directly (i.e. do the divide), so we don't spend time subdividing
+<span class="lineNum">     325 </span>            :             huge lines at all.
+<span class="lineNum">     326 </span>            :          */
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :         int hx = (x0 &gt;&gt; 1) + (x1 &gt;&gt; 1);</span>
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :         int hy = (y0 &gt;&gt; 1) + (y1 &gt;&gt; 1);</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :         do_anti_hairline(x0, y0, hx, hy, clip, blitter);</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :         do_anti_hairline(hx, hy, x1, y1, clip, blitter);</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     332 </span>            :     }
+<span class="lineNum">     333 </span>            : 
+<span class="lineNum">     334 </span>            :     int         scaleStart, scaleStop;
+<span class="lineNum">     335 </span>            :     int         istart, istop;
+<span class="lineNum">     336 </span>            :     SkFixed     fstart, slope;
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :     HLine_SkAntiHairBlitter     hline_blitter;</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     Horish_SkAntiHairBlitter    horish_blitter;</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :     VLine_SkAntiHairBlitter     vline_blitter;</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :     Vertish_SkAntiHairBlitter   vertish_blitter;</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :     SkAntiHairBlitter*          hairBlitter = nullptr;</span>
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :     if (SkAbs32(x1 - x0) &gt; SkAbs32(y1 - y0)) {   // mostly horizontal</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :         if (x0 &gt; x1) {    // we want to go left-to-right</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :             SkTSwap&lt;SkFDot6&gt;(x0, x1);</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :             SkTSwap&lt;SkFDot6&gt;(y0, y1);</span>
+<span class="lineNum">     348 </span>            :         }
+<span class="lineNum">     349 </span>            : 
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :         istart = SkFDot6Floor(x0);</span>
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :         istop = SkFDot6Ceil(x1);</span>
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :         fstart = SkFDot6ToFixed(y0);</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :         if (y0 == y1) {   // completely horizontal, take fast case</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :             slope = 0;</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :             hairBlitter = &amp;hline_blitter;</span>
+<span class="lineNum">     356 </span>            :         } else {
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :             slope = fastfixdiv(y1 - y0, x1 - x0);</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :             SkASSERT(slope &gt;= -SK_Fixed1 &amp;&amp; slope &lt;= SK_Fixed1);</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :             fstart += (slope * (32 - (x0 &amp; 63)) + 32) &gt;&gt; 6;</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :             hairBlitter = &amp;horish_blitter;</span>
+<span class="lineNum">     361 </span>            :         }
+<span class="lineNum">     362 </span>            : 
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :         SkASSERT(istop &gt; istart);</span>
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :         if (istop - istart == 1) {</span>
+<span class="lineNum">     365 </span>            :             // we are within a single pixel
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :             scaleStart = x1 - x0;</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :             SkASSERT(scaleStart &gt;= 0 &amp;&amp; scaleStart &lt;= 64);</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :             scaleStop = 0;</span>
+<span class="lineNum">     369 </span>            :         } else {
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :             scaleStart = 64 - (x0 &amp; 63);</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :             scaleStop = x1 &amp; 63;</span>
+<span class="lineNum">     372 </span>            :         }
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :         if (clip){</span>
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :             if (istart &gt;= clip-&gt;fRight || istop &lt;= clip-&gt;fLeft) {</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :                 return;</span>
+<span class="lineNum">     377 </span>            :             }
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :             if (istart &lt; clip-&gt;fLeft) {</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :                 fstart += slope * (clip-&gt;fLeft - istart);</span>
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :                 istart = clip-&gt;fLeft;</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :                 scaleStart = 64;</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :                 if (istop - istart == 1) {</span>
+<span class="lineNum">     383 </span>            :                     // we are within a single pixel
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :                     scaleStart = contribution_64(x1);</span>
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :                     scaleStop = 0;</span>
+<span class="lineNum">     386 </span>            :                 }
+<span class="lineNum">     387 </span>            :             }
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :             if (istop &gt; clip-&gt;fRight) {</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :                 istop = clip-&gt;fRight;</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :                 scaleStop = 0;  // so we don't draw this last column</span>
+<span class="lineNum">     391 </span>            :             }
+<span class="lineNum">     392 </span>            : 
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :             SkASSERT(istart &lt;= istop);</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :             if (istart == istop) {</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :                 return;</span>
+<span class="lineNum">     396 </span>            :             }
+<span class="lineNum">     397 </span>            :             // now test if our Y values are completely inside the clip
+<span class="lineNum">     398 </span>            :             int top, bottom;
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :             if (slope &gt;= 0) { // T2B</span>
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :                 top = SkFixedFloorToInt(fstart - SK_FixedHalf);</span>
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :                 bottom = SkFixedCeilToInt(fstart + (istop - istart - 1) * slope + SK_FixedHalf);</span>
+<span class="lineNum">     402 </span>            :             } else {           // B2T
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :                 bottom = SkFixedCeilToInt(fstart + SK_FixedHalf);</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :                 top = SkFixedFloorToInt(fstart + (istop - istart - 1) * slope - SK_FixedHalf);</span>
+<span class="lineNum">     405 </span>            :             }
+<span class="lineNum">     406 </span>            : #ifdef OUTSET_BEFORE_CLIP_TEST
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :             top -= 1;</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :             bottom += 1;</span>
+<span class="lineNum">     409 </span>            : #endif
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :             if (top &gt;= clip-&gt;fBottom || bottom &lt;= clip-&gt;fTop) {</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :                 return;</span>
+<span class="lineNum">     412 </span>            :             }
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :             if (clip-&gt;fTop &lt;= top &amp;&amp; clip-&gt;fBottom &gt;= bottom) {</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :                 clip = nullptr;</span>
+<span class="lineNum">     415 </span>            :             }
+<span class="lineNum">     416 </span>            :         }
+<span class="lineNum">     417 </span>            :     } else {   // mostly vertical
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :         if (y0 &gt; y1) {  // we want to go top-to-bottom</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :             SkTSwap&lt;SkFDot6&gt;(x0, x1);</span>
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :             SkTSwap&lt;SkFDot6&gt;(y0, y1);</span>
+<span class="lineNum">     421 </span>            :         }
+<span class="lineNum">     422 </span>            : 
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :         istart = SkFDot6Floor(y0);</span>
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :         istop = SkFDot6Ceil(y1);</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :         fstart = SkFDot6ToFixed(x0);</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :         if (x0 == x1) {</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :             if (y0 == y1) { // are we zero length?</span>
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :                 return;     // nothing to do</span>
+<span class="lineNum">     429 </span>            :             }
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :             slope = 0;</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :             hairBlitter = &amp;vline_blitter;</span>
+<span class="lineNum">     432 </span>            :         } else {
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :             slope = fastfixdiv(x1 - x0, y1 - y0);</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :             SkASSERT(slope &lt;= SK_Fixed1 &amp;&amp; slope &gt;= -SK_Fixed1);</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :             fstart += (slope * (32 - (y0 &amp; 63)) + 32) &gt;&gt; 6;</span>
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :             hairBlitter = &amp;vertish_blitter;</span>
+<span class="lineNum">     437 </span>            :         }
+<span class="lineNum">     438 </span>            : 
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :         SkASSERT(istop &gt; istart);</span>
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :         if (istop - istart == 1) {</span>
+<span class="lineNum">     441 </span>            :             // we are within a single pixel
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :             scaleStart = y1 - y0;</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :             SkASSERT(scaleStart &gt;= 0 &amp;&amp; scaleStart &lt;= 64);</span>
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :             scaleStop = 0;</span>
+<span class="lineNum">     445 </span>            :         } else {
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :             scaleStart = 64 - (y0 &amp; 63);</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :             scaleStop = y1 &amp; 63;</span>
+<span class="lineNum">     448 </span>            :         }
+<span class="lineNum">     449 </span>            : 
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :         if (clip) {</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :             if (istart &gt;= clip-&gt;fBottom || istop &lt;= clip-&gt;fTop) {</span>
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :                 return;</span>
+<span class="lineNum">     453 </span>            :             }
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :             if (istart &lt; clip-&gt;fTop) {</span>
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :                 fstart += slope * (clip-&gt;fTop - istart);</span>
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 :                 istart = clip-&gt;fTop;</span>
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :                 scaleStart = 64;</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :                 if (istop - istart == 1) {</span>
+<span class="lineNum">     459 </span>            :                     // we are within a single pixel
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :                     scaleStart = contribution_64(y1);</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :                     scaleStop = 0;</span>
+<span class="lineNum">     462 </span>            :                 }
+<span class="lineNum">     463 </span>            :             }
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :             if (istop &gt; clip-&gt;fBottom) {</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :                 istop = clip-&gt;fBottom;</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :                 scaleStop = 0;  // so we don't draw this last row</span>
+<span class="lineNum">     467 </span>            :             }
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :             SkASSERT(istart &lt;= istop);</span>
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :             if (istart == istop)</span>
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :                 return;</span>
+<span class="lineNum">     472 </span>            : 
+<span class="lineNum">     473 </span>            :             // now test if our X values are completely inside the clip
+<span class="lineNum">     474 </span>            :             int left, right;
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :             if (slope &gt;= 0) { // L2R</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :                 left = SkFixedFloorToInt(fstart - SK_FixedHalf);</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :                 right = SkFixedCeilToInt(fstart + (istop - istart - 1) * slope + SK_FixedHalf);</span>
+<span class="lineNum">     478 </span>            :             } else {           // R2L
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :                 right = SkFixedCeilToInt(fstart + SK_FixedHalf);</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :                 left = SkFixedFloorToInt(fstart + (istop - istart - 1) * slope - SK_FixedHalf);</span>
+<span class="lineNum">     481 </span>            :             }
+<span class="lineNum">     482 </span>            : #ifdef OUTSET_BEFORE_CLIP_TEST
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :             left -= 1;</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :             right += 1;</span>
+<span class="lineNum">     485 </span>            : #endif
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :             if (left &gt;= clip-&gt;fRight || right &lt;= clip-&gt;fLeft) {</span>
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :                 return;</span>
+<span class="lineNum">     488 </span>            :             }
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :             if (clip-&gt;fLeft &lt;= left &amp;&amp; clip-&gt;fRight &gt;= right) {</span>
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :                 clip = nullptr;</span>
+<span class="lineNum">     491 </span>            :             }
+<span class="lineNum">     492 </span>            :         }
+<span class="lineNum">     493 </span>            :     }
+<span class="lineNum">     494 </span>            : 
+<span class="lineNum">     495 </span><span class="lineNoCov">          0 :     SkRectClipBlitter   rectClipper;</span>
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :     if (clip) {</span>
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 :         rectClipper.init(blitter, *clip);</span>
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :         blitter = &amp;rectClipper;</span>
+<span class="lineNum">     499 </span>            :     }
+<span class="lineNum">     500 </span>            : 
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :     SkASSERT(hairBlitter);</span>
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :     hairBlitter-&gt;setup(blitter);</span>
+<span class="lineNum">     503 </span>            : 
+<span class="lineNum">     504 </span>            : #ifdef SK_DEBUG
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :     if (scaleStart &gt; 0 &amp;&amp; scaleStop &gt; 0) {</span>
+<span class="lineNum">     506 </span>            :         // be sure we don't draw twice in the same pixel
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :         SkASSERT(istart &lt; istop - 1);</span>
+<span class="lineNum">     508 </span>            :     }
+<span class="lineNum">     509 </span>            : #endif
+<span class="lineNum">     510 </span>            : 
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :     fstart = hairBlitter-&gt;drawCap(istart, fstart, slope, scaleStart);</span>
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :     istart += 1;</span>
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :     int fullSpans = istop - istart - (scaleStop &gt; 0);</span>
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 :     if (fullSpans &gt; 0) {</span>
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :         fstart = hairBlitter-&gt;drawLine(istart, istart + fullSpans, fstart, slope);</span>
+<span class="lineNum">     516 </span>            :     }
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :     if (scaleStop &gt; 0) {</span>
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :         hairBlitter-&gt;drawCap(istop - 1, fstart, slope, scaleStop);</span>
+<span class="lineNum">     519 </span>            :     }
+<a name="520"><span class="lineNum">     520 </span>            : }</a>
+<span class="lineNum">     521 </span>            : 
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 : void SkScan::AntiHairLineRgn(const SkPoint array[], int arrayCount, const SkRegion* clip,</span>
+<span class="lineNum">     523 </span>            :                              SkBlitter* blitter) {
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :     if (clip &amp;&amp; clip-&gt;isEmpty()) {</span>
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     526 </span>            :     }
+<span class="lineNum">     527 </span>            : 
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :     SkASSERT(clip == nullptr || !clip-&gt;getBounds().isEmpty());</span>
+<span class="lineNum">     529 </span>            : 
+<span class="lineNum">     530 </span>            : #ifdef TEST_GAMMA
+<span class="lineNum">     531 </span>            :     build_gamma_table();
+<span class="lineNum">     532 </span>            : #endif
+<span class="lineNum">     533 </span>            : 
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :     const SkScalar max = SkIntToScalar(32767);</span>
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :     const SkRect fixedBounds = SkRect::MakeLTRB(-max, -max, max, max);</span>
+<span class="lineNum">     536 </span>            : 
+<span class="lineNum">     537 </span>            :     SkRect clipBounds;
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :     if (clip) {</span>
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :         clipBounds.set(clip-&gt;getBounds());</span>
+<span class="lineNum">     540 </span>            :         /*  We perform integral clipping later on, but we do a scalar clip first
+<span class="lineNum">     541 </span>            :          to ensure that our coordinates are expressible in fixed/integers.
+<span class="lineNum">     542 </span>            : 
+<span class="lineNum">     543 </span>            :          antialiased hairlines can draw up to 1/2 of a pixel outside of
+<span class="lineNum">     544 </span>            :          their bounds, so we need to outset the clip before calling the
+<span class="lineNum">     545 </span>            :          clipper. To make the numerics safer, we outset by a whole pixel,
+<span class="lineNum">     546 </span>            :          since the 1/2 pixel boundary is important to the antihair blitter,
+<span class="lineNum">     547 </span>            :          we don't want to risk numerical fate by chopping on that edge.
+<span class="lineNum">     548 </span>            :          */
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :         clipBounds.outset(SK_Scalar1, SK_Scalar1);</span>
+<span class="lineNum">     550 </span>            :     }
+<span class="lineNum">     551 </span>            : 
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     for (int i = 0; i &lt; arrayCount - 1; ++i) {</span>
+<span class="lineNum">     553 </span>            :         SkPoint pts[2];
+<span class="lineNum">     554 </span>            : 
+<span class="lineNum">     555 </span>            :         // We have to pre-clip the line to fit in a SkFixed, so we just chop
+<span class="lineNum">     556 </span>            :         // the line. TODO find a way to actually draw beyond that range.
+<span class="lineNum">     557 </span><span class="lineNoCov">          0 :         if (!SkLineClipper::IntersectLine(&amp;array[i], fixedBounds, pts)) {</span>
+<span class="lineNum">     558 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     559 </span>            :         }
+<span class="lineNum">     560 </span>            : 
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 :         if (clip &amp;&amp; !SkLineClipper::IntersectLine(pts, clipBounds, pts)) {</span>
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     563 </span>            :         }
+<span class="lineNum">     564 </span>            : 
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :         SkFDot6 x0 = SkScalarToFDot6(pts[0].fX);</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :         SkFDot6 y0 = SkScalarToFDot6(pts[0].fY);</span>
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :         SkFDot6 x1 = SkScalarToFDot6(pts[1].fX);</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :         SkFDot6 y1 = SkScalarToFDot6(pts[1].fY);</span>
+<span class="lineNum">     569 </span>            : 
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :         if (clip) {</span>
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :             SkFDot6 left = SkMin32(x0, x1);</span>
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :             SkFDot6 top = SkMin32(y0, y1);</span>
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :             SkFDot6 right = SkMax32(x0, x1);</span>
+<span class="lineNum">     574 </span><span class="lineNoCov">          0 :             SkFDot6 bottom = SkMax32(y0, y1);</span>
+<span class="lineNum">     575 </span>            :             SkIRect ir;
+<span class="lineNum">     576 </span>            : 
+<span class="lineNum">     577 </span><span class="lineNoCov">          0 :             ir.set( SkFDot6Floor(left) - 1,</span>
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :                     SkFDot6Floor(top) - 1,</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :                     SkFDot6Ceil(right) + 1,</span>
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :                     SkFDot6Ceil(bottom) + 1);</span>
+<span class="lineNum">     581 </span>            : 
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :             if (clip-&gt;quickReject(ir)) {</span>
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     584 </span>            :             }
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :             if (!clip-&gt;quickContains(ir)) {</span>
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :                 SkRegion::Cliperator iter(*clip, ir);</span>
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :                 const SkIRect*       r = &amp;iter.rect();</span>
+<span class="lineNum">     588 </span>            : 
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 :                 while (!iter.done()) {</span>
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :                     do_anti_hairline(x0, y0, x1, y1, r, blitter);</span>
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :                     iter.next();</span>
+<span class="lineNum">     592 </span>            :                 }
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     594 </span>            :             }
+<span class="lineNum">     595 </span>            :             // fall through to no-clip case
+<span class="lineNum">     596 </span>            :         }
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 :         do_anti_hairline(x0, y0, x1, y1, nullptr, blitter);</span>
+<span class="lineNum">     598 </span>            :     }
+<a name="599"><span class="lineNum">     599 </span>            : }</a>
+<span class="lineNum">     600 </span>            : 
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 : void SkScan::AntiHairRect(const SkRect&amp; rect, const SkRasterClip&amp; clip,</span>
+<span class="lineNum">     602 </span>            :                           SkBlitter* blitter) {
+<span class="lineNum">     603 </span>            :     SkPoint pts[5];
+<span class="lineNum">     604 </span>            : 
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :     pts[0].set(rect.fLeft, rect.fTop);</span>
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :     pts[1].set(rect.fRight, rect.fTop);</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :     pts[2].set(rect.fRight, rect.fBottom);</span>
+<span class="lineNum">     608 </span><span class="lineNoCov">          0 :     pts[3].set(rect.fLeft, rect.fBottom);</span>
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :     pts[4] = pts[0];</span>
+<span class="lineNum">     610 </span><span class="lineNoCov">          0 :     SkScan::AntiHairLine(pts, 5, clip, blitter);</span>
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     612 </span>            : 
+<span class="lineNum">     613 </span>            : ///////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     614 </span>            : 
+<a name="615"><span class="lineNum">     615 </span>            : typedef int FDot8;  // 24.8 integer fixed point</a>
+<span class="lineNum">     616 </span>            : 
+<span class="lineNum">     617 </span><span class="lineCov">        944 : static inline FDot8 SkFixedToFDot8(SkFixed x) {</span>
+<span class="lineNum">     618 </span><span class="lineCov">        944 :     return (x + 0x80) &gt;&gt; 8;</span>
+<a name="619"><span class="lineNum">     619 </span>            : }</a>
+<span class="lineNum">     620 </span>            : 
+<span class="lineNum">     621 </span><span class="lineCov">         10 : static void do_scanline(FDot8 L, int top, FDot8 R, U8CPU alpha,</span>
+<span class="lineNum">     622 </span>            :                         SkBlitter* blitter) {
+<span class="lineNum">     623 </span><span class="lineCov">         10 :     SkASSERT(L &lt; R);</span>
+<span class="lineNum">     624 </span>            : 
+<span class="lineNum">     625 </span><span class="lineCov">         10 :     if ((L &gt;&gt; 8) == ((R - 1) &gt;&gt; 8)) {  // 1x1 pixel</span>
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :         blitter-&gt;blitV(L &gt;&gt; 8, top, 1, SkAlphaMul(alpha, R - L));</span>
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     628 </span>            :     }
+<span class="lineNum">     629 </span>            : 
+<span class="lineNum">     630 </span><span class="lineCov">         10 :     int left = L &gt;&gt; 8;</span>
+<span class="lineNum">     631 </span>            : 
+<span class="lineNum">     632 </span><span class="lineCov">         10 :     if (L &amp; 0xFF) {</span>
+<span class="lineNum">     633 </span><span class="lineNoCov">          0 :         blitter-&gt;blitV(left, top, 1, SkAlphaMul(alpha, 256 - (L &amp; 0xFF)));</span>
+<span class="lineNum">     634 </span><span class="lineNoCov">          0 :         left += 1;</span>
+<span class="lineNum">     635 </span>            :     }
+<span class="lineNum">     636 </span>            : 
+<span class="lineNum">     637 </span><span class="lineCov">         10 :     int rite = R &gt;&gt; 8;</span>
+<span class="lineNum">     638 </span><span class="lineCov">         10 :     int width = rite - left;</span>
+<span class="lineNum">     639 </span><span class="lineCov">         10 :     if (width &gt; 0) {</span>
+<span class="lineNum">     640 </span><span class="lineCov">         10 :         call_hline_blitter(blitter, left, top, width, alpha);</span>
+<span class="lineNum">     641 </span>            :     }
+<span class="lineNum">     642 </span><span class="lineCov">         10 :     if (R &amp; 0xFF) {</span>
+<span class="lineNum">     643 </span><span class="lineNoCov">          0 :         blitter-&gt;blitV(rite, top, 1, SkAlphaMul(alpha, R &amp; 0xFF));</span>
+<span class="lineNum">     644 </span>            :     }
+<a name="645"><span class="lineNum">     645 </span>            : }</a>
+<span class="lineNum">     646 </span>            : 
+<span class="lineNum">     647 </span><span class="lineCov">        236 : static void antifilldot8(FDot8 L, FDot8 T, FDot8 R, FDot8 B, SkBlitter* blitter,</span>
+<span class="lineNum">     648 </span>            :                          bool fillInner) {
+<span class="lineNum">     649 </span>            :     // check for empty now that we're in our reduced precision space
+<span class="lineNum">     650 </span><span class="lineCov">        236 :     if (L &gt;= R || T &gt;= B) {</span>
+<span class="lineNum">     651 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     652 </span>            :     }
+<span class="lineNum">     653 </span><span class="lineCov">        236 :     int top = T &gt;&gt; 8;</span>
+<span class="lineNum">     654 </span><span class="lineCov">        236 :     if (top == ((B - 1) &gt;&gt; 8)) {   // just one scanline high</span>
+<span class="lineNum">     655 </span><span class="lineCov">         10 :         do_scanline(L, top, R, B - T - 1, blitter);</span>
+<span class="lineNum">     656 </span><span class="lineCov">         10 :         return;</span>
+<span class="lineNum">     657 </span>            :     }
+<span class="lineNum">     658 </span>            : 
+<span class="lineNum">     659 </span><span class="lineCov">        226 :     if (T &amp; 0xFF) {</span>
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :         do_scanline(L, top, R, 256 - (T &amp; 0xFF), blitter);</span>
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :         top += 1;</span>
+<span class="lineNum">     662 </span>            :     }
+<span class="lineNum">     663 </span>            : 
+<span class="lineNum">     664 </span><span class="lineCov">        226 :     int bot = B &gt;&gt; 8;</span>
+<span class="lineNum">     665 </span><span class="lineCov">        226 :     int height = bot - top;</span>
+<span class="lineNum">     666 </span><span class="lineCov">        226 :     if (height &gt; 0) {</span>
+<span class="lineNum">     667 </span><span class="lineCov">        226 :         int left = L &gt;&gt; 8;</span>
+<span class="lineNum">     668 </span><span class="lineCov">        226 :         if (left == ((R - 1) &gt;&gt; 8)) {   // just 1-pixel wide</span>
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :             blitter-&gt;blitV(left, top, height, R - L - 1);</span>
+<span class="lineNum">     670 </span>            :         } else {
+<span class="lineNum">     671 </span><span class="lineCov">        226 :             if (L &amp; 0xFF) {</span>
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :                 blitter-&gt;blitV(left, top, height, 256 - (L &amp; 0xFF));</span>
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :                 left += 1;</span>
+<span class="lineNum">     674 </span>            :             }
+<span class="lineNum">     675 </span><span class="lineCov">        226 :             int rite = R &gt;&gt; 8;</span>
+<span class="lineNum">     676 </span><span class="lineCov">        226 :             int width = rite - left;</span>
+<span class="lineNum">     677 </span><span class="lineCov">        226 :             if (width &gt; 0 &amp;&amp; fillInner) {</span>
+<span class="lineNum">     678 </span><span class="lineCov">        226 :                 blitter-&gt;blitRect(left, top, width, height);</span>
+<span class="lineNum">     679 </span>            :             }
+<span class="lineNum">     680 </span><span class="lineCov">        226 :             if (R &amp; 0xFF) {</span>
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :                 blitter-&gt;blitV(rite, top, height, R &amp; 0xFF);</span>
+<span class="lineNum">     682 </span>            :             }
+<span class="lineNum">     683 </span>            :         }
+<span class="lineNum">     684 </span>            :     }
+<span class="lineNum">     685 </span>            : 
+<span class="lineNum">     686 </span><span class="lineCov">        226 :     if (B &amp; 0xFF) {</span>
+<span class="lineNum">     687 </span><span class="lineNoCov">          0 :         do_scanline(L, bot, R, B &amp; 0xFF, blitter);</span>
+<span class="lineNum">     688 </span>            :     }
+<a name="689"><span class="lineNum">     689 </span>            : }</a>
+<span class="lineNum">     690 </span>            : 
+<span class="lineNum">     691 </span><span class="lineCov">        236 : static void antifillrect(const SkXRect&amp; xr, SkBlitter* blitter) {</span>
+<span class="lineNum">     692 </span><span class="lineCov">        472 :     antifilldot8(SkFixedToFDot8(xr.fLeft), SkFixedToFDot8(xr.fTop),</span>
+<span class="lineNum">     693 </span><span class="lineCov">        472 :                  SkFixedToFDot8(xr.fRight), SkFixedToFDot8(xr.fBottom),</span>
+<span class="lineNum">     694 </span><span class="lineCov">        236 :                  blitter, true);</span>
+<span class="lineNum">     695 </span><span class="lineCov">        236 : }</span>
+<span class="lineNum">     696 </span>            : 
+<a name="697"><span class="lineNum">     697 </span>            : ///////////////////////////////////////////////////////////////////////////////</a>
+<span class="lineNum">     698 </span>            : 
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 : void SkScan::AntiFillXRect(const SkXRect&amp; xr, const SkRegion* clip,</span>
+<span class="lineNum">     700 </span>            :                           SkBlitter* blitter) {
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :     if (nullptr == clip) {</span>
+<span class="lineNum">     702 </span><span class="lineNoCov">          0 :         antifillrect(xr, blitter);</span>
+<span class="lineNum">     703 </span>            :     } else {
+<span class="lineNum">     704 </span>            :         SkIRect outerBounds;
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :         XRect_roundOut(xr, &amp;outerBounds);</span>
+<span class="lineNum">     706 </span>            : 
+<span class="lineNum">     707 </span><span class="lineNoCov">          0 :         if (clip-&gt;isRect()) {</span>
+<span class="lineNum">     708 </span><span class="lineNoCov">          0 :             const SkIRect&amp; clipBounds = clip-&gt;getBounds();</span>
+<span class="lineNum">     709 </span>            : 
+<span class="lineNum">     710 </span><span class="lineNoCov">          0 :             if (clipBounds.contains(outerBounds)) {</span>
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :                 antifillrect(xr, blitter);</span>
+<span class="lineNum">     712 </span>            :             } else {
+<span class="lineNum">     713 </span>            :                 SkXRect tmpR;
+<span class="lineNum">     714 </span>            :                 // this keeps our original edges fractional
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :                 XRect_set(&amp;tmpR, clipBounds);</span>
+<span class="lineNum">     716 </span><span class="lineNoCov">          0 :                 if (tmpR.intersect(xr)) {</span>
+<span class="lineNum">     717 </span><span class="lineNoCov">          0 :                     antifillrect(tmpR, blitter);</span>
+<span class="lineNum">     718 </span>            :                 }
+<span class="lineNum">     719 </span>            :             }
+<span class="lineNum">     720 </span>            :         } else {
+<span class="lineNum">     721 </span><span class="lineNoCov">          0 :             SkRegion::Cliperator clipper(*clip, outerBounds);</span>
+<span class="lineNum">     722 </span><span class="lineNoCov">          0 :             const SkIRect&amp;       rr = clipper.rect();</span>
+<span class="lineNum">     723 </span>            : 
+<span class="lineNum">     724 </span><span class="lineNoCov">          0 :             while (!clipper.done()) {</span>
+<span class="lineNum">     725 </span>            :                 SkXRect  tmpR;
+<span class="lineNum">     726 </span>            : 
+<span class="lineNum">     727 </span>            :                 // this keeps our original edges fractional
+<span class="lineNum">     728 </span><span class="lineNoCov">          0 :                 XRect_set(&amp;tmpR, rr);</span>
+<span class="lineNum">     729 </span><span class="lineNoCov">          0 :                 if (tmpR.intersect(xr)) {</span>
+<span class="lineNum">     730 </span><span class="lineNoCov">          0 :                     antifillrect(tmpR, blitter);</span>
+<span class="lineNum">     731 </span>            :                 }
+<span class="lineNum">     732 </span><span class="lineNoCov">          0 :                 clipper.next();</span>
+<span class="lineNum">     733 </span>            :             }
+<span class="lineNum">     734 </span>            :         }
+<span class="lineNum">     735 </span>            :     }
+<a name="736"><span class="lineNum">     736 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     737 </span>            : 
+<span class="lineNum">     738 </span><span class="lineNoCov">          0 : void SkScan::AntiFillXRect(const SkXRect&amp; xr, const SkRasterClip&amp; clip,</span>
+<span class="lineNum">     739 </span>            :                            SkBlitter* blitter) {
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :     if (clip.isBW()) {</span>
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 :         AntiFillXRect(xr, &amp;clip.bwRgn(), blitter);</span>
+<span class="lineNum">     742 </span>            :     } else {
+<span class="lineNum">     743 </span>            :         SkIRect outerBounds;
+<span class="lineNum">     744 </span><span class="lineNoCov">          0 :         XRect_roundOut(xr, &amp;outerBounds);</span>
+<span class="lineNum">     745 </span>            : 
+<span class="lineNum">     746 </span><span class="lineNoCov">          0 :         if (clip.quickContains(outerBounds)) {</span>
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 :             AntiFillXRect(xr, nullptr, blitter);</span>
+<span class="lineNum">     748 </span>            :         } else {
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :             SkAAClipBlitterWrapper wrapper(clip, blitter);</span>
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :             AntiFillXRect(xr, &amp;wrapper.getRgn(), wrapper.getBlitter());</span>
+<span class="lineNum">     751 </span>            :         }
+<span class="lineNum">     752 </span>            :     }
+<span class="lineNum">     753 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     754 </span>            : 
+<span class="lineNum">     755 </span>            : /*  This guy takes a float-rect, but with the key improvement that it has
+<span class="lineNum">     756 </span>            :     already been clipped, so we know that it is safe to convert it into a
+<a name="757"><span class="lineNum">     757 </span>            :     XRect (fixedpoint), as it won't overflow.</a>
+<span class="lineNum">     758 </span>            : */
+<span class="lineNum">     759 </span><span class="lineCov">        236 : static void antifillrect(const SkRect&amp; r, SkBlitter* blitter) {</span>
+<span class="lineNum">     760 </span>            :     SkXRect xr;
+<span class="lineNum">     761 </span>            : 
+<span class="lineNum">     762 </span><span class="lineCov">        236 :     XRect_set(&amp;xr, r);</span>
+<span class="lineNum">     763 </span><span class="lineCov">        236 :     antifillrect(xr, blitter);</span>
+<span class="lineNum">     764 </span><span class="lineCov">        236 : }</span>
+<span class="lineNum">     765 </span>            : 
+<span class="lineNum">     766 </span>            : /*  We repeat the clipping logic of AntiFillXRect because the float rect might
+<span class="lineNum">     767 </span>            :     overflow if we blindly converted it to an XRect. This sucks that we have to
+<span class="lineNum">     768 </span>            :     repeat the clipping logic, but I don't see how to share the code/logic.
+<span class="lineNum">     769 </span>            : 
+<span class="lineNum">     770 </span>            :     We clip r (as needed) into one or more (smaller) float rects, and then pass
+<span class="lineNum">     771 </span>            :     those to our version of antifillrect, which converts it into an XRect and
+<a name="772"><span class="lineNum">     772 </span>            :     then calls the blit.</a>
+<span class="lineNum">     773 </span>            : */
+<span class="lineNum">     774 </span><span class="lineCov">        205 : void SkScan::AntiFillRect(const SkRect&amp; origR, const SkRegion* clip,</span>
+<span class="lineNum">     775 </span>            :                           SkBlitter* blitter) {
+<span class="lineNum">     776 </span><span class="lineCov">        205 :     if (clip) {</span>
+<span class="lineNum">     777 </span>            :         SkRect newR;
+<span class="lineNum">     778 </span><span class="lineCov">        205 :         newR.set(clip-&gt;getBounds());</span>
+<span class="lineNum">     779 </span><span class="lineCov">        205 :         if (!newR.intersect(origR)) {</span>
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     781 </span>            :         }
+<span class="lineNum">     782 </span>            : 
+<span class="lineNum">     783 </span><span class="lineCov">        205 :         const SkIRect outerBounds = newR.roundOut();</span>
+<span class="lineNum">     784 </span>            : 
+<span class="lineNum">     785 </span><span class="lineCov">        205 :         if (clip-&gt;isRect()) {</span>
+<span class="lineNum">     786 </span><span class="lineCov">        193 :             antifillrect(newR, blitter);</span>
+<span class="lineNum">     787 </span>            :         } else {
+<span class="lineNum">     788 </span><span class="lineCov">         12 :             SkRegion::Cliperator clipper(*clip, outerBounds);</span>
+<span class="lineNum">     789 </span><span class="lineCov">         98 :             while (!clipper.done()) {</span>
+<span class="lineNum">     790 </span><span class="lineCov">         43 :                 newR.set(clipper.rect());</span>
+<span class="lineNum">     791 </span><span class="lineCov">         43 :                 if (newR.intersect(origR)) {</span>
+<span class="lineNum">     792 </span><span class="lineCov">         43 :                     antifillrect(newR, blitter);</span>
+<span class="lineNum">     793 </span>            :                 }
+<span class="lineNum">     794 </span><span class="lineCov">         43 :                 clipper.next();</span>
+<span class="lineNum">     795 </span>            :             }
+<span class="lineNum">     796 </span>            :         }
+<span class="lineNum">     797 </span>            :     } else {
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 :         antifillrect(origR, blitter);</span>
+<span class="lineNum">     799 </span>            :     }
+<a name="800"><span class="lineNum">     800 </span>            : }</a>
+<span class="lineNum">     801 </span>            : 
+<span class="lineNum">     802 </span><span class="lineCov">        205 : void SkScan::AntiFillRect(const SkRect&amp; r, const SkRasterClip&amp; clip,</span>
+<span class="lineNum">     803 </span>            :                           SkBlitter* blitter) {
+<span class="lineNum">     804 </span><span class="lineCov">        205 :     if (clip.isBW()) {</span>
+<span class="lineNum">     805 </span><span class="lineCov">         78 :         AntiFillRect(r, &amp;clip.bwRgn(), blitter);</span>
+<span class="lineNum">     806 </span>            :     } else {
+<span class="lineNum">     807 </span><span class="lineCov">        254 :         SkAAClipBlitterWrapper wrap(clip, blitter);</span>
+<span class="lineNum">     808 </span><span class="lineCov">        127 :         AntiFillRect(r, &amp;wrap.getRgn(), wrap.getBlitter());</span>
+<span class="lineNum">     809 </span>            :     }
+<span class="lineNum">     810 </span><span class="lineCov">        205 : }</span>
+<span class="lineNum">     811 </span>            : 
+<span class="lineNum">     812 </span>            : ///////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     813 </span>            : 
+<span class="lineNum">     814 </span>            : #define SkAlphaMulRound(a, b)   SkMulDiv255Round(a, b)
+<a name="815"><span class="lineNum">     815 </span>            : </a>
+<span class="lineNum">     816 </span>            : // calls blitRect() if the rectangle is non-empty
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 : static void fillcheckrect(int L, int T, int R, int B, SkBlitter* blitter) {</span>
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 :     if (L &lt; R &amp;&amp; T &lt; B) {</span>
+<span class="lineNum">     819 </span><span class="lineNoCov">          0 :         blitter-&gt;blitRect(L, T, R - L, B - T);</span>
+<span class="lineNum">     820 </span>            :     }
+<a name="821"><span class="lineNum">     821 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     822 </span>            : 
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 : static inline FDot8 SkScalarToFDot8(SkScalar x) {</span>
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :     return (int)(x * 256);</span>
+<a name="825"><span class="lineNum">     825 </span>            : }</a>
+<span class="lineNum">     826 </span>            : 
+<span class="lineNum">     827 </span><span class="lineNoCov">          0 : static inline int FDot8Floor(FDot8 x) {</span>
+<span class="lineNum">     828 </span><span class="lineNoCov">          0 :     return x &gt;&gt; 8;</span>
+<a name="829"><span class="lineNum">     829 </span>            : }</a>
+<span class="lineNum">     830 </span>            : 
+<span class="lineNum">     831 </span><span class="lineNoCov">          0 : static inline int FDot8Ceil(FDot8 x) {</span>
+<span class="lineNum">     832 </span><span class="lineNoCov">          0 :     return (x + 0xFF) &gt;&gt; 8;</span>
+<span class="lineNum">     833 </span>            : }
+<a name="834"><span class="lineNum">     834 </span>            : </a>
+<span class="lineNum">     835 </span>            : // 1 - (1 - a)*(1 - b)
+<span class="lineNum">     836 </span><span class="lineNoCov">          0 : static inline U8CPU InvAlphaMul(U8CPU a, U8CPU b) {</span>
+<span class="lineNum">     837 </span>            :     // need precise rounding (not just SkAlphaMul) so that values like
+<span class="lineNum">     838 </span>            :     // a=228, b=252 don't overflow the result
+<span class="lineNum">     839 </span><span class="lineNoCov">          0 :     return SkToU8(a + b - SkAlphaMulRound(a, b));</span>
+<a name="840"><span class="lineNum">     840 </span>            : }</a>
+<span class="lineNum">     841 </span>            : 
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 : static void inner_scanline(FDot8 L, int top, FDot8 R, U8CPU alpha,</span>
+<span class="lineNum">     843 </span>            :                            SkBlitter* blitter) {
+<span class="lineNum">     844 </span><span class="lineNoCov">          0 :     SkASSERT(L &lt; R);</span>
+<span class="lineNum">     845 </span>            : 
+<span class="lineNum">     846 </span><span class="lineNoCov">          0 :     if ((L &gt;&gt; 8) == ((R - 1) &gt;&gt; 8)) {  // 1x1 pixel</span>
+<span class="lineNum">     847 </span><span class="lineNoCov">          0 :         FDot8 widClamp = R - L;</span>
+<span class="lineNum">     848 </span>            :         // border case clamp 256 to 255 instead of going through call_hline_blitter
+<span class="lineNum">     849 </span>            :         // see skbug/4406
+<span class="lineNum">     850 </span><span class="lineNoCov">          0 :         widClamp = widClamp - (widClamp &gt;&gt; 8);</span>
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :         blitter-&gt;blitV(L &gt;&gt; 8, top, 1, InvAlphaMul(alpha, widClamp));</span>
+<span class="lineNum">     852 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     853 </span>            :     }
+<span class="lineNum">     854 </span>            : 
+<span class="lineNum">     855 </span><span class="lineNoCov">          0 :     int left = L &gt;&gt; 8;</span>
+<span class="lineNum">     856 </span><span class="lineNoCov">          0 :     if (L &amp; 0xFF) {</span>
+<span class="lineNum">     857 </span><span class="lineNoCov">          0 :         blitter-&gt;blitV(left, top, 1, InvAlphaMul(alpha, L &amp; 0xFF));</span>
+<span class="lineNum">     858 </span><span class="lineNoCov">          0 :         left += 1;</span>
+<span class="lineNum">     859 </span>            :     }
+<span class="lineNum">     860 </span>            : 
+<span class="lineNum">     861 </span><span class="lineNoCov">          0 :     int rite = R &gt;&gt; 8;</span>
+<span class="lineNum">     862 </span><span class="lineNoCov">          0 :     int width = rite - left;</span>
+<span class="lineNum">     863 </span><span class="lineNoCov">          0 :     if (width &gt; 0) {</span>
+<span class="lineNum">     864 </span><span class="lineNoCov">          0 :         call_hline_blitter(blitter, left, top, width, alpha);</span>
+<span class="lineNum">     865 </span>            :     }
+<span class="lineNum">     866 </span>            : 
+<span class="lineNum">     867 </span><span class="lineNoCov">          0 :     if (R &amp; 0xFF) {</span>
+<span class="lineNum">     868 </span><span class="lineNoCov">          0 :         blitter-&gt;blitV(rite, top, 1, InvAlphaMul(alpha, ~R &amp; 0xFF));</span>
+<span class="lineNum">     869 </span>            :     }
+<a name="870"><span class="lineNum">     870 </span>            : }</a>
+<span class="lineNum">     871 </span>            : 
+<span class="lineNum">     872 </span><span class="lineNoCov">          0 : static void innerstrokedot8(FDot8 L, FDot8 T, FDot8 R, FDot8 B,</span>
+<span class="lineNum">     873 </span>            :                             SkBlitter* blitter) {
+<span class="lineNum">     874 </span><span class="lineNoCov">          0 :     SkASSERT(L &lt; R &amp;&amp; T &lt; B);</span>
+<span class="lineNum">     875 </span>            : 
+<span class="lineNum">     876 </span><span class="lineNoCov">          0 :     int top = T &gt;&gt; 8;</span>
+<span class="lineNum">     877 </span><span class="lineNoCov">          0 :     if (top == ((B - 1) &gt;&gt; 8)) {   // just one scanline high</span>
+<span class="lineNum">     878 </span>            :         // We want the inverse of B-T, since we're the inner-stroke
+<span class="lineNum">     879 </span><span class="lineNoCov">          0 :         int alpha = 256 - (B - T);</span>
+<span class="lineNum">     880 </span><span class="lineNoCov">          0 :         if (alpha) {</span>
+<span class="lineNum">     881 </span><span class="lineNoCov">          0 :             inner_scanline(L, top, R, alpha, blitter);</span>
+<span class="lineNum">     882 </span>            :         }
+<span class="lineNum">     883 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     884 </span>            :     }
+<span class="lineNum">     885 </span>            : 
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 :     if (T &amp; 0xFF) {</span>
+<span class="lineNum">     887 </span><span class="lineNoCov">          0 :         inner_scanline(L, top, R, T &amp; 0xFF, blitter);</span>
+<span class="lineNum">     888 </span><span class="lineNoCov">          0 :         top += 1;</span>
+<span class="lineNum">     889 </span>            :     }
+<span class="lineNum">     890 </span>            : 
+<span class="lineNum">     891 </span><span class="lineNoCov">          0 :     int bot = B &gt;&gt; 8;</span>
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :     int height = bot - top;</span>
+<span class="lineNum">     893 </span><span class="lineNoCov">          0 :     if (height &gt; 0) {</span>
+<span class="lineNum">     894 </span><span class="lineNoCov">          0 :         if (L &amp; 0xFF) {</span>
+<span class="lineNum">     895 </span><span class="lineNoCov">          0 :             blitter-&gt;blitV(L &gt;&gt; 8, top, height, L &amp; 0xFF);</span>
+<span class="lineNum">     896 </span>            :         }
+<span class="lineNum">     897 </span><span class="lineNoCov">          0 :         if (R &amp; 0xFF) {</span>
+<span class="lineNum">     898 </span><span class="lineNoCov">          0 :             blitter-&gt;blitV(R &gt;&gt; 8, top, height, ~R &amp; 0xFF);</span>
+<span class="lineNum">     899 </span>            :         }
+<span class="lineNum">     900 </span>            :     }
+<span class="lineNum">     901 </span>            : 
+<span class="lineNum">     902 </span><span class="lineNoCov">          0 :     if (B &amp; 0xFF) {</span>
+<span class="lineNum">     903 </span><span class="lineNoCov">          0 :         inner_scanline(L, bot, R, ~B &amp; 0xFF, blitter);</span>
+<span class="lineNum">     904 </span>            :     }
+<a name="905"><span class="lineNum">     905 </span>            : }</a>
+<span class="lineNum">     906 </span>            : 
+<span class="lineNum">     907 </span><span class="lineNoCov">          0 : static inline void align_thin_stroke(FDot8&amp; edge1, FDot8&amp; edge2) {</span>
+<span class="lineNum">     908 </span><span class="lineNoCov">          0 :     SkASSERT(edge1 &lt;= edge2);</span>
+<span class="lineNum">     909 </span>            : 
+<span class="lineNum">     910 </span><span class="lineNoCov">          0 :     if (FDot8Floor(edge1) == FDot8Floor(edge2)) {</span>
+<span class="lineNum">     911 </span><span class="lineNoCov">          0 :         edge2 -= (edge1 &amp; 0xFF);</span>
+<span class="lineNum">     912 </span><span class="lineNoCov">          0 :         edge1 &amp;= ~0xFF;</span>
+<span class="lineNum">     913 </span>            :     }
+<a name="914"><span class="lineNum">     914 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     915 </span>            : 
+<span class="lineNum">     916 </span><span class="lineNoCov">          0 : void SkScan::AntiFrameRect(const SkRect&amp; r, const SkPoint&amp; strokeSize,</span>
+<span class="lineNum">     917 </span>            :                            const SkRegion* clip, SkBlitter* blitter) {
+<span class="lineNum">     918 </span><span class="lineNoCov">          0 :     SkASSERT(strokeSize.fX &gt;= 0 &amp;&amp; strokeSize.fY &gt;= 0);</span>
+<span class="lineNum">     919 </span>            : 
+<span class="lineNum">     920 </span><span class="lineNoCov">          0 :     SkScalar rx = SkScalarHalf(strokeSize.fX);</span>
+<span class="lineNum">     921 </span><span class="lineNoCov">          0 :     SkScalar ry = SkScalarHalf(strokeSize.fY);</span>
+<span class="lineNum">     922 </span>            : 
+<span class="lineNum">     923 </span>            :     // outset by the radius
+<span class="lineNum">     924 </span><span class="lineNoCov">          0 :     FDot8 outerL = SkScalarToFDot8(r.fLeft - rx);</span>
+<span class="lineNum">     925 </span><span class="lineNoCov">          0 :     FDot8 outerT = SkScalarToFDot8(r.fTop - ry);</span>
+<span class="lineNum">     926 </span><span class="lineNoCov">          0 :     FDot8 outerR = SkScalarToFDot8(r.fRight + rx);</span>
+<span class="lineNum">     927 </span><span class="lineNoCov">          0 :     FDot8 outerB = SkScalarToFDot8(r.fBottom + ry);</span>
+<span class="lineNum">     928 </span>            : 
+<span class="lineNum">     929 </span>            :     SkIRect outer;
+<span class="lineNum">     930 </span>            :     // set outer to the outer rect of the outer section
+<span class="lineNum">     931 </span><span class="lineNoCov">          0 :     outer.set(FDot8Floor(outerL), FDot8Floor(outerT), FDot8Ceil(outerR), FDot8Ceil(outerB));</span>
+<span class="lineNum">     932 </span>            : 
+<span class="lineNum">     933 </span><span class="lineNoCov">          0 :     SkBlitterClipper clipper;</span>
+<span class="lineNum">     934 </span><span class="lineNoCov">          0 :     if (clip) {</span>
+<span class="lineNum">     935 </span><span class="lineNoCov">          0 :         if (clip-&gt;quickReject(outer)) {</span>
+<span class="lineNum">     936 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     937 </span>            :         }
+<span class="lineNum">     938 </span><span class="lineNoCov">          0 :         if (!clip-&gt;contains(outer)) {</span>
+<span class="lineNum">     939 </span><span class="lineNoCov">          0 :             blitter = clipper.apply(blitter, clip, &amp;outer);</span>
+<span class="lineNum">     940 </span>            :         }
+<span class="lineNum">     941 </span>            :         // now we can ignore clip for the rest of the function
+<span class="lineNum">     942 </span>            :     }
+<span class="lineNum">     943 </span>            : 
+<span class="lineNum">     944 </span>            :     // in case we lost a bit with diameter/2
+<span class="lineNum">     945 </span><span class="lineNoCov">          0 :     rx = strokeSize.fX - rx;</span>
+<span class="lineNum">     946 </span><span class="lineNoCov">          0 :     ry = strokeSize.fY - ry;</span>
+<span class="lineNum">     947 </span>            : 
+<span class="lineNum">     948 </span>            :     // inset by the radius
+<span class="lineNum">     949 </span><span class="lineNoCov">          0 :     FDot8 innerL = SkScalarToFDot8(r.fLeft + rx);</span>
+<span class="lineNum">     950 </span><span class="lineNoCov">          0 :     FDot8 innerT = SkScalarToFDot8(r.fTop + ry);</span>
+<span class="lineNum">     951 </span><span class="lineNoCov">          0 :     FDot8 innerR = SkScalarToFDot8(r.fRight - rx);</span>
+<span class="lineNum">     952 </span><span class="lineNoCov">          0 :     FDot8 innerB = SkScalarToFDot8(r.fBottom - ry);</span>
+<span class="lineNum">     953 </span>            : 
+<span class="lineNum">     954 </span>            :     // For sub-unit strokes, tweak the hulls such that one of the edges coincides with the pixel
+<span class="lineNum">     955 </span>            :     // edge. This ensures that the general rect stroking logic below
+<span class="lineNum">     956 </span>            :     //   a) doesn't blit the same scanline twice
+<span class="lineNum">     957 </span>            :     //   b) computes the correct coverage when both edges fall within the same pixel
+<span class="lineNum">     958 </span><span class="lineNoCov">          0 :     if (strokeSize.fX &lt; 1 || strokeSize.fY &lt; 1) {</span>
+<span class="lineNum">     959 </span><span class="lineNoCov">          0 :         align_thin_stroke(outerL, innerL);</span>
+<span class="lineNum">     960 </span><span class="lineNoCov">          0 :         align_thin_stroke(outerT, innerT);</span>
+<span class="lineNum">     961 </span><span class="lineNoCov">          0 :         align_thin_stroke(innerR, outerR);</span>
+<span class="lineNum">     962 </span><span class="lineNoCov">          0 :         align_thin_stroke(innerB, outerB);</span>
+<span class="lineNum">     963 </span>            :     }
+<span class="lineNum">     964 </span>            : 
+<span class="lineNum">     965 </span>            :     // stroke the outer hull
+<span class="lineNum">     966 </span><span class="lineNoCov">          0 :     antifilldot8(outerL, outerT, outerR, outerB, blitter, false);</span>
+<span class="lineNum">     967 </span>            : 
+<span class="lineNum">     968 </span>            :     // set outer to the outer rect of the middle section
+<span class="lineNum">     969 </span><span class="lineNoCov">          0 :     outer.set(FDot8Ceil(outerL), FDot8Ceil(outerT), FDot8Floor(outerR), FDot8Floor(outerB));</span>
+<span class="lineNum">     970 </span>            : 
+<span class="lineNum">     971 </span><span class="lineNoCov">          0 :     if (innerL &gt;= innerR || innerT &gt;= innerB) {</span>
+<span class="lineNum">     972 </span><span class="lineNoCov">          0 :         fillcheckrect(outer.fLeft, outer.fTop, outer.fRight, outer.fBottom,</span>
+<span class="lineNum">     973 </span><span class="lineNoCov">          0 :                       blitter);</span>
+<span class="lineNum">     974 </span>            :     } else {
+<span class="lineNum">     975 </span>            :         SkIRect inner;
+<span class="lineNum">     976 </span>            :         // set inner to the inner rect of the middle section
+<span class="lineNum">     977 </span><span class="lineNoCov">          0 :         inner.set(FDot8Floor(innerL), FDot8Floor(innerT), FDot8Ceil(innerR), FDot8Ceil(innerB));</span>
+<span class="lineNum">     978 </span>            : 
+<span class="lineNum">     979 </span>            :         // draw the frame in 4 pieces
+<span class="lineNum">     980 </span><span class="lineNoCov">          0 :         fillcheckrect(outer.fLeft, outer.fTop, outer.fRight, inner.fTop,</span>
+<span class="lineNum">     981 </span><span class="lineNoCov">          0 :                       blitter);</span>
+<span class="lineNum">     982 </span><span class="lineNoCov">          0 :         fillcheckrect(outer.fLeft, inner.fTop, inner.fLeft, inner.fBottom,</span>
+<span class="lineNum">     983 </span><span class="lineNoCov">          0 :                       blitter);</span>
+<span class="lineNum">     984 </span><span class="lineNoCov">          0 :         fillcheckrect(inner.fRight, inner.fTop, outer.fRight, inner.fBottom,</span>
+<span class="lineNum">     985 </span><span class="lineNoCov">          0 :                       blitter);</span>
+<span class="lineNum">     986 </span><span class="lineNoCov">          0 :         fillcheckrect(outer.fLeft, inner.fBottom, outer.fRight, outer.fBottom,</span>
+<span class="lineNum">     987 </span><span class="lineNoCov">          0 :                       blitter);</span>
+<span class="lineNum">     988 </span>            : 
+<span class="lineNum">     989 </span>            :         // now stroke the inner rect, which is similar to antifilldot8() except that
+<span class="lineNum">     990 </span>            :         // it treats the fractional coordinates with the inverse bias (since its
+<span class="lineNum">     991 </span>            :         // inner).
+<span class="lineNum">     992 </span><span class="lineNoCov">          0 :         innerstrokedot8(innerL, innerT, innerR, innerB, blitter);</span>
+<span class="lineNum">     993 </span>            :     }
+<a name="994"><span class="lineNum">     994 </span>            : }</a>
+<span class="lineNum">     995 </span>            : 
+<span class="lineNum">     996 </span><span class="lineNoCov">          0 : void SkScan::AntiFrameRect(const SkRect&amp; r, const SkPoint&amp; strokeSize,</span>
+<span class="lineNum">     997 </span>            :                            const SkRasterClip&amp; clip, SkBlitter* blitter) {
+<span class="lineNum">     998 </span><span class="lineNoCov">          0 :     if (clip.isBW()) {</span>
+<span class="lineNum">     999 </span><span class="lineNoCov">          0 :         AntiFrameRect(r, strokeSize, &amp;clip.bwRgn(), blitter);</span>
+<span class="lineNum">    1000 </span>            :     } else {
+<span class="lineNum">    1001 </span><span class="lineNoCov">          0 :         SkAAClipBlitterWrapper wrap(clip, blitter);</span>
+<span class="lineNum">    1002 </span><span class="lineNoCov">          0 :         AntiFrameRect(r, strokeSize, &amp;wrap.getRgn(), wrap.getBlitter());</span>
+<span class="lineNum">    1003 </span>            :     }
+<span class="lineNum">    1004 </span><span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

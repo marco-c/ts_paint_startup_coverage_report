@@ -1,0 +1,1149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - netwerk/base/nsBufferedStreams.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">netwerk/base</a> - nsBufferedStreams.cpp<span style="font-size: 80%;"> (source / <a href="nsBufferedStreams.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">197</td>
+            <td class="headerCovTableEntry">495</td>
+            <td class="headerCovTableEntryLo">39.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">30</td>
+            <td class="headerCovTableEntry">57</td>
+            <td class="headerCovTableEntryLo">52.6 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */</a>
+<span class="lineNum">       2 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       3 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       4 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       5 </span>            : 
+<span class="lineNum">       6 </span>            : #include &quot;ipc/IPCMessageUtils.h&quot;
+<span class="lineNum">       7 </span>            : 
+<span class="lineNum">       8 </span>            : #include &quot;nsBufferedStreams.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;nsStreamUtils.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;nsNetCID.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;nsIClassInfoImpl.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/ipc/InputStreamUtils.h&quot;
+<span class="lineNum">      13 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #ifdef DEBUG_brendan
+<span class="lineNum">      16 </span>            : # define METERING
+<span class="lineNum">      17 </span>            : #endif
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : #ifdef METERING
+<span class="lineNum">      20 </span>            : # include &lt;stdio.h&gt;
+<span class="lineNum">      21 </span>            : # define METER(x)       x
+<span class="lineNum">      22 </span>            : # define MAX_BIG_SEEKS  20
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : static struct {
+<span class="lineNum">      25 </span>            :     uint32_t            mSeeksWithinBuffer;
+<span class="lineNum">      26 </span>            :     uint32_t            mSeeksOutsideBuffer;
+<span class="lineNum">      27 </span>            :     uint32_t            mBufferReadUponSeek;
+<span class="lineNum">      28 </span>            :     uint32_t            mBufferUnreadUponSeek;
+<span class="lineNum">      29 </span>            :     uint32_t            mBytesReadFromBuffer;
+<span class="lineNum">      30 </span>            :     uint32_t            mBigSeekIndex;
+<span class="lineNum">      31 </span>            :     struct {
+<span class="lineNum">      32 </span>            :         int64_t         mOldOffset;
+<span class="lineNum">      33 </span>            :         int64_t         mNewOffset;
+<span class="lineNum">      34 </span>            :     } mBigSeek[MAX_BIG_SEEKS];
+<span class="lineNum">      35 </span>            : } bufstats;
+<span class="lineNum">      36 </span>            : #else
+<span class="lineNum">      37 </span>            : # define METER(x)       /* nothing */
+<span class="lineNum">      38 </span>            : #endif
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span>            : using namespace mozilla::ipc;
+<span class="lineNum">      41 </span>            : using mozilla::Maybe;
+<span class="lineNum">      42 </span>            : using mozilla::Nothing;
+<span class="lineNum">      43 </span>            : using mozilla::Some;
+<span class="lineNum">      44 </span>            : 
+<span class="lineNum">      45 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<a name="46"><span class="lineNum">      46 </span>            : // nsBufferedStream</a>
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span><span class="lineCov">        113 : nsBufferedStream::nsBufferedStream()</span>
+<span class="lineNum">      49 </span>            :     : mBuffer(nullptr),
+<span class="lineNum">      50 </span>            :       mBufferStartOffset(0),
+<span class="lineNum">      51 </span>            :       mCursor(0),
+<span class="lineNum">      52 </span>            :       mFillPoint(0),
+<span class="lineNum">      53 </span>            :       mStream(nullptr),
+<span class="lineNum">      54 </span>            :       mBufferDisabled(false),
+<span class="lineNum">      55 </span>            :       mEOF(false),
+<span class="lineNum">      56 </span><span class="lineCov">        113 :       mGetBufferCount(0)</span>
+<span class="lineNum">      57 </span>            : {
+<a name="58"><span class="lineNum">      58 </span><span class="lineCov">        113 : }</span></a>
+<span class="lineNum">      59 </span>            : 
+<span class="lineNum">      60 </span><span class="lineCov">        226 : nsBufferedStream::~nsBufferedStream()</span>
+<span class="lineNum">      61 </span>            : {
+<span class="lineNum">      62 </span><span class="lineCov">        113 :     Close();</span>
+<a name="63"><span class="lineNum">      63 </span><span class="lineCov">        113 : }</span></a>
+<span class="lineNum">      64 </span>            : 
+<span class="lineNum">      65 </span><span class="lineCov">       1335 : NS_IMPL_ISUPPORTS(nsBufferedStream, nsISeekableStream)</span>
+<a name="66"><span class="lineNum">      66 </span>            : </a>
+<span class="lineNum">      67 </span>            : nsresult
+<span class="lineNum">      68 </span><span class="lineCov">        113 : nsBufferedStream::Init(nsISupports* stream, uint32_t bufferSize)</span>
+<span class="lineNum">      69 </span>            : {
+<span class="lineNum">      70 </span><span class="lineCov">        113 :     NS_ASSERTION(stream, &quot;need to supply a stream&quot;);</span>
+<span class="lineNum">      71 </span><span class="lineCov">        113 :     NS_ASSERTION(mStream == nullptr, &quot;already inited&quot;);</span>
+<span class="lineNum">      72 </span><span class="lineCov">        113 :     mStream = stream;</span>
+<span class="lineNum">      73 </span><span class="lineCov">        113 :     NS_IF_ADDREF(mStream);</span>
+<span class="lineNum">      74 </span><span class="lineCov">        113 :     mBufferSize = bufferSize;</span>
+<span class="lineNum">      75 </span><span class="lineCov">        113 :     mBufferStartOffset = 0;</span>
+<span class="lineNum">      76 </span><span class="lineCov">        113 :     mCursor = 0;</span>
+<span class="lineNum">      77 </span><span class="lineCov">        226 :     mBuffer = new (mozilla::fallible) char[bufferSize];</span>
+<span class="lineNum">      78 </span><span class="lineCov">        113 :     if (mBuffer == nullptr) {</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :         return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">      80 </span>            :     }
+<span class="lineNum">      81 </span><span class="lineCov">        113 :     return NS_OK;</span>
+<span class="lineNum">      82 </span>            : }
+<a name="83"><span class="lineNum">      83 </span>            : </a>
+<span class="lineNum">      84 </span>            : nsresult
+<span class="lineNum">      85 </span><span class="lineCov">        143 : nsBufferedStream::Close()</span>
+<span class="lineNum">      86 </span>            : {
+<span class="lineNum">      87 </span><span class="lineCov">        143 :     NS_IF_RELEASE(mStream);</span>
+<span class="lineNum">      88 </span><span class="lineCov">        143 :     if (mBuffer) {</span>
+<span class="lineNum">      89 </span><span class="lineCov">        113 :         delete[] mBuffer;</span>
+<span class="lineNum">      90 </span><span class="lineCov">        113 :         mBuffer = nullptr;</span>
+<span class="lineNum">      91 </span><span class="lineCov">        113 :         mBufferSize = 0;</span>
+<span class="lineNum">      92 </span><span class="lineCov">        113 :         mBufferStartOffset = 0;</span>
+<span class="lineNum">      93 </span><span class="lineCov">        113 :         mCursor = 0;</span>
+<span class="lineNum">      94 </span><span class="lineCov">        113 :         mFillPoint = 0;</span>
+<span class="lineNum">      95 </span>            :     }
+<span class="lineNum">      96 </span>            : #ifdef METERING
+<span class="lineNum">      97 </span>            :     {
+<span class="lineNum">      98 </span>            :         static FILE *tfp;
+<span class="lineNum">      99 </span>            :         if (!tfp) {
+<span class="lineNum">     100 </span>            :             tfp = fopen(&quot;/tmp/bufstats&quot;, &quot;w&quot;);
+<span class="lineNum">     101 </span>            :             if (tfp) {
+<span class="lineNum">     102 </span>            :                 setvbuf(tfp, nullptr, _IOLBF, 0);
+<span class="lineNum">     103 </span>            :             }
+<span class="lineNum">     104 </span>            :         }
+<span class="lineNum">     105 </span>            :         if (tfp) {
+<span class="lineNum">     106 </span>            :             fprintf(tfp, &quot;seeks within buffer:    %u\n&quot;,
+<span class="lineNum">     107 </span>            :                     bufstats.mSeeksWithinBuffer);
+<span class="lineNum">     108 </span>            :             fprintf(tfp, &quot;seeks outside buffer:   %u\n&quot;,
+<span class="lineNum">     109 </span>            :                     bufstats.mSeeksOutsideBuffer);
+<span class="lineNum">     110 </span>            :             fprintf(tfp, &quot;buffer read on seek:    %u\n&quot;,
+<span class="lineNum">     111 </span>            :                     bufstats.mBufferReadUponSeek);
+<span class="lineNum">     112 </span>            :             fprintf(tfp, &quot;buffer unread on seek:  %u\n&quot;,
+<span class="lineNum">     113 </span>            :                     bufstats.mBufferUnreadUponSeek);
+<span class="lineNum">     114 </span>            :             fprintf(tfp, &quot;bytes read from buffer: %u\n&quot;,
+<span class="lineNum">     115 </span>            :                     bufstats.mBytesReadFromBuffer);
+<span class="lineNum">     116 </span>            :             for (uint32_t i = 0; i &lt; bufstats.mBigSeekIndex; i++) {
+<span class="lineNum">     117 </span>            :                 fprintf(tfp, &quot;bigseek[%u] = {old: %u, new: %u}\n&quot;,
+<span class="lineNum">     118 </span>            :                         i,
+<span class="lineNum">     119 </span>            :                         bufstats.mBigSeek[i].mOldOffset,
+<span class="lineNum">     120 </span>            :                         bufstats.mBigSeek[i].mNewOffset);
+<span class="lineNum">     121 </span>            :             }
+<span class="lineNum">     122 </span>            :         }
+<span class="lineNum">     123 </span>            :     }
+<span class="lineNum">     124 </span>            : #endif
+<span class="lineNum">     125 </span><span class="lineCov">        143 :     return NS_OK;</span>
+<span class="lineNum">     126 </span>            : }
+<a name="127"><span class="lineNum">     127 </span>            : </a>
+<span class="lineNum">     128 </span>            : NS_IMETHODIMP
+<span class="lineNum">     129 </span><span class="lineCov">        102 : nsBufferedStream::Seek(int32_t whence, int64_t offset)</span>
+<span class="lineNum">     130 </span>            : {
+<span class="lineNum">     131 </span><span class="lineCov">        102 :     if (mStream == nullptr) {</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :         return NS_BASE_STREAM_CLOSED;</span>
+<span class="lineNum">     133 </span>            :     }
+<span class="lineNum">     134 </span>            : 
+<span class="lineNum">     135 </span>            :     // If the underlying stream isn't a random access store, then fail early.
+<span class="lineNum">     136 </span>            :     // We could possibly succeed for the case where the seek position denotes
+<span class="lineNum">     137 </span>            :     // something that happens to be read into the buffer, but that would make
+<span class="lineNum">     138 </span>            :     // the failure data-dependent.
+<span class="lineNum">     139 </span>            :     nsresult rv;
+<span class="lineNum">     140 </span><span class="lineCov">        204 :     nsCOMPtr&lt;nsISeekableStream&gt; ras = do_QueryInterface(mStream, &amp;rv);</span>
+<span class="lineNum">     141 </span><span class="lineCov">        102 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     142 </span>            : #ifdef DEBUG
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :         NS_ERROR(&quot;mStream doesn't QI to nsISeekableStream&quot;);</span>
+<span class="lineNum">     144 </span>            : #endif
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     146 </span>            :     }
+<span class="lineNum">     147 </span>            : 
+<span class="lineNum">     148 </span><span class="lineCov">        102 :     int64_t absPos = 0;</span>
+<span class="lineNum">     149 </span><span class="lineCov">        102 :     switch (whence) {</span>
+<span class="lineNum">     150 </span>            :       case nsISeekableStream::NS_SEEK_SET:
+<span class="lineNum">     151 </span><span class="lineCov">        102 :         absPos = offset;</span>
+<span class="lineNum">     152 </span><span class="lineCov">        102 :         break;</span>
+<span class="lineNum">     153 </span>            :       case nsISeekableStream::NS_SEEK_CUR:
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :         absPos = mBufferStartOffset;</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :         absPos += mCursor;</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :         absPos += offset;</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     158 </span>            :       case nsISeekableStream::NS_SEEK_END:
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :         absPos = -1;</span>
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     161 </span>            :       default:
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :         NS_NOTREACHED(&quot;bogus seek whence parameter&quot;);</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :         return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     164 </span>            :     }
+<span class="lineNum">     165 </span>            : 
+<span class="lineNum">     166 </span>            :     // Let mCursor point into the existing buffer if the new position is
+<span class="lineNum">     167 </span>            :     // between the current cursor and the mFillPoint &quot;fencepost&quot; -- the
+<span class="lineNum">     168 </span>            :     // client may never get around to a Read or Write after this Seek.
+<span class="lineNum">     169 </span>            :     // Read and Write worry about flushing and filling in that event.
+<span class="lineNum">     170 </span>            :     // But if we're at EOF, make sure to pass the seek through to the
+<span class="lineNum">     171 </span>            :     // underlying stream, because it may have auto-closed itself and
+<span class="lineNum">     172 </span>            :     // needs to reopen.
+<span class="lineNum">     173 </span><span class="lineCov">        102 :     uint32_t offsetInBuffer = uint32_t(absPos - mBufferStartOffset);</span>
+<span class="lineNum">     174 </span><span class="lineCov">        102 :     if (offsetInBuffer &lt;= mFillPoint &amp;&amp; !mEOF) {</span>
+<span class="lineNum">     175 </span>            :         METER(bufstats.mSeeksWithinBuffer++);
+<span class="lineNum">     176 </span><span class="lineCov">        102 :         mCursor = offsetInBuffer;</span>
+<span class="lineNum">     177 </span><span class="lineCov">        102 :         return NS_OK;</span>
+<span class="lineNum">     178 </span>            :     }
+<span class="lineNum">     179 </span>            : 
+<span class="lineNum">     180 </span>            :     METER(bufstats.mSeeksOutsideBuffer++);
+<span class="lineNum">     181 </span>            :     METER(bufstats.mBufferReadUponSeek += mCursor);
+<span class="lineNum">     182 </span>            :     METER(bufstats.mBufferUnreadUponSeek += mFillPoint - mCursor);
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :     rv = Flush();</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     185 </span>            : #ifdef DEBUG
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;(debug) Flush returned error within nsBufferedStream::Seek, so we exit early.&quot;);</span>
+<span class="lineNum">     187 </span>            : #endif
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     189 </span>            :     }
+<span class="lineNum">     190 </span>            : 
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :     rv = ras-&gt;Seek(whence, offset);</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     193 </span>            : #ifdef DEBUG
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;(debug) Error: ras-&gt;Seek() returned error within nsBufferedStream::Seek, so we exit early.&quot;);</span>
+<span class="lineNum">     195 </span>            : #endif
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     197 </span>            :     }
+<span class="lineNum">     198 </span>            : 
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :     mEOF = false;</span>
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span>            :     // Recompute whether the offset we're seeking to is in our buffer.
+<span class="lineNum">     202 </span>            :     // Note that we need to recompute because Flush() might have
+<span class="lineNum">     203 </span>            :     // changed mBufferStartOffset.
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :     offsetInBuffer = uint32_t(absPos - mBufferStartOffset);</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :     if (offsetInBuffer &lt;= mFillPoint) {</span>
+<span class="lineNum">     206 </span>            :         // It's safe to just set mCursor to offsetInBuffer.  In particular, we
+<span class="lineNum">     207 </span>            :         // want to avoid calling Fill() here since we already have the data that
+<span class="lineNum">     208 </span>            :         // was seeked to and calling Fill() might auto-close our underlying
+<span class="lineNum">     209 </span>            :         // stream in some cases.
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :         mCursor = offsetInBuffer;</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     212 </span>            :     }
+<span class="lineNum">     213 </span>            : 
+<span class="lineNum">     214 </span>            :     METER(if (bufstats.mBigSeekIndex &lt; MAX_BIG_SEEKS)
+<span class="lineNum">     215 </span>            :               bufstats.mBigSeek[bufstats.mBigSeekIndex].mOldOffset =
+<span class="lineNum">     216 </span>            :                   mBufferStartOffset + int64_t(mCursor));
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :     const int64_t minus1 = -1;</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :     if (absPos == minus1) {</span>
+<span class="lineNum">     219 </span>            :         // then we had the SEEK_END case, above
+<span class="lineNum">     220 </span>            :         int64_t tellPos;
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :         rv = ras-&gt;Tell(&amp;tellPos);</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :         mBufferStartOffset = tellPos;</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :             return rv;</span>
+<span class="lineNum">     225 </span>            :         }
+<span class="lineNum">     226 </span>            :     }
+<span class="lineNum">     227 </span>            :     else {
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :         mBufferStartOffset = absPos;</span>
+<span class="lineNum">     229 </span>            :     }
+<span class="lineNum">     230 </span>            :     METER(if (bufstats.mBigSeekIndex &lt; MAX_BIG_SEEKS)
+<span class="lineNum">     231 </span>            :               bufstats.mBigSeek[bufstats.mBigSeekIndex++].mNewOffset =
+<span class="lineNum">     232 </span>            :                   mBufferStartOffset);
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :     mFillPoint = mCursor = 0;</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :     return Fill();</span>
+<span class="lineNum">     236 </span>            : }
+<a name="237"><span class="lineNum">     237 </span>            : </a>
+<span class="lineNum">     238 </span>            : NS_IMETHODIMP
+<span class="lineNum">     239 </span><span class="lineCov">          1 : nsBufferedStream::Tell(int64_t *result)</span>
+<span class="lineNum">     240 </span>            : {
+<span class="lineNum">     241 </span><span class="lineCov">          1 :     if (mStream == nullptr) {</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :         return NS_BASE_STREAM_CLOSED;</span>
+<span class="lineNum">     243 </span>            :     }
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span><span class="lineCov">          1 :     int64_t result64 = mBufferStartOffset;</span>
+<span class="lineNum">     246 </span><span class="lineCov">          1 :     result64 += mCursor;</span>
+<span class="lineNum">     247 </span><span class="lineCov">          1 :     *result = result64;</span>
+<span class="lineNum">     248 </span><span class="lineCov">          1 :     return NS_OK;</span>
+<span class="lineNum">     249 </span>            : }
+<a name="250"><span class="lineNum">     250 </span>            : </a>
+<span class="lineNum">     251 </span>            : NS_IMETHODIMP
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 : nsBufferedStream::SetEOF()</span>
+<span class="lineNum">     253 </span>            : {
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :     if (mStream == nullptr) {</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :         return NS_BASE_STREAM_CLOSED;</span>
+<span class="lineNum">     256 </span>            :     }
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span>            :     nsresult rv;
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsISeekableStream&gt; ras = do_QueryInterface(mStream, &amp;rv);</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     262 </span>            :     }
+<span class="lineNum">     263 </span>            : 
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     rv = ras-&gt;SetEOF();</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :     if (NS_SUCCEEDED(rv)) {</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :         mEOF = true;</span>
+<span class="lineNum">     267 </span>            :     }
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     270 </span>            : }
+<a name="271"><span class="lineNum">     271 </span>            : </a>
+<span class="lineNum">     272 </span>            : nsresult
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 : nsBufferedStream::GetData(nsISupports **aResult)</span>
+<span class="lineNum">     274 </span>            : {
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsISupports&gt; rv(mStream);</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :     *aResult = rv.forget().take();</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     278 </span>            : }
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<a name="281"><span class="lineNum">     281 </span>            : // nsBufferedInputStream</a>
+<a name="282"><span class="lineNum">     282 </span>            : </a>
+<span class="lineNum">     283 </span><span class="lineCov">        562 : NS_IMPL_ADDREF_INHERITED(nsBufferedInputStream, nsBufferedStream)</span>
+<span class="lineNum">     284 </span><span class="lineCov">        562 : NS_IMPL_RELEASE_INHERITED(nsBufferedInputStream, nsBufferedStream)</span>
+<span class="lineNum">     285 </span>            : 
+<span class="lineNum">     286 </span><span class="lineCov">          3 : NS_IMPL_CLASSINFO(nsBufferedInputStream, nullptr, nsIClassInfo::THREADSAFE,</span>
+<a name="287"><span class="lineNum">     287 </span>            :                   NS_BUFFEREDINPUTSTREAM_CID)</a>
+<span class="lineNum">     288 </span>            : 
+<span class="lineNum">     289 </span><span class="lineCov">        461 : NS_INTERFACE_MAP_BEGIN(nsBufferedInputStream)</span>
+<span class="lineNum">     290 </span><span class="lineCov">        461 :     NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsIInputStream, nsIBufferedInputStream)</span>
+<span class="lineNum">     291 </span><span class="lineCov">        306 :     NS_INTERFACE_MAP_ENTRY(nsIBufferedInputStream)</span>
+<span class="lineNum">     292 </span><span class="lineCov">        103 :     NS_INTERFACE_MAP_ENTRY(nsIStreamBufferAccess)</span>
+<span class="lineNum">     293 </span><span class="lineCov">        103 :     NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIIPCSerializableInputStream, IsIPCSerializable())</span>
+<span class="lineNum">     294 </span><span class="lineCov">        103 :     NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIAsyncInputStream, IsAsyncInputStream())</span>
+<span class="lineNum">     295 </span><span class="lineCov">        103 :     NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIInputStreamCallback, IsAsyncInputStream())</span>
+<span class="lineNum">     296 </span><span class="lineCov">        103 :     NS_IMPL_QUERY_CLASSINFO(nsBufferedInputStream)</span>
+<a name="297"><span class="lineNum">     297 </span><span class="lineCov">        103 : NS_INTERFACE_MAP_END_INHERITING(nsBufferedStream)</span></a>
+<span class="lineNum">     298 </span>            : 
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 : NS_IMPL_CI_INTERFACE_GETTER(nsBufferedInputStream,</span>
+<span class="lineNum">     300 </span>            :                             nsIInputStream,
+<span class="lineNum">     301 </span>            :                             nsIBufferedInputStream,
+<span class="lineNum">     302 </span>            :                             nsISeekableStream,
+<span class="lineNum">     303 </span>            :                             nsIStreamBufferAccess)
+<a name="304"><span class="lineNum">     304 </span>            : </a>
+<span class="lineNum">     305 </span>            : nsresult
+<span class="lineNum">     306 </span><span class="lineCov">        101 : nsBufferedInputStream::Create(nsISupports *aOuter, REFNSIID aIID, void **aResult)</span>
+<span class="lineNum">     307 </span>            : {
+<span class="lineNum">     308 </span><span class="lineCov">        101 :     NS_ENSURE_NO_AGGREGATION(aOuter);</span>
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span><span class="lineCov">        101 :     nsBufferedInputStream* stream = new nsBufferedInputStream();</span>
+<span class="lineNum">     311 </span><span class="lineCov">        101 :     if (stream == nullptr) {</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :         return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     313 </span>            :     }
+<span class="lineNum">     314 </span><span class="lineCov">        101 :     NS_ADDREF(stream);</span>
+<span class="lineNum">     315 </span><span class="lineCov">        101 :     nsresult rv = stream-&gt;QueryInterface(aIID, aResult);</span>
+<span class="lineNum">     316 </span><span class="lineCov">        101 :     NS_RELEASE(stream);</span>
+<span class="lineNum">     317 </span><span class="lineCov">        101 :     return rv;</span>
+<span class="lineNum">     318 </span>            : }
+<a name="319"><span class="lineNum">     319 </span>            : </a>
+<span class="lineNum">     320 </span>            : NS_IMETHODIMP
+<span class="lineNum">     321 </span><span class="lineCov">        101 : nsBufferedInputStream::Init(nsIInputStream* stream, uint32_t bufferSize)</span>
+<span class="lineNum">     322 </span>            : {
+<span class="lineNum">     323 </span><span class="lineCov">        101 :     return nsBufferedStream::Init(stream, bufferSize);</span>
+<span class="lineNum">     324 </span>            : }
+<a name="325"><span class="lineNum">     325 </span>            : </a>
+<span class="lineNum">     326 </span>            : NS_IMETHODIMP
+<span class="lineNum">     327 </span><span class="lineCov">          6 : nsBufferedInputStream::Close()</span>
+<span class="lineNum">     328 </span>            : {
+<span class="lineNum">     329 </span><span class="lineCov">          6 :     nsresult rv1 = NS_OK, rv2;</span>
+<span class="lineNum">     330 </span><span class="lineCov">          6 :     if (mStream) {</span>
+<span class="lineNum">     331 </span><span class="lineCov">          6 :         rv1 = Source()-&gt;Close();</span>
+<span class="lineNum">     332 </span>            : #ifdef DEBUG
+<span class="lineNum">     333 </span><span class="lineCov">          6 :         if (NS_FAILED(rv1)) {</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :             NS_WARNING(&quot;(debug) Error: Source()-&gt;Close() returned error (rv1) in bsBuffedInputStream::Close().&quot;);</span>
+<span class="lineNum">     335 </span>            :         };
+<span class="lineNum">     336 </span>            : #endif
+<span class="lineNum">     337 </span><span class="lineCov">          6 :         NS_RELEASE(mStream);</span>
+<span class="lineNum">     338 </span>            :     }
+<span class="lineNum">     339 </span>            : 
+<span class="lineNum">     340 </span><span class="lineCov">          6 :     rv2 = nsBufferedStream::Close();</span>
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span>            : #ifdef DEBUG
+<span class="lineNum">     343 </span><span class="lineCov">          6 :     if (NS_FAILED(rv2)) {</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;(debug) Error: nsBufferedStream::Close() returned error (rv2) within nsBufferedInputStream::Close().&quot;);</span>
+<span class="lineNum">     345 </span>            :     };
+<span class="lineNum">     346 </span>            : #endif
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span><span class="lineCov">          6 :     mAsyncWaitCallback = nullptr;</span>
+<span class="lineNum">     349 </span>            : 
+<span class="lineNum">     350 </span><span class="lineCov">          6 :     if (NS_FAILED(rv1)) {</span>
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :         return rv1;</span>
+<span class="lineNum">     352 </span>            :     }
+<span class="lineNum">     353 </span><span class="lineCov">          6 :     return rv2;</span>
+<span class="lineNum">     354 </span>            : }
+<a name="355"><span class="lineNum">     355 </span>            : </a>
+<span class="lineNum">     356 </span>            : NS_IMETHODIMP
+<span class="lineNum">     357 </span><span class="lineCov">         98 : nsBufferedInputStream::Available(uint64_t *result)</span>
+<span class="lineNum">     358 </span>            : {
+<span class="lineNum">     359 </span><span class="lineCov">         98 :     nsresult rv = NS_OK;</span>
+<span class="lineNum">     360 </span><span class="lineCov">         98 :     *result = 0;</span>
+<span class="lineNum">     361 </span><span class="lineCov">         98 :     if (mStream) {</span>
+<span class="lineNum">     362 </span><span class="lineCov">         98 :         rv = Source()-&gt;Available(result);</span>
+<span class="lineNum">     363 </span>            :     }
+<span class="lineNum">     364 </span><span class="lineCov">         98 :     *result += (mFillPoint - mCursor);</span>
+<span class="lineNum">     365 </span><span class="lineCov">         98 :     return rv;</span>
+<span class="lineNum">     366 </span>            : }
+<a name="367"><span class="lineNum">     367 </span>            : </a>
+<span class="lineNum">     368 </span>            : NS_IMETHODIMP
+<span class="lineNum">     369 </span><span class="lineCov">        369 : nsBufferedInputStream::Read(char * buf, uint32_t count, uint32_t *result)</span>
+<span class="lineNum">     370 </span>            : {
+<span class="lineNum">     371 </span><span class="lineCov">        369 :     if (mBufferDisabled) {</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :         if (!mStream) {</span>
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :             *result = 0;</span>
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :             return NS_OK;</span>
+<span class="lineNum">     375 </span>            :         }
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :         nsresult rv = Source()-&gt;Read(buf, count, result);</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :         if (NS_SUCCEEDED(rv)) {</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :             mBufferStartOffset += *result;  // so nsBufferedStream::Tell works</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :             if (*result == 0) {</span>
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :                 mEOF = true;</span>
+<span class="lineNum">     381 </span>            :             }
+<span class="lineNum">     382 </span>            :         }
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     384 </span>            :     }
+<span class="lineNum">     385 </span>            : 
+<span class="lineNum">     386 </span><span class="lineCov">        369 :     return ReadSegments(NS_CopySegmentToBuffer, buf, count, result);</span>
+<span class="lineNum">     387 </span>            : }
+<a name="388"><span class="lineNum">     388 </span>            : </a>
+<span class="lineNum">     389 </span>            : NS_IMETHODIMP
+<span class="lineNum">     390 </span><span class="lineCov">        404 : nsBufferedInputStream::ReadSegments(nsWriteSegmentFun writer, void *closure,</span>
+<span class="lineNum">     391 </span>            :                                     uint32_t count, uint32_t *result)
+<span class="lineNum">     392 </span>            : {
+<span class="lineNum">     393 </span><span class="lineCov">        404 :     *result = 0;</span>
+<span class="lineNum">     394 </span>            : 
+<span class="lineNum">     395 </span><span class="lineCov">        404 :     if (!mStream) {</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     397 </span>            :     }
+<span class="lineNum">     398 </span>            : 
+<span class="lineNum">     399 </span><span class="lineCov">        404 :     nsresult rv = NS_OK;</span>
+<span class="lineNum">     400 </span><span class="lineCov">       1328 :     while (count &gt; 0) {</span>
+<span class="lineNum">     401 </span><span class="lineCov">        464 :         uint32_t amt = std::min(count, mFillPoint - mCursor);</span>
+<span class="lineNum">     402 </span><span class="lineCov">        464 :         if (amt &gt; 0) {</span>
+<span class="lineNum">     403 </span><span class="lineCov">        361 :             uint32_t read = 0;</span>
+<span class="lineNum">     404 </span><span class="lineCov">        722 :             rv = writer(static_cast&lt;nsIBufferedInputStream*&gt;(this), closure,</span>
+<span class="lineNum">     405 </span><span class="lineCov">        361 :                         mBuffer + mCursor, *result, amt, &amp;read);</span>
+<span class="lineNum">     406 </span><span class="lineCov">        361 :             if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     407 </span>            :                 // errors returned from the writer end here!
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :                 rv = NS_OK;</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     410 </span>            :             }
+<span class="lineNum">     411 </span><span class="lineCov">        361 :             *result += read;</span>
+<span class="lineNum">     412 </span><span class="lineCov">        361 :             count -= read;</span>
+<span class="lineNum">     413 </span><span class="lineCov">        361 :             mCursor += read;</span>
+<span class="lineNum">     414 </span>            :         }
+<span class="lineNum">     415 </span>            :         else {
+<span class="lineNum">     416 </span><span class="lineCov">        103 :             rv = Fill();</span>
+<span class="lineNum">     417 </span><span class="lineCov">        103 :             if (NS_FAILED(rv) || mFillPoint == mCursor) {</span>
+<span class="lineNum">     418 </span><span class="lineCov">          2 :                 break;</span>
+<span class="lineNum">     419 </span>            :             }
+<span class="lineNum">     420 </span>            :         }
+<span class="lineNum">     421 </span>            :     }
+<span class="lineNum">     422 </span><span class="lineCov">        404 :     return (*result &gt; 0) ? NS_OK : rv;</span>
+<span class="lineNum">     423 </span>            : }
+<a name="424"><span class="lineNum">     424 </span>            : </a>
+<span class="lineNum">     425 </span>            : NS_IMETHODIMP
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 : nsBufferedInputStream::IsNonBlocking(bool *aNonBlocking)</span>
+<span class="lineNum">     427 </span>            : {
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :     if (mStream) {</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :         return Source()-&gt;IsNonBlocking(aNonBlocking);</span>
+<span class="lineNum">     430 </span>            :     }
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">     432 </span>            : }
+<a name="433"><span class="lineNum">     433 </span>            : </a>
+<span class="lineNum">     434 </span>            : NS_IMETHODIMP
+<span class="lineNum">     435 </span><span class="lineCov">        103 : nsBufferedInputStream::Fill()</span>
+<span class="lineNum">     436 </span>            : {
+<span class="lineNum">     437 </span><span class="lineCov">        103 :     if (mBufferDisabled) {</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     439 </span>            :     }
+<span class="lineNum">     440 </span><span class="lineCov">        103 :     NS_ENSURE_TRUE(mStream, NS_ERROR_NOT_INITIALIZED);</span>
+<span class="lineNum">     441 </span>            : 
+<span class="lineNum">     442 </span>            :     nsresult rv;
+<span class="lineNum">     443 </span><span class="lineCov">        103 :     int32_t rem = int32_t(mFillPoint - mCursor);</span>
+<span class="lineNum">     444 </span><span class="lineCov">        103 :     if (rem &gt; 0) {</span>
+<span class="lineNum">     445 </span>            :         // slide the remainder down to the start of the buffer
+<span class="lineNum">     446 </span>            :         // |&lt;-------------&gt;|&lt;--rem--&gt;|&lt;---&gt;|
+<span class="lineNum">     447 </span>            :         // b               c         f     s
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :         memcpy(mBuffer, mBuffer + mCursor, rem);</span>
+<span class="lineNum">     449 </span>            :     }
+<span class="lineNum">     450 </span><span class="lineCov">        103 :     mBufferStartOffset += mCursor;</span>
+<span class="lineNum">     451 </span><span class="lineCov">        103 :     mFillPoint = rem;</span>
+<span class="lineNum">     452 </span><span class="lineCov">        103 :     mCursor = 0;</span>
+<span class="lineNum">     453 </span>            : 
+<span class="lineNum">     454 </span>            :     uint32_t amt;
+<span class="lineNum">     455 </span><span class="lineCov">        103 :     rv = Source()-&gt;Read(mBuffer + mFillPoint, mBufferSize - mFillPoint, &amp;amt);</span>
+<span class="lineNum">     456 </span><span class="lineCov">        103 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     458 </span>            :     }
+<span class="lineNum">     459 </span>            : 
+<span class="lineNum">     460 </span><span class="lineCov">        103 :     if (amt == 0) {</span>
+<span class="lineNum">     461 </span><span class="lineCov">          2 :         mEOF = true;</span>
+<span class="lineNum">     462 </span>            :     }
+<span class="lineNum">     463 </span>            : 
+<span class="lineNum">     464 </span><span class="lineCov">        103 :     mFillPoint += amt;</span>
+<span class="lineNum">     465 </span><span class="lineCov">        103 :     return NS_OK;</span>
+<span class="lineNum">     466 </span>            : }
+<a name="467"><span class="lineNum">     467 </span>            : </a>
+<span class="lineNum">     468 </span>            : NS_IMETHODIMP_(char*)
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 : nsBufferedInputStream::GetBuffer(uint32_t aLength, uint32_t aAlignMask)</span>
+<span class="lineNum">     470 </span>            : {
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mGetBufferCount == 0, &quot;nested GetBuffer!&quot;);</span>
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :     if (mGetBufferCount != 0) {</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     474 </span>            :     }
+<span class="lineNum">     475 </span>            : 
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :     if (mBufferDisabled) {</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     478 </span>            :     }
+<span class="lineNum">     479 </span>            : 
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :     char* buf = mBuffer + mCursor;</span>
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :     uint32_t rem = mFillPoint - mCursor;</span>
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :     if (rem == 0) {</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :         if (NS_FAILED(Fill())) {</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     485 </span>            :         }
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :         buf = mBuffer + mCursor;</span>
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :         rem = mFillPoint - mCursor;</span>
+<span class="lineNum">     488 </span>            :     }
+<span class="lineNum">     489 </span>            : 
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :     uint32_t mod = (NS_PTR_TO_INT32(buf) &amp; aAlignMask);</span>
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :     if (mod) {</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :         uint32_t pad = aAlignMask + 1 - mod;</span>
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :         if (pad &gt; rem) {</span>
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     495 </span>            :         }
+<span class="lineNum">     496 </span>            : 
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 :         memset(buf, 0, pad);</span>
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :         mCursor += pad;</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :         buf += pad;</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :         rem -= pad;</span>
+<span class="lineNum">     501 </span>            :     }
+<span class="lineNum">     502 </span>            : 
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :     if (aLength &gt; rem) {</span>
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     505 </span>            :     }
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :     mGetBufferCount++;</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :     return buf;</span>
+<span class="lineNum">     508 </span>            : }
+<a name="509"><span class="lineNum">     509 </span>            : </a>
+<span class="lineNum">     510 </span>            : NS_IMETHODIMP_(void)
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 : nsBufferedInputStream::PutBuffer(char* aBuffer, uint32_t aLength)</span>
+<span class="lineNum">     512 </span>            : {
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mGetBufferCount == 1, &quot;stray PutBuffer!&quot;);</span>
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 :     if (--mGetBufferCount != 0) {</span>
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     516 </span>            :     }
+<span class="lineNum">     517 </span>            : 
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mCursor + aLength &lt;= mFillPoint, &quot;PutBuffer botch&quot;);</span>
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :     mCursor += aLength;</span>
+<span class="lineNum">     520 </span>            : }
+<a name="521"><span class="lineNum">     521 </span>            : </a>
+<span class="lineNum">     522 </span>            : NS_IMETHODIMP
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 : nsBufferedInputStream::DisableBuffering()</span>
+<span class="lineNum">     524 </span>            : {
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :     NS_ASSERTION(!mBufferDisabled, &quot;redundant call to DisableBuffering!&quot;);</span>
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mGetBufferCount == 0,</span>
+<span class="lineNum">     527 </span>            :                  &quot;DisableBuffer call between GetBuffer and PutBuffer!&quot;);
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :     if (mGetBufferCount != 0) {</span>
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :         return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     530 </span>            :     }
+<span class="lineNum">     531 </span>            : 
+<span class="lineNum">     532 </span>            :     // Empty the buffer so nsBufferedStream::Tell works.
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :     mBufferStartOffset += mCursor;</span>
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :     mFillPoint = mCursor = 0;</span>
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :     mBufferDisabled = true;</span>
+<span class="lineNum">     536 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     537 </span>            : }
+<a name="538"><span class="lineNum">     538 </span>            : </a>
+<span class="lineNum">     539 </span>            : NS_IMETHODIMP
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 : nsBufferedInputStream::EnableBuffering()</span>
+<span class="lineNum">     541 </span>            : {
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mBufferDisabled, &quot;gratuitous call to EnableBuffering!&quot;);</span>
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :     mBufferDisabled = false;</span>
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     545 </span>            : }
+<a name="546"><span class="lineNum">     546 </span>            : </a>
+<span class="lineNum">     547 </span>            : NS_IMETHODIMP
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 : nsBufferedInputStream::GetUnbufferedStream(nsISupports* *aStream)</span>
+<span class="lineNum">     549 </span>            : {
+<span class="lineNum">     550 </span>            :     // Empty the buffer so subsequent i/o trumps any buffered data.
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :     mBufferStartOffset += mCursor;</span>
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     mFillPoint = mCursor = 0;</span>
+<span class="lineNum">     553 </span>            : 
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :     *aStream = mStream;</span>
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :     NS_IF_ADDREF(*aStream);</span>
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     557 </span>            : }
+<a name="558"><span class="lineNum">     558 </span>            : </a>
+<span class="lineNum">     559 </span>            : void
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 : nsBufferedInputStream::Serialize(InputStreamParams&amp; aParams,</span>
+<span class="lineNum">     561 </span>            :                                  FileDescriptorArray&amp; aFileDescriptors)
+<span class="lineNum">     562 </span>            : {
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :     BufferedInputStreamParams params;</span>
+<span class="lineNum">     564 </span>            : 
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :     if (mStream) {</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :         nsCOMPtr&lt;nsIInputStream&gt; stream = do_QueryInterface(mStream);</span>
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(stream);</span>
+<span class="lineNum">     568 </span>            : 
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :         InputStreamParams wrappedParams;</span>
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :         InputStreamHelper::SerializeInputStream(stream, wrappedParams,</span>
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :                                                 aFileDescriptors);</span>
+<span class="lineNum">     572 </span>            : 
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :         params.optionalStream() = wrappedParams;</span>
+<span class="lineNum">     574 </span>            :     }
+<span class="lineNum">     575 </span>            :     else {
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :         params.optionalStream() = mozilla::void_t();</span>
+<span class="lineNum">     577 </span>            :     }
+<span class="lineNum">     578 </span>            : 
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :     params.bufferSize() = mBufferSize;</span>
+<span class="lineNum">     580 </span>            : 
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :     aParams = params;</span>
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 : }</span>
+<a name="583"><span class="lineNum">     583 </span>            : </a>
+<span class="lineNum">     584 </span>            : bool
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 : nsBufferedInputStream::Deserialize(const InputStreamParams&amp; aParams,</span>
+<span class="lineNum">     586 </span>            :                                    const FileDescriptorArray&amp; aFileDescriptors)
+<span class="lineNum">     587 </span>            : {
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :     if (aParams.type() != InputStreamParams::TBufferedInputStreamParams) {</span>
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 :         NS_ERROR(&quot;Received unknown parameters from the other process!&quot;);</span>
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     591 </span>            :     }
+<span class="lineNum">     592 </span>            : 
+<span class="lineNum">     593 </span>            :     const BufferedInputStreamParams&amp; params =
+<span class="lineNum">     594 </span><span class="lineNoCov">          0 :         aParams.get_BufferedInputStreamParams();</span>
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :     const OptionalInputStreamParams&amp; wrappedParams = params.optionalStream();</span>
+<span class="lineNum">     596 </span>            : 
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIInputStream&gt; stream;</span>
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :     if (wrappedParams.type() == OptionalInputStreamParams::TInputStreamParams) {</span>
+<span class="lineNum">     599 </span>            :         stream =
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :           InputStreamHelper::DeserializeInputStream(wrappedParams.get_InputStreamParams(),</span>
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :                                                     aFileDescriptors);</span>
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :         if (!stream) {</span>
+<span class="lineNum">     603 </span><span class="lineNoCov">          0 :             NS_WARNING(&quot;Failed to deserialize wrapped stream!&quot;);</span>
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     605 </span>            :         }
+<span class="lineNum">     606 </span>            :     }
+<span class="lineNum">     607 </span>            :     else {
+<span class="lineNum">     608 </span><span class="lineNoCov">          0 :         NS_ASSERTION(wrappedParams.type() == OptionalInputStreamParams::Tvoid_t,</span>
+<span class="lineNum">     609 </span>            :                      &quot;Unknown type for OptionalInputStreamParams!&quot;);
+<span class="lineNum">     610 </span>            :     }
+<span class="lineNum">     611 </span>            : 
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :     nsresult rv = Init(stream, params.bufferSize());</span>
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 :     NS_ENSURE_SUCCESS(rv, false);</span>
+<span class="lineNum">     614 </span>            : 
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     616 </span>            : }
+<a name="617"><span class="lineNum">     617 </span>            : </a>
+<span class="lineNum">     618 </span>            : Maybe&lt;uint64_t&gt;
+<span class="lineNum">     619 </span><span class="lineNoCov">          0 : nsBufferedInputStream::ExpectedSerializedLength()</span>
+<span class="lineNum">     620 </span>            : {
+<span class="lineNum">     621 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIIPCSerializableInputStream&gt; stream = do_QueryInterface(mStream);</span>
+<span class="lineNum">     622 </span><span class="lineNoCov">          0 :     if (stream) {</span>
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 :         return stream-&gt;ExpectedSerializedLength();</span>
+<span class="lineNum">     624 </span>            :     }
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :     return Nothing();</span>
+<span class="lineNum">     626 </span>            : }
+<a name="627"><span class="lineNum">     627 </span>            : </a>
+<span class="lineNum">     628 </span>            : bool
+<span class="lineNum">     629 </span><span class="lineCov">        103 : nsBufferedInputStream::IsIPCSerializable() const</span>
+<span class="lineNum">     630 </span>            : {
+<span class="lineNum">     631 </span><span class="lineCov">        103 :     if (!mStream) {</span>
+<span class="lineNum">     632 </span><span class="lineNoCov">          0 :       return true;</span>
+<span class="lineNum">     633 </span>            :     }
+<span class="lineNum">     634 </span>            : 
+<span class="lineNum">     635 </span><span class="lineCov">        206 :     nsCOMPtr&lt;nsIIPCSerializableInputStream&gt; stream = do_QueryInterface(mStream);</span>
+<span class="lineNum">     636 </span><span class="lineCov">        103 :     return !!stream;</span>
+<span class="lineNum">     637 </span>            : }
+<a name="638"><span class="lineNum">     638 </span>            : </a>
+<span class="lineNum">     639 </span>            : bool
+<span class="lineNum">     640 </span><span class="lineCov">        206 : nsBufferedInputStream::IsAsyncInputStream() const</span>
+<span class="lineNum">     641 </span>            : {
+<span class="lineNum">     642 </span><span class="lineCov">        412 :     nsCOMPtr&lt;nsIAsyncInputStream&gt; stream = do_QueryInterface(mStream);</span>
+<span class="lineNum">     643 </span><span class="lineCov">        412 :     return !!stream;</span>
+<span class="lineNum">     644 </span>            : }
+<a name="645"><span class="lineNum">     645 </span>            : </a>
+<span class="lineNum">     646 </span>            : NS_IMETHODIMP
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 : nsBufferedInputStream::CloseWithStatus(nsresult aStatus)</span>
+<span class="lineNum">     648 </span>            : {
+<span class="lineNum">     649 </span><span class="lineNoCov">          0 :     return Close();</span>
+<span class="lineNum">     650 </span>            : }
+<a name="651"><span class="lineNum">     651 </span>            : </a>
+<span class="lineNum">     652 </span>            : NS_IMETHODIMP
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 : nsBufferedInputStream::AsyncWait(nsIInputStreamCallback* aCallback,</span>
+<span class="lineNum">     654 </span>            :                                 uint32_t aFlags,
+<span class="lineNum">     655 </span>            :                                 uint32_t aRequestedCount,
+<span class="lineNum">     656 </span>            :                                 nsIEventTarget* aEventTarget)
+<span class="lineNum">     657 </span>            : {
+<span class="lineNum">     658 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIAsyncInputStream&gt; stream = do_QueryInterface(mStream);</span>
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :     if (!stream) {</span>
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :         return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     661 </span>            :     }
+<span class="lineNum">     662 </span>            : 
+<span class="lineNum">     663 </span><span class="lineNoCov">          0 :     if (mAsyncWaitCallback &amp;&amp; aCallback) {</span>
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :         return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     665 </span>            :     }
+<span class="lineNum">     666 </span>            : 
+<span class="lineNum">     667 </span><span class="lineNoCov">          0 :     mAsyncWaitCallback = aCallback;</span>
+<span class="lineNum">     668 </span>            : 
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :     if (!mAsyncWaitCallback) {</span>
+<span class="lineNum">     670 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     671 </span>            :     }
+<span class="lineNum">     672 </span>            : 
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :     return stream-&gt;AsyncWait(this, aFlags, aRequestedCount, aEventTarget);</span>
+<span class="lineNum">     674 </span>            : }
+<a name="675"><span class="lineNum">     675 </span>            : </a>
+<span class="lineNum">     676 </span>            : NS_IMETHODIMP
+<span class="lineNum">     677 </span><span class="lineNoCov">          0 : nsBufferedInputStream::OnInputStreamReady(nsIAsyncInputStream* aStream)</span>
+<span class="lineNum">     678 </span>            : {
+<span class="lineNum">     679 </span>            :     // We have been canceled in the meanwhile.
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 :     if (!mAsyncWaitCallback) {</span>
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     682 </span>            :     }
+<span class="lineNum">     683 </span>            : 
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIInputStreamCallback&gt; callback;</span>
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :     callback.swap(mAsyncWaitCallback);</span>
+<span class="lineNum">     686 </span>            : 
+<span class="lineNum">     687 </span><span class="lineNoCov">          0 :     return callback-&gt;OnInputStreamReady(this);</span>
+<span class="lineNum">     688 </span>            : }
+<a name="689"><span class="lineNum">     689 </span>            : </a>
+<span class="lineNum">     690 </span>            : NS_IMETHODIMP
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 : nsBufferedInputStream::GetData(nsIInputStream **aResult)</span>
+<span class="lineNum">     692 </span>            : {
+<span class="lineNum">     693 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsISupports&gt; stream;</span>
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :     nsBufferedStream::GetData(getter_AddRefs(stream));</span>
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIInputStream&gt; inputStream = do_QueryInterface(stream);</span>
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :     *aResult = inputStream.forget().take();</span>
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     698 </span>            : }
+<span class="lineNum">     699 </span>            : 
+<span class="lineNum">     700 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<a name="701"><span class="lineNum">     701 </span>            : // nsBufferedOutputStream</a>
+<a name="702"><span class="lineNum">     702 </span>            : </a>
+<span class="lineNum">     703 </span><span class="lineCov">         54 : NS_IMPL_ADDREF_INHERITED(nsBufferedOutputStream, nsBufferedStream)</span>
+<span class="lineNum">     704 </span><span class="lineCov">         54 : NS_IMPL_RELEASE_INHERITED(nsBufferedOutputStream, nsBufferedStream)</span>
+<a name="705"><span class="lineNum">     705 </span>            : // This QI uses NS_INTERFACE_MAP_ENTRY_CONDITIONAL to check for</a>
+<span class="lineNum">     706 </span>            : // non-nullness of mSafeStream.
+<span class="lineNum">     707 </span><span class="lineCov">         36 : NS_INTERFACE_MAP_BEGIN(nsBufferedOutputStream)</span>
+<span class="lineNum">     708 </span><span class="lineCov">         36 :     NS_INTERFACE_MAP_ENTRY(nsIOutputStream)</span>
+<span class="lineNum">     709 </span><span class="lineCov">         18 :     NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsISafeOutputStream, mSafeStream)</span>
+<span class="lineNum">     710 </span><span class="lineCov">         18 :     NS_INTERFACE_MAP_ENTRY(nsIBufferedOutputStream)</span>
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :     NS_INTERFACE_MAP_ENTRY(nsIStreamBufferAccess)</span>
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 : NS_INTERFACE_MAP_END_INHERITING(nsBufferedStream)</span>
+<a name="713"><span class="lineNum">     713 </span>            : </a>
+<span class="lineNum">     714 </span>            : nsresult
+<span class="lineNum">     715 </span><span class="lineCov">          6 : nsBufferedOutputStream::Create(nsISupports *aOuter, REFNSIID aIID, void **aResult)</span>
+<span class="lineNum">     716 </span>            : {
+<span class="lineNum">     717 </span><span class="lineCov">          6 :     NS_ENSURE_NO_AGGREGATION(aOuter);</span>
+<span class="lineNum">     718 </span>            : 
+<span class="lineNum">     719 </span><span class="lineCov">          6 :     nsBufferedOutputStream* stream = new nsBufferedOutputStream();</span>
+<span class="lineNum">     720 </span><span class="lineCov">          6 :     if (stream == nullptr) {</span>
+<span class="lineNum">     721 </span><span class="lineNoCov">          0 :         return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     722 </span>            :     }
+<span class="lineNum">     723 </span><span class="lineCov">          6 :     NS_ADDREF(stream);</span>
+<span class="lineNum">     724 </span><span class="lineCov">          6 :     nsresult rv = stream-&gt;QueryInterface(aIID, aResult);</span>
+<span class="lineNum">     725 </span><span class="lineCov">          6 :     NS_RELEASE(stream);</span>
+<span class="lineNum">     726 </span><span class="lineCov">          6 :     return rv;</span>
+<span class="lineNum">     727 </span>            : }
+<a name="728"><span class="lineNum">     728 </span>            : </a>
+<span class="lineNum">     729 </span>            : NS_IMETHODIMP
+<span class="lineNum">     730 </span><span class="lineCov">         12 : nsBufferedOutputStream::Init(nsIOutputStream* stream, uint32_t bufferSize)</span>
+<span class="lineNum">     731 </span>            : {
+<span class="lineNum">     732 </span>            :     // QI stream to an nsISafeOutputStream, to see if we should support it
+<span class="lineNum">     733 </span><span class="lineCov">         12 :     mSafeStream = do_QueryInterface(stream);</span>
+<span class="lineNum">     734 </span>            : 
+<span class="lineNum">     735 </span><span class="lineCov">         12 :     return nsBufferedStream::Init(stream, bufferSize);</span>
+<span class="lineNum">     736 </span>            : }
+<a name="737"><span class="lineNum">     737 </span>            : </a>
+<span class="lineNum">     738 </span>            : NS_IMETHODIMP
+<span class="lineNum">     739 </span><span class="lineCov">         18 : nsBufferedOutputStream::Close()</span>
+<span class="lineNum">     740 </span>            : {
+<span class="lineNum">     741 </span><span class="lineCov">         18 :     nsresult rv1, rv2 = NS_OK, rv3;</span>
+<span class="lineNum">     742 </span>            : 
+<span class="lineNum">     743 </span><span class="lineCov">         18 :     rv1 = Flush();</span>
+<span class="lineNum">     744 </span>            : 
+<span class="lineNum">     745 </span>            : #ifdef DEBUG
+<span class="lineNum">     746 </span><span class="lineCov">         18 :     if (NS_FAILED(rv1)) {</span>
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;(debug) Flush() inside nsBufferedOutputStream::Close() returned error (rv1).&quot;);</span>
+<span class="lineNum">     748 </span>            :     }
+<span class="lineNum">     749 </span>            : #endif
+<span class="lineNum">     750 </span>            : 
+<span class="lineNum">     751 </span>            :     // If we fail to Flush all the data, then we close anyway and drop the
+<span class="lineNum">     752 </span>            :     // remaining data in the buffer. We do this because it's what Unix does
+<span class="lineNum">     753 </span>            :     // for fclose and close. However, we report the error from Flush anyway.
+<span class="lineNum">     754 </span><span class="lineCov">         18 :     if (mStream) {</span>
+<span class="lineNum">     755 </span><span class="lineCov">          6 :         rv2 = Sink()-&gt;Close();</span>
+<span class="lineNum">     756 </span>            : #ifdef DEBUG
+<span class="lineNum">     757 </span><span class="lineCov">          6 :         if (NS_FAILED(rv2)) {</span>
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :             NS_WARNING(&quot;(debug) Sink-&gt;Close() inside nsBufferedOutputStream::Close() returned error (rv2).&quot;);</span>
+<span class="lineNum">     759 </span>            :         }
+<span class="lineNum">     760 </span>            : #endif
+<span class="lineNum">     761 </span><span class="lineCov">          6 :         NS_RELEASE(mStream);</span>
+<span class="lineNum">     762 </span>            :     }
+<span class="lineNum">     763 </span><span class="lineCov">         18 :     rv3 = nsBufferedStream::Close();</span>
+<span class="lineNum">     764 </span>            : 
+<span class="lineNum">     765 </span>            : #ifdef DEBUG
+<span class="lineNum">     766 </span><span class="lineCov">         18 :     if (NS_FAILED(rv3)) {</span>
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;(debug) nsBufferedStream:Close() inside nsBufferedOutputStream::Close() returned error (rv3).&quot;);</span>
+<span class="lineNum">     768 </span>            :     }
+<span class="lineNum">     769 </span>            : #endif
+<span class="lineNum">     770 </span>            : 
+<span class="lineNum">     771 </span><span class="lineCov">         18 :     if (NS_FAILED(rv1)) {</span>
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 :         return rv1;</span>
+<span class="lineNum">     773 </span>            :     }
+<span class="lineNum">     774 </span><span class="lineCov">         18 :     if (NS_FAILED(rv2)) {</span>
+<span class="lineNum">     775 </span><span class="lineNoCov">          0 :         return rv2;</span>
+<span class="lineNum">     776 </span>            :     }
+<span class="lineNum">     777 </span><span class="lineCov">         18 :     return rv3;</span>
+<span class="lineNum">     778 </span>            : }
+<a name="779"><span class="lineNum">     779 </span>            : </a>
+<span class="lineNum">     780 </span>            : NS_IMETHODIMP
+<span class="lineNum">     781 </span><span class="lineCov">        234 : nsBufferedOutputStream::Write(const char *buf, uint32_t count, uint32_t *result)</span>
+<span class="lineNum">     782 </span>            : {
+<span class="lineNum">     783 </span><span class="lineCov">        234 :     nsresult rv = NS_OK;</span>
+<span class="lineNum">     784 </span><span class="lineCov">        234 :     uint32_t written = 0;</span>
+<span class="lineNum">     785 </span><span class="lineCov">        234 :     *result = 0;</span>
+<span class="lineNum">     786 </span><span class="lineCov">        234 :     if (!mStream) {</span>
+<span class="lineNum">     787 </span>            :         // We special case this situtaion.
+<span class="lineNum">     788 </span>            :         // We should catch the failure, NS_BASE_STREAM_CLOSED ASAP, here.
+<span class="lineNum">     789 </span>            :         // If we don't, eventually Flush() is called in the while loop below
+<span class="lineNum">     790 </span>            :         // after so many writes.
+<span class="lineNum">     791 </span>            :         // However, Flush() returns NS_OK when mStream is null (!!),
+<span class="lineNum">     792 </span>            :         // and we don't get a meaningful error, NS_BASE_STREAM_CLOSED,
+<span class="lineNum">     793 </span>            :         // soon enough when we use buffered output.
+<span class="lineNum">     794 </span>            : #ifdef DEBUG
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;(info) nsBufferedOutputStream::Write returns NS_BASE_STREAM_CLOSED immediately (mStream==null).&quot;);</span>
+<span class="lineNum">     796 </span>            : #endif
+<span class="lineNum">     797 </span><span class="lineNoCov">          0 :         return NS_BASE_STREAM_CLOSED;</span>
+<span class="lineNum">     798 </span>            :     }
+<span class="lineNum">     799 </span>            : 
+<span class="lineNum">     800 </span><span class="lineCov">        864 :     while (count &gt; 0) {</span>
+<span class="lineNum">     801 </span><span class="lineCov">        315 :         uint32_t amt = std::min(count, mBufferSize - mCursor);</span>
+<span class="lineNum">     802 </span><span class="lineCov">        315 :         if (amt &gt; 0) {</span>
+<span class="lineNum">     803 </span><span class="lineCov">        229 :             memcpy(mBuffer + mCursor, buf + written, amt);</span>
+<span class="lineNum">     804 </span><span class="lineCov">        229 :             written += amt;</span>
+<span class="lineNum">     805 </span><span class="lineCov">        229 :             count -= amt;</span>
+<span class="lineNum">     806 </span><span class="lineCov">        229 :             mCursor += amt;</span>
+<span class="lineNum">     807 </span><span class="lineCov">        229 :             if (mFillPoint &lt; mCursor)</span>
+<span class="lineNum">     808 </span><span class="lineCov">        229 :                 mFillPoint = mCursor;</span>
+<span class="lineNum">     809 </span>            :         }
+<span class="lineNum">     810 </span>            :         else {
+<span class="lineNum">     811 </span><span class="lineCov">         86 :             NS_ASSERTION(mFillPoint, &quot;loop in nsBufferedOutputStream::Write!&quot;);</span>
+<span class="lineNum">     812 </span><span class="lineCov">         86 :             rv = Flush();</span>
+<span class="lineNum">     813 </span><span class="lineCov">         86 :             if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     814 </span>            : #ifdef DEBUG
+<span class="lineNum">     815 </span><span class="lineNoCov">          0 :                 NS_WARNING(&quot;(debug) Flush() returned error in nsBufferedOutputStream::Write.&quot;);</span>
+<span class="lineNum">     816 </span>            : #endif
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     818 </span>            :             }
+<span class="lineNum">     819 </span>            :         }
+<span class="lineNum">     820 </span>            :     }
+<span class="lineNum">     821 </span><span class="lineCov">        234 :     *result = written;</span>
+<span class="lineNum">     822 </span><span class="lineCov">        234 :     return (written &gt; 0) ? NS_OK : rv;</span>
+<span class="lineNum">     823 </span>            : }
+<a name="824"><span class="lineNum">     824 </span>            : </a>
+<span class="lineNum">     825 </span>            : NS_IMETHODIMP
+<span class="lineNum">     826 </span><span class="lineCov">        110 : nsBufferedOutputStream::Flush()</span>
+<span class="lineNum">     827 </span>            : {
+<span class="lineNum">     828 </span>            :     nsresult rv;
+<span class="lineNum">     829 </span>            :     uint32_t amt;
+<span class="lineNum">     830 </span><span class="lineCov">        110 :     if (!mStream) {</span>
+<span class="lineNum">     831 </span>            :         // Stream already cancelled/flushed; probably because of previous error.
+<span class="lineNum">     832 </span><span class="lineCov">         12 :         return NS_OK;</span>
+<span class="lineNum">     833 </span>            :     }
+<span class="lineNum">     834 </span>            :     // optimize : some code within C-C needs to call Seek -&gt; Flush() often.
+<span class="lineNum">     835 </span><span class="lineCov">         98 :     if (mFillPoint == 0) {</span>
+<span class="lineNum">     836 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     837 </span>            :     }
+<span class="lineNum">     838 </span><span class="lineCov">         98 :     rv = Sink()-&gt;Write(mBuffer, mFillPoint, &amp;amt);</span>
+<span class="lineNum">     839 </span><span class="lineCov">         98 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     841 </span>            :     }
+<span class="lineNum">     842 </span><span class="lineCov">         98 :     mBufferStartOffset += amt;</span>
+<span class="lineNum">     843 </span><span class="lineCov">         98 :     if (amt == mFillPoint) {</span>
+<span class="lineNum">     844 </span><span class="lineCov">         98 :         mFillPoint = mCursor = 0;</span>
+<span class="lineNum">     845 </span><span class="lineCov">         98 :         return NS_OK;   // flushed everything</span>
+<span class="lineNum">     846 </span>            :     }
+<span class="lineNum">     847 </span>            : 
+<span class="lineNum">     848 </span>            :     // slide the remainder down to the start of the buffer
+<span class="lineNum">     849 </span>            :     // |&lt;--------------&gt;|&lt;---|-----&gt;|
+<span class="lineNum">     850 </span>            :     // b                a    c      s
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :     uint32_t rem = mFillPoint - amt;</span>
+<span class="lineNum">     852 </span><span class="lineNoCov">          0 :     memmove(mBuffer, mBuffer + amt, rem);</span>
+<span class="lineNum">     853 </span><span class="lineNoCov">          0 :     mFillPoint = mCursor = rem;</span>
+<span class="lineNum">     854 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;        // didn't flush all</span>
+<span class="lineNum">     855 </span>            : }
+<span class="lineNum">     856 </span>            : 
+<a name="857"><span class="lineNum">     857 </span>            : // nsISafeOutputStream</a>
+<span class="lineNum">     858 </span>            : NS_IMETHODIMP
+<span class="lineNum">     859 </span><span class="lineCov">          6 : nsBufferedOutputStream::Finish()</span>
+<span class="lineNum">     860 </span>            : {
+<span class="lineNum">     861 </span>            :     // flush the stream, to write out any buffered data...
+<span class="lineNum">     862 </span><span class="lineCov">          6 :     nsresult rv1 = nsBufferedOutputStream::Flush();</span>
+<span class="lineNum">     863 </span><span class="lineCov">          6 :     nsresult rv2 = NS_OK, rv3;</span>
+<span class="lineNum">     864 </span>            : 
+<span class="lineNum">     865 </span><span class="lineCov">          6 :     if (NS_FAILED(rv1)) {</span>
+<span class="lineNum">     866 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;(debug) nsBufferedOutputStream::Flush() failed in nsBufferedOutputStream::Finish()! Possible dataloss.&quot;);</span>
+<span class="lineNum">     867 </span>            : 
+<span class="lineNum">     868 </span><span class="lineNoCov">          0 :         rv2 = Sink()-&gt;Close();</span>
+<span class="lineNum">     869 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv2)) {</span>
+<span class="lineNum">     870 </span><span class="lineNoCov">          0 :             NS_WARNING(&quot;(debug) Sink()-&gt;Close() failed in nsBufferedOutputStream::Finish()! Possible dataloss.&quot;);</span>
+<span class="lineNum">     871 </span>            :         }
+<span class="lineNum">     872 </span>            :     } else {
+<span class="lineNum">     873 </span><span class="lineCov">          6 :         rv2 = mSafeStream-&gt;Finish();</span>
+<span class="lineNum">     874 </span><span class="lineCov">          6 :         if (NS_FAILED(rv2)) {</span>
+<span class="lineNum">     875 </span><span class="lineNoCov">          0 :             NS_WARNING(&quot;(debug) mSafeStream-&gt;Finish() failed within nsBufferedOutputStream::Flush()! Possible dataloss.&quot;);</span>
+<span class="lineNum">     876 </span>            :         }
+<span class="lineNum">     877 </span>            :     }
+<span class="lineNum">     878 </span>            : 
+<span class="lineNum">     879 </span>            :     // ... and close the buffered stream, so any further attempts to flush/close
+<span class="lineNum">     880 </span>            :     // the buffered stream won't cause errors.
+<span class="lineNum">     881 </span><span class="lineCov">          6 :     rv3 = nsBufferedStream::Close();</span>
+<span class="lineNum">     882 </span>            : 
+<span class="lineNum">     883 </span>            :     // We want to return the errors precisely from Finish()
+<span class="lineNum">     884 </span>            :     // and mimick the existing error handling in
+<span class="lineNum">     885 </span>            :     // nsBufferedOutputStream::Close() as reference.
+<span class="lineNum">     886 </span>            : 
+<span class="lineNum">     887 </span><span class="lineCov">          6 :     if (NS_FAILED(rv1)) {</span>
+<span class="lineNum">     888 </span><span class="lineNoCov">          0 :         return rv1;</span>
+<span class="lineNum">     889 </span>            :     }
+<span class="lineNum">     890 </span><span class="lineCov">          6 :     if (NS_FAILED(rv2)) {</span>
+<span class="lineNum">     891 </span><span class="lineNoCov">          0 :         return rv2;</span>
+<span class="lineNum">     892 </span>            :     }
+<span class="lineNum">     893 </span><span class="lineCov">          6 :     return rv3;</span>
+<span class="lineNum">     894 </span>            : }
+<a name="895"><span class="lineNum">     895 </span>            : </a>
+<span class="lineNum">     896 </span>            : static nsresult
+<span class="lineNum">     897 </span><span class="lineNoCov">          0 : nsReadFromInputStream(nsIOutputStream* outStr,</span>
+<span class="lineNum">     898 </span>            :                       void* closure,
+<span class="lineNum">     899 </span>            :                       char* toRawSegment,
+<span class="lineNum">     900 </span>            :                       uint32_t offset,
+<span class="lineNum">     901 </span>            :                       uint32_t count,
+<span class="lineNum">     902 </span>            :                       uint32_t *readCount)
+<span class="lineNum">     903 </span>            : {
+<span class="lineNum">     904 </span><span class="lineNoCov">          0 :     nsIInputStream* fromStream = (nsIInputStream*)closure;</span>
+<span class="lineNum">     905 </span><span class="lineNoCov">          0 :     return fromStream-&gt;Read(toRawSegment, count, readCount);</span>
+<span class="lineNum">     906 </span>            : }
+<a name="907"><span class="lineNum">     907 </span>            : </a>
+<span class="lineNum">     908 </span>            : NS_IMETHODIMP
+<span class="lineNum">     909 </span><span class="lineNoCov">          0 : nsBufferedOutputStream::WriteFrom(nsIInputStream *inStr, uint32_t count, uint32_t *_retval)</span>
+<span class="lineNum">     910 </span>            : {
+<span class="lineNum">     911 </span><span class="lineNoCov">          0 :     return WriteSegments(nsReadFromInputStream, inStr, count, _retval);</span>
+<span class="lineNum">     912 </span>            : }
+<a name="913"><span class="lineNum">     913 </span>            : </a>
+<span class="lineNum">     914 </span>            : NS_IMETHODIMP
+<span class="lineNum">     915 </span><span class="lineNoCov">          0 : nsBufferedOutputStream::WriteSegments(nsReadSegmentFun reader, void * closure, uint32_t count, uint32_t *_retval)</span>
+<span class="lineNum">     916 </span>            : {
+<span class="lineNum">     917 </span><span class="lineNoCov">          0 :     *_retval = 0;</span>
+<span class="lineNum">     918 </span>            :     nsresult rv;
+<span class="lineNum">     919 </span><span class="lineNoCov">          0 :     while (count &gt; 0) {</span>
+<span class="lineNum">     920 </span><span class="lineNoCov">          0 :         uint32_t left = std::min(count, mBufferSize - mCursor);</span>
+<span class="lineNum">     921 </span><span class="lineNoCov">          0 :         if (left == 0) {</span>
+<span class="lineNum">     922 </span><span class="lineNoCov">          0 :             rv = Flush();</span>
+<span class="lineNum">     923 </span><span class="lineNoCov">          0 :             if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     924 </span><span class="lineNoCov">          0 :                 return (*_retval &gt; 0) ? NS_OK : rv;</span>
+<span class="lineNum">     925 </span>            :             }
+<span class="lineNum">     926 </span>            : 
+<span class="lineNum">     927 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     928 </span>            :         }
+<span class="lineNum">     929 </span>            : 
+<span class="lineNum">     930 </span><span class="lineNoCov">          0 :         uint32_t read = 0;</span>
+<span class="lineNum">     931 </span><span class="lineNoCov">          0 :         rv = reader(this, closure, mBuffer + mCursor, *_retval, left, &amp;read);</span>
+<span class="lineNum">     932 </span>            : 
+<span class="lineNum">     933 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv)) { // If we have read some data, return ok</span>
+<span class="lineNum">     934 </span><span class="lineNoCov">          0 :             return (*_retval &gt; 0) ? NS_OK : rv;</span>
+<span class="lineNum">     935 </span>            :         }
+<span class="lineNum">     936 </span><span class="lineNoCov">          0 :         mCursor += read;</span>
+<span class="lineNum">     937 </span><span class="lineNoCov">          0 :         *_retval += read;</span>
+<span class="lineNum">     938 </span><span class="lineNoCov">          0 :         count -= read;</span>
+<span class="lineNum">     939 </span><span class="lineNoCov">          0 :         mFillPoint = std::max(mFillPoint, mCursor);</span>
+<span class="lineNum">     940 </span>            :     }
+<span class="lineNum">     941 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     942 </span>            : }
+<a name="943"><span class="lineNum">     943 </span>            : </a>
+<span class="lineNum">     944 </span>            : NS_IMETHODIMP
+<span class="lineNum">     945 </span><span class="lineNoCov">          0 : nsBufferedOutputStream::IsNonBlocking(bool *aNonBlocking)</span>
+<span class="lineNum">     946 </span>            : {
+<span class="lineNum">     947 </span><span class="lineNoCov">          0 :     if (mStream) {</span>
+<span class="lineNum">     948 </span><span class="lineNoCov">          0 :         return Sink()-&gt;IsNonBlocking(aNonBlocking);</span>
+<span class="lineNum">     949 </span>            :     }
+<span class="lineNum">     950 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">     951 </span>            : }
+<a name="952"><span class="lineNum">     952 </span>            : </a>
+<span class="lineNum">     953 </span>            : NS_IMETHODIMP_(char*)
+<span class="lineNum">     954 </span><span class="lineNoCov">          0 : nsBufferedOutputStream::GetBuffer(uint32_t aLength, uint32_t aAlignMask)</span>
+<span class="lineNum">     955 </span>            : {
+<span class="lineNum">     956 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mGetBufferCount == 0, &quot;nested GetBuffer!&quot;);</span>
+<span class="lineNum">     957 </span><span class="lineNoCov">          0 :     if (mGetBufferCount != 0) {</span>
+<span class="lineNum">     958 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     959 </span>            :     }
+<span class="lineNum">     960 </span>            : 
+<span class="lineNum">     961 </span><span class="lineNoCov">          0 :     if (mBufferDisabled) {</span>
+<span class="lineNum">     962 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     963 </span>            :     }
+<span class="lineNum">     964 </span>            : 
+<span class="lineNum">     965 </span><span class="lineNoCov">          0 :     char* buf = mBuffer + mCursor;</span>
+<span class="lineNum">     966 </span><span class="lineNoCov">          0 :     uint32_t rem = mBufferSize - mCursor;</span>
+<span class="lineNum">     967 </span><span class="lineNoCov">          0 :     if (rem == 0) {</span>
+<span class="lineNum">     968 </span><span class="lineNoCov">          0 :         if (NS_FAILED(Flush())) {</span>
+<span class="lineNum">     969 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     970 </span>            :         }
+<span class="lineNum">     971 </span><span class="lineNoCov">          0 :         buf = mBuffer + mCursor;</span>
+<span class="lineNum">     972 </span><span class="lineNoCov">          0 :         rem = mBufferSize - mCursor;</span>
+<span class="lineNum">     973 </span>            :     }
+<span class="lineNum">     974 </span>            : 
+<span class="lineNum">     975 </span><span class="lineNoCov">          0 :     uint32_t mod = (NS_PTR_TO_INT32(buf) &amp; aAlignMask);</span>
+<span class="lineNum">     976 </span><span class="lineNoCov">          0 :     if (mod) {</span>
+<span class="lineNum">     977 </span><span class="lineNoCov">          0 :         uint32_t pad = aAlignMask + 1 - mod;</span>
+<span class="lineNum">     978 </span><span class="lineNoCov">          0 :         if (pad &gt; rem) {</span>
+<span class="lineNum">     979 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     980 </span>            :         }
+<span class="lineNum">     981 </span>            : 
+<span class="lineNum">     982 </span><span class="lineNoCov">          0 :         memset(buf, 0, pad);</span>
+<span class="lineNum">     983 </span><span class="lineNoCov">          0 :         mCursor += pad;</span>
+<span class="lineNum">     984 </span><span class="lineNoCov">          0 :         buf += pad;</span>
+<span class="lineNum">     985 </span><span class="lineNoCov">          0 :         rem -= pad;</span>
+<span class="lineNum">     986 </span>            :     }
+<span class="lineNum">     987 </span>            : 
+<span class="lineNum">     988 </span><span class="lineNoCov">          0 :     if (aLength &gt; rem) {</span>
+<span class="lineNum">     989 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     990 </span>            :     }
+<span class="lineNum">     991 </span><span class="lineNoCov">          0 :     mGetBufferCount++;</span>
+<span class="lineNum">     992 </span><span class="lineNoCov">          0 :     return buf;</span>
+<span class="lineNum">     993 </span>            : }
+<a name="994"><span class="lineNum">     994 </span>            : </a>
+<span class="lineNum">     995 </span>            : NS_IMETHODIMP_(void)
+<span class="lineNum">     996 </span><span class="lineNoCov">          0 : nsBufferedOutputStream::PutBuffer(char* aBuffer, uint32_t aLength)</span>
+<span class="lineNum">     997 </span>            : {
+<span class="lineNum">     998 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mGetBufferCount == 1, &quot;stray PutBuffer!&quot;);</span>
+<span class="lineNum">     999 </span><span class="lineNoCov">          0 :     if (--mGetBufferCount != 0) {</span>
+<span class="lineNum">    1000 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">    1001 </span>            :     }
+<span class="lineNum">    1002 </span>            : 
+<span class="lineNum">    1003 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mCursor + aLength &lt;= mBufferSize, &quot;PutBuffer botch&quot;);</span>
+<span class="lineNum">    1004 </span><span class="lineNoCov">          0 :     mCursor += aLength;</span>
+<span class="lineNum">    1005 </span><span class="lineNoCov">          0 :     if (mFillPoint &lt; mCursor) {</span>
+<span class="lineNum">    1006 </span><span class="lineNoCov">          0 :         mFillPoint = mCursor;</span>
+<span class="lineNum">    1007 </span>            :     }
+<span class="lineNum">    1008 </span>            : }
+<a name="1009"><span class="lineNum">    1009 </span>            : </a>
+<span class="lineNum">    1010 </span>            : NS_IMETHODIMP
+<span class="lineNum">    1011 </span><span class="lineNoCov">          0 : nsBufferedOutputStream::DisableBuffering()</span>
+<span class="lineNum">    1012 </span>            : {
+<span class="lineNum">    1013 </span><span class="lineNoCov">          0 :     NS_ASSERTION(!mBufferDisabled, &quot;redundant call to DisableBuffering!&quot;);</span>
+<span class="lineNum">    1014 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mGetBufferCount == 0,</span>
+<span class="lineNum">    1015 </span>            :                  &quot;DisableBuffer call between GetBuffer and PutBuffer!&quot;);
+<span class="lineNum">    1016 </span><span class="lineNoCov">          0 :     if (mGetBufferCount != 0) {</span>
+<span class="lineNum">    1017 </span><span class="lineNoCov">          0 :         return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">    1018 </span>            :     }
+<span class="lineNum">    1019 </span>            : 
+<span class="lineNum">    1020 </span>            :     // Empty the buffer so nsBufferedStream::Tell works.
+<span class="lineNum">    1021 </span><span class="lineNoCov">          0 :     nsresult rv = Flush();</span>
+<span class="lineNum">    1022 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">    1023 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">    1024 </span>            :     }
+<span class="lineNum">    1025 </span>            : 
+<span class="lineNum">    1026 </span><span class="lineNoCov">          0 :     mBufferDisabled = true;</span>
+<span class="lineNum">    1027 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">    1028 </span>            : }
+<a name="1029"><span class="lineNum">    1029 </span>            : </a>
+<span class="lineNum">    1030 </span>            : NS_IMETHODIMP
+<span class="lineNum">    1031 </span><span class="lineNoCov">          0 : nsBufferedOutputStream::EnableBuffering()</span>
+<span class="lineNum">    1032 </span>            : {
+<span class="lineNum">    1033 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mBufferDisabled, &quot;gratuitous call to EnableBuffering!&quot;);</span>
+<span class="lineNum">    1034 </span><span class="lineNoCov">          0 :     mBufferDisabled = false;</span>
+<span class="lineNum">    1035 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">    1036 </span>            : }
+<a name="1037"><span class="lineNum">    1037 </span>            : </a>
+<span class="lineNum">    1038 </span>            : NS_IMETHODIMP
+<span class="lineNum">    1039 </span><span class="lineNoCov">          0 : nsBufferedOutputStream::GetUnbufferedStream(nsISupports* *aStream)</span>
+<span class="lineNum">    1040 </span>            : {
+<span class="lineNum">    1041 </span>            :     // Empty the buffer so subsequent i/o trumps any buffered data.
+<span class="lineNum">    1042 </span><span class="lineNoCov">          0 :     if (mFillPoint) {</span>
+<span class="lineNum">    1043 </span><span class="lineNoCov">          0 :         nsresult rv = Flush();</span>
+<span class="lineNum">    1044 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv)) {</span>
+<span class="lineNum">    1045 </span><span class="lineNoCov">          0 :             return rv;</span>
+<span class="lineNum">    1046 </span>            :         }
+<span class="lineNum">    1047 </span>            :     }
+<span class="lineNum">    1048 </span>            : 
+<span class="lineNum">    1049 </span><span class="lineNoCov">          0 :     *aStream = mStream;</span>
+<span class="lineNum">    1050 </span><span class="lineNoCov">          0 :     NS_IF_ADDREF(*aStream);</span>
+<span class="lineNum">    1051 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">    1052 </span>            : }
+<a name="1053"><span class="lineNum">    1053 </span>            : </a>
+<span class="lineNum">    1054 </span>            : NS_IMETHODIMP
+<span class="lineNum">    1055 </span><span class="lineNoCov">          0 : nsBufferedOutputStream::GetData(nsIOutputStream **aResult)</span>
+<span class="lineNum">    1056 </span>            : {
+<span class="lineNum">    1057 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsISupports&gt; stream;</span>
+<span class="lineNum">    1058 </span><span class="lineNoCov">          0 :     nsBufferedStream::GetData(getter_AddRefs(stream));</span>
+<span class="lineNum">    1059 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIOutputStream&gt; outputStream = do_QueryInterface(stream);</span>
+<span class="lineNum">    1060 </span><span class="lineNoCov">          0 :     *aResult = outputStream.forget().take();</span>
+<span class="lineNum">    1061 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">    1062 </span>            : }
+<span class="lineNum">    1063 </span>            : #undef METER
+<span class="lineNum">    1064 </span>            : 
+<span class="lineNum">    1065 </span>            : ////////////////////////////////////////////////////////////////////////////////
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

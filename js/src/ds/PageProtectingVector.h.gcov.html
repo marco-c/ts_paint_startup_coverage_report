@@ -1,0 +1,739 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - js/src/ds/PageProtectingVector.h</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">js/src/ds</a> - PageProtectingVector.h<span style="font-size: 80%;"> (source / <a href="PageProtectingVector.h.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">138</td>
+            <td class="headerCovTableEntry">277</td>
+            <td class="headerCovTableEntryLo">49.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">32</td>
+            <td class="headerCovTableEntry">46</td>
+            <td class="headerCovTableEntryLo">69.6 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-</a>
+<span class="lineNum">       2 </span>            :  * vim: set ts=8 sts=4 et sw=4 tw=99:
+<span class="lineNum">       3 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #ifndef ds_PageProtectingVector_h
+<span class="lineNum">       8 </span>            : #define ds_PageProtectingVector_h
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/Atomics.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/IntegerPrintfMacros.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/PodOperations.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/Types.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/Vector.h&quot;
+<span class="lineNum">      15 </span>            : 
+<span class="lineNum">      16 </span>            : #ifdef MALLOC_H
+<span class="lineNum">      17 </span>            : # include MALLOC_H
+<span class="lineNum">      18 </span>            : #endif
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : #include &quot;ds/MemoryProtectionExceptionHandler.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;gc/Memory.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;js/Utility.h&quot;
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : #ifdef MOZ_MEMORY
+<span class="lineNum">      25 </span>            : # ifdef XP_DARWIN
+<span class="lineNum">      26 </span>            : #  define malloc_usable_size malloc_size
+<span class="lineNum">      27 </span>            : # else
+<span class="lineNum">      28 </span>            : extern &quot;C&quot; MFBT_API size_t malloc_usable_size(MALLOC_USABLE_SIZE_CONST_PTR void* p);
+<span class="lineNum">      29 </span>            : # endif
+<span class="lineNum">      30 </span>            : #endif
+<span class="lineNum">      31 </span>            : 
+<span class="lineNum">      32 </span>            : namespace js {
+<span class="lineNum">      33 </span>            : 
+<span class="lineNum">      34 </span>            : /*
+<span class="lineNum">      35 </span>            :  * PageProtectingVector is a vector that can only grow or be cleared, restricts
+<span class="lineNum">      36 </span>            :  * access to memory pages that haven't been used yet, and marks all of its fully
+<span class="lineNum">      37 </span>            :  * used memory pages as read-only. It can be used to detect heap corruption in
+<span class="lineNum">      38 </span>            :  * important buffers, since anything that tries to write into its protected
+<span class="lineNum">      39 </span>            :  * pages will crash. On Nightly and Aurora, these crashes will additionally be
+<span class="lineNum">      40 </span>            :  * annotated with a moz crash reason using MemoryProtectionExceptionHandler.
+<span class="lineNum">      41 </span>            :  *
+<span class="lineNum">      42 </span>            :  * PageProtectingVector's protection is limited to full pages. If the front
+<span class="lineNum">      43 </span>            :  * of its buffer is not aligned on a page boundary, elems preceding the first
+<span class="lineNum">      44 </span>            :  * page boundary will not be protected. Similarly, the end of the buffer will
+<span class="lineNum">      45 </span>            :  * not be fully protected unless it is aligned on a page boundary. Altogether,
+<span class="lineNum">      46 </span>            :  * up to two pages of memory may not be protected.
+<span class="lineNum">      47 </span>            :  */
+<span class="lineNum">      48 </span>            : template&lt;typename T,
+<span class="lineNum">      49 </span>            :          size_t MinInlineCapacity = 0,
+<span class="lineNum">      50 </span>            :          class AllocPolicy = mozilla::MallocAllocPolicy,
+<span class="lineNum">      51 </span>            :          bool ProtectUsed = true,
+<span class="lineNum">      52 </span>            :          bool ProtectUnused = true,
+<span class="lineNum">      53 </span>            :          size_t InitialLowerBound = 0,
+<span class="lineNum">      54 </span>            :          bool PoisonUnused = true,
+<span class="lineNum">      55 </span>            :          uint8_t PoisonPattern = 0xe3&gt;
+<span class="lineNum">      56 </span>            : class PageProtectingVector final
+<span class="lineNum">      57 </span>            : {
+<span class="lineNum">      58 </span>            :     mozilla::Vector&lt;T, MinInlineCapacity, AllocPolicy&gt; vector;
+<span class="lineNum">      59 </span>            : 
+<span class="lineNum">      60 </span>            :     static constexpr size_t toShift(size_t v) { return v &lt;= 1 ? 0 : 1 + toShift(v &gt;&gt; 1); }
+<span class="lineNum">      61 </span>            : 
+<span class="lineNum">      62 </span>            :     static_assert((sizeof(T) &amp; (sizeof(T) - 1)) == 0, &quot;For performance reasons, &quot;
+<span class="lineNum">      63 </span>            :                   &quot;PageProtectingVector only works with power-of-2 sized elements!&quot;);
+<span class="lineNum">      64 </span>            : 
+<span class="lineNum">      65 </span>            :     static const size_t elemShift = toShift(sizeof(T));
+<span class="lineNum">      66 </span>            :     static const size_t elemSize = 1 &lt;&lt; elemShift;
+<span class="lineNum">      67 </span>            :     static const size_t elemMask = elemSize - 1;
+<span class="lineNum">      68 </span>            : 
+<span class="lineNum">      69 </span>            :     /* We hardcode the page size here to minimize administrative overhead. */
+<span class="lineNum">      70 </span>            :     static const size_t pageShift = 12;
+<span class="lineNum">      71 </span>            :     static const size_t pageSize = 1 &lt;&lt; pageShift;
+<span class="lineNum">      72 </span>            :     static const size_t pageMask = pageSize - 1;
+<span class="lineNum">      73 </span>            : 
+<span class="lineNum">      74 </span>            :     /*
+<span class="lineNum">      75 </span>            :      * The number of elements that can be added before we need to either adjust
+<span class="lineNum">      76 </span>            :      * the active page or resize the buffer. If |elemsUntilTest &lt; 0| we will
+<span class="lineNum">      77 </span>            :      * take the slow paths in the append calls.
+<span class="lineNum">      78 </span>            :      */
+<span class="lineNum">      79 </span>            :     intptr_t elemsUntilTest;
+<span class="lineNum">      80 </span>            : 
+<span class="lineNum">      81 </span>            :     /*
+<span class="lineNum">      82 </span>            :      * The offset of the currently 'active' page - that is, the page that is
+<span class="lineNum">      83 </span>            :      * currently being written to. If both used and unused bytes are protected,
+<span class="lineNum">      84 </span>            :      * this will be the only (fully owned) page with read and write access.
+<span class="lineNum">      85 </span>            :      */
+<span class="lineNum">      86 </span>            :     size_t currPage;
+<span class="lineNum">      87 </span>            : 
+<span class="lineNum">      88 </span>            :     /*
+<span class="lineNum">      89 </span>            :      * The first fully owned page. This is the first page that can
+<span class="lineNum">      90 </span>            :      * be protected, but it may not be the first *active* page.
+<span class="lineNum">      91 </span>            :      */
+<span class="lineNum">      92 </span>            :     size_t initPage;
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span>            :     /*
+<span class="lineNum">      95 </span>            :      * The last fully owned page. This is the last page that can
+<span class="lineNum">      96 </span>            :      * be protected, but it may not be the last *active* page.
+<span class="lineNum">      97 </span>            :      */
+<span class="lineNum">      98 </span>            :     size_t lastPage;
+<span class="lineNum">      99 </span>            : 
+<span class="lineNum">     100 </span>            :     /*
+<span class="lineNum">     101 </span>            :      * The size in elems that a buffer needs to be before its pages will be
+<span class="lineNum">     102 </span>            :      * protected. This is intended to reduce churn for small vectors while
+<span class="lineNum">     103 </span>            :      * still offering protection when they grow large enough.
+<span class="lineNum">     104 </span>            :      */
+<span class="lineNum">     105 </span>            :     size_t lowerBound;
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span>            : #ifdef DEBUG
+<span class="lineNum">     108 </span>            :     bool regionUnprotected;
+<span class="lineNum">     109 </span>            : #endif
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span>            :     bool usable;
+<span class="lineNum">     112 </span>            :     bool enabled;
+<span class="lineNum">     113 </span>            :     bool protectUsedEnabled;
+<a name="114"><span class="lineNum">     114 </span>            :     bool protectUnusedEnabled;</a>
+<span class="lineNum">     115 </span>            : 
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :     MOZ_ALWAYS_INLINE void resetTest() {</span>
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(protectUsedEnabled || protectUnusedEnabled);</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :         size_t nextPage = (pageSize - (uintptr_t(begin() + length()) &amp; pageMask)) &gt;&gt; elemShift;</span>
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :         size_t nextResize = capacity() - length();</span>
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :         if (MOZ_LIKELY(nextPage &lt;= nextResize))</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :             elemsUntilTest = intptr_t(nextPage);</span>
+<span class="lineNum">     122 </span>            :         else
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :             elemsUntilTest = intptr_t(nextResize);</span>
+<a name="124"><span class="lineNum">     124 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     125 </span>            : 
+<span class="lineNum">     126 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void setTestInitial() {</span>
+<span class="lineNum">     127 </span><span class="lineCov">       8466 :         if (MOZ_LIKELY(!protectUsedEnabled &amp;&amp; !protectUnusedEnabled))</span>
+<span class="lineNum">     128 </span><span class="lineCov">       8466 :             elemsUntilTest = intptr_t(capacity() - length());</span>
+<span class="lineNum">     129 </span>            :         else
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :             resetTest();</span>
+<a name="131"><span class="lineNum">     131 </span><span class="lineCov">       8466 :     }</span></a>
+<span class="lineNum">     132 </span>            : 
+<span class="lineNum">     133 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void resetForNewBuffer() {</span>
+<span class="lineNum">     134 </span><span class="lineCov">       8466 :         initPage = (uintptr_t(begin() - 1) &gt;&gt; pageShift) + 1;</span>
+<span class="lineNum">     135 </span><span class="lineCov">       8466 :         currPage = (uintptr_t(begin() + length()) &gt;&gt; pageShift);</span>
+<span class="lineNum">     136 </span><span class="lineCov">       8466 :         lastPage = (uintptr_t(begin() + capacity()) &gt;&gt; pageShift) - 1;</span>
+<span class="lineNum">     137 </span><span class="lineCov">       8466 :         protectUsedEnabled = ProtectUsed &amp;&amp; usable &amp;&amp; enabled &amp;&amp; initPage &lt;= lastPage &amp;&amp;</span>
+<span class="lineNum">     138 </span>            :                              (uintptr_t(begin()) &amp; elemMask) == 0 &amp;&amp; capacity() &gt;= lowerBound;
+<span class="lineNum">     139 </span><span class="lineCov">       8466 :         protectUnusedEnabled = ProtectUnused &amp;&amp; usable &amp;&amp; enabled &amp;&amp; initPage &lt;= lastPage &amp;&amp;</span>
+<span class="lineNum">     140 </span>            :                                (uintptr_t(begin()) &amp; elemMask) == 0 &amp;&amp; capacity() &gt;= lowerBound;
+<span class="lineNum">     141 </span><span class="lineCov">       8466 :         setTestInitial();</span>
+<a name="142"><span class="lineNum">     142 </span><span class="lineCov">       8466 :     }</span></a>
+<span class="lineNum">     143 </span>            : 
+<span class="lineNum">     144 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void poisonNewBuffer() {</span>
+<span class="lineNum">     145 </span>            :         if (!PoisonUnused)
+<span class="lineNum">     146 </span>            :             return;
+<span class="lineNum">     147 </span><span class="lineCov">       8466 :         T* addr = begin() + length();</span>
+<span class="lineNum">     148 </span><span class="lineCov">       8466 :         size_t toPoison = (capacity() - length()) * sizeof(T);</span>
+<span class="lineNum">     149 </span><span class="lineCov">       8466 :         memset(addr, PoisonPattern, toPoison);</span>
+<a name="150"><span class="lineNum">     150 </span>            :     }</a>
+<span class="lineNum">     151 </span>            : 
+<span class="lineNum">     152 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void addExceptionHandler() {</span>
+<span class="lineNum">     153 </span><span class="lineCov">       8466 :         if (MOZ_UNLIKELY(protectUsedEnabled || protectUnusedEnabled))</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :             MemoryProtectionExceptionHandler::addRegion(begin(), capacity() &lt;&lt; elemShift);</span>
+<a name="155"><span class="lineNum">     155 </span><span class="lineCov">       8466 :     }</span></a>
+<span class="lineNum">     156 </span>            : 
+<span class="lineNum">     157 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void removeExceptionHandler() {</span>
+<span class="lineNum">     158 </span><span class="lineCov">       8466 :         if (MOZ_UNLIKELY(protectUsedEnabled || protectUnusedEnabled))</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :             MemoryProtectionExceptionHandler::removeRegion(begin());</span>
+<a name="160"><span class="lineNum">     160 </span><span class="lineCov">       8466 :     }</span></a>
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void protectUsed() {</span>
+<span class="lineNum">     163 </span><span class="lineCov">       8466 :         if (MOZ_LIKELY(!protectUsedEnabled))</span>
+<span class="lineNum">     164 </span><span class="lineCov">       8466 :             return;</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :         if (MOZ_UNLIKELY(currPage &lt;= initPage))</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :         T* addr = reinterpret_cast&lt;T*&gt;(initPage &lt;&lt; pageShift);</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :         size_t size = (currPage - initPage) &lt;&lt; pageShift;</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :         gc::MakePagesReadOnly(addr, size);</span>
+<a name="170"><span class="lineNum">     170 </span>            :     }</a>
+<span class="lineNum">     171 </span>            : 
+<span class="lineNum">     172 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void unprotectUsed() {</span>
+<span class="lineNum">     173 </span><span class="lineCov">       8466 :         if (MOZ_LIKELY(!protectUsedEnabled))</span>
+<span class="lineNum">     174 </span><span class="lineCov">       8466 :             return;</span>
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :         if (MOZ_UNLIKELY(currPage &lt;= initPage))</span>
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :         T* addr = reinterpret_cast&lt;T*&gt;(initPage &lt;&lt; pageShift);</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :         size_t size = (currPage - initPage) &lt;&lt; pageShift;</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :         gc::UnprotectPages(addr, size);</span>
+<a name="180"><span class="lineNum">     180 </span>            :     }</a>
+<span class="lineNum">     181 </span>            : 
+<span class="lineNum">     182 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void protectUnused() {</span>
+<span class="lineNum">     183 </span><span class="lineCov">       8466 :         if (MOZ_LIKELY(!protectUnusedEnabled))</span>
+<span class="lineNum">     184 </span><span class="lineCov">       8466 :             return;</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :         if (MOZ_UNLIKELY(currPage &gt;= lastPage))</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :         T* addr = reinterpret_cast&lt;T*&gt;((currPage + 1) &lt;&lt; pageShift);</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :         size_t size = (lastPage - currPage) &lt;&lt; pageShift;</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :         gc::ProtectPages(addr, size);</span>
+<a name="190"><span class="lineNum">     190 </span>            :     }</a>
+<span class="lineNum">     191 </span>            : 
+<span class="lineNum">     192 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void unprotectUnused() {</span>
+<span class="lineNum">     193 </span><span class="lineCov">       8466 :         if (MOZ_LIKELY(!protectUnusedEnabled))</span>
+<span class="lineNum">     194 </span><span class="lineCov">       8466 :             return;</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :         if (MOZ_UNLIKELY(currPage &gt;= lastPage))</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :         T* addr = reinterpret_cast&lt;T*&gt;((currPage + 1) &lt;&lt; pageShift);</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :         size_t size = (lastPage - currPage) &lt;&lt; pageShift;</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :         gc::UnprotectPages(addr, size);</span>
+<a name="200"><span class="lineNum">     200 </span>            :     }</a>
+<span class="lineNum">     201 </span>            : 
+<span class="lineNum">     202 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void protectNewBuffer() {</span>
+<span class="lineNum">     203 </span><span class="lineCov">       8466 :         resetForNewBuffer();</span>
+<span class="lineNum">     204 </span><span class="lineCov">       8466 :         addExceptionHandler();</span>
+<span class="lineNum">     205 </span><span class="lineCov">       8466 :         poisonNewBuffer();</span>
+<span class="lineNum">     206 </span><span class="lineCov">       8466 :         protectUsed();</span>
+<span class="lineNum">     207 </span><span class="lineCov">       8466 :         protectUnused();</span>
+<a name="208"><span class="lineNum">     208 </span><span class="lineCov">       8466 :     }</span></a>
+<span class="lineNum">     209 </span>            : 
+<span class="lineNum">     210 </span><span class="lineCov">       8466 :     MOZ_ALWAYS_INLINE void unprotectOldBuffer() {</span>
+<span class="lineNum">     211 </span><span class="lineCov">       8466 :         MOZ_ASSERT(!regionUnprotected);</span>
+<span class="lineNum">     212 </span><span class="lineCov">       8466 :         unprotectUnused();</span>
+<span class="lineNum">     213 </span><span class="lineCov">       8466 :         unprotectUsed();</span>
+<span class="lineNum">     214 </span><span class="lineCov">       8466 :         removeExceptionHandler();</span>
+<a name="215"><span class="lineNum">     215 </span><span class="lineCov">       8466 :     }</span></a>
+<span class="lineNum">     216 </span>            : 
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :     MOZ_ALWAYS_INLINE void protectUnusedPartial(size_t curr, size_t next) {</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :         if (MOZ_LIKELY(!protectUnusedEnabled))</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :         if (MOZ_UNLIKELY(next &gt; lastPage))</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :             --next;</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :         if (MOZ_UNLIKELY(next == curr))</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :         void* addr = reinterpret_cast&lt;T*&gt;((curr + 1) &lt;&lt; pageShift);</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :         size_t size = (next - curr) &lt;&lt; pageShift;</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :         gc::ProtectPages(addr, size);</span>
+<a name="227"><span class="lineNum">     227 </span>            :     }</a>
+<span class="lineNum">     228 </span>            : 
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     MOZ_ALWAYS_INLINE void unprotectUnusedPartial(size_t curr, size_t next) {</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :         if (MOZ_LIKELY(!protectUnusedEnabled))</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :         if (MOZ_UNLIKELY(next &gt; lastPage))</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :             --next;</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :         if (MOZ_UNLIKELY(next == curr))</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :         void* addr = reinterpret_cast&lt;T*&gt;((curr + 1) &lt;&lt; pageShift);</span>
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :         size_t size = (next - curr) &lt;&lt; pageShift;</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :         gc::UnprotectPages(addr, size);</span>
+<a name="239"><span class="lineNum">     239 </span>            :     }</a>
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :     MOZ_ALWAYS_INLINE void protectUsedPartial(size_t curr, size_t next) {</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :         if (MOZ_LIKELY(!protectUsedEnabled))</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :         if (MOZ_UNLIKELY(curr &lt; initPage))</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :             ++curr;</span>
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :         if (MOZ_UNLIKELY(next == curr))</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :         void* addr = reinterpret_cast&lt;T*&gt;(curr &lt;&lt; pageShift);</span>
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :         size_t size = (next - curr) &lt;&lt; pageShift;</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :         gc::MakePagesReadOnly(addr, size);</span>
+<a name="251"><span class="lineNum">     251 </span>            :     }</a>
+<span class="lineNum">     252 </span>            : 
+<span class="lineNum">     253 </span><span class="lineCov">       3963 :     MOZ_ALWAYS_INLINE MOZ_MUST_USE bool reserveNewBuffer(size_t size) {</span>
+<span class="lineNum">     254 </span><span class="lineCov">       3963 :         unprotectOldBuffer();</span>
+<span class="lineNum">     255 </span><span class="lineCov">       3963 :         bool ret = vector.reserve(size);</span>
+<span class="lineNum">     256 </span><span class="lineCov">       3963 :         protectNewBuffer();</span>
+<span class="lineNum">     257 </span><span class="lineCov">       3963 :         return ret;</span>
+<span class="lineNum">     258 </span>            :     }
+<a name="259"><span class="lineNum">     259 </span>            : </a>
+<span class="lineNum">     260 </span>            :     template&lt;typename U&gt;
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :     MOZ_ALWAYS_INLINE void infallibleAppendNewPage(const U* values, size_t size) {</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :         size_t nextPage = uintptr_t(begin() + length() + size) &gt;&gt; pageShift;</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(currPage &lt; nextPage);</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :         unprotectUnusedPartial(currPage, nextPage);</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :         vector.infallibleAppend(values, size);</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :         protectUsedPartial(currPage, nextPage);</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :         currPage = nextPage;</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :         resetTest();</span>
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :     }</span>
+<a name="270"><span class="lineNum">     270 </span>            : </a>
+<span class="lineNum">     271 </span>            :     template&lt;typename U&gt;
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :     MOZ_ALWAYS_INLINE MOZ_MUST_USE bool appendNewPage(const U* values, size_t size) {</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :         size_t nextPage = uintptr_t(begin() + length() + size) &gt;&gt; pageShift;</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(currPage &lt; nextPage);</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :         unprotectUnusedPartial(currPage, nextPage);</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :         bool ret = vector.append(values, size);</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :         if (MOZ_LIKELY(ret)) {</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :             protectUsedPartial(currPage, nextPage);</span>
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :             currPage = nextPage;</span>
+<span class="lineNum">     280 </span>            :         } else {
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :             protectUnusedPartial(currPage, nextPage);</span>
+<span class="lineNum">     282 </span>            :         }
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :         resetTest();</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :         return ret;</span>
+<span class="lineNum">     285 </span>            :     }
+<a name="286"><span class="lineNum">     286 </span>            : </a>
+<span class="lineNum">     287 </span>            :     template&lt;typename U&gt;
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :     MOZ_ALWAYS_INLINE MOZ_MUST_USE bool appendNewBuffer(const U* values, size_t size) {</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :         unprotectOldBuffer();</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :         bool ret = vector.append(values, size);</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :         protectNewBuffer();</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :         return ret;</span>
+<span class="lineNum">     293 </span>            :     }
+<span class="lineNum">     294 </span>            : 
+<span class="lineNum">     295 </span>            :     MOZ_NEVER_INLINE void unprotectRegionSlow(uintptr_t l, uintptr_t r);
+<span class="lineNum">     296 </span>            :     MOZ_NEVER_INLINE void reprotectRegionSlow(uintptr_t l, uintptr_t r);
+<span class="lineNum">     297 </span>            : 
+<span class="lineNum">     298 </span>            :     MOZ_NEVER_INLINE MOZ_MUST_USE bool reserveSlow(size_t size);
+<span class="lineNum">     299 </span>            : 
+<span class="lineNum">     300 </span>            :     template&lt;typename U&gt;
+<span class="lineNum">     301 </span>            :     MOZ_NEVER_INLINE void infallibleAppendSlow(const U* values, size_t size);
+<span class="lineNum">     302 </span>            : 
+<span class="lineNum">     303 </span>            :     template&lt;typename U&gt;
+<span class="lineNum">     304 </span>            :     MOZ_NEVER_INLINE MOZ_MUST_USE bool appendSlow(const U* values, size_t size);
+<a name="305"><span class="lineNum">     305 </span>            : </a>
+<span class="lineNum">     306 </span>            :   public:
+<span class="lineNum">     307 </span><span class="lineCov">       4503 :     explicit PageProtectingVector(AllocPolicy policy = AllocPolicy())</span>
+<span class="lineNum">     308 </span>            :       : vector(policy),
+<span class="lineNum">     309 </span>            :         elemsUntilTest(0),
+<span class="lineNum">     310 </span>            :         currPage(0),
+<span class="lineNum">     311 </span>            :         initPage(0),
+<span class="lineNum">     312 </span>            :         lastPage(0),
+<span class="lineNum">     313 </span>            :         lowerBound(InitialLowerBound),
+<span class="lineNum">     314 </span>            : #ifdef DEBUG
+<span class="lineNum">     315 </span>            :         regionUnprotected(false),
+<span class="lineNum">     316 </span>            : #endif
+<span class="lineNum">     317 </span>            :         usable(true),
+<span class="lineNum">     318 </span>            :         enabled(true),
+<span class="lineNum">     319 </span>            :         protectUsedEnabled(false),
+<span class="lineNum">     320 </span><span class="lineCov">       4503 :         protectUnusedEnabled(false)</span>
+<span class="lineNum">     321 </span>            :     {
+<span class="lineNum">     322 </span><span class="lineCov">       4503 :         if (gc::SystemPageSize() != pageSize)</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :             usable = false;</span>
+<span class="lineNum">     324 </span><span class="lineCov">       4503 :         protectNewBuffer();</span>
+<a name="325"><span class="lineNum">     325 </span><span class="lineCov">       4503 :     }</span></a>
+<span class="lineNum">     326 </span>            : 
+<a name="327"><span class="lineNum">     327 </span><span class="lineCov">       4503 :     ~PageProtectingVector() { unprotectOldBuffer(); }</span></a>
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :     void disableProtection() {</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(enabled);</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :         unprotectOldBuffer();</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :         enabled = false;</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :         resetForNewBuffer();</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     335 </span>            : 
+<span class="lineNum">     336 </span>            :     void enableProtection() {
+<span class="lineNum">     337 </span>            :         MOZ_ASSERT(!enabled);
+<span class="lineNum">     338 </span>            :         enabled = true;
+<span class="lineNum">     339 </span>            :         protectNewBuffer();
+<span class="lineNum">     340 </span>            :     }
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span>            :     /*
+<span class="lineNum">     343 </span>            :      * Sets the lower bound on the size, in elems, that this vector's underlying
+<span class="lineNum">     344 </span>            :      * capacity has to be before its used pages will be protected.
+<span class="lineNum">     345 </span>            :      */
+<span class="lineNum">     346 </span>            :     void setLowerBoundForProtection(size_t elems) {
+<span class="lineNum">     347 </span>            :         if (lowerBound != elems) {
+<span class="lineNum">     348 </span>            :             unprotectOldBuffer();
+<span class="lineNum">     349 </span>            :             lowerBound = elems;
+<span class="lineNum">     350 </span>            :             protectNewBuffer();
+<span class="lineNum">     351 </span>            :         }
+<span class="lineNum">     352 </span>            :     }
+<span class="lineNum">     353 </span>            : 
+<span class="lineNum">     354 </span>            :     /* Disable protection on the smallest containing region. */
+<span class="lineNum">     355 </span>            :     MOZ_ALWAYS_INLINE void unprotectRegion(T* first, size_t size) {
+<span class="lineNum">     356 </span>            : #ifdef DEBUG
+<span class="lineNum">     357 </span>            :         regionUnprotected = true;
+<span class="lineNum">     358 </span>            : #endif
+<span class="lineNum">     359 </span>            :         if (MOZ_UNLIKELY(protectUsedEnabled)) {
+<span class="lineNum">     360 </span>            :             uintptr_t l = uintptr_t(first) &gt;&gt; pageShift;
+<span class="lineNum">     361 </span>            :             uintptr_t r = uintptr_t(first + size - 1) &gt;&gt; pageShift;
+<span class="lineNum">     362 </span>            :             if (r &gt;= initPage &amp;&amp; l &lt; currPage)
+<span class="lineNum">     363 </span>            :                 unprotectRegionSlow(l, r);
+<span class="lineNum">     364 </span>            :         }
+<span class="lineNum">     365 </span>            :     }
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span>            :     /* Re-enable protection on the smallest containing region. */
+<span class="lineNum">     368 </span>            :     MOZ_ALWAYS_INLINE void reprotectRegion(T* first, size_t size) {
+<span class="lineNum">     369 </span>            : #ifdef DEBUG
+<span class="lineNum">     370 </span>            :         regionUnprotected = false;
+<span class="lineNum">     371 </span>            : #endif
+<span class="lineNum">     372 </span>            :         if (MOZ_UNLIKELY(protectUsedEnabled)) {
+<span class="lineNum">     373 </span>            :             uintptr_t l = uintptr_t(first) &gt;&gt; pageShift;
+<span class="lineNum">     374 </span>            :             uintptr_t r = uintptr_t(first + size - 1) &gt;&gt; pageShift;
+<span class="lineNum">     375 </span>            :             if (r &gt;= initPage &amp;&amp; l &lt; currPage)
+<span class="lineNum">     376 </span>            :                 reprotectRegionSlow(l, r);
+<span class="lineNum">     377 </span>            :         }
+<a name="378"><span class="lineNum">     378 </span>            :     }</a>
+<a name="379"><span class="lineNum">     379 </span>            : </a>
+<span class="lineNum">     380 </span><span class="lineCov">    1145327 :     MOZ_ALWAYS_INLINE size_t capacity() const { return vector.capacity(); }</span>
+<a name="381"><span class="lineNum">     381 </span><span class="lineCov">    1816061 :     MOZ_ALWAYS_INLINE size_t length() const { return vector.length(); }</span></a>
+<a name="382"><span class="lineNum">     382 </span>            : </a>
+<span class="lineNum">     383 </span><span class="lineCov">     176463 :     MOZ_ALWAYS_INLINE T* begin() { return vector.begin(); }</span>
+<a name="384"><span class="lineNum">     384 </span><span class="lineCov">       4499 :     MOZ_ALWAYS_INLINE const T* begin() const { return vector.begin(); }</span></a>
+<span class="lineNum">     385 </span>            : 
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :     void clear() {</span>
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :         unprotectOldBuffer();</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :         vector.clear();</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :         protectNewBuffer();</span>
+<a name="390"><span class="lineNum">     390 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     391 </span>            : 
+<span class="lineNum">     392 </span><span class="lineCov">    1119916 :     MOZ_ALWAYS_INLINE MOZ_MUST_USE bool reserve(size_t size) {</span>
+<span class="lineNum">     393 </span><span class="lineCov">    1119916 :         if (MOZ_LIKELY(size &lt;= capacity()))</span>
+<span class="lineNum">     394 </span><span class="lineCov">    1115973 :             return vector.reserve(size);</span>
+<span class="lineNum">     395 </span><span class="lineCov">       3963 :         return reserveSlow(size);</span>
+<span class="lineNum">     396 </span>            :     }
+<a name="397"><span class="lineNum">     397 </span>            : </a>
+<span class="lineNum">     398 </span>            :     template&lt;typename U&gt;
+<span class="lineNum">     399 </span><span class="lineCov">    3724009 :     MOZ_ALWAYS_INLINE void infallibleAppend(const U* values, size_t size) {</span>
+<span class="lineNum">     400 </span><span class="lineCov">    3724009 :         elemsUntilTest -= size;</span>
+<span class="lineNum">     401 </span><span class="lineCov">    3724009 :         if (MOZ_LIKELY(elemsUntilTest &gt;= 0))</span>
+<span class="lineNum">     402 </span><span class="lineCov">    3724009 :             return vector.infallibleAppend(values, size);</span>
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :         infallibleAppendSlow(values, size);</span>
+<span class="lineNum">     404 </span>            :     }
+<a name="405"><span class="lineNum">     405 </span>            : </a>
+<span class="lineNum">     406 </span>            :     template&lt;typename U&gt;
+<span class="lineNum">     407 </span><span class="lineCov">        306 :     MOZ_ALWAYS_INLINE MOZ_MUST_USE bool append(const U* values, size_t size) {</span>
+<span class="lineNum">     408 </span><span class="lineCov">        306 :         elemsUntilTest -= size;</span>
+<span class="lineNum">     409 </span><span class="lineCov">        306 :         if (MOZ_LIKELY(elemsUntilTest &gt;= 0))</span>
+<span class="lineNum">     410 </span><span class="lineCov">        306 :             return vector.append(values, size);</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :         return appendSlow(values, size);</span>
+<span class="lineNum">     412 </span>            :     }
+<span class="lineNum">     413 </span>            : };
+<span class="lineNum">     414 </span>            : 
+<span class="lineNum">     415 </span>            : template&lt;typename T, size_t A, class B, bool C, bool D, size_t E, bool F, uint8_t G&gt;
+<span class="lineNum">     416 </span>            : MOZ_NEVER_INLINE void
+<span class="lineNum">     417 </span>            : PageProtectingVector&lt;T, A, B, C, D, E, F, G&gt;::unprotectRegionSlow(uintptr_t l, uintptr_t r)
+<span class="lineNum">     418 </span>            : {
+<span class="lineNum">     419 </span>            :     if (l &lt; initPage)
+<span class="lineNum">     420 </span>            :         l = initPage;
+<span class="lineNum">     421 </span>            :     if (r &gt;= currPage)
+<span class="lineNum">     422 </span>            :         r = currPage - 1;
+<span class="lineNum">     423 </span>            :     T* addr = reinterpret_cast&lt;T*&gt;(l &lt;&lt; pageShift);
+<span class="lineNum">     424 </span>            :     size_t size = (r - l + 1) &lt;&lt; pageShift;
+<span class="lineNum">     425 </span>            :     gc::UnprotectPages(addr, size);
+<span class="lineNum">     426 </span>            : }
+<span class="lineNum">     427 </span>            : 
+<span class="lineNum">     428 </span>            : template&lt;typename T, size_t A, class B, bool C, bool D, size_t E, bool F, uint8_t G&gt;
+<span class="lineNum">     429 </span>            : MOZ_NEVER_INLINE void
+<span class="lineNum">     430 </span>            : PageProtectingVector&lt;T, A, B, C, D, E, F, G&gt;::reprotectRegionSlow(uintptr_t l, uintptr_t r)
+<span class="lineNum">     431 </span>            : {
+<span class="lineNum">     432 </span>            :     if (l &lt; initPage)
+<span class="lineNum">     433 </span>            :         l = initPage;
+<span class="lineNum">     434 </span>            :     if (r &gt;= currPage)
+<span class="lineNum">     435 </span>            :         r = currPage - 1;
+<span class="lineNum">     436 </span>            :     T* addr = reinterpret_cast&lt;T*&gt;(l &lt;&lt; pageShift);
+<span class="lineNum">     437 </span>            :     size_t size = (r - l + 1) &lt;&lt; pageShift;
+<span class="lineNum">     438 </span>            :     gc::MakePagesReadOnly(addr, size);
+<span class="lineNum">     439 </span>            : }
+<span class="lineNum">     440 </span>            : 
+<a name="441"><span class="lineNum">     441 </span>            : template&lt;typename T, size_t A, class B, bool C, bool D, size_t E, bool F, uint8_t G&gt;</a>
+<span class="lineNum">     442 </span>            : MOZ_NEVER_INLINE MOZ_MUST_USE bool
+<span class="lineNum">     443 </span><span class="lineCov">       3963 : PageProtectingVector&lt;T, A, B, C, D, E, F, G&gt;::reserveSlow(size_t size)</span>
+<span class="lineNum">     444 </span>            : {
+<span class="lineNum">     445 </span><span class="lineCov">       3963 :     return reserveNewBuffer(size);</span>
+<span class="lineNum">     446 </span>            : }
+<span class="lineNum">     447 </span>            : 
+<span class="lineNum">     448 </span>            : template&lt;typename T, size_t A, class B, bool C, bool D, size_t E, bool F, uint8_t G&gt;
+<a name="449"><span class="lineNum">     449 </span>            : template&lt;typename U&gt;</a>
+<span class="lineNum">     450 </span>            : MOZ_NEVER_INLINE void
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 : PageProtectingVector&lt;T, A, B, C, D, E, F, G&gt;::infallibleAppendSlow(const U* values, size_t size)</span>
+<span class="lineNum">     452 </span>            : {
+<span class="lineNum">     453 </span>            :     // Ensure that we're here because we reached a page
+<span class="lineNum">     454 </span>            :     // boundary and not because of a buffer overflow.
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :     MOZ_RELEASE_ASSERT(MOZ_LIKELY(length() + size &lt;= capacity()),</span>
+<span class="lineNum">     456 </span>            :                        &quot;About to overflow our AssemblerBuffer using infallibleAppend!&quot;);
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :     infallibleAppendNewPage(values, size);</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     459 </span>            : 
+<span class="lineNum">     460 </span>            : template&lt;typename T, size_t A, class B, bool C, bool D, size_t E, bool F, uint8_t G&gt;
+<a name="461"><span class="lineNum">     461 </span>            : template&lt;typename U&gt;</a>
+<span class="lineNum">     462 </span>            : MOZ_NEVER_INLINE MOZ_MUST_USE bool
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 : PageProtectingVector&lt;T, A, B, C, D, E, F, G&gt;::appendSlow(const U* values, size_t size)</span>
+<span class="lineNum">     464 </span>            : {
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :     if (MOZ_LIKELY(length() + size &lt;= capacity()))</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :         return appendNewPage(values, size);</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :     return appendNewBuffer(values, size);</span>
+<span class="lineNum">     468 </span>            : }
+<span class="lineNum">     469 </span>            : 
+<span class="lineNum">     470 </span>            : class ProtectedReallocPolicy
+<span class="lineNum">     471 </span>            : {
+<span class="lineNum">     472 </span>            :     uintptr_t currAddr;
+<span class="lineNum">     473 </span>            :     size_t currSize;
+<span class="lineNum">     474 </span>            :     uintptr_t prevAddr;
+<span class="lineNum">     475 </span>            :     size_t prevSize;
+<span class="lineNum">     476 </span>            : 
+<a name="477"><span class="lineNum">     477 </span>            :     static const uint8_t PoisonPattern = 0xe5;</a>
+<span class="lineNum">     478 </span>            : 
+<span class="lineNum">     479 </span><span class="lineCov">       5172 :     template &lt;typename T&gt; void update(T* newAddr, size_t newSize) {</span>
+<span class="lineNum">     480 </span><span class="lineCov">       5172 :         prevAddr = currAddr;</span>
+<span class="lineNum">     481 </span><span class="lineCov">       5172 :         prevSize = currSize;</span>
+<span class="lineNum">     482 </span><span class="lineCov">       5172 :         currAddr = uintptr_t(newAddr);</span>
+<span class="lineNum">     483 </span><span class="lineCov">       5172 :         currSize = newSize * sizeof(T);</span>
+<a name="484"><span class="lineNum">     484 </span><span class="lineCov">       5172 :     }</span></a>
+<span class="lineNum">     485 </span>            : 
+<span class="lineNum">     486 </span><span class="lineCov">       1209 :     template &lt;typename T&gt; void updateIfValid(T* newAddr, size_t newSize) {</span>
+<span class="lineNum">     487 </span><span class="lineCov">       1209 :         if (newAddr)</span>
+<span class="lineNum">     488 </span><span class="lineCov">       1209 :             update&lt;T&gt;(newAddr, newSize);</span>
+<a name="489"><span class="lineNum">     489 </span><span class="lineCov">       1209 :     }</span></a>
+<span class="lineNum">     490 </span>            : 
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :     template &lt;typename T&gt; T* reallocUpdate(T* oldAddr, size_t oldSize, size_t newSize) {</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :         T* newAddr = js_pod_realloc&lt;T&gt;(oldAddr, oldSize, newSize);</span>
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :         updateIfValid&lt;T&gt;(newAddr, newSize);</span>
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :         return newAddr;</span>
+<a name="495"><span class="lineNum">     495 </span>            :     }</a>
+<span class="lineNum">     496 </span>            : 
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 :     void crashWithInfo(const uint8_t* buffer, size_t bytes, const char* type) {</span>
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :         size_t start = 0;</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :         while (start &lt; bytes) {</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :             if (MOZ_LIKELY(buffer[start] != PoisonPattern)) {</span>
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :                 ++start;</span>
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     503 </span>            :             }
+<span class="lineNum">     504 </span>            :             size_t limit;
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :             for (limit = start + 1; limit &lt; bytes &amp;&amp; buffer[limit] == PoisonPattern; ++limit);</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :             size_t size = limit - start;</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :             if (size &gt;= 16) {</span>
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :                 MOZ_CRASH_UNSAFE_PRINTF(&quot;maybe_pod_realloc: %s buffer (old size = %&quot; PRIu64</span>
+<span class="lineNum">     509 </span>            :                                         &quot;) contains %&quot; PRIu64 &quot; bytes of poison starting from&quot;
+<span class="lineNum">     510 </span>            :                                         &quot; offset %&quot; PRIu64 &quot;!&quot;, type, uint64_t(bytes),
+<span class="lineNum">     511 </span>            :                                         uint64_t(size), uint64_t(start));
+<span class="lineNum">     512 </span>            :             }
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :             start = limit;</span>
+<span class="lineNum">     514 </span>            :         }
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :         MOZ_CRASH(&quot;Could not confirm the presence of poison!&quot;);</span>
+<span class="lineNum">     516 </span>            :     }
+<a name="517"><span class="lineNum">     517 </span>            : </a>
+<span class="lineNum">     518 </span>            :   public:
+<a name="519"><span class="lineNum">     519 </span><span class="lineCov">       4503 :     ProtectedReallocPolicy() : currAddr(0), currSize(0), prevAddr(0), prevSize(0) {}</span></a>
+<span class="lineNum">     520 </span>            : 
+<span class="lineNum">     521 </span><span class="lineCov">      27018 :     ~ProtectedReallocPolicy() {</span>
+<span class="lineNum">     522 </span><span class="lineCov">      13509 :         MOZ_RELEASE_ASSERT(!currSize &amp;&amp; !currAddr);</span>
+<a name="523"><span class="lineNum">     523 </span><span class="lineCov">      13509 :     }</span></a>
+<span class="lineNum">     524 </span>            : 
+<span class="lineNum">     525 </span><span class="lineCov">       1209 :     template &lt;typename T&gt; T* maybe_pod_malloc(size_t numElems) {</span>
+<span class="lineNum">     526 </span><span class="lineCov">       1209 :         MOZ_RELEASE_ASSERT(!currSize &amp;&amp; !currAddr);</span>
+<span class="lineNum">     527 </span><span class="lineCov">       1209 :         T* addr = js_pod_malloc&lt;T&gt;(numElems);</span>
+<span class="lineNum">     528 </span><span class="lineCov">       1209 :         updateIfValid&lt;T&gt;(addr, numElems);</span>
+<span class="lineNum">     529 </span><span class="lineCov">       1209 :         return addr;</span>
+<span class="lineNum">     530 </span>            :     }
+<span class="lineNum">     531 </span>            : 
+<span class="lineNum">     532 </span>            :     template &lt;typename T&gt; T* maybe_pod_calloc(size_t numElems) {
+<span class="lineNum">     533 </span>            :         MOZ_RELEASE_ASSERT(!currSize &amp;&amp; !currAddr);
+<span class="lineNum">     534 </span>            :         T* addr = js_pod_calloc&lt;T&gt;(numElems);
+<span class="lineNum">     535 </span>            :         updateIfValid&lt;T&gt;(addr, numElems);
+<span class="lineNum">     536 </span>            :         return addr;
+<a name="537"><span class="lineNum">     537 </span>            :     }</a>
+<span class="lineNum">     538 </span>            : 
+<span class="lineNum">     539 </span><span class="lineCov">       2754 :     template &lt;typename T&gt; T* maybe_pod_realloc(T* oldAddr, size_t oldSize, size_t newSize) {</span>
+<span class="lineNum">     540 </span><span class="lineCov">       2754 :         if (uintptr_t(oldAddr) != currAddr) {</span>
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :             MOZ_CRASH_UNSAFE_PRINTF(&quot;maybe_pod_realloc: oldAddr and currAddr don't match &quot;</span>
+<span class="lineNum">     542 </span>            :                                     &quot;(0x%&quot; PRIx64 &quot; != 0x%&quot; PRIx64 &quot;, %&quot; PRIu64 &quot;)!&quot;,
+<span class="lineNum">     543 </span>            :                                     uint64_t(oldAddr), uint64_t(currAddr), uint64_t(currSize));
+<span class="lineNum">     544 </span>            :         }
+<span class="lineNum">     545 </span><span class="lineCov">       2754 :         if (oldSize * sizeof(T) != currSize) {</span>
+<span class="lineNum">     546 </span><span class="lineNoCov">          0 :             MOZ_CRASH_UNSAFE_PRINTF(&quot;maybe_pod_realloc: oldSize and currSize don't match &quot;</span>
+<span class="lineNum">     547 </span>            :                                     &quot;(%&quot; PRIu64 &quot; != %&quot; PRIu64 &quot;, 0x%&quot; PRIx64 &quot;)!&quot;,
+<span class="lineNum">     548 </span>            :                                     uint64_t(oldSize * sizeof(T)), uint64_t(currSize),
+<span class="lineNum">     549 </span>            :                                     uint64_t(currAddr));
+<span class="lineNum">     550 </span>            :         }
+<span class="lineNum">     551 </span>            : 
+<span class="lineNum">     552 </span><span class="lineCov">       2754 :         MOZ_ASSERT_IF(oldAddr, oldSize);</span>
+<span class="lineNum">     553 </span><span class="lineCov">       2754 :         if (MOZ_UNLIKELY(!newSize))</span>
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     555 </span><span class="lineCov">       2754 :         if (MOZ_UNLIKELY(!oldAddr))</span>
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :             return maybe_pod_malloc&lt;T&gt;(newSize);</span>
+<span class="lineNum">     557 </span>            : 
+<span class="lineNum">     558 </span>            : #ifdef MOZ_MEMORY
+<span class="lineNum">     559 </span><span class="lineCov">       2754 :         size_t usableSize = malloc_usable_size(oldAddr);</span>
+<span class="lineNum">     560 </span><span class="lineCov">       2754 :         if (usableSize &lt; currSize) {</span>
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 :             MOZ_CRASH_UNSAFE_PRINTF(&quot;maybe_pod_realloc: usableSize &lt; currSize &quot;</span>
+<span class="lineNum">     562 </span>            :                                     &quot;(%&quot; PRIu64 &quot; &lt; %&quot; PRIu64 &quot;, %&quot; PRIu64 &quot;, %s)!&quot;,
+<span class="lineNum">     563 </span>            :                                     uint64_t(usableSize), uint64_t(currSize),
+<span class="lineNum">     564 </span>            :                                     uint64_t(prevSize), prevAddr == currAddr ? &quot;true&quot; : &quot;false&quot;);
+<span class="lineNum">     565 </span>            :         }
+<span class="lineNum">     566 </span>            : #endif
+<span class="lineNum">     567 </span>            : 
+<span class="lineNum">     568 </span><span class="lineCov">       2754 :         size_t bytes = (newSize &gt;= oldSize ? oldSize : newSize) * sizeof(T);</span>
+<span class="lineNum">     569 </span>            : 
+<span class="lineNum">     570 </span>            :         // Check for the poison pattern every so often.
+<span class="lineNum">     571 </span><span class="lineCov">       2754 :         const uint8_t* oldAddrBytes = reinterpret_cast&lt;const uint8_t*&gt;(oldAddr);</span>
+<span class="lineNum">     572 </span><span class="lineCov">       9408 :         for (size_t j, i = 0; i + 16 &lt;= bytes; i += 1024) {</span>
+<span class="lineNum">     573 </span><span class="lineCov">       6654 :             for (j = 0; j &lt; 16 &amp;&amp; oldAddrBytes[i + j] == PoisonPattern; ++j);</span>
+<span class="lineNum">     574 </span><span class="lineCov">       6654 :             if (MOZ_UNLIKELY(j == 16))</span>
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :                 crashWithInfo(oldAddrBytes, bytes, &quot;old&quot;);</span>
+<span class="lineNum">     576 </span>            :         }
+<span class="lineNum">     577 </span>            : 
+<span class="lineNum">     578 </span><span class="lineCov">       2754 :         T* tmpAddr = js_pod_malloc&lt;T&gt;(newSize);</span>
+<span class="lineNum">     579 </span><span class="lineCov">       2754 :         if (MOZ_UNLIKELY(!tmpAddr))</span>
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :             return reallocUpdate&lt;T&gt;(oldAddr, oldSize, newSize);</span>
+<span class="lineNum">     581 </span>            : 
+<span class="lineNum">     582 </span><span class="lineCov">       2754 :         memcpy(tmpAddr, oldAddr, bytes);</span>
+<span class="lineNum">     583 </span>            : 
+<span class="lineNum">     584 </span><span class="lineCov">       2754 :         const uint8_t* tmpAddrBytes = reinterpret_cast&lt;const uint8_t*&gt;(tmpAddr);</span>
+<span class="lineNum">     585 </span><span class="lineCov">       9408 :         for (size_t j, i = 0; i + 16 &lt;= bytes; i += 1024) {</span>
+<span class="lineNum">     586 </span><span class="lineCov">       6654 :             for (j = 0; j &lt; 16 &amp;&amp; tmpAddrBytes[i + j] == PoisonPattern; ++j);</span>
+<span class="lineNum">     587 </span><span class="lineCov">       6654 :             if (MOZ_UNLIKELY(j == 16))</span>
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :                 crashWithInfo(tmpAddrBytes, bytes, &quot;tmp&quot;);</span>
+<span class="lineNum">     589 </span>            :         }
+<span class="lineNum">     590 </span>            : 
+<span class="lineNum">     591 </span><span class="lineCov">       2754 :         if (!mozilla::PodEqual(oldAddrBytes, tmpAddrBytes, bytes))</span>
+<span class="lineNum">     592 </span><span class="lineNoCov">          0 :             MOZ_CRASH(&quot;maybe_pod_realloc: tmp buffer doesn't match old buffer!&quot;);</span>
+<span class="lineNum">     593 </span>            : 
+<span class="lineNum">     594 </span><span class="lineCov">       2754 :         T* newAddr = js_pod_realloc&lt;T&gt;(oldAddr, oldSize, newSize);</span>
+<span class="lineNum">     595 </span><span class="lineCov">       2754 :         if (MOZ_UNLIKELY(!newAddr)) {</span>
+<span class="lineNum">     596 </span><span class="lineNoCov">          0 :             js_free(tmpAddr);</span>
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 :             return reallocUpdate&lt;T&gt;(oldAddr, oldSize, newSize);</span>
+<span class="lineNum">     598 </span>            :         }
+<span class="lineNum">     599 </span>            : 
+<span class="lineNum">     600 </span><span class="lineCov">       2754 :         const uint8_t* newAddrBytes = reinterpret_cast&lt;const uint8_t*&gt;(newAddr);</span>
+<span class="lineNum">     601 </span><span class="lineCov">       9408 :         for (size_t j, i = 0; i + 16 &lt;= bytes; i += 1024) {</span>
+<span class="lineNum">     602 </span><span class="lineCov">       6654 :             for (j = 0; j &lt; 16 &amp;&amp; newAddrBytes[i + j] == PoisonPattern; ++j);</span>
+<span class="lineNum">     603 </span><span class="lineCov">       6654 :             if (MOZ_UNLIKELY(j == 16))</span>
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :                 crashWithInfo(newAddrBytes, bytes, &quot;new&quot;);</span>
+<span class="lineNum">     605 </span>            :         }
+<span class="lineNum">     606 </span>            : 
+<span class="lineNum">     607 </span><span class="lineCov">       2754 :         if (!mozilla::PodEqual(tmpAddrBytes, newAddrBytes, bytes)) {</span>
+<span class="lineNum">     608 </span>            : #ifdef MOZ_MEMORY
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :             MOZ_CRASH_UNSAFE_PRINTF(&quot;maybe_pod_realloc: buffers don't match &quot;</span>
+<span class="lineNum">     610 </span>            :                                     &quot;(%&quot; PRIu64 &quot; &gt;= %&quot; PRIu64 &quot;, %&quot; PRIu64 &quot;, %s)!&quot;,
+<span class="lineNum">     611 </span>            :                                     uint64_t(usableSize), uint64_t(currSize),
+<span class="lineNum">     612 </span>            :                                     uint64_t(prevSize), prevAddr == currAddr ? &quot;true&quot; : &quot;false&quot;);
+<span class="lineNum">     613 </span>            : #else
+<span class="lineNum">     614 </span>            :             MOZ_CRASH_UNSAFE_PRINTF(&quot;maybe_pod_realloc: buffers don't match &quot;
+<span class="lineNum">     615 </span>            :                                     &quot;(%&quot; PRIu64 &quot;, %&quot; PRIu64 &quot;, %s)!&quot;,
+<span class="lineNum">     616 </span>            :                                     uint64_t(currSize), uint64_t(prevSize),
+<span class="lineNum">     617 </span>            :                                     prevAddr == currAddr ? &quot;true&quot; : &quot;false&quot;);
+<span class="lineNum">     618 </span>            : #endif
+<span class="lineNum">     619 </span>            :         }
+<span class="lineNum">     620 </span>            : 
+<span class="lineNum">     621 </span><span class="lineCov">       2754 :         js_free(tmpAddr);</span>
+<span class="lineNum">     622 </span><span class="lineCov">       2754 :         update&lt;T&gt;(newAddr, newSize);</span>
+<span class="lineNum">     623 </span><span class="lineCov">       2754 :         return newAddr;</span>
+<a name="624"><span class="lineNum">     624 </span>            :     }</a>
+<span class="lineNum">     625 </span>            : 
+<a name="626"><span class="lineNum">     626 </span><span class="lineCov">       1209 :     template &lt;typename T&gt; T* pod_malloc(size_t numElems) { return maybe_pod_malloc&lt;T&gt;(numElems); }</span></a>
+<span class="lineNum">     627 </span>            :     template &lt;typename T&gt; T* pod_calloc(size_t numElems) { return maybe_pod_calloc&lt;T&gt;(numElems); }
+<span class="lineNum">     628 </span><span class="lineCov">       2754 :     template &lt;typename T&gt; T* pod_realloc(T* p, size_t oldSize, size_t newSize) {</span>
+<span class="lineNum">     629 </span><span class="lineCov">       2754 :         return maybe_pod_realloc&lt;T&gt;(p, oldSize, newSize);</span>
+<a name="630"><span class="lineNum">     630 </span>            :     }</a>
+<span class="lineNum">     631 </span>            : 
+<span class="lineNum">     632 </span><span class="lineCov">       1209 :     void free_(void* p) {</span>
+<span class="lineNum">     633 </span><span class="lineCov">       1209 :         MOZ_RELEASE_ASSERT(uintptr_t(p) == currAddr);</span>
+<span class="lineNum">     634 </span>            : #ifdef MOZ_MEMORY
+<span class="lineNum">     635 </span><span class="lineCov">       1209 :         size_t usableSize = malloc_usable_size(p);</span>
+<span class="lineNum">     636 </span><span class="lineCov">       1209 :         if (usableSize &lt; currSize) {</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :             MOZ_CRASH_UNSAFE_PRINTF(&quot;free_: usableSize &lt; currSize &quot;</span>
+<span class="lineNum">     638 </span>            :                                     &quot;(%&quot; PRIu64 &quot; &lt; %&quot; PRIu64 &quot;, %&quot; PRIu64 &quot;, %s)!&quot;,
+<span class="lineNum">     639 </span>            :                                     uint64_t(usableSize), uint64_t(currSize),
+<span class="lineNum">     640 </span>            :                                     uint64_t(prevSize), prevAddr == currAddr ? &quot;true&quot; : &quot;false&quot;);
+<span class="lineNum">     641 </span>            :         }
+<span class="lineNum">     642 </span>            : #endif
+<span class="lineNum">     643 </span><span class="lineCov">       1209 :         js_free(p);</span>
+<span class="lineNum">     644 </span><span class="lineCov">       1209 :         update&lt;uint8_t&gt;(0, 0);</span>
+<a name="645"><span class="lineNum">     645 </span><span class="lineCov">       1209 :     }</span></a>
+<a name="646"><span class="lineNum">     646 </span>            : </a>
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :     void reportAllocOverflow() const {}</span>
+<span class="lineNum">     648 </span><span class="lineCov">     962369 :     bool checkSimulatedOOM() const {</span>
+<span class="lineNum">     649 </span><span class="lineCov">     962369 :         return !js::oom::ShouldFailWithOOM();</span>
+<span class="lineNum">     650 </span>            :     }
+<span class="lineNum">     651 </span>            : };
+<span class="lineNum">     652 </span>            : 
+<span class="lineNum">     653 </span>            : } /* namespace js */
+<span class="lineNum">     654 </span>            : 
+<span class="lineNum">     655 </span>            : #endif /* ds_PageProtectingVector_h */
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

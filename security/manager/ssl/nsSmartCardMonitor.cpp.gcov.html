@@ -1,0 +1,481 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - security/manager/ssl/nsSmartCardMonitor.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">security/manager/ssl</a> - nsSmartCardMonitor.cpp<span style="font-size: 80%;"> (source / <a href="nsSmartCardMonitor.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">137</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">25</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public</a>
+<span class="lineNum">       2 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       3 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       4 </span>            : 
+<span class="lineNum">       5 </span>            : #include &quot;nsSmartCardMonitor.h&quot;
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;ScopedNSSTypes.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;mozilla/Services.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/Unused.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;nsIObserverService.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;nsServiceManagerUtils.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;GeckoProfiler.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nspr.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;pk11func.h&quot;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : using namespace mozilla;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : //
+<span class="lineNum">      20 </span>            : // The SmartCard monitoring thread should start up for each module we load
+<span class="lineNum">      21 </span>            : // that has removable tokens. This code calls an NSS function which waits
+<span class="lineNum">      22 </span>            : // until there is a change in the token state. NSS uses the
+<span class="lineNum">      23 </span>            : // C_WaitForSlotEvent() call in PKCS #11 if the module implements the call,
+<span class="lineNum">      24 </span>            : // otherwise NSS will poll the token in a loop with a delay of 'latency'
+<span class="lineNum">      25 </span>            : // between polls. Note that the C_WaitForSlotEvent() may wake up on any type
+<span class="lineNum">      26 </span>            : // of token event, so it's necessary to filter these events down to just the
+<span class="lineNum">      27 </span>            : // insertion and removal events we are looking for.
+<span class="lineNum">      28 </span>            : //
+<span class="lineNum">      29 </span>            : // Once the event is found, it is dispatched to the main thread to notify
+<span class="lineNum">      30 </span>            : // any window where window.crypto.enableSmartCardEvents is true.
+<span class="lineNum">      31 </span>            : // Additionally, all observers of the topics |kSmartcardInsert| and
+<span class="lineNum">      32 </span>            : // |kSmartcardRemove| are notified by the observer service of the appropriate
+<span class="lineNum">      33 </span>            : // event.
+<span class="lineNum">      34 </span>            : //
+<span class="lineNum">      35 </span>            : 
+<span class="lineNum">      36 </span>            : #define kSmartcardInsert &quot;smartcard-insert&quot;
+<span class="lineNum">      37 </span>            : #define kSmartcardRemove &quot;smartcard-remove&quot;
+<span class="lineNum">      38 </span>            : 
+<a name="39"><span class="lineNum">      39 </span>            : class nsTokenEventRunnable : public nsIRunnable {</a>
+<span class="lineNum">      40 </span>            : public:
+<span class="lineNum">      41 </span><span class="lineNoCov">          0 :   nsTokenEventRunnable(const char* aType, const nsAString&amp; aTokenName)</span>
+<span class="lineNum">      42 </span><span class="lineNoCov">          0 :     : mType(aType)</span>
+<span class="lineNum">      43 </span><span class="lineNoCov">          0 :     , mTokenName(aTokenName)</span>
+<span class="lineNum">      44 </span>            :   {
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">      46 </span>            : 
+<span class="lineNum">      47 </span>            :   NS_DECL_THREADSAFE_ISUPPORTS
+<span class="lineNum">      48 </span>            :   NS_DECL_NSIRUNNABLE
+<a name="49"><span class="lineNum">      49 </span>            : </a>
+<span class="lineNum">      50 </span>            : private:
+<span class="lineNum">      51 </span><span class="lineNoCov">          0 :   virtual ~nsTokenEventRunnable() {}</span>
+<span class="lineNum">      52 </span>            : 
+<span class="lineNum">      53 </span>            :   const char* mType;
+<span class="lineNum">      54 </span>            :   nsString mTokenName;
+<a name="55"><span class="lineNum">      55 </span>            : };</a>
+<span class="lineNum">      56 </span>            : 
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 : NS_IMPL_ISUPPORTS(nsTokenEventRunnable, nsIRunnable)</span>
+<a name="58"><span class="lineNum">      58 </span>            : </a>
+<span class="lineNum">      59 </span>            : NS_IMETHODIMP
+<span class="lineNum">      60 </span><span class="lineNoCov">          0 : nsTokenEventRunnable::Run()</span>
+<span class="lineNum">      61 </span>            : {
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">      63 </span>            : 
+<span class="lineNum">      64 </span>            :   nsCOMPtr&lt;nsIObserverService&gt; observerService =
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :     mozilla::services::GetObserverService();</span>
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 :   if (!observerService) {</span>
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">      68 </span>            :   }
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :   return observerService-&gt;NotifyObservers(nullptr, mType, mTokenName.get());</span>
+<span class="lineNum">      70 </span>            : }
+<span class="lineNum">      71 </span>            : 
+<span class="lineNum">      72 </span>            : // self linking and removing double linked entry
+<span class="lineNum">      73 </span>            : // adopts the thread it is passed.
+<span class="lineNum">      74 </span>            : class SmartCardThreadEntry
+<span class="lineNum">      75 </span>            : {
+<a name="76"><span class="lineNum">      76 </span>            : public:</a>
+<span class="lineNum">      77 </span>            :   friend class SmartCardThreadList;
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :   SmartCardThreadEntry(SmartCardMonitoringThread *thread,</span>
+<span class="lineNum">      79 </span>            :                        SmartCardThreadEntry *next,
+<span class="lineNum">      80 </span>            :                        SmartCardThreadEntry *prev,
+<span class="lineNum">      81 </span>            :                        SmartCardThreadEntry **head)
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :     : next(next)</span>
+<span class="lineNum">      83 </span>            :     , prev(prev)
+<span class="lineNum">      84 </span>            :     , head(head)
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :     , thread(thread)</span>
+<span class="lineNum">      86 </span>            :   {
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :     if (prev) {</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :       prev-&gt;next = this;</span>
+<span class="lineNum">      89 </span>            :     } else {
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :       *head = this;</span>
+<span class="lineNum">      91 </span>            :     }
+<span class="lineNum">      92 </span><span class="lineNoCov">          0 :     if (next) {</span>
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :       next-&gt;prev = this;</span>
+<span class="lineNum">      94 </span>            :     }
+<a name="95"><span class="lineNum">      95 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">      96 </span>            : 
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   ~SmartCardThreadEntry()</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :   {</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :     if (prev) {</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :       prev-&gt;next = next;</span>
+<span class="lineNum">     101 </span>            :     } else {
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :       *head = next;</span>
+<span class="lineNum">     103 </span>            :     }
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :     if (next) {</span>
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :       next-&gt;prev = prev;</span>
+<span class="lineNum">     106 </span>            :     }
+<span class="lineNum">     107 </span>            :     // NOTE: automatically stops the thread
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :     delete thread;</span>
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span>            : private:
+<span class="lineNum">     112 </span>            :   SmartCardThreadEntry *next;
+<span class="lineNum">     113 </span>            :   SmartCardThreadEntry *prev;
+<span class="lineNum">     114 </span>            :   SmartCardThreadEntry **head;
+<span class="lineNum">     115 </span>            :   SmartCardMonitoringThread *thread;
+<span class="lineNum">     116 </span>            : };
+<span class="lineNum">     117 </span>            : 
+<span class="lineNum">     118 </span>            : //
+<span class="lineNum">     119 </span>            : // SmartCardThreadList is a class to help manage the running threads.
+<span class="lineNum">     120 </span>            : // That way new threads could be started and old ones terminated as we
+<a name="121"><span class="lineNum">     121 </span>            : // load and unload modules.</a>
+<span class="lineNum">     122 </span>            : //
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 : SmartCardThreadList::SmartCardThreadList() : head(0)</span>
+<span class="lineNum">     124 </span>            : {
+<a name="125"><span class="lineNum">     125 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     126 </span>            : 
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 : SmartCardThreadList::~SmartCardThreadList()</span>
+<span class="lineNum">     128 </span>            : {
+<span class="lineNum">     129 </span>            :   // the head is self linking and unlinking, the following
+<span class="lineNum">     130 </span>            :   // loop removes all entries on the list.
+<span class="lineNum">     131 </span>            :   // it will also stop the thread if it happens to be running
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :   while (head) {</span>
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :     delete head;</span>
+<span class="lineNum">     134 </span>            :   }
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 : }</span>
+<a name="136"><span class="lineNum">     136 </span>            : </a>
+<span class="lineNum">     137 </span>            : void
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 : SmartCardThreadList::Remove(SECMODModule *aModule)</span>
+<span class="lineNum">     139 </span>            : {
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :   for (SmartCardThreadEntry* current = head; current;</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :        current = current-&gt;next) {</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :     if (current-&gt;thread-&gt;GetModule() == aModule) {</span>
+<span class="lineNum">     143 </span>            :       // NOTE: automatically stops the thread and dequeues it from the list
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :       delete current;</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">     146 </span>            :     }
+<span class="lineNum">     147 </span>            :   }
+<span class="lineNum">     148 </span>            : }
+<span class="lineNum">     149 </span>            : 
+<a name="150"><span class="lineNum">     150 </span>            : // adopts the thread passed to it. Starts the thread as well</a>
+<span class="lineNum">     151 </span>            : nsresult
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 : SmartCardThreadList::Add(SmartCardMonitoringThread* thread)</span>
+<span class="lineNum">     153 </span>            : {
+<span class="lineNum">     154 </span>            :   SmartCardThreadEntry* current = new SmartCardThreadEntry(thread, head,
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :                                                            nullptr, &amp;head);</span>
+<span class="lineNum">     156 </span>            :   // OK to forget current here, it's on the list.
+<span class="lineNum">     157 </span>            :   Unused &lt;&lt; current;
+<span class="lineNum">     158 </span>            : 
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :   return thread-&gt;Start();</span>
+<span class="lineNum">     160 </span>            : }
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span>            : 
+<a name="163"><span class="lineNum">     163 </span>            : // We really should have a Unity PL Hash function...</a>
+<span class="lineNum">     164 </span>            : static PLHashNumber
+<a name="165"><span class="lineNum">     165 </span><span class="lineNoCov">          0 : unity(const void* key) { return PLHashNumber(NS_PTR_TO_INT32(key)); }</span></a>
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 : SmartCardMonitoringThread::SmartCardMonitoringThread(SECMODModule* module_)</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :   : mThread(nullptr)</span>
+<span class="lineNum">     169 </span>            : {
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :   mModule = SECMOD_ReferenceModule(module_);</span>
+<span class="lineNum">     171 </span>            :   // simple hash functions, most modules have less than 3 slots, so 10 buckets
+<span class="lineNum">     172 </span>            :   // should be plenty
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :   mHash = PL_NewHashTable(10, unity, PL_CompareValues, PL_CompareStrings,</span>
+<span class="lineNum">     174 </span>            :                           nullptr, 0);
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     176 </span>            : 
+<span class="lineNum">     177 </span>            : //
+<span class="lineNum">     178 </span>            : // when we shutdown the thread, be sure to stop it first. If not, it just might
+<a name="179"><span class="lineNum">     179 </span>            : // crash when the mModule it is looking at disappears.</a>
+<span class="lineNum">     180 </span>            : //
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 : SmartCardMonitoringThread::~SmartCardMonitoringThread()</span>
+<span class="lineNum">     182 </span>            : {
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :   Stop();</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :   SECMOD_DestroyModule(mModule);</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :   if (mHash) {</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :     PL_HashTableDestroy(mHash);</span>
+<span class="lineNum">     187 </span>            :   }
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 : }</span>
+<a name="189"><span class="lineNum">     189 </span>            : </a>
+<span class="lineNum">     190 </span>            : nsresult
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 : SmartCardMonitoringThread::Start()</span>
+<span class="lineNum">     192 </span>            : {
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :   if (!mThread) {</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :     mThread = PR_CreateThread(PR_SYSTEM_THREAD, LaunchExecute, this,</span>
+<span class="lineNum">     195 </span>            :                               PR_PRIORITY_NORMAL, PR_GLOBAL_THREAD,
+<span class="lineNum">     196 </span>            :                               PR_JOINABLE_THREAD, 0);
+<span class="lineNum">     197 </span>            :   }
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :   return mThread ? NS_OK : NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     199 </span>            : }
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span>            : //
+<span class="lineNum">     202 </span>            : // Should only stop if we are through with the module.
+<span class="lineNum">     203 </span>            : // CancelWait has the side effect of losing all the keys and
+<span class="lineNum">     204 </span>            : // current operations on the module!. (See the comment in
+<a name="205"><span class="lineNum">     205 </span>            : // SECMOD_CancelWait for why this is so..).</a>
+<span class="lineNum">     206 </span>            : //
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 : void SmartCardMonitoringThread::Stop()</span>
+<span class="lineNum">     208 </span>            : {
+<span class="lineNum">     209 </span>            :   SECStatus rv;
+<span class="lineNum">     210 </span>            : 
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :   rv = SECMOD_CancelWait(mModule);</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :   if (rv != SECSuccess) {</span>
+<span class="lineNum">     213 </span>            :     // we didn't wake up the Wait, so don't try to join the thread
+<span class="lineNum">     214 </span>            :     // otherwise we will hang forever...
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     216 </span>            :   }
+<span class="lineNum">     217 </span>            : 
+<span class="lineNum">     218 </span>            :   // confused about the memory model here? NSPR owns the memory for
+<span class="lineNum">     219 </span>            :   // threads. non-joinable threads are freed when the thread dies.
+<span class="lineNum">     220 </span>            :   // joinable threads are freed after the call to PR_JoinThread.
+<span class="lineNum">     221 </span>            :   // That means if SECMOD_CancelWait fails, we'll leak the mThread
+<span class="lineNum">     222 </span>            :   // structure. this is considered preferable to hanging (which is
+<span class="lineNum">     223 </span>            :   // what will happen if we try to join a thread that blocked).
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :   if (mThread) {</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :     PR_JoinThread(mThread);</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :     mThread = 0;</span>
+<span class="lineNum">     227 </span>            :   }
+<span class="lineNum">     228 </span>            : }
+<span class="lineNum">     229 </span>            : 
+<span class="lineNum">     230 </span>            : //
+<span class="lineNum">     231 </span>            : // remember the name and series of a token in a particular slot.
+<span class="lineNum">     232 </span>            : // This is important because the name is no longer available when
+<span class="lineNum">     233 </span>            : // the token is removed. If listeners depended on this information,
+<span class="lineNum">     234 </span>            : // They would be out of luck. It also is a handy way of making sure
+<span class="lineNum">     235 </span>            : // we don't generate spurious insertion and removal events as the slot
+<span class="lineNum">     236 </span>            : // cycles through various states.
+<a name="237"><span class="lineNum">     237 </span>            : //</a>
+<span class="lineNum">     238 </span>            : void
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 : SmartCardMonitoringThread::SetTokenName(CK_SLOT_ID slotid,</span>
+<span class="lineNum">     240 </span>            :                                        const char* tokenName, uint32_t series)
+<span class="lineNum">     241 </span>            : {
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :   if (mHash) {</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :     if (tokenName) {</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :       int len = strlen(tokenName) + 1;</span>
+<span class="lineNum">     245 </span>            :       // Use PR_Malloc() because PLHashAllocOps.freeEntry for mHash is
+<span class="lineNum">     246 </span>            :       // DefaultFreeEntry(), which uses PR_Free().
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :       char* entry = (char*)PR_Malloc(len + sizeof(uint32_t));</span>
+<span class="lineNum">     248 </span>            : 
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :       if (entry) {</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :         memcpy(entry, &amp;series, sizeof(uint32_t));</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :         memcpy(&amp;entry[sizeof(uint32_t)], tokenName, len);</span>
+<span class="lineNum">     252 </span>            : 
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :         PL_HashTableAdd(mHash, (void*)(uintptr_t)slotid, entry); /* adopt */</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     255 </span>            :       }
+<span class="lineNum">     256 </span>            :     } else {
+<span class="lineNum">     257 </span>            :       // if tokenName was not provided, remove the old one (implicit delete)
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :       PL_HashTableRemove(mHash, (void*)(uintptr_t)slotid);</span>
+<span class="lineNum">     259 </span>            :     }
+<span class="lineNum">     260 </span>            :   }
+<span class="lineNum">     261 </span>            : }
+<span class="lineNum">     262 </span>            : 
+<a name="263"><span class="lineNum">     263 </span>            : // retrieve the name saved above</a>
+<span class="lineNum">     264 </span>            : const char*
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 : SmartCardMonitoringThread::GetTokenName(CK_SLOT_ID slotid)</span>
+<span class="lineNum">     266 </span>            : {
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :   const char* tokenName = nullptr;</span>
+<span class="lineNum">     268 </span>            :   const char* entry;
+<span class="lineNum">     269 </span>            : 
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :   if (mHash) {</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :     entry = (const char*)PL_HashTableLookupConst(mHash,</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :                                                  (void*)(uintptr_t)slotid);</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     if (entry) {</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :       tokenName = &amp;entry[sizeof(uint32_t)];</span>
+<span class="lineNum">     275 </span>            :     }
+<span class="lineNum">     276 </span>            :   }
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   return tokenName;</span>
+<span class="lineNum">     278 </span>            : }
+<span class="lineNum">     279 </span>            : 
+<a name="280"><span class="lineNum">     280 </span>            : // retrieve the series saved in SetTokenName above</a>
+<span class="lineNum">     281 </span>            : uint32_t
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 : SmartCardMonitoringThread::GetTokenSeries(CK_SLOT_ID slotid)</span>
+<span class="lineNum">     283 </span>            : {
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :   uint32_t series = 0;</span>
+<span class="lineNum">     285 </span>            :   const char* entry;
+<span class="lineNum">     286 </span>            : 
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   if (mHash) {</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :     entry = (const char*)PL_HashTableLookupConst(mHash,</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :                                                  (void*)(uintptr_t)slotid);</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :     if (entry) {</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :       memcpy(&amp;series, entry, sizeof(uint32_t));</span>
+<span class="lineNum">     292 </span>            :     }
+<span class="lineNum">     293 </span>            :   }
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :   return series;</span>
+<span class="lineNum">     295 </span>            : }
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span>            : //
+<span class="lineNum">     298 </span>            : // helper function to pass the event off to nsNSSComponent.
+<a name="299"><span class="lineNum">     299 </span>            : //</a>
+<span class="lineNum">     300 </span>            : void
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 : SmartCardMonitoringThread::SendEvent(const char* eventType,</span>
+<span class="lineNum">     302 </span>            :                                      const char* tokenName)
+<span class="lineNum">     303 </span>            : {
+<span class="lineNum">     304 </span>            :   // The token name should be UTF8, but it's not clear that this is enforced
+<span class="lineNum">     305 </span>            :   // by NSS. To be safe, we explicitly check here before converting it to
+<span class="lineNum">     306 </span>            :   // UTF16. If it isn't UTF8, we just use an empty string with the idea that
+<span class="lineNum">     307 </span>            :   // consumers of these events should at least be notified that something
+<span class="lineNum">     308 </span>            :   // happened.
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :   nsAutoString tokenNameUTF16(NS_LITERAL_STRING(&quot;&quot;));</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :   if (IsUTF8(nsDependentCString(tokenName))) {</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :     tokenNameUTF16.Assign(NS_ConvertUTF8toUTF16(tokenName));</span>
+<span class="lineNum">     312 </span>            :   }
+<span class="lineNum">     313 </span>            :   nsCOMPtr&lt;nsIRunnable&gt; runnable(new nsTokenEventRunnable(eventType,
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :                                                           tokenNameUTF16));</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :   NS_DispatchToMainThread(runnable);</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     317 </span>            : 
+<span class="lineNum">     318 </span>            : //
+<a name="319"><span class="lineNum">     319 </span>            : // This is the main loop.</a>
+<span class="lineNum">     320 </span>            : //
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 : void SmartCardMonitoringThread::Execute()</span>
+<span class="lineNum">     322 </span>            : {
+<span class="lineNum">     323 </span>            :   const char* tokenName;
+<span class="lineNum">     324 </span>            : 
+<span class="lineNum">     325 </span>            :   //
+<span class="lineNum">     326 </span>            :   // populate token names for already inserted tokens.
+<span class="lineNum">     327 </span>            :   //
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :   PK11SlotList* sl = PK11_FindSlotsByNames(mModule-&gt;dllName, nullptr, nullptr,</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :                                            true);</span>
+<span class="lineNum">     330 </span>            : 
+<span class="lineNum">     331 </span>            :   PK11SlotListElement* sle;
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :   if (sl) {</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :     for (sle = PK11_GetFirstSafe(sl); sle;</span>
+<span class="lineNum">     334 </span>            :          sle = PK11_GetNextSafe(sl, sle, false)) {
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :       SetTokenName(PK11_GetSlotID(sle-&gt;slot), PK11_GetTokenName(sle-&gt;slot),</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :                    PK11_GetSlotSeries(sle-&gt;slot));</span>
+<span class="lineNum">     337 </span>            :     }
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :     PK11_FreeSlotList(sl);</span>
+<span class="lineNum">     339 </span>            :   }
+<span class="lineNum">     340 </span>            : 
+<span class="lineNum">     341 </span>            :   // loop starts..
+<span class="lineNum">     342 </span>            :   do {
+<span class="lineNum">     343 </span>            :     UniquePK11SlotInfo slot(
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :       SECMOD_WaitForAnyTokenEvent(mModule, 0, PR_SecondsToInterval(1)));</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :     if (!slot) {</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     347 </span>            :     }
+<span class="lineNum">     348 </span>            : 
+<span class="lineNum">     349 </span>            :     // now we have a potential insertion or removal event, see if the slot
+<span class="lineNum">     350 </span>            :     // is present to determine which it is...
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :     if (PK11_IsPresent(slot.get())) {</span>
+<span class="lineNum">     352 </span>            :       // insertion
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :       CK_SLOT_ID slotID = PK11_GetSlotID(slot.get());</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :       uint32_t series = PK11_GetSlotSeries(slot.get());</span>
+<span class="lineNum">     355 </span>            : 
+<span class="lineNum">     356 </span>            :       // skip spurious insertion events...
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :       if (series != GetTokenSeries(slotID)) {</span>
+<span class="lineNum">     358 </span>            :         // if there's a token name, then we have not yet issued a remove
+<span class="lineNum">     359 </span>            :         // event for the previous token, do so now...
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :         tokenName = GetTokenName(slotID);</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :         if (tokenName) {</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :           SendEvent(kSmartcardRemove, tokenName);</span>
+<span class="lineNum">     363 </span>            :         }
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :         tokenName = PK11_GetTokenName(slot.get());</span>
+<span class="lineNum">     365 </span>            :         // save the token name and series
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :         SetTokenName(slotID, tokenName, series);</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :         SendEvent(kSmartcardInsert, tokenName);</span>
+<span class="lineNum">     368 </span>            :       }
+<span class="lineNum">     369 </span>            :     } else {
+<span class="lineNum">     370 </span>            :       // retrieve token name
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :       CK_SLOT_ID slotID = PK11_GetSlotID(slot.get());</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :       tokenName = GetTokenName(slotID);</span>
+<span class="lineNum">     373 </span>            :       // if there's not a token name, then the software isn't expecting
+<span class="lineNum">     374 </span>            :       // a (or another) remove event.
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :       if (tokenName) {</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :         SendEvent(kSmartcardRemove, tokenName);</span>
+<span class="lineNum">     377 </span>            :         // clear the token name (after we send it)
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :         SetTokenName(slotID, nullptr, 0);</span>
+<span class="lineNum">     379 </span>            :       }
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     381 </span>            :   } while (1);
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 : }</span>
+<a name="383"><span class="lineNum">     383 </span>            : </a>
+<span class="lineNum">     384 </span>            : // accessor to help searching active Monitoring threads
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 : const SECMODModule* SmartCardMonitoringThread::GetModule()</span>
+<span class="lineNum">     386 </span>            : {
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :   return mModule;</span>
+<span class="lineNum">     388 </span>            : }
+<a name="389"><span class="lineNum">     389 </span>            : </a>
+<span class="lineNum">     390 </span>            : // C-like calling sequence to glue into PR_CreateThread.
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 : void SmartCardMonitoringThread::LaunchExecute(void* arg)</span>
+<span class="lineNum">     392 </span>            : {
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :   AutoProfilerRegisterThread registerThread(&quot;SmartCard&quot;);</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :   NS_SetCurrentThreadName(&quot;SmartCard&quot;);</span>
+<span class="lineNum">     395 </span>            : 
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :   ((SmartCardMonitoringThread*)arg)-&gt;Execute();</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

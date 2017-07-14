@@ -1,0 +1,907 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/libjpeg/jdhuff.c</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">media/libjpeg</a> - jdhuff.c<span style="font-size: 80%;"> (source / <a href="jdhuff.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">275</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * jdhuff.c
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * This file was part of the Independent JPEG Group's software:
+<span class="lineNum">       5 </span>            :  * Copyright (C) 1991-1997, Thomas G. Lane.
+<span class="lineNum">       6 </span>            :  * libjpeg-turbo Modifications:
+<span class="lineNum">       7 </span>            :  * Copyright (C) 2009-2011, 2016, D. R. Commander.
+<span class="lineNum">       8 </span>            :  * For conditions of distribution and use, see the accompanying README.ijg
+<span class="lineNum">       9 </span>            :  * file.
+<span class="lineNum">      10 </span>            :  *
+<span class="lineNum">      11 </span>            :  * This file contains Huffman entropy decoding routines.
+<span class="lineNum">      12 </span>            :  *
+<span class="lineNum">      13 </span>            :  * Much of the complexity here has to do with supporting input suspension.
+<span class="lineNum">      14 </span>            :  * If the data source module demands suspension, we want to be able to back
+<span class="lineNum">      15 </span>            :  * up to the start of the current MCU.  To do this, we copy state variables
+<span class="lineNum">      16 </span>            :  * into local working storage, and update them back to the permanent
+<span class="lineNum">      17 </span>            :  * storage only upon successful completion of an MCU.
+<span class="lineNum">      18 </span>            :  */
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : #define JPEG_INTERNALS
+<span class="lineNum">      21 </span>            : #include &quot;jinclude.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;jpeglib.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;jdhuff.h&quot;             /* Declarations shared with jdphuff.c */
+<span class="lineNum">      24 </span>            : #include &quot;jpegcomp.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;jstdhuff.c&quot;
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : /*
+<span class="lineNum">      29 </span>            :  * Expanded entropy decoder object for Huffman decoding.
+<span class="lineNum">      30 </span>            :  *
+<span class="lineNum">      31 </span>            :  * The savable_state subrecord contains fields that change within an MCU,
+<span class="lineNum">      32 </span>            :  * but must not be updated permanently until we complete the MCU.
+<span class="lineNum">      33 </span>            :  */
+<span class="lineNum">      34 </span>            : 
+<span class="lineNum">      35 </span>            : typedef struct {
+<span class="lineNum">      36 </span>            :   int last_dc_val[MAX_COMPS_IN_SCAN]; /* last DC coef for each component */
+<span class="lineNum">      37 </span>            : } savable_state;
+<span class="lineNum">      38 </span>            : 
+<span class="lineNum">      39 </span>            : /* This macro is to work around compilers with missing or broken
+<span class="lineNum">      40 </span>            :  * structure assignment.  You'll need to fix this code if you have
+<span class="lineNum">      41 </span>            :  * such a compiler and you change MAX_COMPS_IN_SCAN.
+<span class="lineNum">      42 </span>            :  */
+<span class="lineNum">      43 </span>            : 
+<span class="lineNum">      44 </span>            : #ifndef NO_STRUCT_ASSIGN
+<span class="lineNum">      45 </span>            : #define ASSIGN_STATE(dest,src)  ((dest) = (src))
+<span class="lineNum">      46 </span>            : #else
+<span class="lineNum">      47 </span>            : #if MAX_COMPS_IN_SCAN == 4
+<span class="lineNum">      48 </span>            : #define ASSIGN_STATE(dest,src)  \
+<span class="lineNum">      49 </span>            :         ((dest).last_dc_val[0] = (src).last_dc_val[0], \
+<span class="lineNum">      50 </span>            :          (dest).last_dc_val[1] = (src).last_dc_val[1], \
+<span class="lineNum">      51 </span>            :          (dest).last_dc_val[2] = (src).last_dc_val[2], \
+<span class="lineNum">      52 </span>            :          (dest).last_dc_val[3] = (src).last_dc_val[3])
+<span class="lineNum">      53 </span>            : #endif
+<span class="lineNum">      54 </span>            : #endif
+<span class="lineNum">      55 </span>            : 
+<span class="lineNum">      56 </span>            : 
+<span class="lineNum">      57 </span>            : typedef struct {
+<span class="lineNum">      58 </span>            :   struct jpeg_entropy_decoder pub; /* public fields */
+<span class="lineNum">      59 </span>            : 
+<span class="lineNum">      60 </span>            :   /* These fields are loaded into local variables at start of each MCU.
+<span class="lineNum">      61 </span>            :    * In case of suspension, we exit WITHOUT updating them.
+<span class="lineNum">      62 </span>            :    */
+<span class="lineNum">      63 </span>            :   bitread_perm_state bitstate;  /* Bit buffer at start of MCU */
+<span class="lineNum">      64 </span>            :   savable_state saved;          /* Other state at start of MCU */
+<span class="lineNum">      65 </span>            : 
+<span class="lineNum">      66 </span>            :   /* These fields are NOT loaded into local working state. */
+<span class="lineNum">      67 </span>            :   unsigned int restarts_to_go;  /* MCUs left in this restart interval */
+<span class="lineNum">      68 </span>            : 
+<span class="lineNum">      69 </span>            :   /* Pointers to derived tables (these workspaces have image lifespan) */
+<span class="lineNum">      70 </span>            :   d_derived_tbl *dc_derived_tbls[NUM_HUFF_TBLS];
+<span class="lineNum">      71 </span>            :   d_derived_tbl *ac_derived_tbls[NUM_HUFF_TBLS];
+<span class="lineNum">      72 </span>            : 
+<span class="lineNum">      73 </span>            :   /* Precalculated info set up by start_pass for use in decode_mcu: */
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span>            :   /* Pointers to derived tables to be used for each block within an MCU */
+<span class="lineNum">      76 </span>            :   d_derived_tbl *dc_cur_tbls[D_MAX_BLOCKS_IN_MCU];
+<span class="lineNum">      77 </span>            :   d_derived_tbl *ac_cur_tbls[D_MAX_BLOCKS_IN_MCU];
+<span class="lineNum">      78 </span>            :   /* Whether we care about the DC and AC coefficient values for each block */
+<span class="lineNum">      79 </span>            :   boolean dc_needed[D_MAX_BLOCKS_IN_MCU];
+<span class="lineNum">      80 </span>            :   boolean ac_needed[D_MAX_BLOCKS_IN_MCU];
+<span class="lineNum">      81 </span>            : } huff_entropy_decoder;
+<span class="lineNum">      82 </span>            : 
+<span class="lineNum">      83 </span>            : typedef huff_entropy_decoder *huff_entropy_ptr;
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span>            : 
+<span class="lineNum">      86 </span>            : /*
+<span class="lineNum">      87 </span>            :  * Initialize for a Huffman-compressed scan.
+<span class="lineNum">      88 </span>            :  */
+<a name="89"><span class="lineNum">      89 </span>            : </a>
+<span class="lineNum">      90 </span>            : METHODDEF(void)
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 : start_pass_huff_decoder (j_decompress_ptr cinfo)</span>
+<span class="lineNum">      92 </span>            : {
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :   huff_entropy_ptr entropy = (huff_entropy_ptr) cinfo-&gt;entropy;</span>
+<span class="lineNum">      94 </span>            :   int ci, blkn, dctbl, actbl;
+<span class="lineNum">      95 </span>            :   d_derived_tbl **pdtbl;
+<span class="lineNum">      96 </span>            :   jpeg_component_info *compptr;
+<span class="lineNum">      97 </span>            : 
+<span class="lineNum">      98 </span>            :   /* Check that the scan parameters Ss, Se, Ah/Al are OK for sequential JPEG.
+<span class="lineNum">      99 </span>            :    * This ought to be an error condition, but we make it a warning because
+<span class="lineNum">     100 </span>            :    * there are some baseline files out there with all zeroes in these bytes.
+<span class="lineNum">     101 </span>            :    */
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :   if (cinfo-&gt;Ss != 0 || cinfo-&gt;Se != DCTSIZE2-1 ||</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :       cinfo-&gt;Ah != 0 || cinfo-&gt;Al != 0)</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :     WARNMS(cinfo, JWRN_NOT_SEQUENTIAL);</span>
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :   for (ci = 0; ci &lt; cinfo-&gt;comps_in_scan; ci++) {</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :     compptr = cinfo-&gt;cur_comp_info[ci];</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :     dctbl = compptr-&gt;dc_tbl_no;</span>
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :     actbl = compptr-&gt;ac_tbl_no;</span>
+<span class="lineNum">     110 </span>            :     /* Compute derived values for Huffman tables */
+<span class="lineNum">     111 </span>            :     /* We may do this more than once for a table, but it's not expensive */
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :     pdtbl = (d_derived_tbl **)(entropy-&gt;dc_derived_tbls) + dctbl;</span>
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :     jpeg_make_d_derived_tbl(cinfo, TRUE, dctbl, pdtbl);</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :     pdtbl = (d_derived_tbl **)(entropy-&gt;ac_derived_tbls) + actbl;</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :     jpeg_make_d_derived_tbl(cinfo, FALSE, actbl, pdtbl);</span>
+<span class="lineNum">     116 </span>            :     /* Initialize DC predictions to 0 */
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :     entropy-&gt;saved.last_dc_val[ci] = 0;</span>
+<span class="lineNum">     118 </span>            :   }
+<span class="lineNum">     119 </span>            : 
+<span class="lineNum">     120 </span>            :   /* Precalculate decoding info for each block in an MCU of this scan */
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :   for (blkn = 0; blkn &lt; cinfo-&gt;blocks_in_MCU; blkn++) {</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :     ci = cinfo-&gt;MCU_membership[blkn];</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :     compptr = cinfo-&gt;cur_comp_info[ci];</span>
+<span class="lineNum">     124 </span>            :     /* Precalculate which table to use for each block */
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :     entropy-&gt;dc_cur_tbls[blkn] = entropy-&gt;dc_derived_tbls[compptr-&gt;dc_tbl_no];</span>
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :     entropy-&gt;ac_cur_tbls[blkn] = entropy-&gt;ac_derived_tbls[compptr-&gt;ac_tbl_no];</span>
+<span class="lineNum">     127 </span>            :     /* Decide whether we really care about the coefficient values */
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :     if (compptr-&gt;component_needed) {</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :       entropy-&gt;dc_needed[blkn] = TRUE;</span>
+<span class="lineNum">     130 </span>            :       /* we don't need the ACs if producing a 1/8th-size image */
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :       entropy-&gt;ac_needed[blkn] = (compptr-&gt;_DCT_scaled_size &gt; 1);</span>
+<span class="lineNum">     132 </span>            :     } else {
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :       entropy-&gt;dc_needed[blkn] = entropy-&gt;ac_needed[blkn] = FALSE;</span>
+<span class="lineNum">     134 </span>            :     }
+<span class="lineNum">     135 </span>            :   }
+<span class="lineNum">     136 </span>            : 
+<span class="lineNum">     137 </span>            :   /* Initialize bitread state variables */
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :   entropy-&gt;bitstate.bits_left = 0;</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   entropy-&gt;bitstate.get_buffer = 0; /* unnecessary, but keeps Purify quiet */</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :   entropy-&gt;pub.insufficient_data = FALSE;</span>
+<span class="lineNum">     141 </span>            : 
+<span class="lineNum">     142 </span>            :   /* Initialize restart counter */
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :   entropy-&gt;restarts_to_go = cinfo-&gt;restart_interval;</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span>            : 
+<span class="lineNum">     147 </span>            : /*
+<span class="lineNum">     148 </span>            :  * Compute the derived values for a Huffman table.
+<span class="lineNum">     149 </span>            :  * This routine also performs some validation checks on the table.
+<span class="lineNum">     150 </span>            :  *
+<span class="lineNum">     151 </span>            :  * Note this is also used by jdphuff.c.
+<span class="lineNum">     152 </span>            :  */
+<a name="153"><span class="lineNum">     153 </span>            : </a>
+<span class="lineNum">     154 </span>            : GLOBAL(void)
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 : jpeg_make_d_derived_tbl (j_decompress_ptr cinfo, boolean isDC, int tblno,</span>
+<span class="lineNum">     156 </span>            :                          d_derived_tbl **pdtbl)
+<span class="lineNum">     157 </span>            : {
+<span class="lineNum">     158 </span>            :   JHUFF_TBL *htbl;
+<span class="lineNum">     159 </span>            :   d_derived_tbl *dtbl;
+<span class="lineNum">     160 </span>            :   int p, i, l, si, numsymbols;
+<span class="lineNum">     161 </span>            :   int lookbits, ctr;
+<span class="lineNum">     162 </span>            :   char huffsize[257];
+<span class="lineNum">     163 </span>            :   unsigned int huffcode[257];
+<span class="lineNum">     164 </span>            :   unsigned int code;
+<span class="lineNum">     165 </span>            : 
+<span class="lineNum">     166 </span>            :   /* Note that huffsize[] and huffcode[] are filled in code-length order,
+<span class="lineNum">     167 </span>            :    * paralleling the order of the symbols themselves in htbl-&gt;huffval[].
+<span class="lineNum">     168 </span>            :    */
+<span class="lineNum">     169 </span>            : 
+<span class="lineNum">     170 </span>            :   /* Find the input Huffman table */
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :   if (tblno &lt; 0 || tblno &gt;= NUM_HUFF_TBLS)</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :     ERREXIT1(cinfo, JERR_NO_HUFF_TABLE, tblno);</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :   htbl =</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :     isDC ? cinfo-&gt;dc_huff_tbl_ptrs[tblno] : cinfo-&gt;ac_huff_tbl_ptrs[tblno];</span>
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :   if (htbl == NULL)</span>
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :     ERREXIT1(cinfo, JERR_NO_HUFF_TABLE, tblno);</span>
+<span class="lineNum">     177 </span>            : 
+<span class="lineNum">     178 </span>            :   /* Allocate a workspace if we haven't already done so. */
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   if (*pdtbl == NULL)</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :     *pdtbl = (d_derived_tbl *)</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :       (*cinfo-&gt;mem-&gt;alloc_small) ((j_common_ptr) cinfo, JPOOL_IMAGE,</span>
+<span class="lineNum">     182 </span>            :                                   sizeof(d_derived_tbl));
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :   dtbl = *pdtbl;</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :   dtbl-&gt;pub = htbl;             /* fill in back link */</span>
+<span class="lineNum">     185 </span>            : 
+<span class="lineNum">     186 </span>            :   /* Figure C.1: make table of Huffman code length for each symbol */
+<span class="lineNum">     187 </span>            : 
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   p = 0;</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :   for (l = 1; l &lt;= 16; l++) {</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :     i = (int) htbl-&gt;bits[l];</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :     if (i &lt; 0 || p + i &gt; 256)   /* protect against table overrun */</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :       ERREXIT(cinfo, JERR_BAD_HUFF_TABLE);</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :     while (i--)</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :       huffsize[p++] = (char) l;</span>
+<span class="lineNum">     195 </span>            :   }
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :   huffsize[p] = 0;</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   numsymbols = p;</span>
+<span class="lineNum">     198 </span>            : 
+<span class="lineNum">     199 </span>            :   /* Figure C.2: generate the codes themselves */
+<span class="lineNum">     200 </span>            :   /* We also validate that the counts represent a legal Huffman code tree. */
+<span class="lineNum">     201 </span>            : 
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :   code = 0;</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :   si = huffsize[0];</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :   p = 0;</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :   while (huffsize[p]) {</span>
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :     while (((int) huffsize[p]) == si) {</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :       huffcode[p++] = code;</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :       code++;</span>
+<span class="lineNum">     209 </span>            :     }
+<span class="lineNum">     210 </span>            :     /* code is now 1 more than the last code used for codelength si; but
+<span class="lineNum">     211 </span>            :      * it must still fit in si bits, since no code is allowed to be all ones.
+<span class="lineNum">     212 </span>            :      */
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     if (((JLONG) code) &gt;= (((JLONG) 1) &lt;&lt; si))</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :       ERREXIT(cinfo, JERR_BAD_HUFF_TABLE);</span>
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :     code &lt;&lt;= 1;</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :     si++;</span>
+<span class="lineNum">     217 </span>            :   }
+<span class="lineNum">     218 </span>            : 
+<span class="lineNum">     219 </span>            :   /* Figure F.15: generate decoding tables for bit-sequential decoding */
+<span class="lineNum">     220 </span>            : 
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :   p = 0;</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :   for (l = 1; l &lt;= 16; l++) {</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :     if (htbl-&gt;bits[l]) {</span>
+<span class="lineNum">     224 </span>            :       /* valoffset[l] = huffval[] index of 1st symbol of code length l,
+<span class="lineNum">     225 </span>            :        * minus the minimum code of length l
+<span class="lineNum">     226 </span>            :        */
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :       dtbl-&gt;valoffset[l] = (JLONG) p - (JLONG) huffcode[p];</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :       p += htbl-&gt;bits[l];</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :       dtbl-&gt;maxcode[l] = huffcode[p-1]; /* maximum code of length l */</span>
+<span class="lineNum">     230 </span>            :     } else {
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :       dtbl-&gt;maxcode[l] = -1;    /* -1 if no codes of this length */</span>
+<span class="lineNum">     232 </span>            :     }
+<span class="lineNum">     233 </span>            :   }
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :   dtbl-&gt;valoffset[17] = 0;</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :   dtbl-&gt;maxcode[17] = 0xFFFFFL; /* ensures jpeg_huff_decode terminates */</span>
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span>            :   /* Compute lookahead tables to speed up decoding.
+<span class="lineNum">     238 </span>            :    * First we set all the table entries to 0, indicating &quot;too long&quot;;
+<span class="lineNum">     239 </span>            :    * then we iterate through the Huffman codes that are short enough and
+<span class="lineNum">     240 </span>            :    * fill in all the entries that correspond to bit sequences starting
+<span class="lineNum">     241 </span>            :    * with that code.
+<span class="lineNum">     242 </span>            :    */
+<span class="lineNum">     243 </span>            : 
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :    for (i = 0; i &lt; (1 &lt;&lt; HUFF_LOOKAHEAD); i++)</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :      dtbl-&gt;lookup[i] = (HUFF_LOOKAHEAD + 1) &lt;&lt; HUFF_LOOKAHEAD;</span>
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   p = 0;</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   for (l = 1; l &lt;= HUFF_LOOKAHEAD; l++) {</span>
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :     for (i = 1; i &lt;= (int) htbl-&gt;bits[l]; i++, p++) {</span>
+<span class="lineNum">     250 </span>            :       /* l = current code's length, p = its index in huffcode[] &amp; huffval[]. */
+<span class="lineNum">     251 </span>            :       /* Generate left-justified code followed by all possible bit sequences */
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :       lookbits = huffcode[p] &lt;&lt; (HUFF_LOOKAHEAD-l);</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :       for (ctr = 1 &lt;&lt; (HUFF_LOOKAHEAD-l); ctr &gt; 0; ctr--) {</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :         dtbl-&gt;lookup[lookbits] = (l &lt;&lt; HUFF_LOOKAHEAD) | htbl-&gt;huffval[p];</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :         lookbits++;</span>
+<span class="lineNum">     256 </span>            :       }
+<span class="lineNum">     257 </span>            :     }
+<span class="lineNum">     258 </span>            :   }
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span>            :   /* Validate symbols as being reasonable.
+<span class="lineNum">     261 </span>            :    * For AC tables, we make no check, but accept all byte values 0..255.
+<span class="lineNum">     262 </span>            :    * For DC tables, we require the symbols to be in range 0..15.
+<span class="lineNum">     263 </span>            :    * (Tighter bounds could be applied depending on the data depth and mode,
+<span class="lineNum">     264 </span>            :    * but this is sufficient to ensure safe decoding.)
+<span class="lineNum">     265 </span>            :    */
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :   if (isDC) {</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; numsymbols; i++) {</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :       int sym = htbl-&gt;huffval[i];</span>
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :       if (sym &lt; 0 || sym &gt; 15)</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :         ERREXIT(cinfo, JERR_BAD_HUFF_TABLE);</span>
+<span class="lineNum">     271 </span>            :     }
+<span class="lineNum">     272 </span>            :   }
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     274 </span>            : 
+<span class="lineNum">     275 </span>            : 
+<span class="lineNum">     276 </span>            : /*
+<span class="lineNum">     277 </span>            :  * Out-of-line code for bit fetching (shared with jdphuff.c).
+<span class="lineNum">     278 </span>            :  * See jdhuff.h for info about usage.
+<span class="lineNum">     279 </span>            :  * Note: current values of get_buffer and bits_left are passed as parameters,
+<span class="lineNum">     280 </span>            :  * but are returned in the corresponding fields of the state struct.
+<span class="lineNum">     281 </span>            :  *
+<span class="lineNum">     282 </span>            :  * On most machines MIN_GET_BITS should be 25 to allow the full 32-bit width
+<span class="lineNum">     283 </span>            :  * of get_buffer to be used.  (On machines with wider words, an even larger
+<span class="lineNum">     284 </span>            :  * buffer could be used.)  However, on some machines 32-bit shifts are
+<span class="lineNum">     285 </span>            :  * quite slow and take time proportional to the number of places shifted.
+<span class="lineNum">     286 </span>            :  * (This is true with most PC compilers, for instance.)  In this case it may
+<span class="lineNum">     287 </span>            :  * be a win to set MIN_GET_BITS to the minimum value of 15.  This reduces the
+<span class="lineNum">     288 </span>            :  * average shift distance at the cost of more calls to jpeg_fill_bit_buffer.
+<span class="lineNum">     289 </span>            :  */
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span>            : #ifdef SLOW_SHIFT_32
+<span class="lineNum">     292 </span>            : #define MIN_GET_BITS  15        /* minimum allowable value */
+<span class="lineNum">     293 </span>            : #else
+<span class="lineNum">     294 </span>            : #define MIN_GET_BITS  (BIT_BUF_SIZE-7)
+<span class="lineNum">     295 </span>            : #endif
+<span class="lineNum">     296 </span>            : 
+<a name="297"><span class="lineNum">     297 </span>            : </a>
+<span class="lineNum">     298 </span>            : GLOBAL(boolean)
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 : jpeg_fill_bit_buffer (bitread_working_state *state,</span>
+<span class="lineNum">     300 </span>            :                       register bit_buf_type get_buffer, register int bits_left,
+<span class="lineNum">     301 </span>            :                       int nbits)
+<span class="lineNum">     302 </span>            : /* Load up the bit buffer to a depth of at least nbits */
+<span class="lineNum">     303 </span>            : {
+<span class="lineNum">     304 </span>            :   /* Copy heavily used state fields into locals (hopefully registers) */
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :   register const JOCTET *next_input_byte = state-&gt;next_input_byte;</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   register size_t bytes_in_buffer = state-&gt;bytes_in_buffer;</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :   j_decompress_ptr cinfo = state-&gt;cinfo;</span>
+<span class="lineNum">     308 </span>            : 
+<span class="lineNum">     309 </span>            :   /* Attempt to load at least MIN_GET_BITS bits into get_buffer. */
+<span class="lineNum">     310 </span>            :   /* (It is assumed that no request will be for more than that many bits.) */
+<span class="lineNum">     311 </span>            :   /* We fail to do so only if we hit a marker or are forced to suspend. */
+<span class="lineNum">     312 </span>            : 
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :   if (cinfo-&gt;unread_marker == 0) {      /* cannot advance past a marker */</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :     while (bits_left &lt; MIN_GET_BITS) {</span>
+<span class="lineNum">     315 </span>            :       register int c;
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span>            :       /* Attempt to read a byte */
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :       if (bytes_in_buffer == 0) {</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :         if (! (*cinfo-&gt;src-&gt;fill_input_buffer) (cinfo))</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :           return FALSE;</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :         next_input_byte = cinfo-&gt;src-&gt;next_input_byte;</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :         bytes_in_buffer = cinfo-&gt;src-&gt;bytes_in_buffer;</span>
+<span class="lineNum">     323 </span>            :       }
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :       bytes_in_buffer--;</span>
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :       c = GETJOCTET(*next_input_byte++);</span>
+<span class="lineNum">     326 </span>            : 
+<span class="lineNum">     327 </span>            :       /* If it's 0xFF, check and discard stuffed zero byte */
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :       if (c == 0xFF) {</span>
+<span class="lineNum">     329 </span>            :         /* Loop here to discard any padding FF's on terminating marker,
+<span class="lineNum">     330 </span>            :          * so that we can save a valid unread_marker value.  NOTE: we will
+<span class="lineNum">     331 </span>            :          * accept multiple FF's followed by a 0 as meaning a single FF data
+<span class="lineNum">     332 </span>            :          * byte.  This data pattern is not valid according to the standard.
+<span class="lineNum">     333 </span>            :          */
+<span class="lineNum">     334 </span>            :         do {
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :           if (bytes_in_buffer == 0) {</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :             if (! (*cinfo-&gt;src-&gt;fill_input_buffer) (cinfo))</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :               return FALSE;</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :             next_input_byte = cinfo-&gt;src-&gt;next_input_byte;</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :             bytes_in_buffer = cinfo-&gt;src-&gt;bytes_in_buffer;</span>
+<span class="lineNum">     340 </span>            :           }
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :           bytes_in_buffer--;</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :           c = GETJOCTET(*next_input_byte++);</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :         } while (c == 0xFF);</span>
+<span class="lineNum">     344 </span>            : 
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :         if (c == 0) {</span>
+<span class="lineNum">     346 </span>            :           /* Found FF/00, which represents an FF data byte */
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :           c = 0xFF;</span>
+<span class="lineNum">     348 </span>            :         } else {
+<span class="lineNum">     349 </span>            :           /* Oops, it's actually a marker indicating end of compressed data.
+<span class="lineNum">     350 </span>            :            * Save the marker code for later use.
+<span class="lineNum">     351 </span>            :            * Fine point: it might appear that we should save the marker into
+<span class="lineNum">     352 </span>            :            * bitread working state, not straight into permanent state.  But
+<span class="lineNum">     353 </span>            :            * once we have hit a marker, we cannot need to suspend within the
+<span class="lineNum">     354 </span>            :            * current MCU, because we will read no more bytes from the data
+<span class="lineNum">     355 </span>            :            * source.  So it is OK to update permanent state right away.
+<span class="lineNum">     356 </span>            :            */
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :           cinfo-&gt;unread_marker = c;</span>
+<span class="lineNum">     358 </span>            :           /* See if we need to insert some fake zero bits. */
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :           goto no_more_bytes;</span>
+<span class="lineNum">     360 </span>            :         }
+<span class="lineNum">     361 </span>            :       }
+<span class="lineNum">     362 </span>            : 
+<span class="lineNum">     363 </span>            :       /* OK, load c into get_buffer */
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :       get_buffer = (get_buffer &lt;&lt; 8) | c;</span>
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :       bits_left += 8;</span>
+<span class="lineNum">     366 </span>            :     } /* end while */
+<span class="lineNum">     367 </span>            :   } else {
+<span class="lineNum">     368 </span>            :   no_more_bytes:
+<span class="lineNum">     369 </span>            :     /* We get here if we've read the marker that terminates the compressed
+<span class="lineNum">     370 </span>            :      * data segment.  There should be enough bits in the buffer register
+<span class="lineNum">     371 </span>            :      * to satisfy the request; if so, no problem.
+<span class="lineNum">     372 </span>            :      */
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :     if (nbits &gt; bits_left) {</span>
+<span class="lineNum">     374 </span>            :       /* Uh-oh.  Report corrupted data to user and stuff zeroes into
+<span class="lineNum">     375 </span>            :        * the data stream, so that we can produce some kind of image.
+<span class="lineNum">     376 </span>            :        * We use a nonvolatile flag to ensure that only one warning message
+<span class="lineNum">     377 </span>            :        * appears per data segment.
+<span class="lineNum">     378 </span>            :        */
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :       if (! cinfo-&gt;entropy-&gt;insufficient_data) {</span>
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :         WARNMS(cinfo, JWRN_HIT_MARKER);</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :         cinfo-&gt;entropy-&gt;insufficient_data = TRUE;</span>
+<span class="lineNum">     382 </span>            :       }
+<span class="lineNum">     383 </span>            :       /* Fill the buffer with zero bits */
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :       get_buffer &lt;&lt;= MIN_GET_BITS - bits_left;</span>
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :       bits_left = MIN_GET_BITS;</span>
+<span class="lineNum">     386 </span>            :     }
+<span class="lineNum">     387 </span>            :   }
+<span class="lineNum">     388 </span>            : 
+<span class="lineNum">     389 </span>            :   /* Unload the local registers */
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :   state-&gt;next_input_byte = next_input_byte;</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :   state-&gt;bytes_in_buffer = bytes_in_buffer;</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :   state-&gt;get_buffer = get_buffer;</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :   state-&gt;bits_left = bits_left;</span>
+<span class="lineNum">     394 </span>            : 
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :   return TRUE;</span>
+<span class="lineNum">     396 </span>            : }
+<span class="lineNum">     397 </span>            : 
+<span class="lineNum">     398 </span>            : 
+<span class="lineNum">     399 </span>            : /* Macro version of the above, which performs much better but does not
+<span class="lineNum">     400 </span>            :    handle markers.  We have to hand off any blocks with markers to the
+<span class="lineNum">     401 </span>            :    slower routines. */
+<span class="lineNum">     402 </span>            : 
+<span class="lineNum">     403 </span>            : #define GET_BYTE \
+<span class="lineNum">     404 </span>            : { \
+<span class="lineNum">     405 </span>            :   register int c0, c1; \
+<span class="lineNum">     406 </span>            :   c0 = GETJOCTET(*buffer++); \
+<span class="lineNum">     407 </span>            :   c1 = GETJOCTET(*buffer); \
+<span class="lineNum">     408 </span>            :   /* Pre-execute most common case */ \
+<span class="lineNum">     409 </span>            :   get_buffer = (get_buffer &lt;&lt; 8) | c0; \
+<span class="lineNum">     410 </span>            :   bits_left += 8; \
+<span class="lineNum">     411 </span>            :   if (c0 == 0xFF) { \
+<span class="lineNum">     412 </span>            :     /* Pre-execute case of FF/00, which represents an FF data byte */ \
+<span class="lineNum">     413 </span>            :     buffer++; \
+<span class="lineNum">     414 </span>            :     if (c1 != 0) { \
+<span class="lineNum">     415 </span>            :       /* Oops, it's actually a marker indicating end of compressed data. */ \
+<span class="lineNum">     416 </span>            :       cinfo-&gt;unread_marker = c1; \
+<span class="lineNum">     417 </span>            :       /* Back out pre-execution and fill the buffer with zero bits */ \
+<span class="lineNum">     418 </span>            :       buffer -= 2; \
+<span class="lineNum">     419 </span>            :       get_buffer &amp;= ~0xFF; \
+<span class="lineNum">     420 </span>            :     } \
+<span class="lineNum">     421 </span>            :   } \
+<span class="lineNum">     422 </span>            : }
+<span class="lineNum">     423 </span>            : 
+<span class="lineNum">     424 </span>            : #if SIZEOF_SIZE_T==8 || defined(_WIN64)
+<span class="lineNum">     425 </span>            : 
+<span class="lineNum">     426 </span>            : /* Pre-fetch 48 bytes, because the holding register is 64-bit */
+<span class="lineNum">     427 </span>            : #define FILL_BIT_BUFFER_FAST \
+<span class="lineNum">     428 </span>            :   if (bits_left &lt;= 16) { \
+<span class="lineNum">     429 </span>            :     GET_BYTE GET_BYTE GET_BYTE GET_BYTE GET_BYTE GET_BYTE \
+<span class="lineNum">     430 </span>            :   }
+<span class="lineNum">     431 </span>            : 
+<span class="lineNum">     432 </span>            : #else
+<span class="lineNum">     433 </span>            : 
+<span class="lineNum">     434 </span>            : /* Pre-fetch 16 bytes, because the holding register is 32-bit */
+<span class="lineNum">     435 </span>            : #define FILL_BIT_BUFFER_FAST \
+<span class="lineNum">     436 </span>            :   if (bits_left &lt;= 16) { \
+<span class="lineNum">     437 </span>            :     GET_BYTE GET_BYTE \
+<span class="lineNum">     438 </span>            :   }
+<span class="lineNum">     439 </span>            : 
+<span class="lineNum">     440 </span>            : #endif
+<span class="lineNum">     441 </span>            : 
+<span class="lineNum">     442 </span>            : 
+<span class="lineNum">     443 </span>            : /*
+<span class="lineNum">     444 </span>            :  * Out-of-line code for Huffman code decoding.
+<span class="lineNum">     445 </span>            :  * See jdhuff.h for info about usage.
+<span class="lineNum">     446 </span>            :  */
+<a name="447"><span class="lineNum">     447 </span>            : </a>
+<span class="lineNum">     448 </span>            : GLOBAL(int)
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 : jpeg_huff_decode (bitread_working_state *state,</span>
+<span class="lineNum">     450 </span>            :                   register bit_buf_type get_buffer, register int bits_left,
+<span class="lineNum">     451 </span>            :                   d_derived_tbl *htbl, int min_bits)
+<span class="lineNum">     452 </span>            : {
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :   register int l = min_bits;</span>
+<span class="lineNum">     454 </span>            :   register JLONG code;
+<span class="lineNum">     455 </span>            : 
+<span class="lineNum">     456 </span>            :   /* HUFF_DECODE has determined that the code is at least min_bits */
+<span class="lineNum">     457 </span>            :   /* bits long, so fetch that many bits in one swoop. */
+<span class="lineNum">     458 </span>            : 
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :   CHECK_BIT_BUFFER(*state, l, return -1);</span>
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :   code = GET_BITS(l);</span>
+<span class="lineNum">     461 </span>            : 
+<span class="lineNum">     462 </span>            :   /* Collect the rest of the Huffman code one bit at a time. */
+<span class="lineNum">     463 </span>            :   /* This is per Figure F.16 in the JPEG spec. */
+<span class="lineNum">     464 </span>            : 
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :   while (code &gt; htbl-&gt;maxcode[l]) {</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :     code &lt;&lt;= 1;</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :     CHECK_BIT_BUFFER(*state, 1, return -1);</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :     code |= GET_BITS(1);</span>
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :     l++;</span>
+<span class="lineNum">     470 </span>            :   }
+<span class="lineNum">     471 </span>            : 
+<span class="lineNum">     472 </span>            :   /* Unload the local registers */
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :   state-&gt;get_buffer = get_buffer;</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :   state-&gt;bits_left = bits_left;</span>
+<span class="lineNum">     475 </span>            : 
+<span class="lineNum">     476 </span>            :   /* With garbage input we may reach the sentinel value l = 17. */
+<span class="lineNum">     477 </span>            : 
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :   if (l &gt; 16) {</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :     WARNMS(state-&gt;cinfo, JWRN_HUFF_BAD_CODE);</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :     return 0;                   /* fake a zero as the safest result */</span>
+<span class="lineNum">     481 </span>            :   }
+<span class="lineNum">     482 </span>            : 
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :   return htbl-&gt;pub-&gt;huffval[ (int) (code + htbl-&gt;valoffset[l]) ];</span>
+<span class="lineNum">     484 </span>            : }
+<span class="lineNum">     485 </span>            : 
+<span class="lineNum">     486 </span>            : 
+<span class="lineNum">     487 </span>            : /*
+<span class="lineNum">     488 </span>            :  * Figure F.12: extend sign bit.
+<span class="lineNum">     489 </span>            :  * On some machines, a shift and add will be faster than a table lookup.
+<span class="lineNum">     490 </span>            :  */
+<span class="lineNum">     491 </span>            : 
+<span class="lineNum">     492 </span>            : #define AVOID_TABLES
+<span class="lineNum">     493 </span>            : #ifdef AVOID_TABLES
+<span class="lineNum">     494 </span>            : 
+<span class="lineNum">     495 </span>            : #define NEG_1 ((unsigned int)-1)
+<span class="lineNum">     496 </span>            : #define HUFF_EXTEND(x,s)  ((x) + ((((x) - (1&lt;&lt;((s)-1))) &gt;&gt; 31) &amp; (((NEG_1)&lt;&lt;(s)) + 1)))
+<span class="lineNum">     497 </span>            : 
+<span class="lineNum">     498 </span>            : #else
+<span class="lineNum">     499 </span>            : 
+<span class="lineNum">     500 </span>            : #define HUFF_EXTEND(x,s)  ((x) &lt; extend_test[s] ? (x) + extend_offset[s] : (x))
+<span class="lineNum">     501 </span>            : 
+<span class="lineNum">     502 </span>            : static const int extend_test[16] =   /* entry n is 2**(n-1) */
+<span class="lineNum">     503 </span>            :   { 0, 0x0001, 0x0002, 0x0004, 0x0008, 0x0010, 0x0020, 0x0040, 0x0080,
+<span class="lineNum">     504 </span>            :     0x0100, 0x0200, 0x0400, 0x0800, 0x1000, 0x2000, 0x4000 };
+<span class="lineNum">     505 </span>            : 
+<span class="lineNum">     506 </span>            : static const int extend_offset[16] = /* entry n is (-1 &lt;&lt; n) + 1 */
+<span class="lineNum">     507 </span>            :   { 0, ((-1)&lt;&lt;1) + 1, ((-1)&lt;&lt;2) + 1, ((-1)&lt;&lt;3) + 1, ((-1)&lt;&lt;4) + 1,
+<span class="lineNum">     508 </span>            :     ((-1)&lt;&lt;5) + 1, ((-1)&lt;&lt;6) + 1, ((-1)&lt;&lt;7) + 1, ((-1)&lt;&lt;8) + 1,
+<span class="lineNum">     509 </span>            :     ((-1)&lt;&lt;9) + 1, ((-1)&lt;&lt;10) + 1, ((-1)&lt;&lt;11) + 1, ((-1)&lt;&lt;12) + 1,
+<span class="lineNum">     510 </span>            :     ((-1)&lt;&lt;13) + 1, ((-1)&lt;&lt;14) + 1, ((-1)&lt;&lt;15) + 1 };
+<span class="lineNum">     511 </span>            : 
+<span class="lineNum">     512 </span>            : #endif /* AVOID_TABLES */
+<span class="lineNum">     513 </span>            : 
+<span class="lineNum">     514 </span>            : 
+<span class="lineNum">     515 </span>            : /*
+<span class="lineNum">     516 </span>            :  * Check for a restart marker &amp; resynchronize decoder.
+<span class="lineNum">     517 </span>            :  * Returns FALSE if must suspend.
+<span class="lineNum">     518 </span>            :  */
+<a name="519"><span class="lineNum">     519 </span>            : </a>
+<span class="lineNum">     520 </span>            : LOCAL(boolean)
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 : process_restart (j_decompress_ptr cinfo)</span>
+<span class="lineNum">     522 </span>            : {
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :   huff_entropy_ptr entropy = (huff_entropy_ptr) cinfo-&gt;entropy;</span>
+<span class="lineNum">     524 </span>            :   int ci;
+<span class="lineNum">     525 </span>            : 
+<span class="lineNum">     526 </span>            :   /* Throw away any unused bits remaining in bit buffer; */
+<span class="lineNum">     527 </span>            :   /* include any full bytes in next_marker's count of discarded bytes */
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :   cinfo-&gt;marker-&gt;discarded_bytes += entropy-&gt;bitstate.bits_left / 8;</span>
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :   entropy-&gt;bitstate.bits_left = 0;</span>
+<span class="lineNum">     530 </span>            : 
+<span class="lineNum">     531 </span>            :   /* Advance past the RSTn marker */
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :   if (! (*cinfo-&gt;marker-&gt;read_restart_marker) (cinfo))</span>
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :     return FALSE;</span>
+<span class="lineNum">     534 </span>            : 
+<span class="lineNum">     535 </span>            :   /* Re-initialize DC predictions to 0 */
+<span class="lineNum">     536 </span><span class="lineNoCov">          0 :   for (ci = 0; ci &lt; cinfo-&gt;comps_in_scan; ci++)</span>
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :     entropy-&gt;saved.last_dc_val[ci] = 0;</span>
+<span class="lineNum">     538 </span>            : 
+<span class="lineNum">     539 </span>            :   /* Reset restart counter */
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :   entropy-&gt;restarts_to_go = cinfo-&gt;restart_interval;</span>
+<span class="lineNum">     541 </span>            : 
+<span class="lineNum">     542 </span>            :   /* Reset out-of-data flag, unless read_restart_marker left us smack up
+<span class="lineNum">     543 </span>            :    * against a marker.  In that case we will end up treating the next data
+<span class="lineNum">     544 </span>            :    * segment as empty, and we can avoid producing bogus output pixels by
+<span class="lineNum">     545 </span>            :    * leaving the flag set.
+<span class="lineNum">     546 </span>            :    */
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :   if (cinfo-&gt;unread_marker == 0)</span>
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :     entropy-&gt;pub.insufficient_data = FALSE;</span>
+<span class="lineNum">     549 </span>            : 
+<span class="lineNum">     550 </span><span class="lineNoCov">          0 :   return TRUE;</span>
+<span class="lineNum">     551 </span>            : }
+<span class="lineNum">     552 </span>            : 
+<a name="553"><span class="lineNum">     553 </span>            : </a>
+<span class="lineNum">     554 </span>            : LOCAL(boolean)
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 : decode_mcu_slow (j_decompress_ptr cinfo, JBLOCKROW *MCU_data)</span>
+<span class="lineNum">     556 </span>            : {
+<span class="lineNum">     557 </span><span class="lineNoCov">          0 :   huff_entropy_ptr entropy = (huff_entropy_ptr) cinfo-&gt;entropy;</span>
+<span class="lineNum">     558 </span>            :   BITREAD_STATE_VARS;
+<span class="lineNum">     559 </span>            :   int blkn;
+<span class="lineNum">     560 </span>            :   savable_state state;
+<span class="lineNum">     561 </span>            :   /* Outer loop handles each block in the MCU */
+<span class="lineNum">     562 </span>            : 
+<span class="lineNum">     563 </span>            :   /* Load up working state */
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :   BITREAD_LOAD_STATE(cinfo,entropy-&gt;bitstate);</span>
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :   ASSIGN_STATE(state, entropy-&gt;saved);</span>
+<span class="lineNum">     566 </span>            : 
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :   for (blkn = 0; blkn &lt; cinfo-&gt;blocks_in_MCU; blkn++) {</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :     JBLOCKROW block = MCU_data ? MCU_data[blkn] : NULL;</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :     d_derived_tbl *dctbl = entropy-&gt;dc_cur_tbls[blkn];</span>
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :     d_derived_tbl *actbl = entropy-&gt;ac_cur_tbls[blkn];</span>
+<span class="lineNum">     571 </span>            :     register int s, k, r;
+<span class="lineNum">     572 </span>            : 
+<span class="lineNum">     573 </span>            :     /* Decode a single block's worth of coefficients */
+<span class="lineNum">     574 </span>            : 
+<span class="lineNum">     575 </span>            :     /* Section F.2.2.1: decode the DC coefficient difference */
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :     HUFF_DECODE(s, br_state, dctbl, return FALSE, label1);</span>
+<span class="lineNum">     577 </span><span class="lineNoCov">          0 :     if (s) {</span>
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :       CHECK_BIT_BUFFER(br_state, s, return FALSE);</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :       r = GET_BITS(s);</span>
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :       s = HUFF_EXTEND(r, s);</span>
+<span class="lineNum">     581 </span>            :     }
+<span class="lineNum">     582 </span>            : 
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 :     if (entropy-&gt;dc_needed[blkn]) {</span>
+<span class="lineNum">     584 </span>            :       /* Convert DC difference to actual value, update last_dc_val */
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :       int ci = cinfo-&gt;MCU_membership[blkn];</span>
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :       s += state.last_dc_val[ci];</span>
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :       state.last_dc_val[ci] = s;</span>
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :       if (block) {</span>
+<span class="lineNum">     589 </span>            :         /* Output the DC coefficient (assumes jpeg_natural_order[0] = 0) */
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :         (*block)[0] = (JCOEF) s;</span>
+<span class="lineNum">     591 </span>            :       }
+<span class="lineNum">     592 </span>            :     }
+<span class="lineNum">     593 </span>            : 
+<span class="lineNum">     594 </span><span class="lineNoCov">          0 :     if (entropy-&gt;ac_needed[blkn] &amp;&amp; block) {</span>
+<span class="lineNum">     595 </span>            : 
+<span class="lineNum">     596 </span>            :       /* Section F.2.2.2: decode the AC coefficients */
+<span class="lineNum">     597 </span>            :       /* Since zeroes are skipped, output area must be cleared beforehand */
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :       for (k = 1; k &lt; DCTSIZE2; k++) {</span>
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :         HUFF_DECODE(s, br_state, actbl, return FALSE, label2);</span>
+<span class="lineNum">     600 </span>            : 
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :         r = s &gt;&gt; 4;</span>
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :         s &amp;= 15;</span>
+<span class="lineNum">     603 </span>            : 
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :         if (s) {</span>
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :           k += r;</span>
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :           CHECK_BIT_BUFFER(br_state, s, return FALSE);</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :           r = GET_BITS(s);</span>
+<span class="lineNum">     608 </span><span class="lineNoCov">          0 :           s = HUFF_EXTEND(r, s);</span>
+<span class="lineNum">     609 </span>            :           /* Output coefficient in natural (dezigzagged) order.
+<span class="lineNum">     610 </span>            :            * Note: the extra entries in jpeg_natural_order[] will save us
+<span class="lineNum">     611 </span>            :            * if k &gt;= DCTSIZE2, which could happen if the data is corrupted.
+<span class="lineNum">     612 </span>            :            */
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 :           (*block)[jpeg_natural_order[k]] = (JCOEF) s;</span>
+<span class="lineNum">     614 </span>            :         } else {
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :           if (r != 15)</span>
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     617 </span><span class="lineNoCov">          0 :           k += 15;</span>
+<span class="lineNum">     618 </span>            :         }
+<span class="lineNum">     619 </span>            :       }
+<span class="lineNum">     620 </span>            : 
+<span class="lineNum">     621 </span>            :     } else {
+<span class="lineNum">     622 </span>            : 
+<span class="lineNum">     623 </span>            :       /* Section F.2.2.2: decode the AC coefficients */
+<span class="lineNum">     624 </span>            :       /* In this path we just discard the values */
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :       for (k = 1; k &lt; DCTSIZE2; k++) {</span>
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :         HUFF_DECODE(s, br_state, actbl, return FALSE, label3);</span>
+<span class="lineNum">     627 </span>            : 
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :         r = s &gt;&gt; 4;</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :         s &amp;= 15;</span>
+<span class="lineNum">     630 </span>            : 
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :         if (s) {</span>
+<span class="lineNum">     632 </span><span class="lineNoCov">          0 :           k += r;</span>
+<span class="lineNum">     633 </span><span class="lineNoCov">          0 :           CHECK_BIT_BUFFER(br_state, s, return FALSE);</span>
+<span class="lineNum">     634 </span><span class="lineNoCov">          0 :           DROP_BITS(s);</span>
+<span class="lineNum">     635 </span>            :         } else {
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :           if (r != 15)</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 :           k += 15;</span>
+<span class="lineNum">     639 </span>            :         }
+<span class="lineNum">     640 </span>            :       }
+<span class="lineNum">     641 </span>            :     }
+<span class="lineNum">     642 </span>            :   }
+<span class="lineNum">     643 </span>            : 
+<span class="lineNum">     644 </span>            :   /* Completed MCU, so update state */
+<span class="lineNum">     645 </span><span class="lineNoCov">          0 :   BITREAD_SAVE_STATE(cinfo,entropy-&gt;bitstate);</span>
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 :   ASSIGN_STATE(entropy-&gt;saved, state);</span>
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :   return TRUE;</span>
+<span class="lineNum">     648 </span>            : }
+<span class="lineNum">     649 </span>            : 
+<a name="650"><span class="lineNum">     650 </span>            : </a>
+<span class="lineNum">     651 </span>            : LOCAL(boolean)
+<span class="lineNum">     652 </span><span class="lineNoCov">          0 : decode_mcu_fast (j_decompress_ptr cinfo, JBLOCKROW *MCU_data)</span>
+<span class="lineNum">     653 </span>            : {
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 :   huff_entropy_ptr entropy = (huff_entropy_ptr) cinfo-&gt;entropy;</span>
+<span class="lineNum">     655 </span>            :   BITREAD_STATE_VARS;
+<span class="lineNum">     656 </span>            :   JOCTET *buffer;
+<span class="lineNum">     657 </span>            :   int blkn;
+<span class="lineNum">     658 </span>            :   savable_state state;
+<span class="lineNum">     659 </span>            :   /* Outer loop handles each block in the MCU */
+<span class="lineNum">     660 </span>            : 
+<span class="lineNum">     661 </span>            :   /* Load up working state */
+<span class="lineNum">     662 </span><span class="lineNoCov">          0 :   BITREAD_LOAD_STATE(cinfo,entropy-&gt;bitstate);</span>
+<span class="lineNum">     663 </span><span class="lineNoCov">          0 :   buffer = (JOCTET *) br_state.next_input_byte;</span>
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :   ASSIGN_STATE(state, entropy-&gt;saved);</span>
+<span class="lineNum">     665 </span>            : 
+<span class="lineNum">     666 </span><span class="lineNoCov">          0 :   for (blkn = 0; blkn &lt; cinfo-&gt;blocks_in_MCU; blkn++) {</span>
+<span class="lineNum">     667 </span><span class="lineNoCov">          0 :     JBLOCKROW block = MCU_data ? MCU_data[blkn] : NULL;</span>
+<span class="lineNum">     668 </span><span class="lineNoCov">          0 :     d_derived_tbl *dctbl = entropy-&gt;dc_cur_tbls[blkn];</span>
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :     d_derived_tbl *actbl = entropy-&gt;ac_cur_tbls[blkn];</span>
+<span class="lineNum">     670 </span>            :     register int s, k, r, l;
+<span class="lineNum">     671 </span>            : 
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :     HUFF_DECODE_FAST(s, l, dctbl, slow_decode_mcu);</span>
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :     if (s) {</span>
+<span class="lineNum">     674 </span><span class="lineNoCov">          0 :       FILL_BIT_BUFFER_FAST</span>
+<span class="lineNum">     675 </span><span class="lineNoCov">          0 :       r = GET_BITS(s);</span>
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :       s = HUFF_EXTEND(r, s);</span>
+<span class="lineNum">     677 </span>            :     }
+<span class="lineNum">     678 </span>            : 
+<span class="lineNum">     679 </span><span class="lineNoCov">          0 :     if (entropy-&gt;dc_needed[blkn]) {</span>
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 :       int ci = cinfo-&gt;MCU_membership[blkn];</span>
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :       s += state.last_dc_val[ci];</span>
+<span class="lineNum">     682 </span><span class="lineNoCov">          0 :       state.last_dc_val[ci] = s;</span>
+<span class="lineNum">     683 </span><span class="lineNoCov">          0 :       if (block)</span>
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :         (*block)[0] = (JCOEF) s;</span>
+<span class="lineNum">     685 </span>            :     }
+<span class="lineNum">     686 </span>            : 
+<span class="lineNum">     687 </span><span class="lineNoCov">          0 :     if (entropy-&gt;ac_needed[blkn] &amp;&amp; block) {</span>
+<span class="lineNum">     688 </span>            : 
+<span class="lineNum">     689 </span><span class="lineNoCov">          0 :       for (k = 1; k &lt; DCTSIZE2; k++) {</span>
+<span class="lineNum">     690 </span><span class="lineNoCov">          0 :         HUFF_DECODE_FAST(s, l, actbl, slow_decode_mcu);</span>
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :         r = s &gt;&gt; 4;</span>
+<span class="lineNum">     692 </span><span class="lineNoCov">          0 :         s &amp;= 15;</span>
+<span class="lineNum">     693 </span>            : 
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :         if (s) {</span>
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :           k += r;</span>
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :           FILL_BIT_BUFFER_FAST</span>
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :           r = GET_BITS(s);</span>
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :           s = HUFF_EXTEND(r, s);</span>
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :           (*block)[jpeg_natural_order[k]] = (JCOEF) s;</span>
+<span class="lineNum">     700 </span>            :         } else {
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :           if (r != 15) break;</span>
+<span class="lineNum">     702 </span><span class="lineNoCov">          0 :           k += 15;</span>
+<span class="lineNum">     703 </span>            :         }
+<span class="lineNum">     704 </span>            :       }
+<span class="lineNum">     705 </span>            : 
+<span class="lineNum">     706 </span>            :     } else {
+<span class="lineNum">     707 </span>            : 
+<span class="lineNum">     708 </span><span class="lineNoCov">          0 :       for (k = 1; k &lt; DCTSIZE2; k++) {</span>
+<span class="lineNum">     709 </span><span class="lineNoCov">          0 :         HUFF_DECODE_FAST(s, l, actbl, slow_decode_mcu);</span>
+<span class="lineNum">     710 </span><span class="lineNoCov">          0 :         r = s &gt;&gt; 4;</span>
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :         s &amp;= 15;</span>
+<span class="lineNum">     712 </span>            : 
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :         if (s) {</span>
+<span class="lineNum">     714 </span><span class="lineNoCov">          0 :           k += r;</span>
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :           FILL_BIT_BUFFER_FAST</span>
+<span class="lineNum">     716 </span><span class="lineNoCov">          0 :           DROP_BITS(s);</span>
+<span class="lineNum">     717 </span>            :         } else {
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 :           if (r != 15) break;</span>
+<span class="lineNum">     719 </span><span class="lineNoCov">          0 :           k += 15;</span>
+<span class="lineNum">     720 </span>            :         }
+<span class="lineNum">     721 </span>            :       }
+<span class="lineNum">     722 </span>            :     }
+<span class="lineNum">     723 </span>            :   }
+<span class="lineNum">     724 </span>            : 
+<span class="lineNum">     725 </span><span class="lineNoCov">          0 :   if (cinfo-&gt;unread_marker != 0) {</span>
+<span class="lineNum">     726 </span>            : slow_decode_mcu:
+<span class="lineNum">     727 </span><span class="lineNoCov">          0 :     cinfo-&gt;unread_marker = 0;</span>
+<span class="lineNum">     728 </span><span class="lineNoCov">          0 :     return FALSE;</span>
+<span class="lineNum">     729 </span>            :   }
+<span class="lineNum">     730 </span>            : 
+<span class="lineNum">     731 </span><span class="lineNoCov">          0 :   br_state.bytes_in_buffer -= (buffer - br_state.next_input_byte);</span>
+<span class="lineNum">     732 </span><span class="lineNoCov">          0 :   br_state.next_input_byte = buffer;</span>
+<span class="lineNum">     733 </span><span class="lineNoCov">          0 :   BITREAD_SAVE_STATE(cinfo,entropy-&gt;bitstate);</span>
+<span class="lineNum">     734 </span><span class="lineNoCov">          0 :   ASSIGN_STATE(entropy-&gt;saved, state);</span>
+<span class="lineNum">     735 </span><span class="lineNoCov">          0 :   return TRUE;</span>
+<span class="lineNum">     736 </span>            : }
+<span class="lineNum">     737 </span>            : 
+<span class="lineNum">     738 </span>            : 
+<span class="lineNum">     739 </span>            : /*
+<span class="lineNum">     740 </span>            :  * Decode and return one MCU's worth of Huffman-compressed coefficients.
+<span class="lineNum">     741 </span>            :  * The coefficients are reordered from zigzag order into natural array order,
+<span class="lineNum">     742 </span>            :  * but are not dequantized.
+<span class="lineNum">     743 </span>            :  *
+<span class="lineNum">     744 </span>            :  * The i'th block of the MCU is stored into the block pointed to by
+<span class="lineNum">     745 </span>            :  * MCU_data[i].  WE ASSUME THIS AREA HAS BEEN ZEROED BY THE CALLER.
+<span class="lineNum">     746 </span>            :  * (Wholesale zeroing is usually a little faster than retail...)
+<span class="lineNum">     747 </span>            :  *
+<span class="lineNum">     748 </span>            :  * Returns FALSE if data source requested suspension.  In that case no
+<span class="lineNum">     749 </span>            :  * changes have been made to permanent state.  (Exception: some output
+<span class="lineNum">     750 </span>            :  * coefficients may already have been assigned.  This is harmless for
+<span class="lineNum">     751 </span>            :  * this module, since we'll just re-assign them on the next call.)
+<span class="lineNum">     752 </span>            :  */
+<span class="lineNum">     753 </span>            : 
+<span class="lineNum">     754 </span>            : #define BUFSIZE (DCTSIZE2 * 8)
+<a name="755"><span class="lineNum">     755 </span>            : </a>
+<span class="lineNum">     756 </span>            : METHODDEF(boolean)
+<span class="lineNum">     757 </span><span class="lineNoCov">          0 : decode_mcu (j_decompress_ptr cinfo, JBLOCKROW *MCU_data)</span>
+<span class="lineNum">     758 </span>            : {
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 :   huff_entropy_ptr entropy = (huff_entropy_ptr) cinfo-&gt;entropy;</span>
+<span class="lineNum">     760 </span><span class="lineNoCov">          0 :   int usefast = 1;</span>
+<span class="lineNum">     761 </span>            : 
+<span class="lineNum">     762 </span>            :   /* Process restart marker if needed; may have to suspend */
+<span class="lineNum">     763 </span><span class="lineNoCov">          0 :   if (cinfo-&gt;restart_interval) {</span>
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 :     if (entropy-&gt;restarts_to_go == 0)</span>
+<span class="lineNum">     765 </span><span class="lineNoCov">          0 :       if (! process_restart(cinfo))</span>
+<span class="lineNum">     766 </span><span class="lineNoCov">          0 :         return FALSE;</span>
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 :     usefast = 0;</span>
+<span class="lineNum">     768 </span>            :   }
+<span class="lineNum">     769 </span>            : 
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :   if (cinfo-&gt;src-&gt;bytes_in_buffer &lt; BUFSIZE * (size_t)cinfo-&gt;blocks_in_MCU</span>
+<span class="lineNum">     771 </span><span class="lineNoCov">          0 :     || cinfo-&gt;unread_marker != 0)</span>
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 :     usefast = 0;</span>
+<span class="lineNum">     773 </span>            : 
+<span class="lineNum">     774 </span>            :   /* If we've run out of data, just leave the MCU set to zeroes.
+<span class="lineNum">     775 </span>            :    * This way, we return uniform gray for the remainder of the segment.
+<span class="lineNum">     776 </span>            :    */
+<span class="lineNum">     777 </span><span class="lineNoCov">          0 :   if (! entropy-&gt;pub.insufficient_data) {</span>
+<span class="lineNum">     778 </span>            : 
+<span class="lineNum">     779 </span><span class="lineNoCov">          0 :     if (usefast) {</span>
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 :       if (!decode_mcu_fast(cinfo, MCU_data)) goto use_slow;</span>
+<span class="lineNum">     781 </span>            :     }
+<span class="lineNum">     782 </span>            :     else {
+<span class="lineNum">     783 </span>            :       use_slow:
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :       if (!decode_mcu_slow(cinfo, MCU_data)) return FALSE;</span>
+<span class="lineNum">     785 </span>            :     }
+<span class="lineNum">     786 </span>            : 
+<span class="lineNum">     787 </span>            :   }
+<span class="lineNum">     788 </span>            : 
+<span class="lineNum">     789 </span>            :   /* Account for restart interval (no-op if not using restarts) */
+<span class="lineNum">     790 </span><span class="lineNoCov">          0 :   entropy-&gt;restarts_to_go--;</span>
+<span class="lineNum">     791 </span>            : 
+<span class="lineNum">     792 </span><span class="lineNoCov">          0 :   return TRUE;</span>
+<span class="lineNum">     793 </span>            : }
+<span class="lineNum">     794 </span>            : 
+<span class="lineNum">     795 </span>            : 
+<span class="lineNum">     796 </span>            : /*
+<span class="lineNum">     797 </span>            :  * Module initialization routine for Huffman entropy decoding.
+<span class="lineNum">     798 </span>            :  */
+<a name="799"><span class="lineNum">     799 </span>            : </a>
+<span class="lineNum">     800 </span>            : GLOBAL(void)
+<span class="lineNum">     801 </span><span class="lineNoCov">          0 : jinit_huff_decoder (j_decompress_ptr cinfo)</span>
+<span class="lineNum">     802 </span>            : {
+<span class="lineNum">     803 </span>            :   huff_entropy_ptr entropy;
+<span class="lineNum">     804 </span>            :   int i;
+<span class="lineNum">     805 </span>            : 
+<span class="lineNum">     806 </span>            :   /* Motion JPEG frames typically do not include the Huffman tables if they
+<span class="lineNum">     807 </span>            :      are the default tables.  Thus, if the tables are not set by the time
+<span class="lineNum">     808 </span>            :      the Huffman decoder is initialized (usually within the body of
+<span class="lineNum">     809 </span>            :      jpeg_start_decompress()), we set them to default values. */
+<span class="lineNum">     810 </span><span class="lineNoCov">          0 :   std_huff_tables((j_common_ptr) cinfo);</span>
+<span class="lineNum">     811 </span>            : 
+<span class="lineNum">     812 </span><span class="lineNoCov">          0 :   entropy = (huff_entropy_ptr)</span>
+<span class="lineNum">     813 </span><span class="lineNoCov">          0 :     (*cinfo-&gt;mem-&gt;alloc_small) ((j_common_ptr) cinfo, JPOOL_IMAGE,</span>
+<span class="lineNum">     814 </span>            :                                 sizeof(huff_entropy_decoder));
+<span class="lineNum">     815 </span><span class="lineNoCov">          0 :   cinfo-&gt;entropy = (struct jpeg_entropy_decoder *) entropy;</span>
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 :   entropy-&gt;pub.start_pass = start_pass_huff_decoder;</span>
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :   entropy-&gt;pub.decode_mcu = decode_mcu;</span>
+<span class="lineNum">     818 </span>            : 
+<span class="lineNum">     819 </span>            :   /* Mark tables unallocated */
+<span class="lineNum">     820 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; NUM_HUFF_TBLS; i++) {</span>
+<span class="lineNum">     821 </span><span class="lineNoCov">          0 :     entropy-&gt;dc_derived_tbls[i] = entropy-&gt;ac_derived_tbls[i] = NULL;</span>
+<span class="lineNum">     822 </span>            :   }
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,451 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - dom/media/MediaDecoderReader.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">dom/media</a> - MediaDecoderReader.cpp<span style="font-size: 80%;"> (source / <a href="MediaDecoderReader.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">169</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">50</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;MediaDecoderReader.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;AbstractMediaDecoder.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;ImageContainer.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;MediaPrefs.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;MediaResource.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;VideoUtils.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/Mutex.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;mozilla/SharedThreadPool.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;mozilla/TaskQueue.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;mozilla/mozalloc.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;nsPrintfCString.h&quot;
+<span class="lineNum">      19 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      20 </span>            : #include &lt;stdint.h&gt;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : using namespace mozilla::media;
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : namespace mozilla {
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : // Un-comment to enable logging of seek bisections.
+<span class="lineNum">      27 </span>            : //#define SEEK_LOGGING
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : extern LazyLogModule gMediaDecoderLog;
+<span class="lineNum">      30 </span>            : 
+<span class="lineNum">      31 </span>            : // avoid redefined macro in unified build
+<span class="lineNum">      32 </span>            : #undef FMT
+<span class="lineNum">      33 </span>            : #undef DECODER_LOG
+<span class="lineNum">      34 </span>            : #undef DECODER_WARN
+<span class="lineNum">      35 </span>            : 
+<span class="lineNum">      36 </span>            : #define FMT(x, ...) &quot;Decoder=%p &quot; x, mDecoder, ##__VA_ARGS__
+<span class="lineNum">      37 </span>            : #define DECODER_LOG(...) MOZ_LOG(gMediaDecoderLog, LogLevel::Debug,   (FMT(__VA_ARGS__)))
+<a name="38"><span class="lineNum">      38 </span>            : #define DECODER_WARN(...) NS_WARNING(nsPrintfCString(FMT(__VA_ARGS__)).get())</a>
+<span class="lineNum">      39 </span>            : 
+<a name="40"><span class="lineNum">      40 </span><span class="lineNoCov">          0 : class VideoQueueMemoryFunctor : public nsDequeFunctor {</span></a>
+<span class="lineNum">      41 </span>            : public:
+<a name="42"><span class="lineNum">      42 </span><span class="lineNoCov">          0 :   VideoQueueMemoryFunctor() : mSize(0) {}</span></a>
+<span class="lineNum">      43 </span>            : 
+<a name="44"><span class="lineNum">      44 </span><span class="lineNoCov">          0 :   MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf);</span></a>
+<span class="lineNum">      45 </span>            : 
+<span class="lineNum">      46 </span><span class="lineNoCov">          0 :   virtual void* operator()(void* aObject) {</span>
+<span class="lineNum">      47 </span><span class="lineNoCov">          0 :     const VideoData* v = static_cast&lt;const VideoData*&gt;(aObject);</span>
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 :     mSize += v-&gt;SizeOfIncludingThis(MallocSizeOf);</span>
+<span class="lineNum">      49 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">      50 </span>            :   }
+<span class="lineNum">      51 </span>            : 
+<span class="lineNum">      52 </span>            :   size_t mSize;
+<span class="lineNum">      53 </span>            : };
+<a name="54"><span class="lineNum">      54 </span>            : </a>
+<span class="lineNum">      55 </span>            : 
+<a name="56"><span class="lineNum">      56 </span><span class="lineNoCov">          0 : class AudioQueueMemoryFunctor : public nsDequeFunctor {</span></a>
+<span class="lineNum">      57 </span>            : public:
+<a name="58"><span class="lineNum">      58 </span><span class="lineNoCov">          0 :   AudioQueueMemoryFunctor() : mSize(0) {}</span></a>
+<span class="lineNum">      59 </span>            : 
+<a name="60"><span class="lineNum">      60 </span><span class="lineNoCov">          0 :   MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf);</span></a>
+<span class="lineNum">      61 </span>            : 
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :   virtual void* operator()(void* aObject) {</span>
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :     const AudioData* audioData = static_cast&lt;const AudioData*&gt;(aObject);</span>
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 :     mSize += audioData-&gt;SizeOfIncludingThis(MallocSizeOf);</span>
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">      66 </span>            :   }
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span>            :   size_t mSize;
+<a name="69"><span class="lineNum">      69 </span>            : };</a>
+<span class="lineNum">      70 </span>            : 
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 : MediaDecoderReader::MediaDecoderReader(const MediaDecoderReaderInit&amp; aInit)</span>
+<span class="lineNum">      72 </span>            :   : mAudioCompactor(mAudioQueue)
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :   , mDecoder(aInit.mDecoder)</span>
+<span class="lineNum">      74 </span>            :   , mTaskQueue(new TaskQueue(
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 :       GetMediaThreadPool(MediaThreadType::PLAYBACK),</span>
+<span class="lineNum">      76 </span>            :       &quot;MediaDecoderReader::mTaskQueue&quot;,
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :       /* aSupportsTailDispatch = */ true))</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :   , mBuffered(mTaskQueue, TimeIntervals(), &quot;MediaDecoderReader::mBuffered (Canonical)&quot;)</span>
+<span class="lineNum">      79 </span>            :   , mIgnoreAudioOutputFormat(false)
+<span class="lineNum">      80 </span>            :   , mHitAudioDecodeError(false)
+<span class="lineNum">      81 </span>            :   , mShutdown(false)
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :   , mResource(aInit.mResource)</span>
+<span class="lineNum">      83 </span>            : {
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :   MOZ_COUNT_CTOR(MediaDecoderReader);</span>
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 : }</span>
+<a name="87"><span class="lineNum">      87 </span>            : </a>
+<span class="lineNum">      88 </span>            : nsresult
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 : MediaDecoderReader::Init()</span>
+<span class="lineNum">      90 </span>            : {
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :   return InitInternal();</span>
+<a name="92"><span class="lineNum">      92 </span>            : }</a>
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 : MediaDecoderReader::~MediaDecoderReader()</span>
+<span class="lineNum">      95 </span>            : {
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mShutdown);</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   MOZ_COUNT_DTOR(MediaDecoderReader);</span>
+<a name="98"><span class="lineNum">      98 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      99 </span>            : 
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 : size_t MediaDecoderReader::SizeOfVideoQueueInBytes() const</span>
+<span class="lineNum">     101 </span>            : {
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :   VideoQueueMemoryFunctor functor;</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :   mVideoQueue.LockedForEach(functor);</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :   return functor.mSize;</span>
+<a name="105"><span class="lineNum">     105 </span>            : }</a>
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 : size_t MediaDecoderReader::SizeOfAudioQueueInBytes() const</span>
+<span class="lineNum">     108 </span>            : {
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :   AudioQueueMemoryFunctor functor;</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :   mAudioQueue.LockedForEach(functor);</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :   return functor.mSize;</span>
+<a name="112"><span class="lineNum">     112 </span>            : }</a>
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 : size_t MediaDecoderReader::SizeOfVideoQueueInFrames()</span>
+<span class="lineNum">     115 </span>            : {
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :   return mVideoQueue.GetSize();</span>
+<a name="117"><span class="lineNum">     117 </span>            : }</a>
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 : size_t MediaDecoderReader::SizeOfAudioQueueInFrames()</span>
+<span class="lineNum">     120 </span>            : {
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :   return mAudioQueue.GetSize();</span>
+<span class="lineNum">     122 </span>            : }
+<a name="123"><span class="lineNum">     123 </span>            : </a>
+<span class="lineNum">     124 </span>            : void
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 : MediaDecoderReader::UpdateDuration(const media::TimeUnit&amp; aDuration)</span>
+<span class="lineNum">     126 </span>            : {
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(OnTaskQueue());</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :   mDuration = Some(aDuration);</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :   UpdateBuffered();</span>
+<a name="130"><span class="lineNum">     130 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     131 </span>            : 
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 : nsresult MediaDecoderReader::ResetDecode(TrackSet aTracks)</span>
+<span class="lineNum">     133 </span>            : {
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :   if (aTracks.contains(TrackInfo::kVideoTrack)) {</span>
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :     VideoQueue().Reset();</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :     mBaseVideoPromise.RejectIfExists(NS_ERROR_DOM_MEDIA_CANCELED, __func__);</span>
+<span class="lineNum">     137 </span>            :   }
+<span class="lineNum">     138 </span>            : 
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   if (aTracks.contains(TrackInfo::kAudioTrack)) {</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     AudioQueue().Reset();</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :     mBaseAudioPromise.RejectIfExists(NS_ERROR_DOM_MEDIA_CANCELED, __func__);</span>
+<span class="lineNum">     142 </span>            :   }
+<span class="lineNum">     143 </span>            : 
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     145 </span>            : }
+<a name="146"><span class="lineNum">     146 </span>            : </a>
+<span class="lineNum">     147 </span>            : RefPtr&lt;MediaDecoderReader::VideoDataPromise&gt;
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 : MediaDecoderReader::DecodeToFirstVideoData()</span>
+<span class="lineNum">     149 </span>            : {
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(OnTaskQueue());</span>
+<span class="lineNum">     151 </span>            :   typedef VideoDataPromise PromiseType;
+<a name="152"><span class="lineNum">     152 </span><span class="lineNoCov">          0 :   RefPtr&lt;PromiseType::Private&gt; p = new PromiseType::Private(__func__);</span></a>
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :   RefPtr&lt;MediaDecoderReader&gt; self = this;</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :   InvokeUntil([self] () -&gt; bool {</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(self-&gt;OnTaskQueue());</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :     NS_ENSURE_TRUE(!self-&gt;mShutdown, false);</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :     bool skip = false;</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     if (!self-&gt;DecodeVideoFrame(skip, media::TimeUnit::Zero())) {</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :       self-&gt;VideoQueue().Finish();</span>
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :       return !!self-&gt;VideoQueue().PeekFront();</span>
+<a name="161"><span class="lineNum">     161 </span>            :     }</a>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :   }, [self] () -&gt; bool {</span>
+<a name="164"><span class="lineNum">     164 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(self-&gt;OnTaskQueue());</span></a>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :     return self-&gt;VideoQueue().GetSize();</span>
+<a name="166"><span class="lineNum">     166 </span><span class="lineNoCov">          0 :   })-&gt;Then(OwnerThread(), __func__, [self, p] () {</span></a>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :     p-&gt;Resolve(self-&gt;VideoQueue().PeekFront(), __func__);</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :   }, [p] () {</span>
+<span class="lineNum">     169 </span>            :     // We don't have a way to differentiate EOS, error, and shutdown here. :-(
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :     p-&gt;Reject(NS_ERROR_DOM_MEDIA_END_OF_STREAM, __func__);</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :   });</span>
+<span class="lineNum">     172 </span>            : 
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :   return p.forget();</span>
+<span class="lineNum">     174 </span>            : }
+<a name="175"><span class="lineNum">     175 </span>            : </a>
+<span class="lineNum">     176 </span>            : void
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 : MediaDecoderReader::UpdateBuffered()</span>
+<span class="lineNum">     178 </span>            : {
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(OnTaskQueue());</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE_VOID(!mShutdown);</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :   mBuffered = GetBuffered();</span>
+<span class="lineNum">     182 </span>            : }
+<a name="183"><span class="lineNum">     183 </span>            : </a>
+<span class="lineNum">     184 </span>            : void
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 : MediaDecoderReader::VisibilityChanged()</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 : {}</span>
+<a name="187"><span class="lineNum">     187 </span>            : </a>
+<span class="lineNum">     188 </span>            : media::TimeIntervals
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 : MediaDecoderReader::GetBuffered()</span>
+<span class="lineNum">     190 </span>            : {
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(OnTaskQueue());</span>
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :   if (mDuration.isNothing()) {</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :     return TimeIntervals();</span>
+<span class="lineNum">     195 </span>            :   }
+<span class="lineNum">     196 </span>            : 
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   AutoPinned&lt;MediaResource&gt; stream(mResource);</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :   return GetEstimatedBufferedTimeRanges(stream, mDuration-&gt;ToMicroseconds());</span>
+<span class="lineNum">     199 </span>            : }
+<a name="200"><span class="lineNum">     200 </span>            : </a>
+<span class="lineNum">     201 </span>            : RefPtr&lt;MediaDecoderReader::MetadataPromise&gt;
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 : MediaDecoderReader::AsyncReadMetadata()</span>
+<span class="lineNum">     203 </span>            : {
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(OnTaskQueue());</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :   DECODER_LOG(&quot;MediaDecoderReader::AsyncReadMetadata&quot;);</span>
+<span class="lineNum">     206 </span>            : 
+<span class="lineNum">     207 </span>            :   // Attempt to read the metadata.
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :   MetadataHolder metadata;</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :   metadata.mInfo = MakeUnique&lt;MediaInfo&gt;();</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :   MetadataTags* tags = nullptr;</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :   nsresult rv = ReadMetadata(metadata.mInfo.get(), &amp;tags);</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :   metadata.mTags.reset(tags);</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   metadata.mInfo-&gt;AssertValid();</span>
+<span class="lineNum">     214 </span>            : 
+<span class="lineNum">     215 </span>            :   // Update the buffer ranges before resolving the metadata promise. Bug 1320258.
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :   UpdateBuffered();</span>
+<span class="lineNum">     217 </span>            : 
+<span class="lineNum">     218 </span>            :   // We're not waiting for anything. If we didn't get the metadata, that's an
+<span class="lineNum">     219 </span>            :   // error.
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv) || !metadata.mInfo-&gt;HasValidMedia()) {</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :     DECODER_WARN(&quot;ReadMetadata failed, rv=%&quot; PRIx32 &quot; HasValidMedia=%d&quot;,</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :                  static_cast&lt;uint32_t&gt;(rv), metadata.mInfo-&gt;HasValidMedia());</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :     return MetadataPromise::CreateAndReject(NS_ERROR_DOM_MEDIA_METADATA_ERR, __func__);</span>
+<span class="lineNum">     224 </span>            :   }
+<span class="lineNum">     225 </span>            : 
+<span class="lineNum">     226 </span>            :   // Success!
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :   return MetadataPromise::CreateAndResolve(Move(metadata), __func__);</span>
+<a name="228"><span class="lineNum">     228 </span>            : }</a>
+<span class="lineNum">     229 </span>            : 
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 : class ReRequestVideoWithSkipTask : public Runnable</span>
+<a name="231"><span class="lineNum">     231 </span>            : {</a>
+<span class="lineNum">     232 </span>            : public:
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :   ReRequestVideoWithSkipTask(MediaDecoderReader* aReader,</span>
+<span class="lineNum">     234 </span>            :                              const media::TimeUnit&amp; aTimeThreshold)
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :     : Runnable(&quot;ReRequestVideoWithSkipTask&quot;)</span>
+<span class="lineNum">     236 </span>            :     , mReader(aReader)
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :     , mTimeThreshold(aTimeThreshold)</span>
+<span class="lineNum">     238 </span>            :   {
+<a name="239"><span class="lineNum">     239 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :   NS_IMETHOD Run() override</span>
+<span class="lineNum">     242 </span>            :   {
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mReader-&gt;OnTaskQueue());</span>
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span>            :     // Make sure ResetDecode hasn't been called in the mean time.
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :     if (!mReader-&gt;mBaseVideoPromise.IsEmpty()) {</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :       mReader-&gt;RequestVideoData(mTimeThreshold);</span>
+<span class="lineNum">     248 </span>            :     }
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     251 </span>            :   }
+<span class="lineNum">     252 </span>            : 
+<span class="lineNum">     253 </span>            : private:
+<span class="lineNum">     254 </span>            :   RefPtr&lt;MediaDecoderReader&gt; mReader;
+<span class="lineNum">     255 </span>            :   const media::TimeUnit mTimeThreshold;
+<a name="256"><span class="lineNum">     256 </span>            : };</a>
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 : class ReRequestAudioTask : public Runnable</span>
+<a name="259"><span class="lineNum">     259 </span>            : {</a>
+<span class="lineNum">     260 </span>            : public:
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :   explicit ReRequestAudioTask(MediaDecoderReader* aReader)</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :     : Runnable(&quot;ReRequestAudioTask&quot;)</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :     , mReader(aReader)</span>
+<span class="lineNum">     264 </span>            :   {
+<a name="265"><span class="lineNum">     265 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     266 </span>            : 
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :   NS_IMETHOD Run() override</span>
+<span class="lineNum">     268 </span>            :   {
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mReader-&gt;OnTaskQueue());</span>
+<span class="lineNum">     270 </span>            : 
+<span class="lineNum">     271 </span>            :     // Make sure ResetDecode hasn't been called in the mean time.
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :     if (!mReader-&gt;mBaseAudioPromise.IsEmpty()) {</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :       mReader-&gt;RequestAudioData();</span>
+<span class="lineNum">     274 </span>            :     }
+<span class="lineNum">     275 </span>            : 
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     277 </span>            :   }
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span>            : private:
+<span class="lineNum">     280 </span>            :   RefPtr&lt;MediaDecoderReader&gt; mReader;
+<span class="lineNum">     281 </span>            : };
+<a name="282"><span class="lineNum">     282 </span>            : </a>
+<span class="lineNum">     283 </span>            : RefPtr&lt;MediaDecoderReader::VideoDataPromise&gt;
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 : MediaDecoderReader::RequestVideoData(const media::TimeUnit&amp; aTimeThreshold)</span>
+<span class="lineNum">     285 </span>            : {
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :   RefPtr&lt;VideoDataPromise&gt; p = mBaseVideoPromise.Ensure(__func__);</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   bool skip = false;</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :   while (VideoQueue().GetSize() == 0 &amp;&amp;</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :          !VideoQueue().IsFinished()) {</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :     if (!DecodeVideoFrame(skip, aTimeThreshold)) {</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :       VideoQueue().Finish();</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :     } else if (skip) {</span>
+<span class="lineNum">     293 </span>            :       // We still need to decode more data in order to skip to the next
+<span class="lineNum">     294 </span>            :       // keyframe. Post another task to the decode task queue to decode
+<span class="lineNum">     295 </span>            :       // again. We don't just decode straight in a loop here, as that
+<span class="lineNum">     296 </span>            :       // would hog the decode task queue.
+<span class="lineNum">     297 </span>            :       RefPtr&lt;nsIRunnable&gt; task(
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :         new ReRequestVideoWithSkipTask(this, aTimeThreshold));</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :       mTaskQueue-&gt;Dispatch(task.forget());</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :       return p;</span>
+<span class="lineNum">     301 </span>            :     }
+<span class="lineNum">     302 </span>            :   }
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :   if (VideoQueue().GetSize() &gt; 0) {</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :     RefPtr&lt;VideoData&gt; v = VideoQueue().PopFront();</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :     mBaseVideoPromise.Resolve(v, __func__);</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   } else if (VideoQueue().IsFinished()) {</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :     mBaseVideoPromise.Reject(NS_ERROR_DOM_MEDIA_END_OF_STREAM, __func__);</span>
+<span class="lineNum">     308 </span>            :   } else {
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(false, &quot;Dropping this promise on the floor&quot;);</span>
+<span class="lineNum">     310 </span>            :   }
+<span class="lineNum">     311 </span>            : 
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :   return p;</span>
+<span class="lineNum">     313 </span>            : }
+<a name="314"><span class="lineNum">     314 </span>            : </a>
+<span class="lineNum">     315 </span>            : RefPtr&lt;MediaDecoderReader::AudioDataPromise&gt;
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 : MediaDecoderReader::RequestAudioData()</span>
+<span class="lineNum">     317 </span>            : {
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :   RefPtr&lt;AudioDataPromise&gt; p = mBaseAudioPromise.Ensure(__func__);</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :   while (AudioQueue().GetSize() == 0 &amp;&amp;</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :          !AudioQueue().IsFinished()) {</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     if (!DecodeAudioData()) {</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :       AudioQueue().Finish();</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     324 </span>            :     }
+<span class="lineNum">     325 </span>            :     // AudioQueue size is still zero, post a task to try again. Don't spin
+<span class="lineNum">     326 </span>            :     // waiting in this while loop since it somehow prevents audio EOS from
+<span class="lineNum">     327 </span>            :     // coming in gstreamer 1.x when there is still video buffer waiting to be
+<span class="lineNum">     328 </span>            :     // consumed. (|mVideoSinkBufferCount| &gt; 0)
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :     if (AudioQueue().GetSize() == 0) {</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :       RefPtr&lt;nsIRunnable&gt; task(new ReRequestAudioTask(this));</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :       mTaskQueue-&gt;Dispatch(task.forget());</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :       return p;</span>
+<span class="lineNum">     333 </span>            :     }
+<span class="lineNum">     334 </span>            :   }
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :   if (AudioQueue().GetSize() &gt; 0) {</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :     RefPtr&lt;AudioData&gt; a = AudioQueue().PopFront();</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :     mBaseAudioPromise.Resolve(a, __func__);</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :   } else if (AudioQueue().IsFinished()) {</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     mBaseAudioPromise.Reject(mHitAudioDecodeError</span>
+<span class="lineNum">     340 </span>            :                              ? NS_ERROR_DOM_MEDIA_FATAL_ERR
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :                              : NS_ERROR_DOM_MEDIA_END_OF_STREAM, __func__);</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :     mHitAudioDecodeError = false;</span>
+<span class="lineNum">     343 </span>            :   } else {
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(false, &quot;Dropping this promise on the floor&quot;);</span>
+<span class="lineNum">     345 </span>            :   }
+<span class="lineNum">     346 </span>            : 
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :   return p;</span>
+<span class="lineNum">     348 </span>            : }
+<a name="349"><span class="lineNum">     349 </span>            : </a>
+<span class="lineNum">     350 </span>            : RefPtr&lt;ShutdownPromise&gt;
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 : MediaDecoderReader::Shutdown()</span>
+<span class="lineNum">     352 </span>            : {
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(OnTaskQueue());</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :   mShutdown = true;</span>
+<span class="lineNum">     355 </span>            : 
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :   mBaseAudioPromise.RejectIfExists(NS_ERROR_DOM_MEDIA_END_OF_STREAM, __func__);</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :   mBaseVideoPromise.RejectIfExists(NS_ERROR_DOM_MEDIA_END_OF_STREAM, __func__);</span>
+<span class="lineNum">     358 </span>            : 
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :   ReleaseResources();</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   mBuffered.DisconnectAll();</span>
+<span class="lineNum">     361 </span>            : 
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :   mDecoder = nullptr;</span>
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :   return mTaskQueue-&gt;BeginShutdown();</span>
+<span class="lineNum">     365 </span>            : }
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

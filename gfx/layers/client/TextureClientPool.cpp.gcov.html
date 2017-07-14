@@ -1,0 +1,431 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - gfx/layers/client/TextureClientPool.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">gfx/layers/client</a> - TextureClientPool.cpp<span style="font-size: 80%;"> (source / <a href="TextureClientPool.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">132</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">17</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*-</a>
+<span class="lineNum">       2 </span>            : * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       3 </span>            : * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       4 </span>            : * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       5 </span>            : 
+<span class="lineNum">       6 </span>            : #include &quot;TextureClientPool.h&quot;
+<span class="lineNum">       7 </span>            : #include &quot;CompositableClient.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;mozilla/layers/CompositableForwarder.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/layers/TextureForwarder.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/layers/TiledContentClient.h&quot;
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : #include &quot;gfxPrefs.h&quot;
+<span class="lineNum">      13 </span>            : 
+<span class="lineNum">      14 </span>            : #include &quot;nsComponentManagerUtils.h&quot;
+<span class="lineNum">      15 </span>            : 
+<span class="lineNum">      16 </span>            : #define TCP_LOG(...)
+<span class="lineNum">      17 </span>            : //#define TCP_LOG(...) printf_stderr(__VA_ARGS__);
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : namespace mozilla {
+<span class="lineNum">      20 </span>            : namespace layers {
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : // We want to shrink to our maximum size of N unused tiles
+<a name="23"><span class="lineNum">      23 </span>            : // after a timeout to allow for short-term budget requirements</a>
+<span class="lineNum">      24 </span>            : static void
+<span class="lineNum">      25 </span><span class="lineNoCov">          0 : ShrinkCallback(nsITimer *aTimer, void *aClosure)</span>
+<span class="lineNum">      26 </span>            : {
+<span class="lineNum">      27 </span><span class="lineNoCov">          0 :   static_cast&lt;TextureClientPool*&gt;(aClosure)-&gt;ShrinkToMaximumSize();</span>
+<span class="lineNum">      28 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : // After a certain amount of inactivity, let's clear the pool so that
+<span class="lineNum">      31 </span>            : // we don't hold onto tiles needlessly. In general, allocations are
+<span class="lineNum">      32 </span>            : // cheap enough that re-allocating isn't an issue unless we're allocating
+<a name="33"><span class="lineNum">      33 </span>            : // at an inopportune time (e.g. mid-animation).</a>
+<span class="lineNum">      34 </span>            : static void
+<span class="lineNum">      35 </span><span class="lineNoCov">          0 : ClearCallback(nsITimer *aTimer, void *aClosure)</span>
+<span class="lineNum">      36 </span>            : {
+<span class="lineNum">      37 </span><span class="lineNoCov">          0 :   static_cast&lt;TextureClientPool*&gt;(aClosure)-&gt;Clear();</span>
+<a name="38"><span class="lineNum">      38 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span><span class="lineNoCov">          0 : TextureClientPool::TextureClientPool(LayersBackend aLayersBackend,</span>
+<span class="lineNum">      41 </span>            :                                      int32_t aMaxTextureSize,
+<span class="lineNum">      42 </span>            :                                      gfx::SurfaceFormat aFormat,
+<span class="lineNum">      43 </span>            :                                      gfx::IntSize aSize,
+<span class="lineNum">      44 </span>            :                                      TextureFlags aFlags,
+<span class="lineNum">      45 </span>            :                                      uint32_t aShrinkTimeoutMsec,
+<span class="lineNum">      46 </span>            :                                      uint32_t aClearTimeoutMsec,
+<span class="lineNum">      47 </span>            :                                      uint32_t aInitialPoolSize,
+<span class="lineNum">      48 </span>            :                                      uint32_t aPoolUnusedSize,
+<span class="lineNum">      49 </span><span class="lineNoCov">          0 :                                      TextureForwarder* aAllocator)</span>
+<span class="lineNum">      50 </span>            :   : mBackend(aLayersBackend)
+<span class="lineNum">      51 </span>            :   , mMaxTextureSize(aMaxTextureSize)
+<span class="lineNum">      52 </span>            :   , mFormat(aFormat)
+<span class="lineNum">      53 </span>            :   , mSize(aSize)
+<span class="lineNum">      54 </span>            :   , mFlags(aFlags)
+<span class="lineNum">      55 </span>            :   , mShrinkTimeoutMsec(aShrinkTimeoutMsec)
+<span class="lineNum">      56 </span>            :   , mClearTimeoutMsec(aClearTimeoutMsec)
+<span class="lineNum">      57 </span>            :   , mInitialPoolSize(aInitialPoolSize)
+<span class="lineNum">      58 </span>            :   , mPoolUnusedSize(aPoolUnusedSize)
+<span class="lineNum">      59 </span>            :   , mOutstandingClients(0)
+<span class="lineNum">      60 </span>            :   , mSurfaceAllocator(aAllocator)
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 :   , mDestroyed(false)</span>
+<span class="lineNum">      62 </span>            : {
+<span class="lineNum">      63 </span>            :   TCP_LOG(&quot;TexturePool %p created with maximum unused texture clients %u\n&quot;,
+<span class="lineNum">      64 </span>            :       this, mInitialPoolSize);
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :   mShrinkTimer = do_CreateInstance(&quot;@mozilla.org/timer;1&quot;);</span>
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 :   mClearTimer = do_CreateInstance(&quot;@mozilla.org/timer;1&quot;);</span>
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :   if (aFormat == gfx::SurfaceFormat::UNKNOWN) {</span>
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :     gfxWarning() &lt;&lt; &quot;Creating texture pool for SurfaceFormat::UNKNOWN format&quot;;</span>
+<span class="lineNum">      69 </span>            :   }
+<a name="70"><span class="lineNum">      70 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      71 </span>            : 
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 : TextureClientPool::~TextureClientPool()</span>
+<span class="lineNum">      73 </span>            : {
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :   mShrinkTimer-&gt;Cancel();</span>
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 :   mClearTimer-&gt;Cancel();</span>
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 : }</span>
+<a name="77"><span class="lineNum">      77 </span>            : </a>
+<span class="lineNum">      78 </span>            : #ifdef GFX_DEBUG_TRACK_CLIENTS_IN_POOL
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 : static bool TestClientPool(const char* what,</span>
+<span class="lineNum">      80 </span>            :                            TextureClient* aClient,
+<span class="lineNum">      81 </span>            :                            TextureClientPool* aPool)
+<span class="lineNum">      82 </span>            : {
+<span class="lineNum">      83 </span><span class="lineNoCov">          0 :   if (!aClient || !aPool) {</span>
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">      85 </span>            :   }
+<span class="lineNum">      86 </span>            : 
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :   TextureClientPool* actual = aClient-&gt;mPoolTracker;</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :   bool ok = (actual == aPool);</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :   if (ok) {</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :     ok = (aClient-&gt;GetFormat() == aPool-&gt;GetFormat());</span>
+<span class="lineNum">      91 </span>            :   }
+<span class="lineNum">      92 </span>            : 
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :   if (!ok) {</span>
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :     if (actual) {</span>
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :       gfxCriticalError() &lt;&lt; &quot;Pool error(&quot; &lt;&lt; what &lt;&lt; &quot;): &quot;</span>
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :                    &lt;&lt; aPool &lt;&lt; &quot;-&quot; &lt;&lt; aPool-&gt;GetFormat() &lt;&lt; &quot;, &quot;</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :                    &lt;&lt; actual &lt;&lt; &quot;-&quot; &lt;&lt; actual-&gt;GetFormat() &lt;&lt; &quot;, &quot;</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :                    &lt;&lt; aClient-&gt;GetFormat();</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :       MOZ_CRASH(&quot;GFX: Crashing with actual&quot;);</span>
+<span class="lineNum">     100 </span>            :     } else {
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :       gfxCriticalError() &lt;&lt; &quot;Pool error(&quot; &lt;&lt; what &lt;&lt; &quot;): &quot;</span>
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :                    &lt;&lt; aPool &lt;&lt; &quot;-&quot; &lt;&lt; aPool-&gt;GetFormat() &lt;&lt; &quot;, nullptr, &quot;</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :                    &lt;&lt; aClient-&gt;GetFormat();</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :       MOZ_CRASH(&quot;GFX: Crashing without actual&quot;);</span>
+<span class="lineNum">     105 </span>            :     }
+<span class="lineNum">     106 </span>            :   }
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :   return ok;</span>
+<span class="lineNum">     108 </span>            : }
+<span class="lineNum">     109 </span>            : #endif
+<a name="110"><span class="lineNum">     110 </span>            : </a>
+<span class="lineNum">     111 </span>            : already_AddRefed&lt;TextureClient&gt;
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 : TextureClientPool::GetTextureClient()</span>
+<span class="lineNum">     113 </span>            : {
+<span class="lineNum">     114 </span>            :   // Try to fetch a client from the pool
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :   RefPtr&lt;TextureClient&gt; textureClient;</span>
+<span class="lineNum">     116 </span>            : 
+<span class="lineNum">     117 </span>            :   // We initially allocate mInitialPoolSize for our pool. If we run
+<span class="lineNum">     118 </span>            :   // out of TextureClients, we allocate additional TextureClients to try and keep around
+<span class="lineNum">     119 </span>            :   // mPoolUnusedSize
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :   if (!mTextureClients.size()) {</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :     AllocateTextureClient();</span>
+<span class="lineNum">     122 </span>            :   }
+<span class="lineNum">     123 </span>            : 
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :   if (!mTextureClients.size()) {</span>
+<span class="lineNum">     125 </span>            :     // All our allocations failed, return nullptr
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     127 </span>            :   }
+<span class="lineNum">     128 </span>            : 
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :   mOutstandingClients++;</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :   textureClient = mTextureClients.top();</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :   mTextureClients.pop();</span>
+<span class="lineNum">     132 </span>            : #ifdef GFX_DEBUG_TRACK_CLIENTS_IN_POOL
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :   if (textureClient) {</span>
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :     textureClient-&gt;mPoolTracker = this;</span>
+<span class="lineNum">     135 </span>            :   }
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :   DebugOnly&lt;bool&gt; ok = TestClientPool(&quot;fetch&quot;, textureClient, this);</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(ok);</span>
+<span class="lineNum">     138 </span>            : #endif
+<span class="lineNum">     139 </span>            :   TCP_LOG(&quot;TexturePool %p giving %p from pool; size %u outstanding %u\n&quot;,
+<span class="lineNum">     140 </span>            :       this, textureClient.get(), mTextureClients.size(), mOutstandingClients);
+<span class="lineNum">     141 </span>            : 
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   return textureClient.forget();</span>
+<span class="lineNum">     143 </span>            : }
+<a name="144"><span class="lineNum">     144 </span>            : </a>
+<span class="lineNum">     145 </span>            : void
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 : TextureClientPool::AllocateTextureClient()</span>
+<span class="lineNum">     147 </span>            : {
+<span class="lineNum">     148 </span>            :   TCP_LOG(&quot;TexturePool %p allocating TextureClient, outstanding %u\n&quot;,
+<span class="lineNum">     149 </span>            :       this, mOutstandingClients);
+<span class="lineNum">     150 </span>            : 
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :   RefPtr&lt;TextureClient&gt; newClient;</span>
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :   if (gfxPrefs::ForceShmemTiles()) {</span>
+<span class="lineNum">     153 </span>            :     // gfx::BackendType::NONE means use the content backend
+<span class="lineNum">     154 </span>            :     newClient =
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :       TextureClient::CreateForRawBufferAccess(mSurfaceAllocator,</span>
+<span class="lineNum">     156 </span>            :                                               mFormat, mSize,
+<span class="lineNum">     157 </span>            :                                               gfx::BackendType::NONE,
+<span class="lineNum">     158 </span>            :                                               mBackend,
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :                                               mFlags, ALLOC_DEFAULT);</span>
+<span class="lineNum">     160 </span>            :   } else {
+<span class="lineNum">     161 </span>            :     newClient =
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :       TextureClient::CreateForDrawing(mSurfaceAllocator,</span>
+<span class="lineNum">     163 </span>            :                                       mFormat, mSize,
+<span class="lineNum">     164 </span>            :                                       mBackend,
+<span class="lineNum">     165 </span>            :                                       mMaxTextureSize,
+<span class="lineNum">     166 </span>            :                                       BackendSelector::Content,
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :                                       mFlags);</span>
+<span class="lineNum">     168 </span>            :   }
+<span class="lineNum">     169 </span>            : 
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :   if (newClient) {</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :     mTextureClients.push(newClient);</span>
+<span class="lineNum">     172 </span>            :   }
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 : }</span>
+<a name="174"><span class="lineNum">     174 </span>            : </a>
+<span class="lineNum">     175 </span>            : void
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 : TextureClientPool::ResetTimers()</span>
+<span class="lineNum">     177 </span>            : {
+<span class="lineNum">     178 </span>            :   // Shrink down if we're beyond our maximum size
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   if (mShrinkTimeoutMsec &amp;&amp;</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :       mTextureClients.size() + mTextureClientsDeferred.size() &gt; mPoolUnusedSize) {</span>
+<span class="lineNum">     181 </span>            :     TCP_LOG(&quot;TexturePool %p scheduling a shrink-to-max-size\n&quot;, this);
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :     mShrinkTimer-&gt;InitWithNamedFuncCallback(</span>
+<span class="lineNum">     183 </span>            :       ShrinkCallback,
+<span class="lineNum">     184 </span>            :       this,
+<span class="lineNum">     185 </span>            :       mShrinkTimeoutMsec,
+<span class="lineNum">     186 </span>            :       nsITimer::TYPE_ONE_SHOT,
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :       &quot;layers::TextureClientPool::ResetTimers&quot;);</span>
+<span class="lineNum">     188 </span>            :   }
+<span class="lineNum">     189 </span>            : 
+<span class="lineNum">     190 </span>            :   // Clear pool after a period of inactivity to reduce memory consumption
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :   if (mClearTimeoutMsec) {</span>
+<span class="lineNum">     192 </span>            :     TCP_LOG(&quot;TexturePool %p scheduling a clear\n&quot;, this);
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :     mClearTimer-&gt;InitWithNamedFuncCallback(</span>
+<span class="lineNum">     194 </span>            :       ClearCallback,
+<span class="lineNum">     195 </span>            :       this,
+<span class="lineNum">     196 </span>            :       mClearTimeoutMsec,
+<span class="lineNum">     197 </span>            :       nsITimer::TYPE_ONE_SHOT,
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :       &quot;layers::TextureClientPool::ResetTimers&quot;);</span>
+<span class="lineNum">     199 </span>            :   }
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 : }</span>
+<a name="201"><span class="lineNum">     201 </span>            : </a>
+<span class="lineNum">     202 </span>            : void
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 : TextureClientPool::ReturnTextureClient(TextureClient *aClient)</span>
+<span class="lineNum">     204 </span>            : {
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :   if (!aClient || mDestroyed) {</span>
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     207 </span>            :   }
+<span class="lineNum">     208 </span>            : #ifdef GFX_DEBUG_TRACK_CLIENTS_IN_POOL
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :   DebugOnly&lt;bool&gt; ok = TestClientPool(&quot;return&quot;, aClient, this);</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(ok);</span>
+<span class="lineNum">     211 </span>            : #endif
+<span class="lineNum">     212 </span>            :   // Add the client to the pool:
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mOutstandingClients &gt; mTextureClientsDeferred.size());</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :   mOutstandingClients--;</span>
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :   mTextureClients.push(aClient);</span>
+<span class="lineNum">     216 </span>            :   TCP_LOG(&quot;TexturePool %p had client %p returned; size %u outstanding %u\n&quot;,
+<span class="lineNum">     217 </span>            :       this, aClient, mTextureClients.size(), mOutstandingClients);
+<span class="lineNum">     218 </span>            : 
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :   ResetTimers();</span>
+<span class="lineNum">     220 </span>            : }
+<a name="221"><span class="lineNum">     221 </span>            : </a>
+<span class="lineNum">     222 </span>            : void
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 : TextureClientPool::ReturnTextureClientDeferred(TextureClient* aClient)</span>
+<span class="lineNum">     224 </span>            : {
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :   if (!aClient || mDestroyed) {</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     227 </span>            :   }
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aClient-&gt;GetReadLock());</span>
+<span class="lineNum">     229 </span>            : #ifdef GFX_DEBUG_TRACK_CLIENTS_IN_POOL
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :   DebugOnly&lt;bool&gt; ok = TestClientPool(&quot;defer&quot;, aClient, this);</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(ok);</span>
+<span class="lineNum">     232 </span>            : #endif
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :   mTextureClientsDeferred.push_back(aClient);</span>
+<span class="lineNum">     234 </span>            :   TCP_LOG(&quot;TexturePool %p had client %p defer-returned, size %u outstanding %u\n&quot;,
+<span class="lineNum">     235 </span>            :       this, aClient, mTextureClientsDeferred.size(), mOutstandingClients);
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :   ResetTimers();</span>
+<span class="lineNum">     238 </span>            : }
+<a name="239"><span class="lineNum">     239 </span>            : </a>
+<span class="lineNum">     240 </span>            : void
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 : TextureClientPool::ShrinkToMaximumSize()</span>
+<span class="lineNum">     242 </span>            : {
+<span class="lineNum">     243 </span>            :   // We're over our desired maximum size, immediately shrink down to the
+<span class="lineNum">     244 </span>            :   // maximum.
+<span class="lineNum">     245 </span>            :   //
+<span class="lineNum">     246 </span>            :   // We cull from the deferred TextureClients first, as we can't reuse those
+<span class="lineNum">     247 </span>            :   // until they get returned.
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   uint32_t totalUnusedTextureClients = mTextureClients.size() + mTextureClientsDeferred.size();</span>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span>            :   // If we have &gt; mInitialPoolSize outstanding, then we want to keep around
+<span class="lineNum">     251 </span>            :   // mPoolUnusedSize at a maximum. If we have fewer than mInitialPoolSize
+<span class="lineNum">     252 </span>            :   // outstanding, then keep around the entire initial pool size.
+<span class="lineNum">     253 </span>            :   uint32_t targetUnusedClients;
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :   if (mOutstandingClients &gt; mInitialPoolSize) {</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :     targetUnusedClients = mPoolUnusedSize;</span>
+<span class="lineNum">     256 </span>            :   } else {
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :     targetUnusedClients = mInitialPoolSize;</span>
+<span class="lineNum">     258 </span>            :   }
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span>            :   TCP_LOG(&quot;TexturePool %p shrinking to maximum unused size %u; current pool size %u; total outstanding %u\n&quot;,
+<span class="lineNum">     261 </span>            :       this, targetUnusedClients, totalUnusedTextureClients, mOutstandingClients);
+<span class="lineNum">     262 </span>            : 
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :   while (totalUnusedTextureClients &gt; targetUnusedClients) {</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     if (mTextureClientsDeferred.size()) {</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :       mOutstandingClients--;</span>
+<span class="lineNum">     266 </span>            :       TCP_LOG(&quot;TexturePool %p dropped deferred client %p; %u remaining\n&quot;,
+<span class="lineNum">     267 </span>            :           this, mTextureClientsDeferred.front().get(),
+<span class="lineNum">     268 </span>            :           mTextureClientsDeferred.size() - 1);
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :       mTextureClientsDeferred.pop_front();</span>
+<span class="lineNum">     270 </span>            :     } else {
+<span class="lineNum">     271 </span>            :       TCP_LOG(&quot;TexturePool %p dropped non-deferred client %p; %u remaining\n&quot;,
+<span class="lineNum">     272 </span>            :           this, mTextureClients.top().get(), mTextureClients.size() - 1);
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :       mTextureClients.pop();</span>
+<span class="lineNum">     274 </span>            :     }
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :     totalUnusedTextureClients--;</span>
+<span class="lineNum">     276 </span>            :   }
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 : }</span>
+<a name="278"><span class="lineNum">     278 </span>            : </a>
+<span class="lineNum">     279 </span>            : void
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 : TextureClientPool::ReturnDeferredClients()</span>
+<span class="lineNum">     281 </span>            : {
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :   if (mTextureClientsDeferred.empty()) {</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     284 </span>            :   }
+<span class="lineNum">     285 </span>            : 
+<span class="lineNum">     286 </span>            :   TCP_LOG(&quot;TexturePool %p returning %u deferred clients to pool\n&quot;,
+<span class="lineNum">     287 </span>            :       this, mTextureClientsDeferred.size());
+<span class="lineNum">     288 </span>            : 
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   ReturnUnlockedClients();</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   ShrinkToMaximumSize();</span>
+<span class="lineNum">     291 </span>            : }
+<a name="292"><span class="lineNum">     292 </span>            : </a>
+<span class="lineNum">     293 </span>            : void
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 : TextureClientPool::ReturnUnlockedClients()</span>
+<span class="lineNum">     295 </span>            : {
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :   for (auto it = mTextureClientsDeferred.begin(); it != mTextureClientsDeferred.end();) {</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :     MOZ_ASSERT((*it)-&gt;GetReadLock()-&gt;AsNonBlockingLock()-&gt;GetReadCount() &gt;= 1);</span>
+<span class="lineNum">     298 </span>            :     // Last count is held by the lock itself.
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :     if (!(*it)-&gt;IsReadLocked()) {</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :       mTextureClients.push(*it);</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :       it = mTextureClientsDeferred.erase(it);</span>
+<span class="lineNum">     302 </span>            : 
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(mOutstandingClients &gt; 0);</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :       mOutstandingClients--;</span>
+<span class="lineNum">     305 </span>            :     } else {
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :       it++;</span>
+<span class="lineNum">     307 </span>            :     }
+<span class="lineNum">     308 </span>            :   }
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 : }</span>
+<a name="310"><span class="lineNum">     310 </span>            : </a>
+<span class="lineNum">     311 </span>            : void
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 : TextureClientPool::ReportClientLost()</span>
+<span class="lineNum">     313 </span>            : {
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mOutstandingClients &gt; mTextureClientsDeferred.size());</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :   mOutstandingClients--;</span>
+<span class="lineNum">     316 </span>            :   TCP_LOG(&quot;TexturePool %p getting report client lost; down to %u outstanding\n&quot;,
+<span class="lineNum">     317 </span>            :       this, mOutstandingClients);
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 : }</span>
+<a name="319"><span class="lineNum">     319 </span>            : </a>
+<span class="lineNum">     320 </span>            : void
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 : TextureClientPool::Clear()</span>
+<span class="lineNum">     322 </span>            : {
+<span class="lineNum">     323 </span>            :   TCP_LOG(&quot;TexturePool %p getting cleared\n&quot;, this);
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :   while (!mTextureClients.empty()) {</span>
+<span class="lineNum">     325 </span>            :     TCP_LOG(&quot;TexturePool %p releasing client %p\n&quot;,
+<span class="lineNum">     326 </span>            :         this, mTextureClients.top().get());
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :     mTextureClients.pop();</span>
+<span class="lineNum">     328 </span>            :   }
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :   while (!mTextureClientsDeferred.empty()) {</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mOutstandingClients &gt; 0);</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :     mOutstandingClients--;</span>
+<span class="lineNum">     332 </span>            :     TCP_LOG(&quot;TexturePool %p releasing deferred client %p\n&quot;,
+<span class="lineNum">     333 </span>            :         this, mTextureClientsDeferred.front().get());
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :     mTextureClientsDeferred.pop_front();</span>
+<span class="lineNum">     335 </span>            :   }
+<a name="336"><span class="lineNum">     336 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 : void TextureClientPool::Destroy()</span>
+<span class="lineNum">     339 </span>            : {
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :   Clear();</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :   mDestroyed = true;</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :   mInitialPoolSize = 0;</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :   mPoolUnusedSize = 0;</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     345 </span>            : 
+<span class="lineNum">     346 </span>            : } // namespace layers
+<span class="lineNum">     347 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

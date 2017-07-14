@@ -1,0 +1,1069 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - toolkit/components/places/SQLFunctions.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">toolkit/components/places</a> - SQLFunctions.cpp<span style="font-size: 80%;"> (source / <a href="SQLFunctions.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">223</td>
+            <td class="headerCovTableEntry">399</td>
+            <td class="headerCovTableEntryLo">55.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">30</td>
+            <td class="headerCovTableEntry">49</td>
+            <td class="headerCovTableEntryLo">61.2 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* vim: sw=2 ts=2 et lcs=trail\:.,tab\:&gt;~ :</a>
+<span class="lineNum">       2 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       3 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       4 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       5 </span>            : 
+<span class="lineNum">       6 </span>            : #include &quot;mozilla/storage.h&quot;
+<span class="lineNum">       7 </span>            : #include &quot;nsString.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;nsUnicharUtils.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;nsWhitespaceTokenizer.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;nsEscape.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozIPlacesAutoComplete.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;SQLFunctions.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;nsMathUtils.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nsUTF8Utils.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsINavHistoryService.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;nsPrintfCString.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;nsNavHistory.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;mozilla/Likely.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;nsVariant.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;mozilla/HashFunctions.h&quot;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : // Maximum number of chars to search through.
+<span class="lineNum">      23 </span>            : // MatchAutoCompleteFunction won't look for matches over this threshold.
+<span class="lineNum">      24 </span>            : #define MAX_CHARS_TO_SEARCH_THROUGH 255
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : using namespace mozilla::storage;
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">      29 </span>            : //// Anonymous Helpers
+<span class="lineNum">      30 </span>            : 
+<span class="lineNum">      31 </span>            : namespace {
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            :   typedef nsACString::const_char_iterator const_char_iterator;
+<span class="lineNum">      34 </span>            : 
+<span class="lineNum">      35 </span>            :   /**
+<span class="lineNum">      36 </span>            :    * Get a pointer to the word boundary after aStart if aStart points to an
+<span class="lineNum">      37 </span>            :    * ASCII letter (i.e. [a-zA-Z]).  Otherwise, return aNext, which we assume
+<span class="lineNum">      38 </span>            :    * points to the next character in the UTF-8 sequence.
+<span class="lineNum">      39 </span>            :    *
+<span class="lineNum">      40 </span>            :    * We define a word boundary as anything that's not [a-z] -- this lets us
+<span class="lineNum">      41 </span>            :    * match CamelCase words.
+<span class="lineNum">      42 </span>            :    *
+<span class="lineNum">      43 </span>            :    * @param aStart the beginning of the UTF-8 sequence
+<span class="lineNum">      44 </span>            :    * @param aNext the next character in the sequence
+<span class="lineNum">      45 </span>            :    * @param aEnd the first byte which is not part of the sequence
+<span class="lineNum">      46 </span>            :    *
+<span class="lineNum">      47 </span>            :    * @return a pointer to the next word boundary after aStart
+<span class="lineNum">      48 </span>            :    */
+<a name="49"><span class="lineNum">      49 </span>            :   static</a>
+<span class="lineNum">      50 </span>            :   MOZ_ALWAYS_INLINE const_char_iterator
+<span class="lineNum">      51 </span><span class="lineNoCov">          0 :   nextWordBoundary(const_char_iterator const aStart,</span>
+<span class="lineNum">      52 </span>            :                    const_char_iterator const aNext,
+<span class="lineNum">      53 </span>            :                    const_char_iterator const aEnd) {
+<span class="lineNum">      54 </span>            : 
+<span class="lineNum">      55 </span><span class="lineNoCov">          0 :     const_char_iterator cur = aStart;</span>
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :     if (('a' &lt;= *cur &amp;&amp; *cur &lt;= 'z') ||</span>
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :         ('A' &lt;= *cur &amp;&amp; *cur &lt;= 'Z')) {</span>
+<span class="lineNum">      58 </span>            : 
+<span class="lineNum">      59 </span>            :       // Since we'll halt as soon as we see a non-ASCII letter, we can do a
+<span class="lineNum">      60 </span>            :       // simple byte-by-byte comparison here and avoid the overhead of a
+<span class="lineNum">      61 </span>            :       // UTF8CharEnumerator.
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :       do {</span>
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :         cur++;</span>
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 :       } while (cur &lt; aEnd &amp;&amp; 'a' &lt;= *cur &amp;&amp; *cur &lt;= 'z');</span>
+<span class="lineNum">      65 </span>            :     }
+<span class="lineNum">      66 </span>            :     else {
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :       cur = aNext;</span>
+<span class="lineNum">      68 </span>            :     }
+<span class="lineNum">      69 </span>            : 
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :     return cur;</span>
+<span class="lineNum">      71 </span>            :   }
+<span class="lineNum">      72 </span>            : 
+<span class="lineNum">      73 </span>            :   enum FindInStringBehavior {
+<span class="lineNum">      74 </span>            :     eFindOnBoundary,
+<span class="lineNum">      75 </span>            :     eFindAnywhere
+<span class="lineNum">      76 </span>            :   };
+<span class="lineNum">      77 </span>            : 
+<span class="lineNum">      78 </span>            :   /**
+<span class="lineNum">      79 </span>            :    * findAnywhere and findOnBoundary do almost the same thing, so it's natural
+<span class="lineNum">      80 </span>            :    * to implement them in terms of a single function.  They're both
+<span class="lineNum">      81 </span>            :    * performance-critical functions, however, and checking aBehavior makes them
+<span class="lineNum">      82 </span>            :    * a bit slower.  Our solution is to define findInString as MOZ_ALWAYS_INLINE
+<span class="lineNum">      83 </span>            :    * and rely on the compiler to optimize out the aBehavior check.
+<span class="lineNum">      84 </span>            :    *
+<span class="lineNum">      85 </span>            :    * @param aToken
+<span class="lineNum">      86 </span>            :    *        The token we're searching for
+<span class="lineNum">      87 </span>            :    * @param aSourceString
+<span class="lineNum">      88 </span>            :    *        The string in which we're searching
+<span class="lineNum">      89 </span>            :    * @param aBehavior
+<span class="lineNum">      90 </span>            :    *        eFindOnBoundary if we should only consider matchines which occur on
+<span class="lineNum">      91 </span>            :    *        word boundaries, or eFindAnywhere if we should consider matches
+<span class="lineNum">      92 </span>            :    *        which appear anywhere.
+<span class="lineNum">      93 </span>            :    *
+<span class="lineNum">      94 </span>            :    * @return true if aToken was found in aSourceString, false otherwise.
+<span class="lineNum">      95 </span>            :    */
+<a name="96"><span class="lineNum">      96 </span>            :   static</a>
+<span class="lineNum">      97 </span>            :   MOZ_ALWAYS_INLINE bool
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :   findInString(const nsDependentCSubstring &amp;aToken,</span>
+<span class="lineNum">      99 </span>            :                const nsACString &amp;aSourceString,
+<span class="lineNum">     100 </span>            :                FindInStringBehavior aBehavior)
+<span class="lineNum">     101 </span>            :   {
+<span class="lineNum">     102 </span>            :     // CaseInsensitiveUTF8CharsEqual assumes that there's at least one byte in
+<span class="lineNum">     103 </span>            :     // the both strings, so don't pass an empty token here.
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :     NS_PRECONDITION(!aToken.IsEmpty(), &quot;Don't search for an empty token!&quot;);</span>
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span>            :     // We cannot match anything if there is nothing to search.
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :     if (aSourceString.IsEmpty()) {</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     109 </span>            :     }
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :     const_char_iterator tokenStart(aToken.BeginReading()),</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :                         tokenEnd(aToken.EndReading()),</span>
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :                         sourceStart(aSourceString.BeginReading()),</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :                         sourceEnd(aSourceString.EndReading());</span>
+<span class="lineNum">     115 </span>            : 
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     117 </span>            :       // We are on a word boundary (if aBehavior == eFindOnBoundary).  See if
+<span class="lineNum">     118 </span>            :       // aToken matches sourceStart.
+<span class="lineNum">     119 </span>            : 
+<span class="lineNum">     120 </span>            :       // Check whether the first character in the token matches the character
+<span class="lineNum">     121 </span>            :       // at sourceStart.  At the same time, get a pointer to the next character
+<span class="lineNum">     122 </span>            :       // in both the token and the source.
+<span class="lineNum">     123 </span>            :       const_char_iterator sourceNext, tokenCur;
+<span class="lineNum">     124 </span>            :       bool error;
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :       if (CaseInsensitiveUTF8CharsEqual(sourceStart, tokenStart,</span>
+<span class="lineNum">     126 </span>            :                                         sourceEnd, tokenEnd,
+<span class="lineNum">     127 </span>            :                                         &amp;sourceNext, &amp;tokenCur, &amp;error)) {
+<span class="lineNum">     128 </span>            : 
+<span class="lineNum">     129 </span>            :         // We don't need to check |error| here -- if
+<span class="lineNum">     130 </span>            :         // CaseInsensitiveUTF8CharCompare encounters an error, it'll also
+<span class="lineNum">     131 </span>            :         // return false and we'll catch the error outside the if.
+<span class="lineNum">     132 </span>            : 
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :         const_char_iterator sourceCur = sourceNext;</span>
+<span class="lineNum">     134 </span>            :         while (true) {
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :           if (tokenCur &gt;= tokenEnd) {</span>
+<span class="lineNum">     136 </span>            :             // We matched the whole token!
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">     138 </span>            :           }
+<span class="lineNum">     139 </span>            : 
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :           if (sourceCur &gt;= sourceEnd) {</span>
+<span class="lineNum">     141 </span>            :             // We ran into the end of source while matching a token.  This
+<span class="lineNum">     142 </span>            :             // means we'll never find the token we're looking for.
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     144 </span>            :           }
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :           if (!CaseInsensitiveUTF8CharsEqual(sourceCur, tokenCur,</span>
+<span class="lineNum">     147 </span>            :                                              sourceEnd, tokenEnd,
+<span class="lineNum">     148 </span>            :                                              &amp;sourceCur, &amp;tokenCur, &amp;error)) {
+<span class="lineNum">     149 </span>            :             // sourceCur doesn't match tokenCur (or there's an error), so break
+<span class="lineNum">     150 </span>            :             // out of this loop.
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     152 </span>            :           }
+<span class="lineNum">     153 </span>            :         }
+<span class="lineNum">     154 </span>            :       }
+<span class="lineNum">     155 </span>            : 
+<span class="lineNum">     156 </span>            :       // If something went wrong above, get out of here!
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :       if (MOZ_UNLIKELY(error)) {</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     159 </span>            :       }
+<span class="lineNum">     160 </span>            : 
+<span class="lineNum">     161 </span>            :       // We didn't match the token.  If we're searching for matches on word
+<span class="lineNum">     162 </span>            :       // boundaries, skip to the next word boundary.  Otherwise, advance
+<span class="lineNum">     163 </span>            :       // forward one character, using the sourceNext pointer we saved earlier.
+<span class="lineNum">     164 </span>            : 
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :       if (aBehavior == eFindOnBoundary) {</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :         sourceStart = nextWordBoundary(sourceStart, sourceNext, sourceEnd);</span>
+<span class="lineNum">     167 </span>            :       }
+<span class="lineNum">     168 </span>            :       else {
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :         sourceStart = sourceNext;</span>
+<span class="lineNum">     170 </span>            :       }
+<span class="lineNum">     171 </span>            : 
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :     } while (sourceStart &lt; sourceEnd);</span>
+<span class="lineNum">     173 </span>            : 
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     175 </span>            :   }
+<span class="lineNum">     176 </span>            : 
+<a name="177"><span class="lineNum">     177 </span>            :   static</a>
+<span class="lineNum">     178 </span>            :   MOZ_ALWAYS_INLINE nsDependentCString
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   getSharedString(mozIStorageValueArray* aValues, uint32_t aIndex) {</span>
+<span class="lineNum">     180 </span>            :     uint32_t len;
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :     const char* str = aValues-&gt;AsSharedUTF8String(aIndex, &amp;len);</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :     if (!str) {</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :       return nsDependentCString(&quot;&quot;, (uint32_t)0);</span>
+<span class="lineNum">     184 </span>            :     }
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :     return nsDependentCString(str, len);</span>
+<span class="lineNum">     186 </span>            :   }
+<span class="lineNum">     187 </span>            : 
+<span class="lineNum">     188 </span>            : } // End anonymous namespace
+<span class="lineNum">     189 </span>            : 
+<span class="lineNum">     190 </span>            : namespace mozilla {
+<span class="lineNum">     191 </span>            : namespace places {
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     194 </span>            : //// AutoComplete Matching Function
+<span class="lineNum">     195 </span>            : 
+<a name="196"><span class="lineNum">     196 </span>            :   /* static */</a>
+<span class="lineNum">     197 </span>            :   nsresult
+<span class="lineNum">     198 </span><span class="lineCov">          1 :   MatchAutoCompleteFunction::create(mozIStorageConnection *aDBConn)</span>
+<span class="lineNum">     199 </span>            :   {
+<span class="lineNum">     200 </span>            :     RefPtr&lt;MatchAutoCompleteFunction&gt; function =
+<span class="lineNum">     201 </span><span class="lineCov">          2 :       new MatchAutoCompleteFunction();</span>
+<span class="lineNum">     202 </span>            : 
+<span class="lineNum">     203 </span><span class="lineCov">          2 :     nsresult rv = aDBConn-&gt;CreateFunction(</span>
+<span class="lineNum">     204 </span><span class="lineCov">          2 :       NS_LITERAL_CSTRING(&quot;autocomplete_match&quot;), kArgIndexLength, function</span>
+<span class="lineNum">     205 </span><span class="lineCov">          3 :     );</span>
+<span class="lineNum">     206 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     207 </span>            : 
+<span class="lineNum">     208 </span><span class="lineCov">          1 :     return NS_OK;</span>
+<span class="lineNum">     209 </span>            :   }
+<span class="lineNum">     210 </span>            : 
+<a name="211"><span class="lineNum">     211 </span>            :   /* static */</a>
+<span class="lineNum">     212 </span>            :   nsDependentCSubstring
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   MatchAutoCompleteFunction::fixupURISpec(const nsACString &amp;aURISpec,</span>
+<span class="lineNum">     214 </span>            :                                           int32_t aMatchBehavior,
+<span class="lineNum">     215 </span>            :                                           nsACString &amp;aSpecBuf)
+<span class="lineNum">     216 </span>            :   {
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :     nsDependentCSubstring fixedSpec;</span>
+<span class="lineNum">     218 </span>            : 
+<span class="lineNum">     219 </span>            :     // Try to unescape the string.  If that succeeds and yields a different
+<span class="lineNum">     220 </span>            :     // string which is also valid UTF-8, we'll use it.
+<span class="lineNum">     221 </span>            :     // Otherwise, we will simply use our original string.
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :     bool unescaped = NS_UnescapeURL(aURISpec.BeginReading(),</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :       aURISpec.Length(), esc_SkipControl, aSpecBuf);</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     if (unescaped &amp;&amp; IsUTF8(aSpecBuf)) {</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :       fixedSpec.Rebind(aSpecBuf, 0);</span>
+<span class="lineNum">     226 </span>            :     } else {
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :       fixedSpec.Rebind(aURISpec, 0);</span>
+<span class="lineNum">     228 </span>            :     }
+<span class="lineNum">     229 </span>            : 
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :     if (aMatchBehavior == mozIPlacesAutoComplete::MATCH_ANYWHERE_UNMODIFIED)</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :       return fixedSpec;</span>
+<span class="lineNum">     232 </span>            : 
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :     if (StringBeginsWith(fixedSpec, NS_LITERAL_CSTRING(&quot;http://&quot;))) {</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :       fixedSpec.Rebind(fixedSpec, 7);</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :     } else if (StringBeginsWith(fixedSpec, NS_LITERAL_CSTRING(&quot;https://&quot;))) {</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :       fixedSpec.Rebind(fixedSpec, 8);</span>
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :     } else if (StringBeginsWith(fixedSpec, NS_LITERAL_CSTRING(&quot;ftp://&quot;))) {</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :       fixedSpec.Rebind(fixedSpec, 6);</span>
+<span class="lineNum">     239 </span>            :     }
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :     if (StringBeginsWith(fixedSpec, NS_LITERAL_CSTRING(&quot;www.&quot;))) {</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :       fixedSpec.Rebind(fixedSpec, 4);</span>
+<span class="lineNum">     243 </span>            :     }
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :     return fixedSpec;</span>
+<span class="lineNum">     246 </span>            :   }
+<span class="lineNum">     247 </span>            : 
+<a name="248"><span class="lineNum">     248 </span>            :   /* static */</a>
+<span class="lineNum">     249 </span>            :   bool
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   MatchAutoCompleteFunction::findAnywhere(const nsDependentCSubstring &amp;aToken,</span>
+<span class="lineNum">     251 </span>            :                                           const nsACString &amp;aSourceString)
+<span class="lineNum">     252 </span>            :   {
+<span class="lineNum">     253 </span>            :     // We can't use FindInReadable here; it works only for ASCII.
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :     return findInString(aToken, aSourceString, eFindAnywhere);</span>
+<span class="lineNum">     256 </span>            :   }
+<span class="lineNum">     257 </span>            : 
+<a name="258"><span class="lineNum">     258 </span>            :   /* static */</a>
+<span class="lineNum">     259 </span>            :   bool
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :   MatchAutoCompleteFunction::findOnBoundary(const nsDependentCSubstring &amp;aToken,</span>
+<span class="lineNum">     261 </span>            :                                             const nsACString &amp;aSourceString)
+<span class="lineNum">     262 </span>            :   {
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :     return findInString(aToken, aSourceString, eFindOnBoundary);</span>
+<span class="lineNum">     264 </span>            :   }
+<span class="lineNum">     265 </span>            : 
+<a name="266"><span class="lineNum">     266 </span>            :   /* static */</a>
+<span class="lineNum">     267 </span>            :   bool
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :   MatchAutoCompleteFunction::findBeginning(const nsDependentCSubstring &amp;aToken,</span>
+<span class="lineNum">     269 </span>            :                                            const nsACString &amp;aSourceString)
+<span class="lineNum">     270 </span>            :   {
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :     NS_PRECONDITION(!aToken.IsEmpty(), &quot;Don't search for an empty token!&quot;);</span>
+<span class="lineNum">     272 </span>            : 
+<span class="lineNum">     273 </span>            :     // We can't use StringBeginsWith here, unfortunately.  Although it will
+<span class="lineNum">     274 </span>            :     // happily take a case-insensitive UTF8 comparator, it eventually calls
+<span class="lineNum">     275 </span>            :     // nsACString::Equals, which checks that the two strings contain the same
+<span class="lineNum">     276 </span>            :     // number of bytes before calling the comparator.  Two characters may be
+<span class="lineNum">     277 </span>            :     // case-insensitively equal while taking up different numbers of bytes, so
+<span class="lineNum">     278 </span>            :     // this is not what we want.
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :     const_char_iterator tokenStart(aToken.BeginReading()),</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :                         tokenEnd(aToken.EndReading()),</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :                         sourceStart(aSourceString.BeginReading()),</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :                         sourceEnd(aSourceString.EndReading());</span>
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span>            :     bool dummy;
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :     while (sourceStart &lt; sourceEnd &amp;&amp;</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :            CaseInsensitiveUTF8CharsEqual(sourceStart, tokenStart,</span>
+<span class="lineNum">     288 </span>            :                                          sourceEnd, tokenEnd,
+<span class="lineNum">     289 </span>            :                                          &amp;sourceStart, &amp;tokenStart, &amp;dummy)) {
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span>            :       // We found the token!
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :       if (tokenStart &gt;= tokenEnd) {</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     294 </span>            :       }
+<span class="lineNum">     295 </span>            :     }
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span>            :     // We don't need to check CaseInsensitiveUTF8CharsEqual's error condition
+<span class="lineNum">     298 </span>            :     // (stored in |dummy|), since the function will return false if it
+<span class="lineNum">     299 </span>            :     // encounters an error.
+<span class="lineNum">     300 </span>            : 
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     302 </span>            :   }
+<span class="lineNum">     303 </span>            : 
+<a name="304"><span class="lineNum">     304 </span>            :   /* static */</a>
+<span class="lineNum">     305 </span>            :   bool
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   MatchAutoCompleteFunction::findBeginningCaseSensitive(</span>
+<span class="lineNum">     307 </span>            :     const nsDependentCSubstring &amp;aToken,
+<span class="lineNum">     308 </span>            :     const nsACString &amp;aSourceString)
+<span class="lineNum">     309 </span>            :   {
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     NS_PRECONDITION(!aToken.IsEmpty(), &quot;Don't search for an empty token!&quot;);</span>
+<span class="lineNum">     311 </span>            : 
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :     return StringBeginsWith(aSourceString, aToken);</span>
+<span class="lineNum">     313 </span>            :   }
+<span class="lineNum">     314 </span>            : 
+<a name="315"><span class="lineNum">     315 </span>            :   /* static */</a>
+<span class="lineNum">     316 </span>            :   MatchAutoCompleteFunction::searchFunctionPtr
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :   MatchAutoCompleteFunction::getSearchFunction(int32_t aBehavior)</span>
+<span class="lineNum">     318 </span>            :   {
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     switch (aBehavior) {</span>
+<span class="lineNum">     320 </span>            :       case mozIPlacesAutoComplete::MATCH_ANYWHERE:
+<span class="lineNum">     321 </span>            :       case mozIPlacesAutoComplete::MATCH_ANYWHERE_UNMODIFIED:
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :         return findAnywhere;</span>
+<span class="lineNum">     323 </span>            :       case mozIPlacesAutoComplete::MATCH_BEGINNING:
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :         return findBeginning;</span>
+<span class="lineNum">     325 </span>            :       case mozIPlacesAutoComplete::MATCH_BEGINNING_CASE_SENSITIVE:
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :         return findBeginningCaseSensitive;</span>
+<span class="lineNum">     327 </span>            :       case mozIPlacesAutoComplete::MATCH_BOUNDARY:
+<span class="lineNum">     328 </span>            :       default:
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :         return findOnBoundary;</span>
+<span class="lineNum">     330 </span>            :     };
+<a name="331"><span class="lineNum">     331 </span>            :   }</a>
+<span class="lineNum">     332 </span>            : 
+<span class="lineNum">     333 </span><span class="lineCov">         10 :   NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">     334 </span>            :     MatchAutoCompleteFunction,
+<span class="lineNum">     335 </span>            :     mozIStorageFunction
+<span class="lineNum">     336 </span>            :   )
+<a name="337"><span class="lineNum">     337 </span>            : </a>
+<span class="lineNum">     338 </span>            :   NS_IMETHODIMP
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :   MatchAutoCompleteFunction::OnFunctionCall(mozIStorageValueArray *aArguments,</span>
+<span class="lineNum">     340 </span>            :                                             nsIVariant **_result)
+<span class="lineNum">     341 </span>            :   {
+<span class="lineNum">     342 </span>            :     // Macro to make the code a bit cleaner and easier to read.  Operates on
+<span class="lineNum">     343 </span>            :     // searchBehavior.
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :     int32_t searchBehavior = aArguments-&gt;AsInt32(kArgIndexSearchBehavior);</span>
+<span class="lineNum">     345 </span>            :     #define HAS_BEHAVIOR(aBitName) \
+<span class="lineNum">     346 </span>            :       (searchBehavior &amp; mozIPlacesAutoComplete::BEHAVIOR_##aBitName)
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span>            :     nsDependentCString searchString =
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :       getSharedString(aArguments, kArgSearchString);</span>
+<span class="lineNum">     350 </span>            :     nsDependentCString url =
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :       getSharedString(aArguments, kArgIndexURL);</span>
+<span class="lineNum">     352 </span>            : 
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     int32_t matchBehavior = aArguments-&gt;AsInt32(kArgIndexMatchBehavior);</span>
+<span class="lineNum">     354 </span>            : 
+<span class="lineNum">     355 </span>            :     // We only want to filter javascript: URLs if we are not supposed to search
+<span class="lineNum">     356 </span>            :     // for them, and the search does not start with &quot;javascript:&quot;.
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :     if (matchBehavior != mozIPlacesAutoComplete::MATCH_ANYWHERE_UNMODIFIED &amp;&amp;</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :         StringBeginsWith(url, NS_LITERAL_CSTRING(&quot;javascript:&quot;)) &amp;&amp;</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :         !HAS_BEHAVIOR(JAVASCRIPT) &amp;&amp;</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :         !StringBeginsWith(searchString, NS_LITERAL_CSTRING(&quot;javascript:&quot;))) {</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :       NS_ADDREF(*_result = new IntegerVariant(0));</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :       return NS_OK;</span>
+<span class="lineNum">     363 </span>            :     }
+<span class="lineNum">     364 </span>            : 
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :     int32_t visitCount = aArguments-&gt;AsInt32(kArgIndexVisitCount);</span>
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :     bool typed = aArguments-&gt;AsInt32(kArgIndexTyped) ? true : false;</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :     bool bookmark = aArguments-&gt;AsInt32(kArgIndexBookmark) ? true : false;</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :     nsDependentCString tags = getSharedString(aArguments, kArgIndexTags);</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :     int32_t openPageCount = aArguments-&gt;AsInt32(kArgIndexOpenPageCount);</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :     bool matches = false;</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :     if (HAS_BEHAVIOR(RESTRICT)) {</span>
+<span class="lineNum">     372 </span>            :       // Make sure we match all the filter requirements.  If a given restriction
+<span class="lineNum">     373 </span>            :       // is active, make sure the corresponding condition is not true.
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :       matches = (!HAS_BEHAVIOR(HISTORY) || visitCount &gt; 0) &amp;&amp;</span>
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :                 (!HAS_BEHAVIOR(TYPED) || typed) &amp;&amp;</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :                 (!HAS_BEHAVIOR(BOOKMARK) || bookmark) &amp;&amp;</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :                 (!HAS_BEHAVIOR(TAG) || !tags.IsVoid()) &amp;&amp;</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :                 (!HAS_BEHAVIOR(OPENPAGE) || openPageCount &gt; 0);</span>
+<span class="lineNum">     379 </span>            :     } else {
+<span class="lineNum">     380 </span>            :       // Make sure that we match all the filter requirements and that the
+<span class="lineNum">     381 </span>            :       // corresponding condition is true if at least a given restriction is active.
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :       matches = (HAS_BEHAVIOR(HISTORY) &amp;&amp; visitCount &gt; 0) ||</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :                 (HAS_BEHAVIOR(TYPED) &amp;&amp; typed) ||</span>
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :                 (HAS_BEHAVIOR(BOOKMARK) &amp;&amp; bookmark) ||</span>
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :                 (HAS_BEHAVIOR(TAG) &amp;&amp; !tags.IsVoid()) ||</span>
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :                 (HAS_BEHAVIOR(OPENPAGE) &amp;&amp; openPageCount &gt; 0);</span>
+<span class="lineNum">     387 </span>            :     }
+<span class="lineNum">     388 </span>            : 
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :     if (!matches) {</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :       NS_ADDREF(*_result = new IntegerVariant(0));</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :       return NS_OK;</span>
+<span class="lineNum">     392 </span>            :     }
+<span class="lineNum">     393 </span>            : 
+<span class="lineNum">     394 </span>            :     // Obtain our search function.
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :     searchFunctionPtr searchFunction = getSearchFunction(matchBehavior);</span>
+<span class="lineNum">     396 </span>            : 
+<span class="lineNum">     397 </span>            :     // Clean up our URI spec and prepare it for searching.
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :     nsCString fixedUrlBuf;</span>
+<span class="lineNum">     399 </span>            :     nsDependentCSubstring fixedUrl =
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :       fixupURISpec(url, matchBehavior, fixedUrlBuf);</span>
+<span class="lineNum">     401 </span>            :     // Limit the number of chars we search through.
+<span class="lineNum">     402 </span>            :     const nsDependentCSubstring&amp; trimmedUrl =
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :       Substring(fixedUrl, 0, MAX_CHARS_TO_SEARCH_THROUGH);</span>
+<span class="lineNum">     404 </span>            : 
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :     nsDependentCString title = getSharedString(aArguments, kArgIndexTitle);</span>
+<span class="lineNum">     406 </span>            :     // Limit the number of chars we search through.
+<span class="lineNum">     407 </span>            :     const nsDependentCSubstring&amp; trimmedTitle =
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :       Substring(title, 0, MAX_CHARS_TO_SEARCH_THROUGH);</span>
+<span class="lineNum">     409 </span>            : 
+<span class="lineNum">     410 </span>            :     // Determine if every token matches either the bookmark title, tags, page
+<span class="lineNum">     411 </span>            :     // title, or page URL.
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :     nsCWhitespaceTokenizer tokenizer(searchString);</span>
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :     while (matches &amp;&amp; tokenizer.hasMoreTokens()) {</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :       const nsDependentCSubstring &amp;token = tokenizer.nextToken();</span>
+<span class="lineNum">     415 </span>            : 
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :       if (HAS_BEHAVIOR(TITLE) &amp;&amp; HAS_BEHAVIOR(URL)) {</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :         matches = (searchFunction(token, trimmedTitle) ||</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :                    searchFunction(token, tags)) &amp;&amp;</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :                   searchFunction(token, trimmedUrl);</span>
+<span class="lineNum">     420 </span>            :       }
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :       else if (HAS_BEHAVIOR(TITLE)) {</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :         matches = searchFunction(token, trimmedTitle) ||</span>
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :                   searchFunction(token, tags);</span>
+<span class="lineNum">     424 </span>            :       }
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :       else if (HAS_BEHAVIOR(URL)) {</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :         matches = searchFunction(token, trimmedUrl);</span>
+<span class="lineNum">     427 </span>            :       }
+<span class="lineNum">     428 </span>            :       else {
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :         matches = searchFunction(token, trimmedTitle) ||</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :                   searchFunction(token, tags) ||</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :                   searchFunction(token, trimmedUrl);</span>
+<span class="lineNum">     432 </span>            :       }
+<span class="lineNum">     433 </span>            :     }
+<span class="lineNum">     434 </span>            : 
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :     NS_ADDREF(*_result = new IntegerVariant(matches ? 1 : 0));</span>
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     437 </span>            :     #undef HAS_BEHAVIOR
+<span class="lineNum">     438 </span>            :   }
+<span class="lineNum">     439 </span>            : 
+<span class="lineNum">     440 </span>            : 
+<span class="lineNum">     441 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     442 </span>            : //// Frecency Calculation Function
+<span class="lineNum">     443 </span>            : 
+<a name="444"><span class="lineNum">     444 </span>            :   /* static */</a>
+<span class="lineNum">     445 </span>            :   nsresult
+<span class="lineNum">     446 </span><span class="lineCov">          1 :   CalculateFrecencyFunction::create(mozIStorageConnection *aDBConn)</span>
+<span class="lineNum">     447 </span>            :   {
+<span class="lineNum">     448 </span>            :     RefPtr&lt;CalculateFrecencyFunction&gt; function =
+<span class="lineNum">     449 </span><span class="lineCov">          2 :       new CalculateFrecencyFunction();</span>
+<span class="lineNum">     450 </span>            : 
+<span class="lineNum">     451 </span><span class="lineCov">          2 :     nsresult rv = aDBConn-&gt;CreateFunction(</span>
+<span class="lineNum">     452 </span><span class="lineCov">          2 :       NS_LITERAL_CSTRING(&quot;calculate_frecency&quot;), -1, function</span>
+<span class="lineNum">     453 </span><span class="lineCov">          3 :     );</span>
+<span class="lineNum">     454 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     455 </span>            : 
+<span class="lineNum">     456 </span><span class="lineCov">          1 :     return NS_OK;</span>
+<a name="457"><span class="lineNum">     457 </span>            :   }</a>
+<span class="lineNum">     458 </span>            : 
+<span class="lineNum">     459 </span><span class="lineCov">         10 :   NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">     460 </span>            :     CalculateFrecencyFunction,
+<span class="lineNum">     461 </span>            :     mozIStorageFunction
+<span class="lineNum">     462 </span>            :   )
+<a name="463"><span class="lineNum">     463 </span>            : </a>
+<span class="lineNum">     464 </span>            :   NS_IMETHODIMP
+<span class="lineNum">     465 </span><span class="lineCov">          1 :   CalculateFrecencyFunction::OnFunctionCall(mozIStorageValueArray *aArguments,</span>
+<span class="lineNum">     466 </span>            :                                             nsIVariant **_result)
+<span class="lineNum">     467 </span>            :   {
+<span class="lineNum">     468 </span>            :     // Fetch arguments.  Use default values if they were omitted.
+<span class="lineNum">     469 </span>            :     uint32_t numEntries;
+<span class="lineNum">     470 </span><span class="lineCov">          1 :     nsresult rv = aArguments-&gt;GetNumEntries(&amp;numEntries);</span>
+<span class="lineNum">     471 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     472 </span><span class="lineCov">          1 :     MOZ_ASSERT(numEntries &lt;= 2, &quot;unexpected number of arguments&quot;);</span>
+<span class="lineNum">     473 </span>            : 
+<span class="lineNum">     474 </span><span class="lineCov">          1 :     int64_t pageId = aArguments-&gt;AsInt64(0);</span>
+<span class="lineNum">     475 </span><span class="lineCov">          1 :     MOZ_ASSERT(pageId &gt; 0, &quot;Should always pass a valid page id&quot;);</span>
+<span class="lineNum">     476 </span><span class="lineCov">          1 :     if (pageId &lt;= 0) {</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :       NS_ADDREF(*_result = new IntegerVariant(0));</span>
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :       return NS_OK;</span>
+<span class="lineNum">     479 </span>            :     }
+<span class="lineNum">     480 </span>            : 
+<span class="lineNum">     481 </span>            :     enum RedirectState {
+<span class="lineNum">     482 </span>            :       eRedirectUnknown,
+<span class="lineNum">     483 </span>            :       eIsRedirect,
+<span class="lineNum">     484 </span>            :       eIsNotRedirect
+<span class="lineNum">     485 </span>            :     };
+<span class="lineNum">     486 </span>            : 
+<span class="lineNum">     487 </span><span class="lineCov">          1 :     RedirectState isRedirect = eRedirectUnknown;</span>
+<span class="lineNum">     488 </span>            : 
+<span class="lineNum">     489 </span><span class="lineCov">          1 :     if (numEntries &gt; 1) {</span>
+<span class="lineNum">     490 </span><span class="lineCov">          1 :       isRedirect = aArguments-&gt;AsInt32(1) ? eIsRedirect : eIsNotRedirect;</span>
+<span class="lineNum">     491 </span>            :     }
+<span class="lineNum">     492 </span>            : 
+<span class="lineNum">     493 </span><span class="lineCov">          1 :     int32_t typed = 0;</span>
+<span class="lineNum">     494 </span><span class="lineCov">          1 :     int32_t visitCount = 0;</span>
+<span class="lineNum">     495 </span><span class="lineCov">          1 :     bool hasBookmark = false;</span>
+<span class="lineNum">     496 </span><span class="lineCov">          1 :     int32_t isQuery = 0;</span>
+<span class="lineNum">     497 </span><span class="lineCov">          1 :     float pointsForSampledVisits = 0.0;</span>
+<span class="lineNum">     498 </span><span class="lineCov">          1 :     int32_t numSampledVisits = 0;</span>
+<span class="lineNum">     499 </span><span class="lineCov">          1 :     int32_t bonus = 0;</span>
+<span class="lineNum">     500 </span>            : 
+<span class="lineNum">     501 </span>            :     // This is a const version of the history object for thread-safety.
+<span class="lineNum">     502 </span><span class="lineCov">          1 :     const nsNavHistory* history = nsNavHistory::GetConstHistoryService();</span>
+<span class="lineNum">     503 </span><span class="lineCov">          1 :     NS_ENSURE_STATE(history);</span>
+<span class="lineNum">     504 </span><span class="lineCov">          2 :     RefPtr&lt;Database&gt; DB = Database::GetDatabase();</span>
+<span class="lineNum">     505 </span><span class="lineCov">          1 :     NS_ENSURE_STATE(DB);</span>
+<span class="lineNum">     506 </span>            : 
+<span class="lineNum">     507 </span>            : 
+<span class="lineNum">     508 </span>            :     // Fetch the page stats from the database.
+<span class="lineNum">     509 </span>            :     {
+<span class="lineNum">     510 </span><span class="lineCov">          2 :       RefPtr&lt;mozIStorageStatement&gt; getPageInfo = DB-&gt;GetStatement(</span>
+<span class="lineNum">     511 </span>            :         &quot;SELECT typed, visit_count, foreign_count, &quot;
+<span class="lineNum">     512 </span>            :                &quot;(substr(url, 0, 7) = 'place:') &quot;
+<span class="lineNum">     513 </span>            :         &quot;FROM moz_places &quot;
+<span class="lineNum">     514 </span>            :         &quot;WHERE id = :page_id &quot;
+<span class="lineNum">     515 </span><span class="lineCov">          2 :       );</span>
+<span class="lineNum">     516 </span><span class="lineCov">          1 :       NS_ENSURE_STATE(getPageInfo);</span>
+<span class="lineNum">     517 </span><span class="lineCov">          2 :       mozStorageStatementScoper infoScoper(getPageInfo);</span>
+<span class="lineNum">     518 </span>            : 
+<span class="lineNum">     519 </span><span class="lineCov">          1 :       rv = getPageInfo-&gt;BindInt64ByName(NS_LITERAL_CSTRING(&quot;page_id&quot;), pageId);</span>
+<span class="lineNum">     520 </span><span class="lineCov">          1 :       NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     521 </span>            : 
+<span class="lineNum">     522 </span><span class="lineCov">          1 :       bool hasResult = false;</span>
+<span class="lineNum">     523 </span><span class="lineCov">          1 :       rv = getPageInfo-&gt;ExecuteStep(&amp;hasResult);</span>
+<span class="lineNum">     524 </span><span class="lineCov">          1 :       NS_ENSURE_TRUE(NS_SUCCEEDED(rv) &amp;&amp; hasResult, NS_ERROR_UNEXPECTED);</span>
+<span class="lineNum">     525 </span>            : 
+<span class="lineNum">     526 </span><span class="lineCov">          1 :       rv = getPageInfo-&gt;GetInt32(0, &amp;typed);</span>
+<span class="lineNum">     527 </span><span class="lineCov">          1 :       NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     528 </span><span class="lineCov">          1 :       rv = getPageInfo-&gt;GetInt32(1, &amp;visitCount);</span>
+<span class="lineNum">     529 </span><span class="lineCov">          1 :       NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     530 </span><span class="lineCov">          1 :       int32_t foreignCount = 0;</span>
+<span class="lineNum">     531 </span><span class="lineCov">          1 :       rv = getPageInfo-&gt;GetInt32(2, &amp;foreignCount);</span>
+<span class="lineNum">     532 </span><span class="lineCov">          1 :       NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     533 </span><span class="lineCov">          1 :       hasBookmark = foreignCount &gt; 0;</span>
+<span class="lineNum">     534 </span><span class="lineCov">          1 :       rv = getPageInfo-&gt;GetInt32(3, &amp;isQuery);</span>
+<span class="lineNum">     535 </span><span class="lineCov">          1 :       NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     536 </span>            :     }
+<span class="lineNum">     537 </span>            : 
+<span class="lineNum">     538 </span><span class="lineCov">          1 :     if (visitCount &gt; 0) {</span>
+<span class="lineNum">     539 </span>            :       // Get a sample of the last visits to the page, to calculate its weight.
+<span class="lineNum">     540 </span>            :       // In case of a temporary or permanent redirect, calculate the frecency
+<span class="lineNum">     541 </span>            :       // as if the original page was visited.
+<span class="lineNum">     542 </span>            :       nsCString redirectsTransitionFragment =
+<span class="lineNum">     543 </span><span class="lineCov">          2 :         nsPrintfCString(&quot;%d AND %d &quot;, nsINavHistoryService::TRANSITION_REDIRECT_PERMANENT,</span>
+<span class="lineNum">     544 </span><span class="lineCov">          2 :                                       nsINavHistoryService::TRANSITION_REDIRECT_TEMPORARY);</span>
+<span class="lineNum">     545 </span><span class="lineCov">          2 :       nsCOMPtr&lt;mozIStorageStatement&gt; getVisits = DB-&gt;GetStatement(</span>
+<span class="lineNum">     546 </span><span class="lineCov">          2 :         NS_LITERAL_CSTRING(</span>
+<span class="lineNum">     547 </span>            :           &quot;/* do not warn (bug 659740 - SQLite may ignore index if few visits exist) */&quot;
+<span class="lineNum">     548 </span>            :           &quot;SELECT &quot;
+<span class="lineNum">     549 </span>            :             &quot;ROUND((strftime('%s','now','localtime','utc') - v.visit_date/1000000)/86400), &quot;
+<span class="lineNum">     550 </span>            :             &quot;origin.visit_type, &quot;
+<span class="lineNum">     551 </span>            :             &quot;v.visit_type, &quot;
+<span class="lineNum">     552 </span>            :             &quot;target.id NOTNULL &quot;
+<span class="lineNum">     553 </span>            :           &quot;FROM moz_historyvisits v &quot;
+<span class="lineNum">     554 </span>            :           &quot;LEFT JOIN moz_historyvisits origin ON origin.id = v.from_visit &quot;
+<span class="lineNum">     555 </span>            :                                             &quot;AND v.visit_type BETWEEN &quot;
+<span class="lineNum">     556 </span><span class="lineCov">          4 :             ) + redirectsTransitionFragment + NS_LITERAL_CSTRING(</span>
+<span class="lineNum">     557 </span>            :           &quot;LEFT JOIN moz_historyvisits target ON v.id = target.from_visit &quot;
+<span class="lineNum">     558 </span>            :                                             &quot;AND target.visit_type BETWEEN &quot;
+<span class="lineNum">     559 </span><span class="lineCov">          4 :             ) + redirectsTransitionFragment + NS_LITERAL_CSTRING(</span>
+<span class="lineNum">     560 </span>            :           &quot;WHERE v.place_id = :page_id &quot;
+<span class="lineNum">     561 </span>            :           &quot;ORDER BY v.visit_date DESC &quot;
+<span class="lineNum">     562 </span>            :         )
+<span class="lineNum">     563 </span><span class="lineCov">          2 :       );</span>
+<span class="lineNum">     564 </span><span class="lineCov">          1 :       NS_ENSURE_STATE(getVisits);</span>
+<span class="lineNum">     565 </span><span class="lineCov">          2 :       mozStorageStatementScoper visitsScoper(getVisits);</span>
+<span class="lineNum">     566 </span><span class="lineCov">          1 :       rv = getVisits-&gt;BindInt64ByName(NS_LITERAL_CSTRING(&quot;page_id&quot;), pageId);</span>
+<span class="lineNum">     567 </span><span class="lineCov">          1 :       NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     568 </span>            : 
+<span class="lineNum">     569 </span>            :       // Fetch only a limited number of recent visits.
+<span class="lineNum">     570 </span><span class="lineCov">          1 :       bool hasResult = false;</span>
+<span class="lineNum">     571 </span><span class="lineCov">          4 :       for (int32_t maxVisits = history-&gt;GetNumVisitsForFrecency();</span>
+<span class="lineNum">     572 </span><span class="lineCov">          2 :            numSampledVisits &lt; maxVisits &amp;&amp;</span>
+<span class="lineNum">     573 </span><span class="lineCov">          4 :            NS_SUCCEEDED(getVisits-&gt;ExecuteStep(&amp;hasResult)) &amp;&amp; hasResult;</span>
+<span class="lineNum">     574 </span>            :            numSampledVisits++) {
+<span class="lineNum">     575 </span>            : 
+<span class="lineNum">     576 </span>            :         int32_t visitType;
+<span class="lineNum">     577 </span><span class="lineCov">          1 :         bool isNull = false;</span>
+<span class="lineNum">     578 </span><span class="lineCov">          1 :         rv = getVisits-&gt;GetIsNull(1, &amp;isNull);</span>
+<span class="lineNum">     579 </span><span class="lineCov">          1 :         NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     580 </span>            : 
+<span class="lineNum">     581 </span><span class="lineCov">          1 :         if (isRedirect == eIsRedirect || isNull) {</span>
+<span class="lineNum">     582 </span>            :           // Use the main visit_type.
+<span class="lineNum">     583 </span><span class="lineCov">          1 :           rv = getVisits-&gt;GetInt32(2, &amp;visitType);</span>
+<span class="lineNum">     584 </span><span class="lineCov">          1 :           NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     585 </span>            :         } else {
+<span class="lineNum">     586 </span>            :           // This is a redirect target, so use the origin visit_type.
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :           rv = getVisits-&gt;GetInt32(1, &amp;visitType);</span>
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :           NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     589 </span>            :         }
+<span class="lineNum">     590 </span>            : 
+<span class="lineNum">     591 </span><span class="lineCov">          1 :         RedirectState visitIsRedirect = isRedirect;</span>
+<span class="lineNum">     592 </span>            : 
+<span class="lineNum">     593 </span>            :         // If we don't know if this is a redirect or not, or this is not the
+<span class="lineNum">     594 </span>            :         // most recent visit that we're looking at, then we use the redirect
+<span class="lineNum">     595 </span>            :         // value from the database.
+<span class="lineNum">     596 </span><span class="lineCov">          1 :         if (visitIsRedirect == eRedirectUnknown || numSampledVisits &gt;= 1) {</span>
+<span class="lineNum">     597 </span>            :           int32_t redirect;
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :           rv = getVisits-&gt;GetInt32(3, &amp;redirect);</span>
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :           NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :           visitIsRedirect = !!redirect ? eIsRedirect : eIsNotRedirect;</span>
+<span class="lineNum">     601 </span>            :         }
+<span class="lineNum">     602 </span>            : 
+<span class="lineNum">     603 </span><span class="lineCov">          1 :         bonus = history-&gt;GetFrecencyTransitionBonus(visitType, true, visitIsRedirect == eIsRedirect);</span>
+<span class="lineNum">     604 </span>            : 
+<span class="lineNum">     605 </span>            :         // Add the bookmark visit bonus.
+<span class="lineNum">     606 </span><span class="lineCov">          1 :         if (hasBookmark) {</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :           bonus += history-&gt;GetFrecencyTransitionBonus(nsINavHistoryService::TRANSITION_BOOKMARK, true);</span>
+<span class="lineNum">     608 </span>            :         }
+<span class="lineNum">     609 </span>            : 
+<span class="lineNum">     610 </span>            :         // If bonus was zero, we can skip the work to determine the weight.
+<span class="lineNum">     611 </span><span class="lineCov">          1 :         if (bonus) {</span>
+<span class="lineNum">     612 </span><span class="lineCov">          1 :           int32_t ageInDays = getVisits-&gt;AsInt32(0);</span>
+<span class="lineNum">     613 </span><span class="lineCov">          1 :           int32_t weight = history-&gt;GetFrecencyAgedWeight(ageInDays);</span>
+<span class="lineNum">     614 </span><span class="lineCov">          1 :           pointsForSampledVisits += (float)(weight * (bonus / 100.0));</span>
+<span class="lineNum">     615 </span>            :         }
+<span class="lineNum">     616 </span>            :       }
+<span class="lineNum">     617 </span>            :     }
+<span class="lineNum">     618 </span>            : 
+<span class="lineNum">     619 </span>            :     // If we sampled some visits for this page, use the calculated weight.
+<span class="lineNum">     620 </span><span class="lineCov">          1 :     if (numSampledVisits) {</span>
+<span class="lineNum">     621 </span>            :       // We were unable to calculate points, maybe cause all the visits in the
+<span class="lineNum">     622 </span>            :       // sample had a zero bonus. Though, we know the page has some past valid
+<span class="lineNum">     623 </span>            :       // visit, or visit_count would be zero. Thus we set the frecency to
+<span class="lineNum">     624 </span>            :       // -1, so they are still shown in autocomplete.
+<span class="lineNum">     625 </span><span class="lineCov">          1 :       if (!pointsForSampledVisits) {</span>
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :         NS_ADDREF(*_result = new IntegerVariant(-1));</span>
+<span class="lineNum">     627 </span>            :       }
+<span class="lineNum">     628 </span>            :       else {
+<span class="lineNum">     629 </span>            :         // Estimate frecency using the sampled visits.
+<span class="lineNum">     630 </span>            :         // Use ceilf() so that we don't round down to 0, which
+<span class="lineNum">     631 </span>            :         // would cause us to completely ignore the place during autocomplete.
+<span class="lineNum">     632 </span><span class="lineCov">          1 :         NS_ADDREF(*_result = new IntegerVariant((int32_t) ceilf(visitCount * ceilf(pointsForSampledVisits) / numSampledVisits)));</span>
+<span class="lineNum">     633 </span>            :       }
+<span class="lineNum">     634 </span><span class="lineCov">          1 :       return NS_OK;</span>
+<span class="lineNum">     635 </span>            :     }
+<span class="lineNum">     636 </span>            : 
+<span class="lineNum">     637 </span>            :     // Otherwise this page has no visits, it may be bookmarked.
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 :     if (!hasBookmark || isQuery) {</span>
+<span class="lineNum">     639 </span><span class="lineNoCov">          0 :       NS_ADDREF(*_result = new IntegerVariant(0));</span>
+<span class="lineNum">     640 </span><span class="lineNoCov">          0 :       return NS_OK;</span>
+<span class="lineNum">     641 </span>            :     }
+<span class="lineNum">     642 </span>            : 
+<span class="lineNum">     643 </span>            :     // For unvisited bookmarks, produce a non-zero frecency, so that they show
+<span class="lineNum">     644 </span>            :     // up in URL bar autocomplete.
+<span class="lineNum">     645 </span><span class="lineNoCov">          0 :     visitCount = 1;</span>
+<span class="lineNum">     646 </span>            : 
+<span class="lineNum">     647 </span>            :     // Make it so something bookmarked and typed will have a higher frecency
+<span class="lineNum">     648 </span>            :     // than something just typed or just bookmarked.
+<span class="lineNum">     649 </span><span class="lineNoCov">          0 :     bonus += history-&gt;GetFrecencyTransitionBonus(nsINavHistoryService::TRANSITION_BOOKMARK, false);</span>
+<span class="lineNum">     650 </span><span class="lineNoCov">          0 :     if (typed) {</span>
+<span class="lineNum">     651 </span><span class="lineNoCov">          0 :       bonus += history-&gt;GetFrecencyTransitionBonus(nsINavHistoryService::TRANSITION_TYPED, false);</span>
+<span class="lineNum">     652 </span>            :     }
+<span class="lineNum">     653 </span>            : 
+<span class="lineNum">     654 </span>            :     // Assume &quot;now&quot; as our ageInDays, so use the first bucket.
+<span class="lineNum">     655 </span><span class="lineNoCov">          0 :     pointsForSampledVisits = history-&gt;GetFrecencyBucketWeight(1) * (bonus / (float)100.0);</span>
+<span class="lineNum">     656 </span>            : 
+<span class="lineNum">     657 </span>            :     // use ceilf() so that we don't round down to 0, which
+<span class="lineNum">     658 </span>            :     // would cause us to completely ignore the place during autocomplete
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :     NS_ADDREF(*_result = new IntegerVariant((int32_t) ceilf(visitCount * ceilf(pointsForSampledVisits))));</span>
+<span class="lineNum">     660 </span>            : 
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     662 </span>            :   }
+<span class="lineNum">     663 </span>            : 
+<span class="lineNum">     664 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     665 </span>            : //// GUID Creation Function
+<span class="lineNum">     666 </span>            : 
+<a name="667"><span class="lineNum">     667 </span>            :   /* static */</a>
+<span class="lineNum">     668 </span>            :   nsresult
+<span class="lineNum">     669 </span><span class="lineCov">          1 :   GenerateGUIDFunction::create(mozIStorageConnection *aDBConn)</span>
+<span class="lineNum">     670 </span>            :   {
+<span class="lineNum">     671 </span><span class="lineCov">          2 :     RefPtr&lt;GenerateGUIDFunction&gt; function = new GenerateGUIDFunction();</span>
+<span class="lineNum">     672 </span><span class="lineCov">          2 :     nsresult rv = aDBConn-&gt;CreateFunction(</span>
+<span class="lineNum">     673 </span><span class="lineCov">          2 :       NS_LITERAL_CSTRING(&quot;generate_guid&quot;), 0, function</span>
+<span class="lineNum">     674 </span><span class="lineCov">          3 :     );</span>
+<span class="lineNum">     675 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     676 </span>            : 
+<span class="lineNum">     677 </span><span class="lineCov">          1 :     return NS_OK;</span>
+<a name="678"><span class="lineNum">     678 </span>            :   }</a>
+<span class="lineNum">     679 </span>            : 
+<span class="lineNum">     680 </span><span class="lineCov">         10 :   NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">     681 </span>            :     GenerateGUIDFunction,
+<span class="lineNum">     682 </span>            :     mozIStorageFunction
+<span class="lineNum">     683 </span>            :   )
+<a name="684"><span class="lineNum">     684 </span>            : </a>
+<span class="lineNum">     685 </span>            :   NS_IMETHODIMP
+<span class="lineNum">     686 </span><span class="lineNoCov">          0 :   GenerateGUIDFunction::OnFunctionCall(mozIStorageValueArray *aArguments,</span>
+<span class="lineNum">     687 </span>            :                                        nsIVariant **_result)
+<span class="lineNum">     688 </span>            :   {
+<span class="lineNum">     689 </span><span class="lineNoCov">          0 :     nsAutoCString guid;</span>
+<span class="lineNum">     690 </span><span class="lineNoCov">          0 :     nsresult rv = GenerateGUID(guid);</span>
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     692 </span>            : 
+<span class="lineNum">     693 </span><span class="lineNoCov">          0 :     NS_ADDREF(*_result = new UTF8TextVariant(guid));</span>
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     695 </span>            :   }
+<span class="lineNum">     696 </span>            : 
+<span class="lineNum">     697 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     698 </span>            : //// Get Unreversed Host Function
+<span class="lineNum">     699 </span>            : 
+<a name="700"><span class="lineNum">     700 </span>            :   /* static */</a>
+<span class="lineNum">     701 </span>            :   nsresult
+<span class="lineNum">     702 </span><span class="lineCov">          1 :   GetUnreversedHostFunction::create(mozIStorageConnection *aDBConn)</span>
+<span class="lineNum">     703 </span>            :   {
+<span class="lineNum">     704 </span><span class="lineCov">          2 :     RefPtr&lt;GetUnreversedHostFunction&gt; function = new GetUnreversedHostFunction();</span>
+<span class="lineNum">     705 </span><span class="lineCov">          2 :     nsresult rv = aDBConn-&gt;CreateFunction(</span>
+<span class="lineNum">     706 </span><span class="lineCov">          2 :       NS_LITERAL_CSTRING(&quot;get_unreversed_host&quot;), 1, function</span>
+<span class="lineNum">     707 </span><span class="lineCov">          3 :     );</span>
+<span class="lineNum">     708 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     709 </span>            : 
+<span class="lineNum">     710 </span><span class="lineCov">          1 :     return NS_OK;</span>
+<a name="711"><span class="lineNum">     711 </span>            :   }</a>
+<span class="lineNum">     712 </span>            : 
+<span class="lineNum">     713 </span><span class="lineCov">         10 :   NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">     714 </span>            :     GetUnreversedHostFunction,
+<span class="lineNum">     715 </span>            :     mozIStorageFunction
+<span class="lineNum">     716 </span>            :   )
+<a name="717"><span class="lineNum">     717 </span>            : </a>
+<span class="lineNum">     718 </span>            :   NS_IMETHODIMP
+<span class="lineNum">     719 </span><span class="lineCov">         16 :   GetUnreversedHostFunction::OnFunctionCall(mozIStorageValueArray *aArguments,</span>
+<span class="lineNum">     720 </span>            :                                             nsIVariant **_result)
+<span class="lineNum">     721 </span>            :   {
+<span class="lineNum">     722 </span>            :     // Must have non-null function arguments.
+<span class="lineNum">     723 </span><span class="lineCov">         16 :     MOZ_ASSERT(aArguments);</span>
+<span class="lineNum">     724 </span>            : 
+<span class="lineNum">     725 </span><span class="lineCov">         32 :     nsAutoString src;</span>
+<span class="lineNum">     726 </span><span class="lineCov">         16 :     aArguments-&gt;GetString(0, src);</span>
+<span class="lineNum">     727 </span>            : 
+<span class="lineNum">     728 </span><span class="lineCov">         32 :     RefPtr&lt;nsVariant&gt; result = new nsVariant();</span>
+<span class="lineNum">     729 </span>            : 
+<span class="lineNum">     730 </span><span class="lineCov">         16 :     if (src.Length()&gt;1) {</span>
+<span class="lineNum">     731 </span><span class="lineCov">         16 :       src.Truncate(src.Length() - 1);</span>
+<span class="lineNum">     732 </span><span class="lineCov">         32 :       nsAutoString dest;</span>
+<span class="lineNum">     733 </span><span class="lineCov">         16 :       ReverseString(src, dest);</span>
+<span class="lineNum">     734 </span><span class="lineCov">         16 :       result-&gt;SetAsAString(dest);</span>
+<span class="lineNum">     735 </span>            :     }
+<span class="lineNum">     736 </span>            :     else {
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :       result-&gt;SetAsAString(EmptyString());</span>
+<span class="lineNum">     738 </span>            :     }
+<span class="lineNum">     739 </span><span class="lineCov">         16 :     result.forget(_result);</span>
+<span class="lineNum">     740 </span><span class="lineCov">         32 :     return NS_OK;</span>
+<span class="lineNum">     741 </span>            :   }
+<span class="lineNum">     742 </span>            : 
+<span class="lineNum">     743 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     744 </span>            : //// Fixup URL Function
+<span class="lineNum">     745 </span>            : 
+<a name="746"><span class="lineNum">     746 </span>            :   /* static */</a>
+<span class="lineNum">     747 </span>            :   nsresult
+<span class="lineNum">     748 </span><span class="lineCov">          1 :   FixupURLFunction::create(mozIStorageConnection *aDBConn)</span>
+<span class="lineNum">     749 </span>            :   {
+<span class="lineNum">     750 </span><span class="lineCov">          2 :     RefPtr&lt;FixupURLFunction&gt; function = new FixupURLFunction();</span>
+<span class="lineNum">     751 </span><span class="lineCov">          2 :     nsresult rv = aDBConn-&gt;CreateFunction(</span>
+<span class="lineNum">     752 </span><span class="lineCov">          2 :       NS_LITERAL_CSTRING(&quot;fixup_url&quot;), 1, function</span>
+<span class="lineNum">     753 </span><span class="lineCov">          3 :     );</span>
+<span class="lineNum">     754 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     755 </span>            : 
+<span class="lineNum">     756 </span><span class="lineCov">          1 :     return NS_OK;</span>
+<a name="757"><span class="lineNum">     757 </span>            :   }</a>
+<span class="lineNum">     758 </span>            : 
+<span class="lineNum">     759 </span><span class="lineCov">         10 :   NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">     760 </span>            :     FixupURLFunction,
+<span class="lineNum">     761 </span>            :     mozIStorageFunction
+<span class="lineNum">     762 </span>            :   )
+<a name="763"><span class="lineNum">     763 </span>            : </a>
+<span class="lineNum">     764 </span>            :   NS_IMETHODIMP
+<span class="lineNum">     765 </span><span class="lineCov">          7 :   FixupURLFunction::OnFunctionCall(mozIStorageValueArray *aArguments,</span>
+<span class="lineNum">     766 </span>            :                                    nsIVariant **_result)
+<span class="lineNum">     767 </span>            :   {
+<span class="lineNum">     768 </span>            :     // Must have non-null function arguments.
+<span class="lineNum">     769 </span><span class="lineCov">          7 :     MOZ_ASSERT(aArguments);</span>
+<span class="lineNum">     770 </span>            : 
+<span class="lineNum">     771 </span><span class="lineCov">         14 :     nsAutoString src;</span>
+<span class="lineNum">     772 </span><span class="lineCov">          7 :     aArguments-&gt;GetString(0, src);</span>
+<span class="lineNum">     773 </span>            : 
+<span class="lineNum">     774 </span><span class="lineCov">         14 :     RefPtr&lt;nsVariant&gt; result = new nsVariant();</span>
+<span class="lineNum">     775 </span>            : 
+<span class="lineNum">     776 </span><span class="lineCov">          7 :     if (StringBeginsWith(src, NS_LITERAL_STRING(&quot;http://&quot;)))</span>
+<span class="lineNum">     777 </span><span class="lineCov">          1 :       src.Cut(0, 7);</span>
+<span class="lineNum">     778 </span><span class="lineCov">          6 :     else if (StringBeginsWith(src, NS_LITERAL_STRING(&quot;https://&quot;)))</span>
+<span class="lineNum">     779 </span><span class="lineNoCov">          0 :       src.Cut(0, 8);</span>
+<span class="lineNum">     780 </span><span class="lineCov">          6 :     else if (StringBeginsWith(src, NS_LITERAL_STRING(&quot;ftp://&quot;)))</span>
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 :       src.Cut(0, 6);</span>
+<span class="lineNum">     782 </span>            : 
+<span class="lineNum">     783 </span>            :     // Remove common URL hostname prefixes
+<span class="lineNum">     784 </span><span class="lineCov">          7 :     if (StringBeginsWith(src, NS_LITERAL_STRING(&quot;www.&quot;))) {</span>
+<span class="lineNum">     785 </span><span class="lineNoCov">          0 :       src.Cut(0, 4);</span>
+<span class="lineNum">     786 </span>            :     }
+<span class="lineNum">     787 </span>            : 
+<span class="lineNum">     788 </span><span class="lineCov">          7 :     result-&gt;SetAsAString(src);</span>
+<span class="lineNum">     789 </span><span class="lineCov">          7 :     result.forget(_result);</span>
+<span class="lineNum">     790 </span><span class="lineCov">         14 :     return NS_OK;</span>
+<span class="lineNum">     791 </span>            :   }
+<span class="lineNum">     792 </span>            : 
+<span class="lineNum">     793 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     794 </span>            : //// Frecency Changed Notification Function
+<span class="lineNum">     795 </span>            : 
+<a name="796"><span class="lineNum">     796 </span>            :   /* static */</a>
+<span class="lineNum">     797 </span>            :   nsresult
+<span class="lineNum">     798 </span><span class="lineCov">          1 :   FrecencyNotificationFunction::create(mozIStorageConnection *aDBConn)</span>
+<span class="lineNum">     799 </span>            :   {
+<span class="lineNum">     800 </span>            :     RefPtr&lt;FrecencyNotificationFunction&gt; function =
+<span class="lineNum">     801 </span><span class="lineCov">          2 :       new FrecencyNotificationFunction();</span>
+<span class="lineNum">     802 </span><span class="lineCov">          2 :     nsresult rv = aDBConn-&gt;CreateFunction(</span>
+<span class="lineNum">     803 </span><span class="lineCov">          2 :       NS_LITERAL_CSTRING(&quot;notify_frecency&quot;), 5, function</span>
+<span class="lineNum">     804 </span><span class="lineCov">          3 :     );</span>
+<span class="lineNum">     805 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     806 </span>            : 
+<span class="lineNum">     807 </span><span class="lineCov">          1 :     return NS_OK;</span>
+<a name="808"><span class="lineNum">     808 </span>            :   }</a>
+<span class="lineNum">     809 </span>            : 
+<span class="lineNum">     810 </span><span class="lineCov">         10 :   NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">     811 </span>            :     FrecencyNotificationFunction,
+<span class="lineNum">     812 </span>            :     mozIStorageFunction
+<span class="lineNum">     813 </span>            :   )
+<a name="814"><span class="lineNum">     814 </span>            : </a>
+<span class="lineNum">     815 </span>            :   NS_IMETHODIMP
+<span class="lineNum">     816 </span><span class="lineCov">          1 :   FrecencyNotificationFunction::OnFunctionCall(mozIStorageValueArray *aArgs,</span>
+<span class="lineNum">     817 </span>            :                                                nsIVariant **_result)
+<span class="lineNum">     818 </span>            :   {
+<span class="lineNum">     819 </span>            :     uint32_t numArgs;
+<span class="lineNum">     820 </span><span class="lineCov">          1 :     nsresult rv = aArgs-&gt;GetNumEntries(&amp;numArgs);</span>
+<span class="lineNum">     821 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     822 </span><span class="lineCov">          1 :     MOZ_ASSERT(numArgs == 5);</span>
+<span class="lineNum">     823 </span>            : 
+<span class="lineNum">     824 </span><span class="lineCov">          1 :     int32_t newFrecency = aArgs-&gt;AsInt32(0);</span>
+<span class="lineNum">     825 </span>            : 
+<span class="lineNum">     826 </span><span class="lineCov">          2 :     nsAutoCString spec;</span>
+<span class="lineNum">     827 </span><span class="lineCov">          1 :     rv = aArgs-&gt;GetUTF8String(1, spec);</span>
+<span class="lineNum">     828 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     829 </span>            : 
+<span class="lineNum">     830 </span><span class="lineCov">          2 :     nsAutoCString guid;</span>
+<span class="lineNum">     831 </span><span class="lineCov">          1 :     rv = aArgs-&gt;GetUTF8String(2, guid);</span>
+<span class="lineNum">     832 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     833 </span>            : 
+<span class="lineNum">     834 </span><span class="lineCov">          1 :     bool hidden = static_cast&lt;bool&gt;(aArgs-&gt;AsInt32(3));</span>
+<span class="lineNum">     835 </span><span class="lineCov">          1 :     PRTime lastVisitDate = static_cast&lt;PRTime&gt;(aArgs-&gt;AsInt64(4));</span>
+<span class="lineNum">     836 </span>            : 
+<span class="lineNum">     837 </span><span class="lineCov">          1 :     const nsNavHistory* navHistory = nsNavHistory::GetConstHistoryService();</span>
+<span class="lineNum">     838 </span><span class="lineCov">          1 :     NS_ENSURE_STATE(navHistory);</span>
+<span class="lineNum">     839 </span><span class="lineCov">          1 :     navHistory-&gt;DispatchFrecencyChangedNotification(spec, newFrecency, guid,</span>
+<span class="lineNum">     840 </span><span class="lineCov">          1 :                                                     hidden, lastVisitDate);</span>
+<span class="lineNum">     841 </span>            : 
+<span class="lineNum">     842 </span><span class="lineCov">          2 :     RefPtr&lt;nsVariant&gt; result = new nsVariant();</span>
+<span class="lineNum">     843 </span><span class="lineCov">          1 :     rv = result-&gt;SetAsInt32(newFrecency);</span>
+<span class="lineNum">     844 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     845 </span><span class="lineCov">          1 :     result.forget(_result);</span>
+<span class="lineNum">     846 </span><span class="lineCov">          1 :     return NS_OK;</span>
+<span class="lineNum">     847 </span>            :   }
+<span class="lineNum">     848 </span>            : 
+<span class="lineNum">     849 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     850 </span>            : //// Store Last Inserted Id Function
+<span class="lineNum">     851 </span>            : 
+<a name="852"><span class="lineNum">     852 </span>            :   /* static */</a>
+<span class="lineNum">     853 </span>            :   nsresult
+<span class="lineNum">     854 </span><span class="lineCov">          1 :   StoreLastInsertedIdFunction::create(mozIStorageConnection *aDBConn)</span>
+<span class="lineNum">     855 </span>            :   {
+<span class="lineNum">     856 </span>            :     RefPtr&lt;StoreLastInsertedIdFunction&gt; function =
+<span class="lineNum">     857 </span><span class="lineCov">          2 :       new StoreLastInsertedIdFunction();</span>
+<span class="lineNum">     858 </span><span class="lineCov">          2 :     nsresult rv = aDBConn-&gt;CreateFunction(</span>
+<span class="lineNum">     859 </span><span class="lineCov">          2 :       NS_LITERAL_CSTRING(&quot;store_last_inserted_id&quot;), 2, function</span>
+<span class="lineNum">     860 </span><span class="lineCov">          3 :     );</span>
+<span class="lineNum">     861 </span><span class="lineCov">          1 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     862 </span>            : 
+<span class="lineNum">     863 </span><span class="lineCov">          1 :     return NS_OK;</span>
+<a name="864"><span class="lineNum">     864 </span>            :   }</a>
+<span class="lineNum">     865 </span>            : 
+<span class="lineNum">     866 </span><span class="lineCov">         10 :   NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">     867 </span>            :     StoreLastInsertedIdFunction,
+<span class="lineNum">     868 </span>            :     mozIStorageFunction
+<span class="lineNum">     869 </span>            :   )
+<a name="870"><span class="lineNum">     870 </span>            : </a>
+<span class="lineNum">     871 </span>            :   NS_IMETHODIMP
+<span class="lineNum">     872 </span><span class="lineCov">          2 :   StoreLastInsertedIdFunction::OnFunctionCall(mozIStorageValueArray *aArgs,</span>
+<span class="lineNum">     873 </span>            :                                               nsIVariant **_result)
+<span class="lineNum">     874 </span>            :   {
+<span class="lineNum">     875 </span>            :     uint32_t numArgs;
+<span class="lineNum">     876 </span><span class="lineCov">          2 :     nsresult rv = aArgs-&gt;GetNumEntries(&amp;numArgs);</span>
+<span class="lineNum">     877 </span><span class="lineCov">          2 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     878 </span><span class="lineCov">          2 :     MOZ_ASSERT(numArgs == 2);</span>
+<span class="lineNum">     879 </span>            : 
+<span class="lineNum">     880 </span><span class="lineCov">          4 :     nsAutoCString table;</span>
+<span class="lineNum">     881 </span><span class="lineCov">          2 :     rv = aArgs-&gt;GetUTF8String(0, table);</span>
+<span class="lineNum">     882 </span><span class="lineCov">          2 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     883 </span>            : 
+<span class="lineNum">     884 </span><span class="lineCov">          2 :     int64_t lastInsertedId = aArgs-&gt;AsInt64(1);</span>
+<span class="lineNum">     885 </span>            : 
+<span class="lineNum">     886 </span><span class="lineCov">          2 :     MOZ_ASSERT(table.EqualsLiteral(&quot;moz_places&quot;) ||</span>
+<span class="lineNum">     887 </span>            :                table.EqualsLiteral(&quot;moz_historyvisits&quot;) ||
+<span class="lineNum">     888 </span>            :                table.EqualsLiteral(&quot;moz_bookmarks&quot;) ||
+<span class="lineNum">     889 </span>            :                table.EqualsLiteral(&quot;moz_icons&quot;));
+<span class="lineNum">     890 </span>            : 
+<span class="lineNum">     891 </span><span class="lineCov">          2 :     if (table.EqualsLiteral(&quot;moz_bookmarks&quot;)) {</span>
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :       nsNavBookmarks::StoreLastInsertedId(table, lastInsertedId);</span>
+<span class="lineNum">     893 </span><span class="lineCov">          2 :     } else if (table.EqualsLiteral(&quot;moz_icons&quot;)) {</span>
+<span class="lineNum">     894 </span><span class="lineNoCov">          0 :       nsFaviconService::StoreLastInsertedId(table, lastInsertedId);</span>
+<span class="lineNum">     895 </span>            :     } else {
+<span class="lineNum">     896 </span><span class="lineCov">          2 :       nsNavHistory::StoreLastInsertedId(table, lastInsertedId);</span>
+<span class="lineNum">     897 </span>            :     }
+<span class="lineNum">     898 </span>            : 
+<span class="lineNum">     899 </span><span class="lineCov">          4 :     RefPtr&lt;nsVariant&gt; result = new nsVariant();</span>
+<span class="lineNum">     900 </span><span class="lineCov">          2 :     rv = result-&gt;SetAsInt64(lastInsertedId);</span>
+<span class="lineNum">     901 </span><span class="lineCov">          2 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     902 </span><span class="lineCov">          2 :     result.forget(_result);</span>
+<span class="lineNum">     903 </span><span class="lineCov">          2 :     return NS_OK;</span>
+<span class="lineNum">     904 </span>            :   }
+<span class="lineNum">     905 </span>            : 
+<span class="lineNum">     906 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     907 </span>            : //// Hash Function
+<span class="lineNum">     908 </span>            : 
+<a name="909"><span class="lineNum">     909 </span>            :   /* static */</a>
+<span class="lineNum">     910 </span>            :   nsresult
+<span class="lineNum">     911 </span><span class="lineCov">          1 :   HashFunction::create(mozIStorageConnection *aDBConn)</span>
+<span class="lineNum">     912 </span>            :   {
+<span class="lineNum">     913 </span><span class="lineCov">          2 :     RefPtr&lt;HashFunction&gt; function = new HashFunction();</span>
+<span class="lineNum">     914 </span><span class="lineCov">          2 :     return aDBConn-&gt;CreateFunction(</span>
+<span class="lineNum">     915 </span><span class="lineCov">          2 :       NS_LITERAL_CSTRING(&quot;hash&quot;), -1, function</span>
+<span class="lineNum">     916 </span><span class="lineCov">          4 :     );</span>
+<a name="917"><span class="lineNum">     917 </span>            :   }</a>
+<span class="lineNum">     918 </span>            : 
+<span class="lineNum">     919 </span><span class="lineCov">         10 :   NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">     920 </span>            :     HashFunction,
+<span class="lineNum">     921 </span>            :     mozIStorageFunction
+<span class="lineNum">     922 </span>            :   )
+<a name="923"><span class="lineNum">     923 </span>            : </a>
+<span class="lineNum">     924 </span>            :   NS_IMETHODIMP
+<span class="lineNum">     925 </span><span class="lineCov">         15 :   HashFunction::OnFunctionCall(mozIStorageValueArray *aArguments,</span>
+<span class="lineNum">     926 </span>            :                                nsIVariant **_result)
+<span class="lineNum">     927 </span>            :   {
+<span class="lineNum">     928 </span>            :     // Must have non-null function arguments.
+<span class="lineNum">     929 </span><span class="lineCov">         15 :     MOZ_ASSERT(aArguments);</span>
+<span class="lineNum">     930 </span>            : 
+<span class="lineNum">     931 </span>            :     // Fetch arguments.  Use default values if they were omitted.
+<span class="lineNum">     932 </span>            :     uint32_t numEntries;
+<span class="lineNum">     933 </span><span class="lineCov">         15 :     nsresult rv = aArguments-&gt;GetNumEntries(&amp;numEntries);</span>
+<span class="lineNum">     934 </span><span class="lineCov">         15 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     935 </span><span class="lineCov">         15 :     NS_ENSURE_TRUE(numEntries &gt;= 1  &amp;&amp; numEntries &lt;= 2, NS_ERROR_FAILURE);</span>
+<span class="lineNum">     936 </span>            : 
+<span class="lineNum">     937 </span><span class="lineCov">         30 :     nsString str;</span>
+<span class="lineNum">     938 </span><span class="lineCov">         15 :     aArguments-&gt;GetString(0, str);</span>
+<span class="lineNum">     939 </span><span class="lineCov">         30 :     nsAutoCString mode;</span>
+<span class="lineNum">     940 </span><span class="lineCov">         15 :     if (numEntries &gt; 1) {</span>
+<span class="lineNum">     941 </span><span class="lineNoCov">          0 :       aArguments-&gt;GetUTF8String(1, mode);</span>
+<span class="lineNum">     942 </span>            :     }
+<span class="lineNum">     943 </span>            : 
+<span class="lineNum">     944 </span><span class="lineCov">         30 :     RefPtr&lt;nsVariant&gt; result = new nsVariant();</span>
+<span class="lineNum">     945 </span><span class="lineCov">         15 :     if (mode.IsEmpty()) {</span>
+<span class="lineNum">     946 </span>            :       // URI-like strings (having a prefix before a colon), are handled specially,
+<span class="lineNum">     947 </span>            :       // as a 48 bit hash, where first 16 bits are the prefix hash, while the
+<span class="lineNum">     948 </span>            :       // other 32 are the string hash.
+<span class="lineNum">     949 </span>            :       // The 16 bits have been decided based on the fact hashing all of the IANA
+<span class="lineNum">     950 </span>            :       // known schemes, plus &quot;places&quot;, does not generate collisions.
+<span class="lineNum">     951 </span><span class="lineCov">         15 :       nsAString::const_iterator start, tip, end;</span>
+<span class="lineNum">     952 </span><span class="lineCov">         15 :       str.BeginReading(tip);</span>
+<span class="lineNum">     953 </span><span class="lineCov">         15 :       start = tip;</span>
+<span class="lineNum">     954 </span><span class="lineCov">         15 :       str.EndReading(end);</span>
+<span class="lineNum">     955 </span><span class="lineCov">         15 :       if (FindInReadable(NS_LITERAL_STRING(&quot;:&quot;), tip, end)) {</span>
+<span class="lineNum">     956 </span><span class="lineCov">         30 :         const nsDependentSubstring&amp; prefix = Substring(start, tip);</span>
+<span class="lineNum">     957 </span><span class="lineCov">         15 :         uint64_t prefixHash = static_cast&lt;uint64_t&gt;(HashString(prefix) &amp; 0x0000FFFF);</span>
+<span class="lineNum">     958 </span>            :         // The second half of the url is more likely to be unique, so we add it.
+<span class="lineNum">     959 </span><span class="lineCov">         15 :         uint32_t srcHash = HashString(str);</span>
+<span class="lineNum">     960 </span><span class="lineCov">         15 :         uint64_t hash = (prefixHash &lt;&lt; 32) + srcHash;</span>
+<span class="lineNum">     961 </span><span class="lineCov">         15 :         result-&gt;SetAsInt64(hash);</span>
+<span class="lineNum">     962 </span>            :       } else {
+<span class="lineNum">     963 </span><span class="lineNoCov">          0 :         uint32_t hash = HashString(str);</span>
+<span class="lineNum">     964 </span><span class="lineNoCov">          0 :         result-&gt;SetAsInt64(hash);</span>
+<span class="lineNum">     965 </span>            :       }
+<span class="lineNum">     966 </span><span class="lineNoCov">          0 :     } else if (mode.Equals(NS_LITERAL_CSTRING(&quot;prefix_lo&quot;))) {</span>
+<span class="lineNum">     967 </span>            :       // Keep only 16 bits.
+<span class="lineNum">     968 </span><span class="lineNoCov">          0 :       uint64_t hash = static_cast&lt;uint64_t&gt;(HashString(str) &amp; 0x0000FFFF) &lt;&lt; 32;</span>
+<span class="lineNum">     969 </span><span class="lineNoCov">          0 :       result-&gt;SetAsInt64(hash);</span>
+<span class="lineNum">     970 </span><span class="lineNoCov">          0 :     } else if (mode.Equals(NS_LITERAL_CSTRING(&quot;prefix_hi&quot;))) {</span>
+<span class="lineNum">     971 </span>            :       // Keep only 16 bits.
+<span class="lineNum">     972 </span><span class="lineNoCov">          0 :       uint64_t hash = static_cast&lt;uint64_t&gt;(HashString(str) &amp; 0x0000FFFF) &lt;&lt; 32;</span>
+<span class="lineNum">     973 </span>            :       // Make this a prefix upper bound by filling the lowest 32 bits.
+<span class="lineNum">     974 </span><span class="lineNoCov">          0 :       hash +=  0xFFFFFFFF;</span>
+<span class="lineNum">     975 </span><span class="lineNoCov">          0 :       result-&gt;SetAsInt64(hash);</span>
+<span class="lineNum">     976 </span>            :     } else {
+<span class="lineNum">     977 </span><span class="lineNoCov">          0 :       return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     978 </span>            :     }
+<span class="lineNum">     979 </span>            : 
+<span class="lineNum">     980 </span><span class="lineCov">         15 :     result.forget(_result);</span>
+<span class="lineNum">     981 </span><span class="lineCov">         15 :     return NS_OK;</span>
+<span class="lineNum">     982 </span>            :   }
+<span class="lineNum">     983 </span>            : 
+<span class="lineNum">     984 </span>            : } // namespace places
+<span class="lineNum">     985 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

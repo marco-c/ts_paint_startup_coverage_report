@@ -1,0 +1,477 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - xpcom/threads/StateMirroring.h</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">xpcom/threads</a> - StateMirroring.h<span style="font-size: 80%;"> (source / <a href="StateMirroring.h.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">122</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">438</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #if !defined(StateMirroring_h_)
+<span class="lineNum">       8 </span>            : #define StateMirroring_h_
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/Maybe.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/MozPromise.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/StateWatching.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/TaskDispatcher.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/UniquePtr.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;mozilla/Unused.h&quot;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : #include &quot;mozilla/Logging.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;nsISupportsImpl.h&quot;
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : /*
+<span class="lineNum">      21 </span>            :  * The state-mirroring machinery allows pieces of interesting state to be
+<span class="lineNum">      22 </span>            :  * observed on multiple thread without locking. The basic strategy is to track
+<span class="lineNum">      23 </span>            :  * changes in a canonical value and post updates to other threads that hold
+<span class="lineNum">      24 </span>            :  * mirrors for that value.
+<span class="lineNum">      25 </span>            :  *
+<span class="lineNum">      26 </span>            :  * One problem with the naive implementation of such a system is that some pieces
+<span class="lineNum">      27 </span>            :  * of state need to be updated atomically, and certain other operations need to
+<span class="lineNum">      28 </span>            :  * wait for these atomic updates to complete before executing. The state-mirroring
+<span class="lineNum">      29 </span>            :  * machinery solves this problem by requiring that its owner thread uses tail
+<span class="lineNum">      30 </span>            :  * dispatch, and posting state update events (which should always be run first by
+<span class="lineNum">      31 </span>            :  * TaskDispatcher implementations) to that tail dispatcher. This ensures that
+<span class="lineNum">      32 </span>            :  * state changes are always atomic from the perspective of observing threads.
+<span class="lineNum">      33 </span>            :  *
+<span class="lineNum">      34 </span>            :  * Given that state-mirroring is an automatic background process, we try to avoid
+<span class="lineNum">      35 </span>            :  * burdening the caller with worrying too much about teardown. To that end, we
+<span class="lineNum">      36 </span>            :  * don't assert dispatch success for any of the notifications, and assume that
+<span class="lineNum">      37 </span>            :  * any canonical or mirror owned by a thread for whom dispatch fails will soon
+<span class="lineNum">      38 </span>            :  * be disconnected by its holder anyway.
+<span class="lineNum">      39 </span>            :  *
+<span class="lineNum">      40 </span>            :  * Given that semantics may change and comments tend to go out of date, we
+<span class="lineNum">      41 </span>            :  * deliberately don't provide usage examples here. Grep around to find them.
+<span class="lineNum">      42 </span>            :  */
+<span class="lineNum">      43 </span>            : 
+<span class="lineNum">      44 </span>            : namespace mozilla {
+<span class="lineNum">      45 </span>            : 
+<span class="lineNum">      46 </span>            : // Mirror&lt;T&gt; and Canonical&lt;T&gt; inherit WatchTarget, so we piggy-back on the
+<span class="lineNum">      47 </span>            : // logging that WatchTarget already does. Given that, it makes sense to share
+<span class="lineNum">      48 </span>            : // the same log module.
+<span class="lineNum">      49 </span>            : #define MIRROR_LOG(x, ...) \
+<span class="lineNum">      50 </span>            :   MOZ_ASSERT(gStateWatchingLog); \
+<span class="lineNum">      51 </span>            :   MOZ_LOG(gStateWatchingLog, LogLevel::Debug, (x, ##__VA_ARGS__))
+<span class="lineNum">      52 </span>            : 
+<span class="lineNum">      53 </span>            : template&lt;typename T&gt; class AbstractMirror;
+<span class="lineNum">      54 </span>            : 
+<span class="lineNum">      55 </span>            : /*
+<span class="lineNum">      56 </span>            :  * AbstractCanonical is a superclass from which all Canonical values must
+<span class="lineNum">      57 </span>            :  * inherit. It serves as the interface of operations which may be performed (via
+<span class="lineNum">      58 </span>            :  * asynchronous dispatch) by other threads, in particular by the corresponding
+<span class="lineNum">      59 </span>            :  * Mirror value.
+<span class="lineNum">      60 </span>            :  */
+<span class="lineNum">      61 </span>            : template&lt;typename T&gt;
+<span class="lineNum">      62 </span>            : class AbstractCanonical
+<a name="63"><span class="lineNum">      63 </span>            : {</a>
+<a name="64"><span class="lineNum">      64 </span>            : public:</a>
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(AbstractCanonical)</span>
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 :   AbstractCanonical(AbstractThread* aThread) : mOwnerThread(aThread) {}</span>
+<span class="lineNum">      67 </span>            :   virtual void AddMirror(AbstractMirror&lt;T&gt;* aMirror) = 0;
+<a name="68"><span class="lineNum">      68 </span>            :   virtual void RemoveMirror(AbstractMirror&lt;T&gt;* aMirror) = 0;</a>
+<span class="lineNum">      69 </span>            : 
+<a name="70"><span class="lineNum">      70 </span><span class="lineNoCov">          0 :   AbstractThread* OwnerThread() const { return mOwnerThread; }</span></a>
+<span class="lineNum">      71 </span>            : protected:
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :   virtual ~AbstractCanonical() {}</span>
+<span class="lineNum">      73 </span>            :   RefPtr&lt;AbstractThread&gt; mOwnerThread;
+<span class="lineNum">      74 </span>            : };
+<span class="lineNum">      75 </span>            : 
+<span class="lineNum">      76 </span>            : /*
+<span class="lineNum">      77 </span>            :  * AbstractMirror is a superclass from which all Mirror values must
+<span class="lineNum">      78 </span>            :  * inherit. It serves as the interface of operations which may be performed (via
+<span class="lineNum">      79 </span>            :  * asynchronous dispatch) by other threads, in particular by the corresponding
+<span class="lineNum">      80 </span>            :  * Canonical value.
+<span class="lineNum">      81 </span>            :  */
+<span class="lineNum">      82 </span>            : template&lt;typename T&gt;
+<span class="lineNum">      83 </span>            : class AbstractMirror
+<a name="84"><span class="lineNum">      84 </span>            : {</a>
+<a name="85"><span class="lineNum">      85 </span>            : public:</a>
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(AbstractMirror)</span>
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :   AbstractMirror(AbstractThread* aThread) : mOwnerThread(aThread) {}</span>
+<span class="lineNum">      88 </span>            :   virtual void UpdateValue(const T&amp; aNewValue) = 0;
+<a name="89"><span class="lineNum">      89 </span>            :   virtual void NotifyDisconnected() = 0;</a>
+<span class="lineNum">      90 </span>            : 
+<a name="91"><span class="lineNum">      91 </span><span class="lineNoCov">          0 :   AbstractThread* OwnerThread() const { return mOwnerThread; }</span></a>
+<span class="lineNum">      92 </span>            : protected:
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :   virtual ~AbstractMirror() {}</span>
+<span class="lineNum">      94 </span>            :   RefPtr&lt;AbstractThread&gt; mOwnerThread;
+<span class="lineNum">      95 </span>            : };
+<span class="lineNum">      96 </span>            : 
+<span class="lineNum">      97 </span>            : /*
+<span class="lineNum">      98 </span>            :  * Canonical&lt;T&gt; is a wrapper class that allows a given value to be mirrored by other
+<span class="lineNum">      99 </span>            :  * threads. It maintains a list of active mirrors, and queues updates for them
+<span class="lineNum">     100 </span>            :  * when the internal value changes. When changing the value, the caller needs to
+<span class="lineNum">     101 </span>            :  * pass a TaskDispatcher object, which fires the updates at the appropriate time.
+<span class="lineNum">     102 </span>            :  * Canonical&lt;T&gt; is also a WatchTarget, and may be set up to trigger other routines
+<span class="lineNum">     103 </span>            :  * (on the same thread) when the canonical value changes.
+<span class="lineNum">     104 </span>            :  *
+<span class="lineNum">     105 </span>            :  * Canonical&lt;T&gt; is intended to be used as a member variable, so it doesn't actually
+<span class="lineNum">     106 </span>            :  * inherit AbstractCanonical&lt;T&gt; (a refcounted type). Rather, it contains an inner
+<span class="lineNum">     107 </span>            :  * class called |Impl| that implements most of the interesting logic.
+<span class="lineNum">     108 </span>            :  */
+<span class="lineNum">     109 </span>            : template&lt;typename T&gt;
+<span class="lineNum">     110 </span>            : class Canonical
+<a name="111"><span class="lineNum">     111 </span>            : {</a>
+<span class="lineNum">     112 </span>            : public:
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :   Canonical(AbstractThread* aThread, const T&amp; aInitialValue, const char* aName)</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :   {</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :     mImpl = new Impl(aThread, aInitialValue, aName);</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :   }</span>
+<a name="117"><span class="lineNum">     117 </span>            : </a>
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :   ~Canonical() {}</span>
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span>            : private:
+<span class="lineNum">     122 </span>            :   class Impl : public AbstractCanonical&lt;T&gt;, public WatchTarget
+<span class="lineNum">     123 </span>            :   {
+<span class="lineNum">     124 </span>            :   public:
+<a name="125"><span class="lineNum">     125 </span>            :     using AbstractCanonical&lt;T&gt;::OwnerThread;</a>
+<span class="lineNum">     126 </span>            : 
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :     Impl(AbstractThread* aThread, const T&amp; aInitialValue, const char* aName)</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :       : AbstractCanonical&lt;T&gt;(aThread), WatchTarget(aName), mValue(aInitialValue)</span>
+<span class="lineNum">     129 </span>            :     {
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :       MIRROR_LOG(&quot;%s [%p] initialized&quot;, mName, this);</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(aThread-&gt;SupportsTailDispatch(), &quot;Can't get coherency without tail dispatch&quot;);</span>
+<a name="132"><span class="lineNum">     132 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     133 </span>            : 
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :     void AddMirror(AbstractMirror&lt;T&gt;* aMirror) override</span>
+<span class="lineNum">     135 </span>            :     {
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :       MIRROR_LOG(&quot;%s [%p] adding mirror %p&quot;, mName, this, aMirror);</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(!mMirrors.Contains(aMirror));</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :       mMirrors.AppendElement(aMirror);</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :       aMirror-&gt;OwnerThread()-&gt;DispatchStateChange(MakeNotifier(aMirror));</span>
+<a name="141"><span class="lineNum">     141 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :     void RemoveMirror(AbstractMirror&lt;T&gt;* aMirror) override</span>
+<span class="lineNum">     144 </span>            :     {
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :       MIRROR_LOG(&quot;%s [%p] removing mirror %p&quot;, mName, this, aMirror);</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(mMirrors.Contains(aMirror));</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :       mMirrors.RemoveElement(aMirror);</span>
+<a name="149"><span class="lineNum">     149 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     150 </span>            : 
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :     void DisconnectAll()</span>
+<span class="lineNum">     152 </span>            :     {
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :       MIRROR_LOG(&quot;%s [%p] Disconnecting all mirrors&quot;, mName, this);</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :       for (size_t i = 0; i &lt; mMirrors.Length(); ++i) {</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :         mMirrors[i]-&gt;OwnerThread()-&gt;Dispatch(</span>
+<span class="lineNum">     156 </span>            :           NewRunnableMethod(&quot;AbstractMirror::NotifyDisconnected&quot;,
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :                             mMirrors[i],</span>
+<span class="lineNum">     158 </span>            :                             &amp;AbstractMirror&lt;T&gt;::NotifyDisconnected),
+<span class="lineNum">     159 </span>            :           AbstractThread::DontAssertDispatchSuccess);
+<span class="lineNum">     160 </span>            :       }
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :       mMirrors.Clear();</span>
+<a name="162"><span class="lineNum">     162 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     163 </span>            : 
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :     operator const T&amp;()</span>
+<span class="lineNum">     165 </span>            :     {
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :       return mValue;</span>
+<a name="168"><span class="lineNum">     168 </span>            :     }</a>
+<span class="lineNum">     169 </span>            : 
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :     void Set(const T&amp; aNewValue)</span>
+<span class="lineNum">     171 </span>            :     {
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     173 </span>            : 
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :       if (aNewValue == mValue) {</span>
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     176 </span>            :       }
+<span class="lineNum">     177 </span>            : 
+<span class="lineNum">     178 </span>            :       // Notify same-thread watchers. The state watching machinery will make sure
+<span class="lineNum">     179 </span>            :       // that notifications run at the right time.
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :       NotifyWatchers();</span>
+<span class="lineNum">     181 </span>            : 
+<span class="lineNum">     182 </span>            :       // Check if we've already got a pending update. If so we won't schedule another
+<span class="lineNum">     183 </span>            :       // one.
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :       bool alreadyNotifying = mInitialValue.isSome();</span>
+<span class="lineNum">     185 </span>            : 
+<span class="lineNum">     186 </span>            :       // Stash the initial value if needed, then update to the new value.
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :       if (mInitialValue.isNothing()) {</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :         mInitialValue.emplace(mValue);</span>
+<span class="lineNum">     189 </span>            :       }
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :       mValue = aNewValue;</span>
+<span class="lineNum">     191 </span>            : 
+<span class="lineNum">     192 </span>            :       // We wait until things have stablized before sending state updates so that
+<span class="lineNum">     193 </span>            :       // we can avoid sending multiple updates, and possibly avoid sending any
+<span class="lineNum">     194 </span>            :       // updates at all if the value ends up where it started.
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :       if (!alreadyNotifying) {</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :         AbstractThread::DispatchDirectTask(NewRunnableMethod(</span>
+<span class="lineNum">     197 </span>            :           &quot;Canonical::Impl::DoNotify&quot;, this, &amp;Impl::DoNotify));
+<span class="lineNum">     198 </span>            :       }
+<span class="lineNum">     199 </span>            :     }
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span>            :     Impl&amp; operator=(const T&amp; aNewValue) { Set(aNewValue); return *this; }
+<span class="lineNum">     202 </span>            :     Impl&amp; operator=(const Impl&amp; aOther) { Set(aOther); return *this; }
+<span class="lineNum">     203 </span>            :     Impl(const Impl&amp; aOther) = delete;
+<a name="204"><span class="lineNum">     204 </span>            : </a>
+<span class="lineNum">     205 </span>            :   protected:
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :     ~Impl() { MOZ_DIAGNOSTIC_ASSERT(mMirrors.IsEmpty()); }</span>
+<a name="207"><span class="lineNum">     207 </span>            : </a>
+<span class="lineNum">     208 </span>            :   private:
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :     void DoNotify()</span>
+<span class="lineNum">     210 </span>            :     {
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(mInitialValue.isSome());</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :       bool same = mInitialValue.ref() == mValue;</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :       mInitialValue.reset();</span>
+<span class="lineNum">     215 </span>            : 
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :       if (same) {</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :         MIRROR_LOG(&quot;%s [%p] unchanged - not sending update&quot;, mName, this);</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     219 </span>            :       }
+<span class="lineNum">     220 </span>            : 
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :       for (size_t i = 0; i &lt; mMirrors.Length(); ++i) {</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :         mMirrors[i]-&gt;OwnerThread()-&gt;DispatchStateChange(MakeNotifier(mMirrors[i]));</span>
+<span class="lineNum">     223 </span>            :       }
+<a name="224"><span class="lineNum">     224 </span>            :     }</a>
+<span class="lineNum">     225 </span>            : 
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :     already_AddRefed&lt;nsIRunnable&gt; MakeNotifier(AbstractMirror&lt;T&gt;* aMirror)</span>
+<span class="lineNum">     227 </span>            :     {
+<span class="lineNum">     228 </span>            :       return NewRunnableMethod&lt;T&gt;(&quot;AbstractMirror::UpdateValue&quot;,
+<span class="lineNum">     229 </span>            :                                   aMirror,
+<span class="lineNum">     230 </span>            :                                   &amp;AbstractMirror&lt;T&gt;::UpdateValue,
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :                                   mValue);</span>
+<span class="lineNum">     232 </span>            :       ;
+<span class="lineNum">     233 </span>            :     }
+<span class="lineNum">     234 </span>            : 
+<span class="lineNum">     235 </span>            :     T mValue;
+<span class="lineNum">     236 </span>            :     Maybe&lt;T&gt; mInitialValue;
+<span class="lineNum">     237 </span>            :     nsTArray&lt;RefPtr&lt;AbstractMirror&lt;T&gt;&gt;&gt; mMirrors;
+<span class="lineNum">     238 </span>            :   };
+<span class="lineNum">     239 </span>            : public:
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span>            :   // NB: Because mirror-initiated disconnection can race with canonical-
+<a name="242"><span class="lineNum">     242 </span>            :   // initiated disconnection, a canonical should never be reinitialized.</a>
+<span class="lineNum">     243 </span>            :   // Forward control operations to the Impl.
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   void DisconnectAll() { return mImpl-&gt;DisconnectAll(); }</span>
+<a name="245"><span class="lineNum">     245 </span>            : </a>
+<a name="246"><span class="lineNum">     246 </span>            :   // Access to the Impl.</a>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   operator Impl&amp;() { return *mImpl; }</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   Impl* operator&amp;() { return mImpl; }</span>
+<a name="249"><span class="lineNum">     249 </span>            : </a>
+<a name="250"><span class="lineNum">     250 </span>            :   // Access to the T.</a>
+<a name="251"><span class="lineNum">     251 </span><span class="lineNoCov">          0 :   const T&amp; Ref() const { return *mImpl; }</span></a>
+<a name="252"><span class="lineNum">     252 </span><span class="lineNoCov">          0 :   operator const T&amp;() const { return Ref(); }</span></a>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :   void Set(const T&amp; aNewValue) { mImpl-&gt;Set(aNewValue); }</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :   Canonical&amp; operator=(const T&amp; aNewValue) { Set(aNewValue); return *this; }</span>
+<span class="lineNum">     255 </span>            :   Canonical&amp; operator=(const Canonical&amp; aOther) { Set(aOther); return *this; }
+<span class="lineNum">     256 </span>            :   Canonical(const Canonical&amp; aOther) = delete;
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span>            : private:
+<span class="lineNum">     259 </span>            :   RefPtr&lt;Impl&gt; mImpl;
+<span class="lineNum">     260 </span>            : };
+<span class="lineNum">     261 </span>            : 
+<span class="lineNum">     262 </span>            : /*
+<span class="lineNum">     263 </span>            :  * Mirror&lt;T&gt; is a wrapper class that allows a given value to mirror that of a
+<span class="lineNum">     264 </span>            :  * Canonical&lt;T&gt; owned by another thread. It registers itself with a Canonical&lt;T&gt;,
+<span class="lineNum">     265 </span>            :  * and is periodically updated with new values. Mirror&lt;T&gt; is also a WatchTarget,
+<span class="lineNum">     266 </span>            :  * and may be set up to trigger other routines (on the same thread) when the
+<span class="lineNum">     267 </span>            :  * mirrored value changes.
+<span class="lineNum">     268 </span>            :  *
+<span class="lineNum">     269 </span>            :  * Mirror&lt;T&gt; is intended to be used as a member variable, so it doesn't actually
+<span class="lineNum">     270 </span>            :  * inherit AbstractMirror&lt;T&gt; (a refcounted type). Rather, it contains an inner
+<span class="lineNum">     271 </span>            :  * class called |Impl| that implements most of the interesting logic.
+<span class="lineNum">     272 </span>            :  */
+<span class="lineNum">     273 </span>            : template&lt;typename T&gt;
+<span class="lineNum">     274 </span>            : class Mirror
+<a name="275"><span class="lineNum">     275 </span>            : {</a>
+<span class="lineNum">     276 </span>            : public:
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   Mirror(AbstractThread* aThread, const T&amp; aInitialValue, const char* aName)</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :   {</span>
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :     mImpl = new Impl(aThread, aInitialValue, aName);</span>
+<a name="280"><span class="lineNum">     280 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     281 </span>            : 
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :   ~Mirror()</span>
+<span class="lineNum">     283 </span>            :   {
+<span class="lineNum">     284 </span>            :     // As a member of complex objects, a Mirror&lt;T&gt; may be destroyed on a
+<span class="lineNum">     285 </span>            :     // different thread than its owner, or late in shutdown during CC. Given
+<span class="lineNum">     286 </span>            :     // that, we require manual disconnection so that callers can put things in
+<span class="lineNum">     287 </span>            :     // the right place.
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :     MOZ_DIAGNOSTIC_ASSERT(!mImpl-&gt;IsConnected());</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span>            : private:
+<span class="lineNum">     292 </span>            :   class Impl : public AbstractMirror&lt;T&gt;, public WatchTarget
+<span class="lineNum">     293 </span>            :   {
+<span class="lineNum">     294 </span>            :   public:
+<a name="295"><span class="lineNum">     295 </span>            :     using AbstractMirror&lt;T&gt;::OwnerThread;</a>
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :     Impl(AbstractThread* aThread, const T&amp; aInitialValue, const char* aName)</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :       : AbstractMirror&lt;T&gt;(aThread), WatchTarget(aName), mValue(aInitialValue)</span>
+<span class="lineNum">     299 </span>            :     {
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :       MIRROR_LOG(&quot;%s [%p] initialized&quot;, mName, this);</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(aThread-&gt;SupportsTailDispatch(), &quot;Can't get coherency without tail dispatch&quot;);</span>
+<a name="302"><span class="lineNum">     302 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :     operator const T&amp;()</span>
+<span class="lineNum">     305 </span>            :     {
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :       return mValue;</span>
+<a name="308"><span class="lineNum">     308 </span>            :     }</a>
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     virtual void UpdateValue(const T&amp; aNewValue) override</span>
+<span class="lineNum">     311 </span>            :     {
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :       if (mValue != aNewValue) {</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :         mValue = aNewValue;</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :         WatchTarget::NotifyWatchers();</span>
+<span class="lineNum">     316 </span>            :       }
+<a name="317"><span class="lineNum">     317 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     318 </span>            : 
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     virtual void NotifyDisconnected() override</span>
+<span class="lineNum">     320 </span>            :     {
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :       MIRROR_LOG(&quot;%s [%p] Notifed of disconnection from %p&quot;, mName, this, mCanonical.get());</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :       mCanonical = nullptr;</span>
+<a name="324"><span class="lineNum">     324 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     325 </span>            : 
+<a name="326"><span class="lineNum">     326 </span><span class="lineNoCov">          0 :     bool IsConnected() const { return !!mCanonical; }</span></a>
+<span class="lineNum">     327 </span>            : 
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :     void Connect(AbstractCanonical&lt;T&gt;* aCanonical)</span>
+<span class="lineNum">     329 </span>            :     {
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :       MIRROR_LOG(&quot;%s [%p] Connecting to %p&quot;, mName, this, aCanonical);</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(!IsConnected());</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;RequiresTailDispatch(aCanonical-&gt;OwnerThread()), &quot;Can't get coherency without tail dispatch&quot;);</span>
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span>            :       nsCOMPtr&lt;nsIRunnable&gt; r =
+<span class="lineNum">     336 </span>            :         NewRunnableMethod&lt;StoreRefPtrPassByPtr&lt;AbstractMirror&lt;T&gt;&gt;&gt;(
+<span class="lineNum">     337 </span>            :           &quot;AbstractCanonical::AddMirror&quot;,
+<span class="lineNum">     338 </span>            :           aCanonical,
+<span class="lineNum">     339 </span>            :           &amp;AbstractCanonical&lt;T&gt;::AddMirror,
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :           this);</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :       aCanonical-&gt;OwnerThread()-&gt;Dispatch(r.forget(), AbstractThread::DontAssertDispatchSuccess);</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :       mCanonical = aCanonical;</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :     }</span>
+<a name="344"><span class="lineNum">     344 </span>            :   public:</a>
+<span class="lineNum">     345 </span>            : 
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :     void DisconnectIfConnected()</span>
+<span class="lineNum">     347 </span>            :     {
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(OwnerThread()-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :       if (!IsConnected()) {</span>
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     351 </span>            :       }
+<span class="lineNum">     352 </span>            : 
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :       MIRROR_LOG(&quot;%s [%p] Disconnecting from %p&quot;, mName, this, mCanonical.get());</span>
+<span class="lineNum">     354 </span>            :       nsCOMPtr&lt;nsIRunnable&gt; r =
+<span class="lineNum">     355 </span>            :         NewRunnableMethod&lt;StoreRefPtrPassByPtr&lt;AbstractMirror&lt;T&gt;&gt;&gt;(
+<span class="lineNum">     356 </span>            :           &quot;AbstractCanonical::RemoveMirror&quot;,
+<span class="lineNum">     357 </span>            :           mCanonical,
+<span class="lineNum">     358 </span>            :           &amp;AbstractCanonical&lt;T&gt;::RemoveMirror,
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :           this);</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :       mCanonical-&gt;OwnerThread()-&gt;Dispatch(r.forget(), AbstractThread::DontAssertDispatchSuccess);</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :       mCanonical = nullptr;</span>
+<span class="lineNum">     362 </span>            :     }
+<a name="363"><span class="lineNum">     363 </span>            : </a>
+<span class="lineNum">     364 </span>            :   protected:
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :     ~Impl() { MOZ_DIAGNOSTIC_ASSERT(!IsConnected()); }</span>
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span>            :   private:
+<span class="lineNum">     368 </span>            :     T mValue;
+<span class="lineNum">     369 </span>            :     RefPtr&lt;AbstractCanonical&lt;T&gt;&gt; mCanonical;
+<span class="lineNum">     370 </span>            :   };
+<span class="lineNum">     371 </span>            : public:
+<a name="372"><span class="lineNum">     372 </span>            : </a>
+<a name="373"><span class="lineNum">     373 </span>            :   // Forward control operations to the Impl&lt;T&gt;.</a>
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :   void Connect(AbstractCanonical&lt;T&gt;* aCanonical) { mImpl-&gt;Connect(aCanonical); }</span>
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :   void DisconnectIfConnected() { mImpl-&gt;DisconnectIfConnected(); }</span>
+<a name="376"><span class="lineNum">     376 </span>            : </a>
+<span class="lineNum">     377 </span>            :   // Access to the Impl&lt;T&gt;.
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :   operator Impl&amp;() { return *mImpl; }</span>
+<span class="lineNum">     379 </span>            :   Impl* operator&amp;() { return mImpl; }
+<a name="380"><span class="lineNum">     380 </span>            : </a>
+<a name="381"><span class="lineNum">     381 </span>            :   // Access to the T.</a>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :   const T&amp; Ref() const { return *mImpl; }</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :   operator const T&amp;() const { return Ref(); }</span>
+<span class="lineNum">     384 </span>            : 
+<span class="lineNum">     385 </span>            : private:
+<span class="lineNum">     386 </span>            :   RefPtr&lt;Impl&gt; mImpl;
+<span class="lineNum">     387 </span>            : };
+<span class="lineNum">     388 </span>            : 
+<span class="lineNum">     389 </span>            : #undef MIRROR_LOG
+<span class="lineNum">     390 </span>            : 
+<span class="lineNum">     391 </span>            : } // namespace mozilla
+<span class="lineNum">     392 </span>            : 
+<span class="lineNum">     393 </span>            : #endif
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,420 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - dom/ipc/PreallocatedProcessManager.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">dom/ipc</a> - PreallocatedProcessManager.cpp<span style="font-size: 80%;"> (source / <a href="PreallocatedProcessManager.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">80</td>
+            <td class="headerCovTableEntry">134</td>
+            <td class="headerCovTableEntryLo">59.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">19</td>
+            <td class="headerCovTableEntry">26</td>
+            <td class="headerCovTableEntryLo">73.1 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+<span class="lineNum">       5 </span>            :  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;mozilla/PreallocatedProcessManager.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;mozilla/ClearOnShutdown.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/Preferences.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/Unused.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/dom/ContentParent.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/dom/ScriptSettings.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;nsIPropertyBag2.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;ProcessPriorityManager.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsServiceManagerUtils.h&quot;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : // This number is fairly arbitrary ... the intention is to put off
+<span class="lineNum">      18 </span>            : // launching another app process until the last one has finished
+<span class="lineNum">      19 </span>            : // loading its content, to reduce CPU/memory/IO contention.
+<span class="lineNum">      20 </span>            : #define DEFAULT_ALLOCATE_DELAY 1000
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : using namespace mozilla;
+<span class="lineNum">      23 </span>            : using namespace mozilla::hal;
+<span class="lineNum">      24 </span>            : using namespace mozilla::dom;
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : namespace mozilla {
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : /**
+<span class="lineNum">      29 </span>            :  * This singleton class implements the static methods on
+<span class="lineNum">      30 </span>            :  * PreallocatedProcessManager.
+<span class="lineNum">      31 </span>            :  */
+<span class="lineNum">      32 </span>            : class PreallocatedProcessManagerImpl final
+<span class="lineNum">      33 </span>            :   : public nsIObserver
+<span class="lineNum">      34 </span>            : {
+<span class="lineNum">      35 </span>            : public:
+<span class="lineNum">      36 </span>            :   static PreallocatedProcessManagerImpl* Singleton();
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            :   NS_DECL_ISUPPORTS
+<span class="lineNum">      39 </span>            :   NS_DECL_NSIOBSERVER
+<span class="lineNum">      40 </span>            : 
+<span class="lineNum">      41 </span>            :   // See comments on PreallocatedProcessManager for these methods.
+<span class="lineNum">      42 </span>            :   void AddBlocker(ContentParent* aParent);
+<span class="lineNum">      43 </span>            :   void RemoveBlocker(ContentParent* aParent);
+<span class="lineNum">      44 </span>            :   already_AddRefed&lt;ContentParent&gt; Take();
+<span class="lineNum">      45 </span>            :   bool Provide(ContentParent* aParent);
+<span class="lineNum">      46 </span>            : 
+<span class="lineNum">      47 </span>            : private:
+<span class="lineNum">      48 </span>            :   static mozilla::StaticRefPtr&lt;PreallocatedProcessManagerImpl&gt; sSingleton;
+<a name="49"><span class="lineNum">      49 </span>            : </a>
+<span class="lineNum">      50 </span>            :   PreallocatedProcessManagerImpl();
+<span class="lineNum">      51 </span><span class="lineNoCov">          0 :   ~PreallocatedProcessManagerImpl() {}</span>
+<span class="lineNum">      52 </span>            :   DISALLOW_EVIL_CONSTRUCTORS(PreallocatedProcessManagerImpl);
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span>            :   void Init();
+<span class="lineNum">      55 </span>            : 
+<span class="lineNum">      56 </span>            :   bool CanAllocate();
+<span class="lineNum">      57 </span>            :   void AllocateAfterDelay();
+<span class="lineNum">      58 </span>            :   void AllocateOnIdle();
+<span class="lineNum">      59 </span>            :   void AllocateNow();
+<span class="lineNum">      60 </span>            : 
+<span class="lineNum">      61 </span>            :   void RereadPrefs();
+<span class="lineNum">      62 </span>            :   void Enable();
+<span class="lineNum">      63 </span>            :   void Disable();
+<span class="lineNum">      64 </span>            :   void CloseProcess();
+<span class="lineNum">      65 </span>            : 
+<span class="lineNum">      66 </span>            :   void ObserveProcessShutdown(nsISupports* aSubject);
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span>            :   bool mEnabled;
+<span class="lineNum">      69 </span>            :   bool mShutdown;
+<span class="lineNum">      70 </span>            :   RefPtr&lt;ContentParent&gt; mPreallocatedProcess;
+<span class="lineNum">      71 </span>            :   nsTHashtable&lt;nsUint64HashKey&gt; mBlockers;
+<span class="lineNum">      72 </span>            : };
+<span class="lineNum">      73 </span>            : 
+<span class="lineNum">      74 </span>            : /* static */ StaticRefPtr&lt;PreallocatedProcessManagerImpl&gt;
+<span class="lineNum">      75 </span><span class="lineCov">          3 : PreallocatedProcessManagerImpl::sSingleton;</span>
+<a name="76"><span class="lineNum">      76 </span>            : </a>
+<span class="lineNum">      77 </span>            : /* static */ PreallocatedProcessManagerImpl*
+<span class="lineNum">      78 </span><span class="lineCov">          4 : PreallocatedProcessManagerImpl::Singleton()</span>
+<span class="lineNum">      79 </span>            : {
+<span class="lineNum">      80 </span><span class="lineCov">          4 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">      81 </span><span class="lineCov">          4 :   if (!sSingleton) {</span>
+<span class="lineNum">      82 </span><span class="lineCov">          1 :     sSingleton = new PreallocatedProcessManagerImpl();</span>
+<span class="lineNum">      83 </span><span class="lineCov">          1 :     sSingleton-&gt;Init();</span>
+<span class="lineNum">      84 </span><span class="lineCov">          1 :     ClearOnShutdown(&amp;sSingleton);</span>
+<span class="lineNum">      85 </span>            :   }
+<span class="lineNum">      86 </span>            : 
+<span class="lineNum">      87 </span><span class="lineCov">          4 :   return sSingleton;</span>
+<a name="88"><span class="lineNum">      88 </span>            : }</a>
+<span class="lineNum">      89 </span>            : 
+<a name="90"><span class="lineNum">      90 </span><span class="lineCov">         27 : NS_IMPL_ISUPPORTS(PreallocatedProcessManagerImpl, nsIObserver)</span></a>
+<span class="lineNum">      91 </span>            : 
+<span class="lineNum">      92 </span><span class="lineCov">          1 : PreallocatedProcessManagerImpl::PreallocatedProcessManagerImpl()</span>
+<span class="lineNum">      93 </span>            :   : mEnabled(false)
+<span class="lineNum">      94 </span><span class="lineCov">          1 :   , mShutdown(false)</span>
+<span class="lineNum">      95 </span><span class="lineCov">          1 : {}</span>
+<a name="96"><span class="lineNum">      96 </span>            : </a>
+<span class="lineNum">      97 </span>            : void
+<span class="lineNum">      98 </span><span class="lineCov">          1 : PreallocatedProcessManagerImpl::Init()</span>
+<span class="lineNum">      99 </span>            : {
+<span class="lineNum">     100 </span><span class="lineCov">          1 :   Preferences::AddStrongObserver(this, &quot;dom.ipc.processPrelaunch.enabled&quot;);</span>
+<span class="lineNum">     101 </span>            :   // We have to respect processCount at all time. This is especially important
+<span class="lineNum">     102 </span>            :   // for testing.
+<span class="lineNum">     103 </span><span class="lineCov">          1 :   Preferences::AddStrongObserver(this, &quot;dom.ipc.processCount&quot;);</span>
+<span class="lineNum">     104 </span><span class="lineCov">          2 :   nsCOMPtr&lt;nsIObserverService&gt; os = services::GetObserverService();</span>
+<span class="lineNum">     105 </span><span class="lineCov">          1 :   if (os) {</span>
+<span class="lineNum">     106 </span><span class="lineCov">          2 :     os-&gt;AddObserver(this, &quot;ipc:content-shutdown&quot;,</span>
+<span class="lineNum">     107 </span><span class="lineCov">          2 :                     /* weakRef = */ false);</span>
+<span class="lineNum">     108 </span><span class="lineCov">          2 :     os-&gt;AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID,</span>
+<span class="lineNum">     109 </span><span class="lineCov">          2 :                     /* weakRef = */ false);</span>
+<span class="lineNum">     110 </span><span class="lineCov">          2 :     os-&gt;AddObserver(this, &quot;profile-change-teardown&quot;,</span>
+<span class="lineNum">     111 </span><span class="lineCov">          2 :                     /* weakRef = */ false);</span>
+<span class="lineNum">     112 </span>            :   }
+<span class="lineNum">     113 </span><span class="lineCov">          1 :   RereadPrefs();</span>
+<span class="lineNum">     114 </span><span class="lineCov">          1 : }</span>
+<a name="115"><span class="lineNum">     115 </span>            : </a>
+<span class="lineNum">     116 </span>            : NS_IMETHODIMP
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 : PreallocatedProcessManagerImpl::Observe(nsISupports* aSubject,</span>
+<span class="lineNum">     118 </span>            :                                         const char* aTopic,
+<span class="lineNum">     119 </span>            :                                         const char16_t* aData)
+<span class="lineNum">     120 </span>            : {
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :   if (!strcmp(&quot;ipc:content-shutdown&quot;, aTopic)) {</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :     ObserveProcessShutdown(aSubject);</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :   } else if (!strcmp(&quot;nsPref:changed&quot;, aTopic)) {</span>
+<span class="lineNum">     124 </span>            :     // The only other observer we registered was for our prefs.
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :     RereadPrefs();</span>
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :   } else if (!strcmp(NS_XPCOM_SHUTDOWN_OBSERVER_ID, aTopic) ||</span>
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :              !strcmp(&quot;profile-change-teardown&quot;, aTopic)) {</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :     Preferences::RemoveObserver(this, &quot;dom.ipc.processPrelaunch.enabled&quot;);</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :     Preferences::RemoveObserver(this, &quot;dom.ipc.processCount&quot;);</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIObserverService&gt; os = services::GetObserverService();</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :     if (os) {</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :       os-&gt;RemoveObserver(this, &quot;ipc:content-shutdown&quot;);</span>
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :       os-&gt;RemoveObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID);</span>
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :       os-&gt;RemoveObserver(this, &quot;profile-change-teardown&quot;);</span>
+<span class="lineNum">     135 </span>            :     }
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :     mShutdown = true;</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :     CloseProcess();</span>
+<span class="lineNum">     138 </span>            :   } else {
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(false);</span>
+<span class="lineNum">     140 </span>            :   }
+<span class="lineNum">     141 </span>            : 
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     143 </span>            : }
+<a name="144"><span class="lineNum">     144 </span>            : </a>
+<span class="lineNum">     145 </span>            : void
+<span class="lineNum">     146 </span><span class="lineCov">          1 : PreallocatedProcessManagerImpl::RereadPrefs()</span>
+<span class="lineNum">     147 </span>            : {
+<span class="lineNum">     148 </span><span class="lineCov">          2 :   if (mozilla::BrowserTabsRemoteAutostart() &amp;&amp;</span>
+<span class="lineNum">     149 </span><span class="lineCov">          1 :       Preferences::GetBool(&quot;dom.ipc.processPrelaunch.enabled&quot;)) {</span>
+<span class="lineNum">     150 </span><span class="lineCov">          1 :     Enable();</span>
+<span class="lineNum">     151 </span>            :   } else {
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :     Disable();</span>
+<span class="lineNum">     153 </span>            :   }
+<span class="lineNum">     154 </span>            : 
+<span class="lineNum">     155 </span><span class="lineCov">          1 :   if (ContentParent::IsMaxProcessCountReached(NS_LITERAL_STRING(DEFAULT_REMOTE_TYPE))) {</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :     CloseProcess();</span>
+<span class="lineNum">     157 </span>            :   }
+<span class="lineNum">     158 </span><span class="lineCov">          1 : }</span>
+<a name="159"><span class="lineNum">     159 </span>            : </a>
+<span class="lineNum">     160 </span>            : already_AddRefed&lt;ContentParent&gt;
+<span class="lineNum">     161 </span><span class="lineCov">          1 : PreallocatedProcessManagerImpl::Take()</span>
+<span class="lineNum">     162 </span>            : {
+<span class="lineNum">     163 </span><span class="lineCov">          1 :   if (!mEnabled || mShutdown) {</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     165 </span>            :   }
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span><span class="lineCov">          1 :   if (mPreallocatedProcess) {</span>
+<span class="lineNum">     168 </span>            :     // The preallocated process is taken. Let's try to start up a new one soon.
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :     AllocateOnIdle();</span>
+<span class="lineNum">     170 </span>            :   }
+<span class="lineNum">     171 </span>            : 
+<span class="lineNum">     172 </span><span class="lineCov">          1 :   return mPreallocatedProcess.forget();</span>
+<span class="lineNum">     173 </span>            : }
+<a name="174"><span class="lineNum">     174 </span>            : </a>
+<span class="lineNum">     175 </span>            : bool
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 : PreallocatedProcessManagerImpl::Provide(ContentParent* aParent)</span>
+<span class="lineNum">     177 </span>            : {
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :   if (mEnabled &amp;&amp; !mShutdown &amp;&amp; !mPreallocatedProcess) {</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :     mPreallocatedProcess = aParent;</span>
+<span class="lineNum">     180 </span>            :   }
+<span class="lineNum">     181 </span>            : 
+<span class="lineNum">     182 </span>            :   // We might get a call from both NotifyTabDestroying and NotifyTabDestroyed with the same
+<span class="lineNum">     183 </span>            :   // ContentParent. Returning true here for both calls is important to avoid the cached process
+<span class="lineNum">     184 </span>            :   // to be destroyed.
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :   return aParent == mPreallocatedProcess;</span>
+<span class="lineNum">     186 </span>            : }
+<a name="187"><span class="lineNum">     187 </span>            : </a>
+<span class="lineNum">     188 </span>            : void
+<span class="lineNum">     189 </span><span class="lineCov">          1 : PreallocatedProcessManagerImpl::Enable()</span>
+<span class="lineNum">     190 </span>            : {
+<span class="lineNum">     191 </span><span class="lineCov">          1 :   if (mEnabled) {</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     193 </span>            :   }
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span><span class="lineCov">          1 :   mEnabled = true;</span>
+<span class="lineNum">     196 </span><span class="lineCov">          1 :   AllocateAfterDelay();</span>
+<span class="lineNum">     197 </span>            : }
+<a name="198"><span class="lineNum">     198 </span>            : </a>
+<span class="lineNum">     199 </span>            : void
+<span class="lineNum">     200 </span><span class="lineCov">          2 : PreallocatedProcessManagerImpl::AddBlocker(ContentParent* aParent)</span>
+<span class="lineNum">     201 </span>            : {
+<span class="lineNum">     202 </span><span class="lineCov">          2 :   uint64_t childID = aParent-&gt;ChildID();</span>
+<span class="lineNum">     203 </span><span class="lineCov">          2 :   MOZ_ASSERT(!mBlockers.Contains(childID));</span>
+<span class="lineNum">     204 </span><span class="lineCov">          2 :   mBlockers.PutEntry(childID);</span>
+<span class="lineNum">     205 </span><span class="lineCov">          2 : }</span>
+<a name="206"><span class="lineNum">     206 </span>            : </a>
+<span class="lineNum">     207 </span>            : void
+<span class="lineNum">     208 </span><span class="lineCov">          1 : PreallocatedProcessManagerImpl::RemoveBlocker(ContentParent* aParent)</span>
+<span class="lineNum">     209 </span>            : {
+<span class="lineNum">     210 </span><span class="lineCov">          1 :   uint64_t childID = aParent-&gt;ChildID();</span>
+<span class="lineNum">     211 </span><span class="lineCov">          1 :   MOZ_ASSERT(mBlockers.Contains(childID));</span>
+<span class="lineNum">     212 </span><span class="lineCov">          1 :   mBlockers.RemoveEntry(childID);</span>
+<span class="lineNum">     213 </span><span class="lineCov">          1 :   if (!mPreallocatedProcess &amp;&amp; mBlockers.IsEmpty()) {</span>
+<span class="lineNum">     214 </span><span class="lineCov">          1 :     AllocateAfterDelay();</span>
+<span class="lineNum">     215 </span>            :   }
+<span class="lineNum">     216 </span><span class="lineCov">          1 : }</span>
+<a name="217"><span class="lineNum">     217 </span>            : </a>
+<span class="lineNum">     218 </span>            : bool
+<span class="lineNum">     219 </span><span class="lineCov">          1 : PreallocatedProcessManagerImpl::CanAllocate()</span>
+<span class="lineNum">     220 </span>            : {
+<span class="lineNum">     221 </span><span class="lineCov">          2 :   return mEnabled &amp;&amp;</span>
+<span class="lineNum">     222 </span><span class="lineCov">          2 :          mBlockers.IsEmpty() &amp;&amp;</span>
+<span class="lineNum">     223 </span><span class="lineCov">          2 :          !mPreallocatedProcess &amp;&amp;</span>
+<span class="lineNum">     224 </span><span class="lineCov">          5 :          !mShutdown &amp;&amp;</span>
+<span class="lineNum">     225 </span><span class="lineCov">          3 :          !ContentParent::IsMaxProcessCountReached(NS_LITERAL_STRING(DEFAULT_REMOTE_TYPE));</span>
+<span class="lineNum">     226 </span>            : }
+<a name="227"><span class="lineNum">     227 </span>            : </a>
+<span class="lineNum">     228 </span>            : void
+<span class="lineNum">     229 </span><span class="lineCov">          2 : PreallocatedProcessManagerImpl::AllocateAfterDelay()</span>
+<span class="lineNum">     230 </span>            : {
+<span class="lineNum">     231 </span><span class="lineCov">          2 :   if (!mEnabled) {</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     233 </span>            :   }
+<span class="lineNum">     234 </span>            : 
+<span class="lineNum">     235 </span><span class="lineCov">          6 :   NS_DelayedDispatchToCurrentThread(</span>
+<span class="lineNum">     236 </span><span class="lineCov">          4 :     NewRunnableMethod(&quot;PreallocatedProcessManagerImpl::AllocateOnIdle&quot;,</span>
+<span class="lineNum">     237 </span>            :                       this,
+<span class="lineNum">     238 </span>            :                       &amp;PreallocatedProcessManagerImpl::AllocateOnIdle),
+<span class="lineNum">     239 </span>            :     Preferences::GetUint(&quot;dom.ipc.processPrelaunch.delayMs&quot;,
+<span class="lineNum">     240 </span><span class="lineCov">          2 :                          DEFAULT_ALLOCATE_DELAY));</span>
+<span class="lineNum">     241 </span>            : }
+<a name="242"><span class="lineNum">     242 </span>            : </a>
+<span class="lineNum">     243 </span>            : void
+<span class="lineNum">     244 </span><span class="lineCov">          2 : PreallocatedProcessManagerImpl::AllocateOnIdle()</span>
+<span class="lineNum">     245 </span>            : {
+<span class="lineNum">     246 </span><span class="lineCov">          2 :   if (!mEnabled) {</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     248 </span>            :   }
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span><span class="lineCov">          4 :   NS_IdleDispatchToCurrentThread(</span>
+<span class="lineNum">     251 </span><span class="lineCov">          4 :     NewRunnableMethod(&quot;PreallocatedProcessManagerImpl::AllocateNow&quot;,</span>
+<span class="lineNum">     252 </span>            :                       this,
+<span class="lineNum">     253 </span><span class="lineCov">          2 :                       &amp;PreallocatedProcessManagerImpl::AllocateNow));</span>
+<span class="lineNum">     254 </span>            : }
+<a name="255"><span class="lineNum">     255 </span>            : </a>
+<span class="lineNum">     256 </span>            : void
+<span class="lineNum">     257 </span><span class="lineCov">          1 : PreallocatedProcessManagerImpl::AllocateNow()</span>
+<span class="lineNum">     258 </span>            : {
+<span class="lineNum">     259 </span><span class="lineCov">          1 :   if (!CanAllocate()) {</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :     if (mEnabled &amp;&amp; !mShutdown &amp;&amp; !mPreallocatedProcess &amp;&amp; !mBlockers.IsEmpty()) {</span>
+<span class="lineNum">     261 </span>            :       // If it's too early to allocate a process let's retry later.
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :       AllocateAfterDelay();</span>
+<span class="lineNum">     263 </span>            :     }
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     265 </span>            :   }
+<span class="lineNum">     266 </span>            : 
+<span class="lineNum">     267 </span><span class="lineCov">          1 :   mPreallocatedProcess = ContentParent::PreallocateProcess();</span>
+<span class="lineNum">     268 </span>            : }
+<a name="269"><span class="lineNum">     269 </span>            : </a>
+<span class="lineNum">     270 </span>            : void
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 : PreallocatedProcessManagerImpl::Disable()</span>
+<span class="lineNum">     272 </span>            : {
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :   if (!mEnabled) {</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     275 </span>            :   }
+<span class="lineNum">     276 </span>            : 
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   mEnabled = false;</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :   CloseProcess();</span>
+<span class="lineNum">     279 </span>            : }
+<a name="280"><span class="lineNum">     280 </span>            : </a>
+<span class="lineNum">     281 </span>            : void
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 : PreallocatedProcessManagerImpl::CloseProcess()</span>
+<span class="lineNum">     283 </span>            : {
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :   if (mPreallocatedProcess) {</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :     mPreallocatedProcess-&gt;ShutDownProcess(ContentParent::SEND_SHUTDOWN_MESSAGE);</span>
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :     mPreallocatedProcess = nullptr;</span>
+<span class="lineNum">     287 </span>            :   }
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 : }</span>
+<a name="289"><span class="lineNum">     289 </span>            : </a>
+<span class="lineNum">     290 </span>            : void
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 : PreallocatedProcessManagerImpl::ObserveProcessShutdown(nsISupports* aSubject)</span>
+<span class="lineNum">     292 </span>            : {
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;nsIPropertyBag2&gt; props = do_QueryInterface(aSubject);</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE_VOID(props);</span>
+<span class="lineNum">     295 </span>            : 
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :   uint64_t childID = CONTENT_PROCESS_ID_UNKNOWN;</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :   props-&gt;GetPropertyAsUint64(NS_LITERAL_STRING(&quot;childID&quot;), &amp;childID);</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE_VOID(childID != CONTENT_PROCESS_ID_UNKNOWN);</span>
+<span class="lineNum">     299 </span>            : 
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :   if (mPreallocatedProcess &amp;&amp; childID == mPreallocatedProcess-&gt;ChildID()) {</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :     mPreallocatedProcess = nullptr;</span>
+<span class="lineNum">     302 </span>            :   }
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :   mBlockers.RemoveEntry(childID);</span>
+<a name="305"><span class="lineNum">     305 </span>            : }</a>
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span><span class="lineCov">          4 : inline PreallocatedProcessManagerImpl* GetPPMImpl()</span>
+<span class="lineNum">     308 </span>            : {
+<span class="lineNum">     309 </span><span class="lineCov">          4 :   return PreallocatedProcessManagerImpl::Singleton();</span>
+<span class="lineNum">     310 </span>            : }
+<a name="311"><span class="lineNum">     311 </span>            : </a>
+<span class="lineNum">     312 </span>            : /* static */ void
+<span class="lineNum">     313 </span><span class="lineCov">          2 : PreallocatedProcessManager::AddBlocker(ContentParent* aParent)</span>
+<span class="lineNum">     314 </span>            : {
+<span class="lineNum">     315 </span><span class="lineCov">          2 :   GetPPMImpl()-&gt;AddBlocker(aParent);</span>
+<span class="lineNum">     316 </span><span class="lineCov">          2 : }</span>
+<a name="317"><span class="lineNum">     317 </span>            : </a>
+<span class="lineNum">     318 </span>            : /* static */ void
+<span class="lineNum">     319 </span><span class="lineCov">          1 : PreallocatedProcessManager::RemoveBlocker(ContentParent* aParent)</span>
+<span class="lineNum">     320 </span>            : {
+<span class="lineNum">     321 </span><span class="lineCov">          1 :   GetPPMImpl()-&gt;RemoveBlocker(aParent);</span>
+<span class="lineNum">     322 </span><span class="lineCov">          1 : }</span>
+<a name="323"><span class="lineNum">     323 </span>            : </a>
+<span class="lineNum">     324 </span>            : /* static */ already_AddRefed&lt;ContentParent&gt;
+<span class="lineNum">     325 </span><span class="lineCov">          1 : PreallocatedProcessManager::Take()</span>
+<span class="lineNum">     326 </span>            : {
+<span class="lineNum">     327 </span><span class="lineCov">          1 :   return GetPPMImpl()-&gt;Take();</span>
+<span class="lineNum">     328 </span>            : }
+<a name="329"><span class="lineNum">     329 </span>            : </a>
+<span class="lineNum">     330 </span>            : /* static */ bool
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 : PreallocatedProcessManager::Provide(ContentParent* aParent)</span>
+<span class="lineNum">     332 </span>            : {
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :   return GetPPMImpl()-&gt;Provide(aParent);</span>
+<span class="lineNum">     334 </span>            : }
+<span class="lineNum">     335 </span>            : 
+<span class="lineNum">     336 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

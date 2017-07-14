@@ -1,0 +1,472 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - storage/VacuumManager.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">storage</a> - VacuumManager.cpp<span style="font-size: 80%;"> (source / <a href="VacuumManager.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">158</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">24</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-</a>
+<span class="lineNum">       2 </span>            :  * vim: sw=2 ts=2 et lcs=trail\:.,tab\:&gt;~ :
+<span class="lineNum">       3 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;mozilla/DebugOnly.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;VacuumManager.h&quot;
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/Services.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/Preferences.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;nsIObserverService.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nsIFile.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;mozilla/Logging.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;prtime.h&quot;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : #include &quot;mozStorageConnection.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;mozIStorageStatement.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;mozIStorageAsyncStatement.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;mozIStoragePendingStatement.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;mozIStorageError.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;mozStorageHelper.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;nsXULAppAPI.h&quot;
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : #define OBSERVER_TOPIC_IDLE_DAILY &quot;idle-daily&quot;
+<span class="lineNum">      28 </span>            : #define OBSERVER_TOPIC_XPCOM_SHUTDOWN &quot;xpcom-shutdown&quot;
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : // Used to notify begin and end of a heavy IO task.
+<span class="lineNum">      31 </span>            : #define OBSERVER_TOPIC_HEAVY_IO &quot;heavy-io-task&quot;
+<span class="lineNum">      32 </span>            : #define OBSERVER_DATA_VACUUM_BEGIN u&quot;vacuum-begin&quot;
+<span class="lineNum">      33 </span>            : #define OBSERVER_DATA_VACUUM_END u&quot;vacuum-end&quot;
+<span class="lineNum">      34 </span>            : 
+<span class="lineNum">      35 </span>            : // This preferences root will contain last vacuum timestamps (in seconds) for
+<span class="lineNum">      36 </span>            : // each database.  The database filename is used as a key.
+<span class="lineNum">      37 </span>            : #define PREF_VACUUM_BRANCH &quot;storage.vacuum.last.&quot;
+<span class="lineNum">      38 </span>            : 
+<span class="lineNum">      39 </span>            : // Time between subsequent vacuum calls for a certain database.
+<span class="lineNum">      40 </span>            : #define VACUUM_INTERVAL_SECONDS 30 * 86400 // 30 days.
+<span class="lineNum">      41 </span>            : 
+<span class="lineNum">      42 </span>            : extern mozilla::LazyLogModule gStorageLog;
+<span class="lineNum">      43 </span>            : 
+<span class="lineNum">      44 </span>            : namespace mozilla {
+<span class="lineNum">      45 </span>            : namespace storage {
+<span class="lineNum">      46 </span>            : 
+<span class="lineNum">      47 </span>            : namespace {
+<span class="lineNum">      48 </span>            : 
+<span class="lineNum">      49 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">      50 </span>            : //// BaseCallback
+<span class="lineNum">      51 </span>            : 
+<span class="lineNum">      52 </span>            : class BaseCallback : public mozIStorageStatementCallback
+<span class="lineNum">      53 </span>            : {
+<span class="lineNum">      54 </span>            : public:
+<a name="55"><span class="lineNum">      55 </span>            :   NS_DECL_ISUPPORTS</a>
+<span class="lineNum">      56 </span>            :   NS_DECL_MOZISTORAGESTATEMENTCALLBACK
+<a name="57"><span class="lineNum">      57 </span><span class="lineNoCov">          0 :   BaseCallback() {}</span></a>
+<span class="lineNum">      58 </span>            : protected:
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :   virtual ~BaseCallback() {}</span>
+<span class="lineNum">      60 </span>            : };
+<a name="61"><span class="lineNum">      61 </span>            : </a>
+<span class="lineNum">      62 </span>            : NS_IMETHODIMP
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 : BaseCallback::HandleError(mozIStorageError *aError)</span>
+<span class="lineNum">      64 </span>            : {
+<span class="lineNum">      65 </span>            : #ifdef DEBUG
+<span class="lineNum">      66 </span>            :   int32_t result;
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :   nsresult rv = aError-&gt;GetResult(&amp;result);</span>
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :   nsAutoCString message;</span>
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :   rv = aError-&gt;GetMessage(message);</span>
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">      72 </span>            : 
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :   nsAutoCString warnMsg;</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :   warnMsg.AppendLiteral(&quot;An error occured during async execution: &quot;);</span>
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 :   warnMsg.AppendInt(result);</span>
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :   warnMsg.Append(' ');</span>
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :   warnMsg.Append(message);</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :   NS_WARNING(warnMsg.get());</span>
+<span class="lineNum">      79 </span>            : #endif
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">      81 </span>            : }
+<a name="82"><span class="lineNum">      82 </span>            : </a>
+<span class="lineNum">      83 </span>            : NS_IMETHODIMP
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 : BaseCallback::HandleResult(mozIStorageResultSet *aResultSet)</span>
+<span class="lineNum">      85 </span>            : {
+<span class="lineNum">      86 </span>            :   // We could get results from PRAGMA statements, but we don't mind them.
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">      88 </span>            : }
+<a name="89"><span class="lineNum">      89 </span>            : </a>
+<span class="lineNum">      90 </span>            : NS_IMETHODIMP
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 : BaseCallback::HandleCompletion(uint16_t aReason)</span>
+<span class="lineNum">      92 </span>            : {
+<span class="lineNum">      93 </span>            :   // By default BaseCallback will just be silent on completion.
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<a name="95"><span class="lineNum">      95 </span>            : }</a>
+<span class="lineNum">      96 </span>            : 
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 : NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">      98 </span>            :   BaseCallback
+<span class="lineNum">      99 </span>            : , mozIStorageStatementCallback
+<span class="lineNum">     100 </span>            : )
+<span class="lineNum">     101 </span>            : 
+<span class="lineNum">     102 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<a name="103"><span class="lineNum">     103 </span>            : //// Vacuumer declaration.</a>
+<span class="lineNum">     104 </span>            : 
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 : class Vacuumer : public BaseCallback</span>
+<span class="lineNum">     106 </span>            : {
+<span class="lineNum">     107 </span>            : public:
+<span class="lineNum">     108 </span>            :   NS_DECL_MOZISTORAGESTATEMENTCALLBACK
+<span class="lineNum">     109 </span>            : 
+<span class="lineNum">     110 </span>            :   explicit Vacuumer(mozIStorageVacuumParticipant *aParticipant);
+<span class="lineNum">     111 </span>            : 
+<span class="lineNum">     112 </span>            :   bool execute();
+<span class="lineNum">     113 </span>            :   nsresult notifyCompletion(bool aSucceeded);
+<span class="lineNum">     114 </span>            : 
+<span class="lineNum">     115 </span>            : private:
+<span class="lineNum">     116 </span>            :   nsCOMPtr&lt;mozIStorageVacuumParticipant&gt; mParticipant;
+<span class="lineNum">     117 </span>            :   nsCString mDBFilename;
+<span class="lineNum">     118 </span>            :   nsCOMPtr&lt;mozIStorageConnection&gt; mDBConn;
+<span class="lineNum">     119 </span>            : };
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<a name="122"><span class="lineNum">     122 </span>            : //// Vacuumer implementation.</a>
+<span class="lineNum">     123 </span>            : 
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 : Vacuumer::Vacuumer(mozIStorageVacuumParticipant *aParticipant)</span>
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :   : mParticipant(aParticipant)</span>
+<span class="lineNum">     126 </span>            : {
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 : }</span>
+<a name="128"><span class="lineNum">     128 </span>            : </a>
+<span class="lineNum">     129 </span>            : bool
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 : Vacuumer::execute()</span>
+<span class="lineNum">     131 </span>            : {
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(NS_IsMainThread(), &quot;Must be running on the main thread!&quot;);</span>
+<span class="lineNum">     133 </span>            : 
+<span class="lineNum">     134 </span>            :   // Get the connection and check its validity.
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :   nsresult rv = mParticipant-&gt;GetDatabaseConnection(getter_AddRefs(mDBConn));</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, false);</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :   bool ready = false;</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :   if (!mDBConn || NS_FAILED(mDBConn-&gt;GetConnectionReady(&amp;ready)) || !ready) {</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Unable to get a connection to vacuum database&quot;);</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     141 </span>            :   }
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span>            :   // Ask for the expected page size.  Vacuum can change the page size, unless
+<span class="lineNum">     144 </span>            :   // the database is using WAL journaling.
+<span class="lineNum">     145 </span>            :   // TODO Bug 634374: figure out a strategy to fix page size with WAL.
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :   int32_t expectedPageSize = 0;</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :   rv = mParticipant-&gt;GetExpectedDatabasePageSize(&amp;expectedPageSize);</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv) || !Service::pageSizeIsValid(expectedPageSize)) {</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Invalid page size requested for database, will use default &quot;);</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :     NS_WARNING(mDBFilename.get());</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :     expectedPageSize = Service::getDefaultPageSize();</span>
+<span class="lineNum">     152 </span>            :   }
+<span class="lineNum">     153 </span>            : 
+<span class="lineNum">     154 </span>            :   // Get the database filename.  Last vacuum time is stored under this name
+<span class="lineNum">     155 </span>            :   // in PREF_VACUUM_BRANCH.
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;nsIFile&gt; databaseFile;</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :   mDBConn-&gt;GetDatabaseFile(getter_AddRefs(databaseFile));</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :   if (!databaseFile) {</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Trying to vacuum a in-memory database!&quot;);</span>
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     161 </span>            :   }
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   nsAutoString databaseFilename;</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :   rv = databaseFile-&gt;GetLeafName(databaseFilename);</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, false);</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :   mDBFilename = NS_ConvertUTF16toUTF8(databaseFilename);</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!mDBFilename.IsEmpty(), &quot;Database filename cannot be empty&quot;);</span>
+<span class="lineNum">     167 </span>            : 
+<span class="lineNum">     168 </span>            :   // Check interval from last vacuum.
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :   int32_t now = static_cast&lt;int32_t&gt;(PR_Now() / PR_USEC_PER_SEC);</span>
+<span class="lineNum">     170 </span>            :   int32_t lastVacuum;
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :   nsAutoCString prefName(PREF_VACUUM_BRANCH);</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :   prefName += mDBFilename;</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :   rv = Preferences::GetInt(prefName.get(), &amp;lastVacuum);</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :   if (NS_SUCCEEDED(rv) &amp;&amp; (now - lastVacuum) &lt; VACUUM_INTERVAL_SECONDS) {</span>
+<span class="lineNum">     175 </span>            :     // This database was vacuumed recently, skip it.
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     177 </span>            :   }
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span>            :   // Notify that we are about to start vacuuming.  The participant can opt-out
+<span class="lineNum">     180 </span>            :   // if it cannot handle a vacuum at this time, and then we'll move to the next
+<span class="lineNum">     181 </span>            :   // one.
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :   bool vacuumGranted = false;</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :   rv = mParticipant-&gt;OnBeginVacuum(&amp;vacuumGranted);</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, false);</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :   if (!vacuumGranted) {</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     187 </span>            :   }
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span>            :   // Notify a heavy IO task is about to start.
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;nsIObserverService&gt; os = mozilla::services::GetObserverService();</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :   if (os) {</span>
+<span class="lineNum">     192 </span>            :     rv =
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :       os-&gt;NotifyObservers(nullptr, OBSERVER_TOPIC_HEAVY_IO,</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :                           OBSERVER_DATA_VACUUM_BEGIN);</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(NS_SUCCEEDED(rv), &quot;Should be able to notify&quot;);</span>
+<span class="lineNum">     196 </span>            :   }
+<span class="lineNum">     197 </span>            : 
+<span class="lineNum">     198 </span>            :   // Execute the statements separately, since the pragma may conflict with the
+<span class="lineNum">     199 </span>            :   // vacuum, if they are executed in the same transaction.
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;mozIStorageAsyncStatement&gt; pageSizeStmt;</span>
+<span class="lineNum">     201 </span>            :   nsAutoCString pageSizeQuery(MOZ_STORAGE_UNIQUIFY_QUERY_STR
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :                               &quot;PRAGMA page_size = &quot;);</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :   pageSizeQuery.AppendInt(expectedPageSize);</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :   rv = mDBConn-&gt;CreateAsyncStatement(pageSizeQuery,</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :                                      getter_AddRefs(pageSizeStmt));</span>
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, false);</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :   RefPtr&lt;BaseCallback&gt; callback = new BaseCallback();</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;mozIStoragePendingStatement&gt; ps;</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :   rv = pageSizeStmt-&gt;ExecuteAsync(callback, getter_AddRefs(ps));</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, false);</span>
+<span class="lineNum">     211 </span>            : 
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;mozIStorageAsyncStatement&gt; stmt;</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   rv = mDBConn-&gt;CreateAsyncStatement(NS_LITERAL_CSTRING(</span>
+<span class="lineNum">     214 </span>            :     &quot;VACUUM&quot;
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :   ), getter_AddRefs(stmt));</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, false);</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :   rv = stmt-&gt;ExecuteAsync(this, getter_AddRefs(ps));</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, false);</span>
+<span class="lineNum">     219 </span>            : 
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">     221 </span>            : }
+<span class="lineNum">     222 </span>            : 
+<span class="lineNum">     223 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     224 </span>            : //// mozIStorageStatementCallback
+<a name="225"><span class="lineNum">     225 </span>            : </a>
+<span class="lineNum">     226 </span>            : NS_IMETHODIMP
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 : Vacuumer::HandleError(mozIStorageError *aError)</span>
+<span class="lineNum">     228 </span>            : {
+<span class="lineNum">     229 </span>            :   int32_t result;
+<span class="lineNum">     230 </span>            :   nsresult rv;
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :   nsAutoCString message;</span>
+<span class="lineNum">     232 </span>            : 
+<span class="lineNum">     233 </span>            : #ifdef DEBUG
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :   rv = aError-&gt;GetResult(&amp;result);</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :   rv = aError-&gt;GetMessage(message);</span>
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     238 </span>            : 
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :   nsAutoCString warnMsg;</span>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :   warnMsg.AppendLiteral(&quot;Unable to vacuum database: &quot;);</span>
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :   warnMsg.Append(mDBFilename);</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :   warnMsg.AppendLiteral(&quot; - &quot;);</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   warnMsg.AppendInt(result);</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   warnMsg.Append(' ');</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :   warnMsg.Append(message);</span>
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   NS_WARNING(warnMsg.get());</span>
+<span class="lineNum">     247 </span>            : #endif
+<span class="lineNum">     248 </span>            : 
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :   if (MOZ_LOG_TEST(gStorageLog, LogLevel::Error)) {</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :     rv = aError-&gt;GetResult(&amp;result);</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     rv = aError-&gt;GetMessage(message);</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :     NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :     MOZ_LOG(gStorageLog, LogLevel::Error,</span>
+<span class="lineNum">     255 </span>            :            (&quot;Vacuum failed with error: %d '%s'. Database was: '%s'&quot;,
+<span class="lineNum">     256 </span>            :             result, message.get(), mDBFilename.get()));
+<span class="lineNum">     257 </span>            :   }
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     259 </span>            : }
+<a name="260"><span class="lineNum">     260 </span>            : </a>
+<span class="lineNum">     261 </span>            : NS_IMETHODIMP
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 : Vacuumer::HandleResult(mozIStorageResultSet *aResultSet)</span>
+<span class="lineNum">     263 </span>            : {
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :   NS_NOTREACHED(&quot;Got a resultset from a vacuum?&quot;);</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     266 </span>            : }
+<a name="267"><span class="lineNum">     267 </span>            : </a>
+<span class="lineNum">     268 </span>            : NS_IMETHODIMP
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 : Vacuumer::HandleCompletion(uint16_t aReason)</span>
+<span class="lineNum">     270 </span>            : {
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :   if (aReason == REASON_FINISHED) {</span>
+<span class="lineNum">     272 </span>            :     // Update last vacuum time.
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     int32_t now = static_cast&lt;int32_t&gt;(PR_Now() / PR_USEC_PER_SEC);</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(!mDBFilename.IsEmpty(), &quot;Database filename cannot be empty&quot;);</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :     nsAutoCString prefName(PREF_VACUUM_BRANCH);</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :     prefName += mDBFilename;</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :     DebugOnly&lt;nsresult&gt; rv = Preferences::SetInt(prefName.get(), now);</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(NS_SUCCEEDED(rv), &quot;Should be able to set a preference&quot;);</span>
+<span class="lineNum">     279 </span>            :   }
+<span class="lineNum">     280 </span>            : 
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :   notifyCompletion(aReason == REASON_FINISHED);</span>
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     284 </span>            : }
+<a name="285"><span class="lineNum">     285 </span>            : </a>
+<span class="lineNum">     286 </span>            : nsresult
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 : Vacuumer::notifyCompletion(bool aSucceeded)</span>
+<span class="lineNum">     288 </span>            : {
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;nsIObserverService&gt; os = mozilla::services::GetObserverService();</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   if (os) {</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :     os-&gt;NotifyObservers(nullptr, OBSERVER_TOPIC_HEAVY_IO,</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :                         OBSERVER_DATA_VACUUM_END);</span>
+<span class="lineNum">     293 </span>            :   }
+<span class="lineNum">     294 </span>            : 
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :   nsresult rv = mParticipant-&gt;OnEndVacuum(aSucceeded);</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     297 </span>            : 
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     299 </span>            : }
+<span class="lineNum">     300 </span>            : 
+<span class="lineNum">     301 </span>            : } // namespace
+<span class="lineNum">     302 </span>            : 
+<span class="lineNum">     303 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<a name="304"><span class="lineNum">     304 </span>            : //// VacuumManager</a>
+<span class="lineNum">     305 </span>            : 
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 : NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">     307 </span>            :   VacuumManager
+<span class="lineNum">     308 </span>            : , nsIObserver
+<span class="lineNum">     309 </span>            : )
+<span class="lineNum">     310 </span>            : 
+<span class="lineNum">     311 </span>            : VacuumManager *
+<span class="lineNum">     312 </span>            : VacuumManager::gVacuumManager = nullptr;
+<a name="313"><span class="lineNum">     313 </span>            : </a>
+<span class="lineNum">     314 </span>            : VacuumManager *
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 : VacuumManager::getSingleton()</span>
+<span class="lineNum">     316 </span>            : {
+<span class="lineNum">     317 </span>            :   //Don't allocate it in the child Process.
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :   if (!XRE_IsParentProcess()) {</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     320 </span>            :   }
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :   if (gVacuumManager) {</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :     NS_ADDREF(gVacuumManager);</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :     return gVacuumManager;</span>
+<span class="lineNum">     325 </span>            :   }
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :   gVacuumManager = new VacuumManager();</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :   if (gVacuumManager) {</span>
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :     NS_ADDREF(gVacuumManager);</span>
+<span class="lineNum">     329 </span>            :   }
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :   return gVacuumManager;</span>
+<a name="331"><span class="lineNum">     331 </span>            : }</a>
+<span class="lineNum">     332 </span>            : 
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 : VacuumManager::VacuumManager()</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :   : mParticipants(&quot;vacuum-participant&quot;)</span>
+<span class="lineNum">     335 </span>            : {
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!gVacuumManager,</span>
+<span class="lineNum">     337 </span>            :              &quot;Attempting to create two instances of the service!&quot;);
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :   gVacuumManager = this;</span>
+<a name="339"><span class="lineNum">     339 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     340 </span>            : 
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 : VacuumManager::~VacuumManager()</span>
+<span class="lineNum">     342 </span>            : {
+<span class="lineNum">     343 </span>            :   // Remove the static reference to the service.  Check to make sure its us
+<span class="lineNum">     344 </span>            :   // in case somebody creates an extra instance of the service.
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(gVacuumManager == this,</span>
+<span class="lineNum">     346 </span>            :              &quot;Deleting a non-singleton instance of the service&quot;);
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :   if (gVacuumManager == this) {</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :     gVacuumManager = nullptr;</span>
+<span class="lineNum">     349 </span>            :   }
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     353 </span>            : //// nsIObserver
+<a name="354"><span class="lineNum">     354 </span>            : </a>
+<span class="lineNum">     355 </span>            : NS_IMETHODIMP
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 : VacuumManager::Observe(nsISupports *aSubject,</span>
+<span class="lineNum">     357 </span>            :                        const char *aTopic,
+<span class="lineNum">     358 </span>            :                        const char16_t *aData)
+<span class="lineNum">     359 </span>            : {
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   if (strcmp(aTopic, OBSERVER_TOPIC_IDLE_DAILY) == 0) {</span>
+<span class="lineNum">     361 </span>            :     // Try to run vacuum on all registered entries.  Will stop at the first
+<span class="lineNum">     362 </span>            :     // successful one.
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :     nsCOMArray&lt;mozIStorageVacuumParticipant&gt; entries;</span>
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :     mParticipants.GetEntries(entries);</span>
+<span class="lineNum">     365 </span>            :     // If there are more entries than what a month can contain, we could end up
+<span class="lineNum">     366 </span>            :     // skipping some, since we run daily.  So we use a starting index.
+<span class="lineNum">     367 </span>            :     static const char* kPrefName = PREF_VACUUM_BRANCH &quot;index&quot;;
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :     int32_t startIndex = Preferences::GetInt(kPrefName, 0);</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :     if (startIndex &gt;= entries.Count()) {</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :       startIndex = 0;</span>
+<span class="lineNum">     371 </span>            :     }
+<span class="lineNum">     372 </span>            :     int32_t index;
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :     for (index = startIndex; index &lt; entries.Count(); ++index) {</span>
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :       RefPtr&lt;Vacuumer&gt; vacuum = new Vacuumer(entries[index]);</span>
+<span class="lineNum">     375 </span>            :       // Only vacuum one database per day.
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :       if (vacuum-&gt;execute()) {</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     378 </span>            :       }
+<span class="lineNum">     379 </span>            :     }
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :     DebugOnly&lt;nsresult&gt; rv = Preferences::SetInt(kPrefName, index);</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(NS_SUCCEEDED(rv), &quot;Should be able to set a preference&quot;);</span>
+<span class="lineNum">     382 </span>            :   }
+<span class="lineNum">     383 </span>            : 
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     385 </span>            : }
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span>            : } // namespace storage
+<span class="lineNum">     388 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

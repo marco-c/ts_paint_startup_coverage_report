@@ -1,0 +1,455 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - dom/media/MemoryBlockCache.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">dom/media</a> - MemoryBlockCache.cpp<span style="font-size: 80%;"> (source / <a href="MemoryBlockCache.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">2</td>
+            <td class="headerCovTableEntry">133</td>
+            <td class="headerCovTableEntryLo">1.5 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">2</td>
+            <td class="headerCovTableEntry">18</td>
+            <td class="headerCovTableEntryLo">11.1 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim:set ts=2 sw=2 sts=2 et cindent: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+<span class="lineNum">       5 </span>            :  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;MemoryBlockCache.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;MediaPrefs.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/Atomics.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/ClearOnShutdown.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/Logging.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/Telemetry.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/Services.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsIObserver.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;nsIObserverService.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;nsWeakReference.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;prsystem.h&quot;
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : namespace mozilla {
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : #undef LOG
+<span class="lineNum">      23 </span>            : LazyLogModule gMemoryBlockCacheLog(&quot;MemoryBlockCache&quot;);
+<span class="lineNum">      24 </span>            : #define LOG(x, ...)                                                            \
+<span class="lineNum">      25 </span>            :   MOZ_LOG(gMemoryBlockCacheLog, LogLevel::Debug, (&quot;%p &quot; x, this, ##__VA_ARGS__))
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : // Combined sizes of all MemoryBlockCache buffers.
+<span class="lineNum">      28 </span>            : // Initialized to 0 by non-local static initialization.
+<span class="lineNum">      29 </span>            : // Increases when a buffer grows (during initialization or unexpected OOB
+<span class="lineNum">      30 </span>            : // writes), decreases when a MemoryBlockCache (with its buffer) is destroyed.
+<span class="lineNum">      31 </span>            : static Atomic&lt;size_t&gt; gCombinedSizes;
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : class MemoryBlockCacheTelemetry final
+<span class="lineNum">      34 </span>            :   : public nsIObserver
+<span class="lineNum">      35 </span>            :   , public nsSupportsWeakReference
+<span class="lineNum">      36 </span>            : {
+<span class="lineNum">      37 </span>            : public:
+<span class="lineNum">      38 </span>            :   NS_DECL_ISUPPORTS
+<span class="lineNum">      39 </span>            :   NS_DECL_NSIOBSERVER
+<span class="lineNum">      40 </span>            : 
+<span class="lineNum">      41 </span>            :   // To be called when the combined size has grown, so that the watermark may
+<span class="lineNum">      42 </span>            :   // be updated if needed.
+<span class="lineNum">      43 </span>            :   // Ensures MemoryBlockCache telemetry will be reported at shutdown.
+<span class="lineNum">      44 </span>            :   // Returns current watermark.
+<span class="lineNum">      45 </span>            :   static size_t NotifyCombinedSizeGrown(size_t aNewSize);
+<a name="46"><span class="lineNum">      46 </span>            : </a>
+<a name="47"><span class="lineNum">      47 </span>            : private:</a>
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 :   MemoryBlockCacheTelemetry() {}</span>
+<span class="lineNum">      49 </span><span class="lineNoCov">          0 :   ~MemoryBlockCacheTelemetry() {}</span>
+<span class="lineNum">      50 </span>            : 
+<span class="lineNum">      51 </span>            :   // Singleton instance created when a first MediaCache is registered, and
+<span class="lineNum">      52 </span>            :   // released when the last MediaCache is unregistered.
+<span class="lineNum">      53 </span>            :   // The observer service will keep a weak reference to it, for notifications.
+<span class="lineNum">      54 </span>            :   static StaticRefPtr&lt;MemoryBlockCacheTelemetry&gt; gMemoryBlockCacheTelemetry;
+<span class="lineNum">      55 </span>            : 
+<span class="lineNum">      56 </span>            :   // Watermark for the combined sizes; can only increase when a buffer grows.
+<span class="lineNum">      57 </span>            :   static Atomic&lt;size_t&gt; gCombinedSizesWatermark;
+<span class="lineNum">      58 </span>            : };
+<span class="lineNum">      59 </span>            : 
+<span class="lineNum">      60 </span>            : // Initialized to nullptr by non-local static initialization.
+<span class="lineNum">      61 </span>            : /* static */ StaticRefPtr&lt;MemoryBlockCacheTelemetry&gt;
+<span class="lineNum">      62 </span><span class="lineCov">          3 :   MemoryBlockCacheTelemetry::gMemoryBlockCacheTelemetry;</span>
+<span class="lineNum">      63 </span>            : 
+<span class="lineNum">      64 </span>            : // Initialized to 0 by non-local static initialization.
+<a name="65"><span class="lineNum">      65 </span>            : /* static */ Atomic&lt;size_t&gt; MemoryBlockCacheTelemetry::gCombinedSizesWatermark;</a>
+<span class="lineNum">      66 </span>            : 
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 : NS_IMPL_ISUPPORTS(MemoryBlockCacheTelemetry,</span>
+<span class="lineNum">      68 </span>            :                   nsIObserver,
+<span class="lineNum">      69 </span>            :                   nsISupportsWeakReference)
+<a name="70"><span class="lineNum">      70 </span>            : </a>
+<span class="lineNum">      71 </span>            : /* static */ size_t
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 : MemoryBlockCacheTelemetry::NotifyCombinedSizeGrown(size_t aNewSize)</span>
+<span class="lineNum">      73 </span>            : {
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :   NS_ASSERTION(NS_IsMainThread(), &quot;Only call on main thread&quot;);</span>
+<span class="lineNum">      75 </span>            : 
+<span class="lineNum">      76 </span>            :   // Ensure gMemoryBlockCacheTelemetry exists.
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :   if (!gMemoryBlockCacheTelemetry) {</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :     gMemoryBlockCacheTelemetry = new MemoryBlockCacheTelemetry();</span>
+<span class="lineNum">      79 </span>            : 
+<span class="lineNum">      80 </span>            :     nsCOMPtr&lt;nsIObserverService&gt; observerService =
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :       mozilla::services::GetObserverService();</span>
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :     if (observerService) {</span>
+<span class="lineNum">      83 </span><span class="lineNoCov">          0 :       observerService-&gt;AddObserver(</span>
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :         gMemoryBlockCacheTelemetry, &quot;profile-change-teardown&quot;, true);</span>
+<span class="lineNum">      85 </span>            :     }
+<span class="lineNum">      86 </span>            : 
+<span class="lineNum">      87 </span>            :     // Clearing gMemoryBlockCacheTelemetry when handling
+<span class="lineNum">      88 </span>            :     // &quot;profile-change-teardown&quot; could run the risk of re-creating it (and then
+<span class="lineNum">      89 </span>            :     // leaking it) if some MediaCache work happened after that notification.
+<span class="lineNum">      90 </span>            :     // So instead we just request it to be cleared on final shutdown.
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :     ClearOnShutdown(&amp;gMemoryBlockCacheTelemetry);</span>
+<span class="lineNum">      92 </span>            :   }
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span>            :   // Update watermark if needed, report current watermark.
+<span class="lineNum">      95 </span>            :   for (;;) {
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :     size_t oldSize = gMemoryBlockCacheTelemetry-&gt;gCombinedSizesWatermark;</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :     if (aNewSize &lt; oldSize) {</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :       return oldSize;</span>
+<span class="lineNum">      99 </span>            :     }
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :     if (gMemoryBlockCacheTelemetry-&gt;gCombinedSizesWatermark.compareExchange(</span>
+<span class="lineNum">     101 </span>            :           oldSize, aNewSize)) {
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :       return aNewSize;</span>
+<span class="lineNum">     103 </span>            :     }
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     105 </span>            : }
+<a name="106"><span class="lineNum">     106 </span>            : </a>
+<span class="lineNum">     107 </span>            : NS_IMETHODIMP
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 : MemoryBlockCacheTelemetry::Observe(nsISupports* aSubject,</span>
+<span class="lineNum">     109 </span>            :                                    char const* aTopic,
+<span class="lineNum">     110 </span>            :                                    char16_t const* aData)
+<span class="lineNum">     111 </span>            : {
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :   NS_ASSERTION(NS_IsMainThread(), &quot;Only call on main thread&quot;);</span>
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :   if (strcmp(aTopic, &quot;profile-change-teardown&quot;) == 0) {</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :     uint32_t watermark = static_cast&lt;uint32_t&gt;(gCombinedSizesWatermark);</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :     LOG(&quot;MemoryBlockCacheTelemetry::~Observe() &quot;</span>
+<span class="lineNum">     117 </span>            :         &quot;MEDIACACHE_MEMORY_WATERMARK=%&quot; PRIu32,
+<span class="lineNum">     118 </span>            :         watermark);
+<span class="lineNum">     119 </span>            :     Telemetry::Accumulate(Telemetry::HistogramID::MEDIACACHE_MEMORY_WATERMARK,
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :                           watermark);</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     122 </span>            :   }
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     124 </span>            : }
+<span class="lineNum">     125 </span>            : 
+<span class="lineNum">     126 </span>            : enum MemoryBlockCacheTelemetryErrors
+<span class="lineNum">     127 </span>            : {
+<span class="lineNum">     128 </span>            :   // Don't change order/numbers! Add new values at the end and update
+<span class="lineNum">     129 </span>            :   // MEMORYBLOCKCACHE_ERRORS description in Histograms.json.
+<span class="lineNum">     130 </span>            :   InitUnderuse = 0,
+<span class="lineNum">     131 </span>            :   InitAllocation = 1,
+<span class="lineNum">     132 </span>            :   ReadOverrun = 2,
+<span class="lineNum">     133 </span>            :   WriteBlockOverflow = 3,
+<span class="lineNum">     134 </span>            :   WriteBlockCannotGrow = 4,
+<span class="lineNum">     135 </span>            :   MoveBlockSourceOverrun = 5,
+<span class="lineNum">     136 </span>            :   MoveBlockDestOverflow = 6,
+<span class="lineNum">     137 </span>            :   MoveBlockCannotGrow = 7,
+<span class="lineNum">     138 </span>            : };
+<a name="139"><span class="lineNum">     139 </span>            : </a>
+<span class="lineNum">     140 </span>            : static int32_t
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 : CalculateMaxBlocks(int64_t aContentLength)</span>
+<span class="lineNum">     142 </span>            : {
+<span class="lineNum">     143 </span>            :   // Note: It doesn't matter if calculations overflow, Init() would later fail.
+<span class="lineNum">     144 </span>            :   // We want at least enough blocks to contain the original content length.
+<span class="lineNum">     145 </span>            :   const int32_t requiredBlocks =
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :     int32_t((aContentLength - 1) / MediaBlockCacheBase::BLOCK_SIZE + 1);</span>
+<span class="lineNum">     147 </span>            :   // Allow at least 1s of ultra HD (25Mbps).
+<span class="lineNum">     148 </span>            :   const int32_t workableBlocks =
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     25 * 1024 * 1024 / 8 / MediaBlockCacheBase::BLOCK_SIZE;</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :   return std::max(requiredBlocks, workableBlocks);</span>
+<a name="151"><span class="lineNum">     151 </span>            : }</a>
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 : MemoryBlockCache::MemoryBlockCache(int64_t aContentLength)</span>
+<span class="lineNum">     154 </span>            :   // Buffer whole blocks.
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :   : mInitialContentLength((aContentLength &gt;= 0) ? size_t(aContentLength) : 0)</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :   , mMaxBlocks(CalculateMaxBlocks(aContentLength))</span>
+<span class="lineNum">     157 </span>            :   , mMutex(&quot;MemoryBlockCache&quot;)
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :   , mHasGrown(false)</span>
+<span class="lineNum">     159 </span>            : {
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :   if (aContentLength &lt;= 0) {</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :     LOG(&quot;MemoryBlockCache() MEMORYBLOCKCACHE_ERRORS='InitUnderuse'&quot;);</span>
+<span class="lineNum">     162 </span>            :     Telemetry::Accumulate(Telemetry::HistogramID::MEMORYBLOCKCACHE_ERRORS,
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :                           InitUnderuse);</span>
+<span class="lineNum">     164 </span>            :   }
+<a name="165"><span class="lineNum">     165 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 : MemoryBlockCache::~MemoryBlockCache()</span>
+<span class="lineNum">     168 </span>            : {
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :   size_t sizes = static_cast&lt;size_t&gt;(gCombinedSizes -= mBuffer.Length());</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :   LOG(&quot;~MemoryBlockCache() - destroying buffer of size %zu; combined sizes now &quot;</span>
+<span class="lineNum">     171 </span>            :       &quot;%zu&quot;,
+<span class="lineNum">     172 </span>            :       mBuffer.Length(),
+<span class="lineNum">     173 </span>            :       sizes);
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 : }</span>
+<a name="175"><span class="lineNum">     175 </span>            : </a>
+<span class="lineNum">     176 </span>            : bool
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 : MemoryBlockCache::EnsureBufferCanContain(size_t aContentLength)</span>
+<span class="lineNum">     178 </span>            : {
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   mMutex.AssertCurrentThreadOwns();</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :   if (aContentLength == 0) {</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     182 </span>            :   }
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :   const size_t initialLength = mBuffer.Length();</span>
+<span class="lineNum">     184 </span>            :   const size_t desiredLength =
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :     ((aContentLength - 1) / BLOCK_SIZE + 1) * BLOCK_SIZE;</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :   if (initialLength &gt;= desiredLength) {</span>
+<span class="lineNum">     187 </span>            :     // Already large enough.
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     189 </span>            :   }
+<span class="lineNum">     190 </span>            :   // Need larger buffer. If we are allowed more memory, attempt to re-allocate.
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :   const size_t extra = desiredLength - initialLength;</span>
+<span class="lineNum">     192 </span>            :   // Only check the very first allocation against the combined MemoryBlockCache
+<span class="lineNum">     193 </span>            :   // limit. Further growths will always be allowed, assuming MediaCache won't
+<span class="lineNum">     194 </span>            :   // go over GetMaxBlocks() by too much.
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :   if (initialLength == 0) {</span>
+<span class="lineNum">     196 </span>            :     // Note: There is a small race between testing `atomic + extra &gt; limit` and
+<span class="lineNum">     197 </span>            :     // committing to it with `atomic += extra` below; but this is acceptable, as
+<span class="lineNum">     198 </span>            :     // in the worst case it may allow a small number of buffers to go past the
+<span class="lineNum">     199 </span>            :     // limit.
+<span class="lineNum">     200 </span>            :     // The alternative would have been to reserve the space first with
+<span class="lineNum">     201 </span>            :     // `atomic += extra` and then undo it with `atomic -= extra` in case of
+<span class="lineNum">     202 </span>            :     // failure; but this would have meant potentially preventing other (small
+<span class="lineNum">     203 </span>            :     // but successful) allocations.
+<span class="lineNum">     204 </span>            :     static const size_t sysmem =
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :       std::max&lt;size_t&gt;(PR_GetPhysicalMemorySize(), 32 * 1024 * 1024);</span>
+<span class="lineNum">     206 </span>            :     const size_t limit = std::min(
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :       size_t(MediaPrefs::MediaMemoryCachesCombinedLimitKb()) * 1024,</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :       sysmem * MediaPrefs::MediaMemoryCachesCombinedLimitPcSysmem() / 100);</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :     const size_t currentSizes = static_cast&lt;size_t&gt;(gCombinedSizes);</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :     if (currentSizes + extra &gt; limit) {</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :       LOG(&quot;EnsureBufferCanContain(%zu) - buffer size %zu, wanted + %zu = %zu;&quot;</span>
+<span class="lineNum">     212 </span>            :           &quot; combined sizes %zu + %zu &gt; limit %zu&quot;,
+<span class="lineNum">     213 </span>            :           aContentLength,
+<span class="lineNum">     214 </span>            :           initialLength,
+<span class="lineNum">     215 </span>            :           extra,
+<span class="lineNum">     216 </span>            :           desiredLength,
+<span class="lineNum">     217 </span>            :           currentSizes,
+<span class="lineNum">     218 </span>            :           extra,
+<span class="lineNum">     219 </span>            :           limit);
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     221 </span>            :     }
+<span class="lineNum">     222 </span>            :   }
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :   if (!mBuffer.SetLength(desiredLength, mozilla::fallible)) {</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     LOG(&quot;EnsureBufferCanContain(%zu) - buffer size %zu, wanted + %zu = %zu, &quot;</span>
+<span class="lineNum">     225 </span>            :         &quot;allocation failed&quot;,
+<span class="lineNum">     226 </span>            :         aContentLength,
+<span class="lineNum">     227 </span>            :         initialLength,
+<span class="lineNum">     228 </span>            :         extra,
+<span class="lineNum">     229 </span>            :         desiredLength);
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     231 </span>            :   }
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mBuffer.Length() == desiredLength);</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :   const size_t capacity = mBuffer.Capacity();</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :   const size_t extraCapacity = capacity - desiredLength;</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :   if (extraCapacity != 0) {</span>
+<span class="lineNum">     236 </span>            :     // Our buffer was given a larger capacity than the requested length, we may
+<span class="lineNum">     237 </span>            :     // as well claim that extra capacity, both for our accounting, and to
+<span class="lineNum">     238 </span>            :     // possibly bypass some future growths that would fit in this new capacity.
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :     mBuffer.SetLength(capacity);</span>
+<span class="lineNum">     240 </span>            :   }
+<span class="lineNum">     241 </span>            :   size_t newSizes =
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :     static_cast&lt;size_t&gt;(gCombinedSizes += (extra + extraCapacity));</span>
+<span class="lineNum">     243 </span>            :   size_t watermark =
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :     MemoryBlockCacheTelemetry::NotifyCombinedSizeGrown(newSizes);</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :   LOG(&quot;EnsureBufferCanContain(%zu) - buffer size %zu + requested %zu + bonus &quot;</span>
+<span class="lineNum">     246 </span>            :       &quot;%zu = %zu; combined &quot;
+<span class="lineNum">     247 </span>            :       &quot;sizes %zu, watermark %zu&quot;,
+<span class="lineNum">     248 </span>            :       aContentLength,
+<span class="lineNum">     249 </span>            :       initialLength,
+<span class="lineNum">     250 </span>            :       extra,
+<span class="lineNum">     251 </span>            :       extraCapacity,
+<span class="lineNum">     252 </span>            :       capacity,
+<span class="lineNum">     253 </span>            :       newSizes,
+<span class="lineNum">     254 </span>            :       watermark);
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :   mHasGrown = true;</span>
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">     257 </span>            : }
+<a name="258"><span class="lineNum">     258 </span>            : </a>
+<span class="lineNum">     259 </span>            : nsresult
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 : MemoryBlockCache::Init()</span>
+<span class="lineNum">     261 </span>            : {
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :   if (mBuffer.IsEmpty()) {</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     LOG(&quot;Init()&quot;);</span>
+<span class="lineNum">     265 </span>            :     // Attempt to pre-allocate buffer for expected content length.
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :     if (!EnsureBufferCanContain(mInitialContentLength)) {</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :       LOG(&quot;Init() MEMORYBLOCKCACHE_ERRORS='InitAllocation'&quot;);</span>
+<span class="lineNum">     268 </span>            :       Telemetry::Accumulate(Telemetry::HistogramID::MEMORYBLOCKCACHE_ERRORS,
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :                             InitAllocation);</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :       return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     271 </span>            :     }
+<span class="lineNum">     272 </span>            :   } else {
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     LOG(&quot;Init() again&quot;);</span>
+<span class="lineNum">     274 </span>            :     // Re-initialization - Just erase data.
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mBuffer.Length() &gt;= mInitialContentLength);</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :     memset(mBuffer.Elements(), 0, mBuffer.Length());</span>
+<span class="lineNum">     277 </span>            :   }
+<span class="lineNum">     278 </span>            :   // Ignore initial growth.
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :   mHasGrown = false;</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     281 </span>            : }
+<a name="282"><span class="lineNum">     282 </span>            : </a>
+<span class="lineNum">     283 </span>            : nsresult
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 : MemoryBlockCache::WriteBlock(uint32_t aBlockIndex,</span>
+<span class="lineNum">     285 </span>            :                              Span&lt;const uint8_t&gt; aData1,
+<span class="lineNum">     286 </span>            :                              Span&lt;const uint8_t&gt; aData2)
+<span class="lineNum">     287 </span>            : {
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   size_t offset = BlockIndexToOffset(aBlockIndex);</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   if (offset + aData1.Length() + aData2.Length() &gt; mBuffer.Length() &amp;&amp;</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :       !mHasGrown) {</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :     LOG(&quot;WriteBlock() MEMORYBLOCKCACHE_ERRORS='WriteBlockOverflow'&quot;);</span>
+<span class="lineNum">     294 </span>            :     Telemetry::Accumulate(Telemetry::HistogramID::MEMORYBLOCKCACHE_ERRORS,
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :                           WriteBlockOverflow);</span>
+<span class="lineNum">     296 </span>            :   }
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :   if (!EnsureBufferCanContain(offset + aData1.Length() + aData2.Length())) {</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :     LOG(&quot;WriteBlock() MEMORYBLOCKCACHE_ERRORS='WriteBlockCannotGrow'&quot;);</span>
+<span class="lineNum">     299 </span>            :     Telemetry::Accumulate(Telemetry::HistogramID::MEMORYBLOCKCACHE_ERRORS,
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :                           WriteBlockCannotGrow);</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     302 </span>            :   }
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :   memcpy(mBuffer.Elements() + offset, aData1.Elements(), aData1.Length());</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :   if (aData2.Length() &gt; 0) {</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :     memcpy(mBuffer.Elements() + offset + aData1.Length(),</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :            aData2.Elements(),</span>
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :            aData2.Length());</span>
+<span class="lineNum">     309 </span>            :   }
+<span class="lineNum">     310 </span>            : 
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     312 </span>            : }
+<a name="313"><span class="lineNum">     313 </span>            : </a>
+<span class="lineNum">     314 </span>            : nsresult
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 : MemoryBlockCache::Read(int64_t aOffset,</span>
+<span class="lineNum">     316 </span>            :                        uint8_t* aData,
+<span class="lineNum">     317 </span>            :                        int32_t aLength,
+<span class="lineNum">     318 </span>            :                        int32_t* aBytes)
+<span class="lineNum">     319 </span>            : {
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aOffset &gt;= 0);</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :   if (aOffset + aLength &gt; int64_t(mBuffer.Length())) {</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :     LOG(&quot;Read() MEMORYBLOCKCACHE_ERRORS='ReadOverrun'&quot;);</span>
+<span class="lineNum">     325 </span>            :     Telemetry::Accumulate(Telemetry::HistogramID::MEMORYBLOCKCACHE_ERRORS,
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :                           ReadOverrun);</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     328 </span>            :   }
+<span class="lineNum">     329 </span>            : 
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :   memcpy(aData, mBuffer.Elements() + aOffset, aLength);</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :   *aBytes = aLength;</span>
+<span class="lineNum">     332 </span>            : 
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     334 </span>            : }
+<a name="335"><span class="lineNum">     335 </span>            : </a>
+<span class="lineNum">     336 </span>            : nsresult
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 : MemoryBlockCache::MoveBlock(int32_t aSourceBlockIndex, int32_t aDestBlockIndex)</span>
+<span class="lineNum">     338 </span>            : {
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     340 </span>            : 
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :   size_t sourceOffset = BlockIndexToOffset(aSourceBlockIndex);</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :   size_t destOffset = BlockIndexToOffset(aDestBlockIndex);</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :   if (sourceOffset + BLOCK_SIZE &gt; mBuffer.Length()) {</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :     LOG(&quot;MoveBlock() MEMORYBLOCKCACHE_ERRORS='MoveBlockSourceOverrun'&quot;);</span>
+<span class="lineNum">     345 </span>            :     Telemetry::Accumulate(Telemetry::HistogramID::MEMORYBLOCKCACHE_ERRORS,
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :                           MoveBlockSourceOverrun);</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     348 </span>            :   }
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :   if (destOffset + BLOCK_SIZE &gt; mBuffer.Length() &amp;&amp; !mHasGrown) {</span>
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :     LOG(&quot;MoveBlock() MEMORYBLOCKCACHE_ERRORS='MoveBlockDestOverflow'&quot;);</span>
+<span class="lineNum">     351 </span>            :     Telemetry::Accumulate(Telemetry::HistogramID::MEMORYBLOCKCACHE_ERRORS,
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :                           MoveBlockDestOverflow);</span>
+<span class="lineNum">     353 </span>            :   }
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :   if (!EnsureBufferCanContain(destOffset + BLOCK_SIZE)) {</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :     LOG(&quot;MoveBlock() MEMORYBLOCKCACHE_ERRORS='MoveBlockCannotGrow'&quot;);</span>
+<span class="lineNum">     356 </span>            :     Telemetry::Accumulate(Telemetry::HistogramID::MEMORYBLOCKCACHE_ERRORS,
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :                           MoveBlockCannotGrow);</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     359 </span>            :   }
+<span class="lineNum">     360 </span>            : 
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :   memcpy(mBuffer.Elements() + destOffset,</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :          mBuffer.Elements() + sourceOffset,</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :          BLOCK_SIZE);</span>
+<span class="lineNum">     364 </span>            : 
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<a name="366"><span class="lineNum">     366 </span>            : }</a>
+<span class="lineNum">     367 </span>            : 
+<span class="lineNum">     368 </span><span class="lineCov">          9 : } // End namespace mozilla.</span>
+<span class="lineNum">     369 </span>            : 
+<span class="lineNum">     370 </span>            : // avoid redefined macro in unified build
+<span class="lineNum">     371 </span>            : #undef LOG
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,992 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - storage/TelemetryVFS.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">storage</a> - TelemetryVFS.cpp<span style="font-size: 80%;"> (source / <a href="TelemetryVFS.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">239</td>
+            <td class="headerCovTableEntry">369</td>
+            <td class="headerCovTableEntryLo">64.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">25</td>
+            <td class="headerCovTableEntry">42</td>
+            <td class="headerCovTableEntryLo">59.5 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-</a>
+<span class="lineNum">       2 </span>            :  * vim: sw=2 ts=2 et lcs=trail\:.,tab\:&gt;~ :
+<span class="lineNum">       3 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &lt;string.h&gt;
+<span class="lineNum">       8 </span>            : #include &quot;mozilla/Telemetry.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/Preferences.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;sqlite3.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/dom/quota/PersistenceType.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/dom/quota/QuotaManager.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/dom/quota/QuotaObject.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;mozilla/IOInterposer.h&quot;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : // The last VFS version for which this file has been updated.
+<span class="lineNum">      18 </span>            : #define LAST_KNOWN_VFS_VERSION 3
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : // The last io_methods version for which this file has been updated.
+<span class="lineNum">      21 </span>            : #define LAST_KNOWN_IOMETHODS_VERSION 3
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : /**
+<span class="lineNum">      24 </span>            :  * This preference is a workaround to allow users/sysadmins to identify
+<span class="lineNum">      25 </span>            :  * that the profile exists on an NFS share whose implementation
+<span class="lineNum">      26 </span>            :  * is incompatible with SQLite's default locking implementation.
+<span class="lineNum">      27 </span>            :  * Bug 433129 attempted to automatically identify such file-systems,
+<span class="lineNum">      28 </span>            :  * but a reliable way was not found and it was determined that the fallback
+<span class="lineNum">      29 </span>            :  * locking is slower than POSIX locking, so we do not want to do it by default.
+<span class="lineNum">      30 </span>            : */
+<span class="lineNum">      31 </span>            : #define PREF_NFS_FILESYSTEM   &quot;storage.nfs_filesystem&quot;
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : namespace {
+<span class="lineNum">      34 </span>            : 
+<span class="lineNum">      35 </span>            : using namespace mozilla;
+<span class="lineNum">      36 </span>            : using namespace mozilla::dom::quota;
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            : struct Histograms {
+<span class="lineNum">      39 </span>            :   const char *name;
+<span class="lineNum">      40 </span>            :   const Telemetry::HistogramID readB;
+<span class="lineNum">      41 </span>            :   const Telemetry::HistogramID writeB;
+<span class="lineNum">      42 </span>            :   const Telemetry::HistogramID readMS;
+<span class="lineNum">      43 </span>            :   const Telemetry::HistogramID writeMS;
+<span class="lineNum">      44 </span>            :   const Telemetry::HistogramID syncMS;
+<span class="lineNum">      45 </span>            : };
+<span class="lineNum">      46 </span>            : 
+<span class="lineNum">      47 </span>            : #define SQLITE_TELEMETRY(FILENAME, HGRAM) \
+<span class="lineNum">      48 </span>            :   { FILENAME, \
+<span class="lineNum">      49 </span>            :     Telemetry::MOZ_SQLITE_ ## HGRAM ## _READ_B, \
+<span class="lineNum">      50 </span>            :     Telemetry::MOZ_SQLITE_ ## HGRAM ## _WRITE_B, \
+<span class="lineNum">      51 </span>            :     Telemetry::MOZ_SQLITE_ ## HGRAM ## _READ_MS, \
+<span class="lineNum">      52 </span>            :     Telemetry::MOZ_SQLITE_ ## HGRAM ## _WRITE_MS, \
+<span class="lineNum">      53 </span>            :     Telemetry::MOZ_SQLITE_ ## HGRAM ## _SYNC_MS \
+<span class="lineNum">      54 </span>            :   }
+<span class="lineNum">      55 </span>            : 
+<span class="lineNum">      56 </span>            : Histograms gHistograms[] = {
+<span class="lineNum">      57 </span>            :   SQLITE_TELEMETRY(&quot;places.sqlite&quot;, PLACES),
+<span class="lineNum">      58 </span>            :   SQLITE_TELEMETRY(&quot;cookies.sqlite&quot;, COOKIES),
+<span class="lineNum">      59 </span>            :   SQLITE_TELEMETRY(&quot;webappsstore.sqlite&quot;, WEBAPPS),
+<span class="lineNum">      60 </span>            :   SQLITE_TELEMETRY(nullptr, OTHER)
+<span class="lineNum">      61 </span>            : };
+<span class="lineNum">      62 </span>            : #undef SQLITE_TELEMETRY
+<span class="lineNum">      63 </span>            : 
+<span class="lineNum">      64 </span>            : /** RAII class for measuring how long io takes on/off main thread
+<span class="lineNum">      65 </span>            :  */
+<span class="lineNum">      66 </span>            : class IOThreadAutoTimer {
+<span class="lineNum">      67 </span>            : public:
+<span class="lineNum">      68 </span>            :   /**
+<span class="lineNum">      69 </span>            :    * IOThreadAutoTimer measures time spent in IO. Additionally it
+<span class="lineNum">      70 </span>            :    * automatically determines whether IO is happening on the main
+<span class="lineNum">      71 </span>            :    * thread and picks an appropriate histogram.
+<span class="lineNum">      72 </span>            :    *
+<span class="lineNum">      73 </span>            :    * @param id takes a telemetry histogram id. The id+1 must be an
+<span class="lineNum">      74 </span>            :    * equivalent histogram for the main thread. Eg, MOZ_SQLITE_OPEN_MS
+<span class="lineNum">      75 </span>            :    * is followed by MOZ_SQLITE_OPEN_MAIN_THREAD_MS.
+<span class="lineNum">      76 </span>            :    *
+<span class="lineNum">      77 </span>            :    * @param aOp optionally takes an IO operation to report through the
+<span class="lineNum">      78 </span>            :    * IOInterposer. Filename will be reported as NULL, and reference will be
+<a name="79"><span class="lineNum">      79 </span>            :    * either &quot;sqlite-mainthread&quot; or &quot;sqlite-otherthread&quot;.</a>
+<span class="lineNum">      80 </span>            :    */
+<span class="lineNum">      81 </span><span class="lineCov">        111 :   explicit IOThreadAutoTimer(Telemetry::HistogramID aId,</span>
+<span class="lineNum">      82 </span>            :     IOInterposeObserver::Operation aOp = IOInterposeObserver::OpNone)
+<span class="lineNum">      83 </span><span class="lineCov">        111 :     : start(TimeStamp::Now()),</span>
+<span class="lineNum">      84 </span>            :       id(aId)
+<span class="lineNum">      85 </span>            : #if defined(MOZ_GECKO_PROFILER) &amp;&amp; !defined(XP_WIN)
+<span class="lineNum">      86 </span><span class="lineCov">        111 :       , op(aOp)</span>
+<span class="lineNum">      87 </span>            : #endif
+<span class="lineNum">      88 </span>            :   {
+<span class="lineNum">      89 </span><span class="lineCov">        111 :   }</span>
+<span class="lineNum">      90 </span>            : 
+<span class="lineNum">      91 </span>            :   /**
+<span class="lineNum">      92 </span>            :    * This constructor is for when we want to report an operation to
+<span class="lineNum">      93 </span>            :    * IOInterposer but do not require a telemetry probe.
+<span class="lineNum">      94 </span>            :    *
+<a name="95"><span class="lineNum">      95 </span>            :    * @param aOp IO Operation to report through the IOInterposer.</a>
+<span class="lineNum">      96 </span>            :    */
+<span class="lineNum">      97 </span><span class="lineCov">         72 :   explicit IOThreadAutoTimer(IOInterposeObserver::Operation aOp)</span>
+<span class="lineNum">      98 </span><span class="lineCov">         72 :     : start(TimeStamp::Now()),</span>
+<span class="lineNum">      99 </span>            :       id(Telemetry::HistogramCount)
+<span class="lineNum">     100 </span>            : #if defined(MOZ_GECKO_PROFILER) &amp;&amp; !defined(XP_WIN)
+<span class="lineNum">     101 </span><span class="lineCov">         72 :       , op(aOp)</span>
+<span class="lineNum">     102 </span>            : #endif
+<span class="lineNum">     103 </span>            :   {
+<a name="104"><span class="lineNum">     104 </span><span class="lineCov">         72 :   }</span></a>
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span><span class="lineCov">        183 :   ~IOThreadAutoTimer()</span>
+<span class="lineNum">     107 </span><span class="lineCov">        183 :   {</span>
+<span class="lineNum">     108 </span><span class="lineCov">        183 :     TimeStamp end(TimeStamp::Now());</span>
+<span class="lineNum">     109 </span><span class="lineCov">        183 :     uint32_t mainThread = NS_IsMainThread() ? 1 : 0;</span>
+<span class="lineNum">     110 </span><span class="lineCov">        183 :     if (id != Telemetry::HistogramCount) {</span>
+<span class="lineNum">     111 </span><span class="lineCov">        111 :       Telemetry::AccumulateTimeDelta(static_cast&lt;Telemetry::HistogramID&gt;(id + mainThread),</span>
+<span class="lineNum">     112 </span><span class="lineCov">        111 :                                      start, end);</span>
+<span class="lineNum">     113 </span>            :     }
+<span class="lineNum">     114 </span>            :     // We don't report SQLite I/O on Windows because we have a comprehensive
+<span class="lineNum">     115 </span>            :     // mechanism for intercepting I/O on that platform that captures a superset
+<span class="lineNum">     116 </span>            :     // of the data captured here.
+<span class="lineNum">     117 </span>            : #if defined(MOZ_GECKO_PROFILER) &amp;&amp; !defined(XP_WIN)
+<span class="lineNum">     118 </span><span class="lineCov">        183 :     if (IOInterposer::IsObservedOperation(op)) {</span>
+<span class="lineNum">     119 </span><span class="lineCov">        183 :       const char* main_ref  = &quot;sqlite-mainthread&quot;;</span>
+<span class="lineNum">     120 </span><span class="lineCov">        183 :       const char* other_ref = &quot;sqlite-otherthread&quot;;</span>
+<span class="lineNum">     121 </span>            : 
+<span class="lineNum">     122 </span>            :       // Create observation
+<span class="lineNum">     123 </span>            :       IOInterposeObserver::Observation ob(op, start, end,
+<span class="lineNum">     124 </span><span class="lineCov">        366 :                                           (mainThread ? main_ref : other_ref));</span>
+<span class="lineNum">     125 </span>            :       // Report observation
+<span class="lineNum">     126 </span><span class="lineCov">        183 :       IOInterposer::Report(ob);</span>
+<span class="lineNum">     127 </span>            :     }
+<span class="lineNum">     128 </span>            : #endif /* defined(MOZ_GECKO_PROFILER) &amp;&amp; !defined(XP_WIN) */
+<span class="lineNum">     129 </span><span class="lineCov">        183 :   }</span>
+<span class="lineNum">     130 </span>            : 
+<span class="lineNum">     131 </span>            : private:
+<span class="lineNum">     132 </span>            :   const TimeStamp start;
+<span class="lineNum">     133 </span>            :   const Telemetry::HistogramID id;
+<span class="lineNum">     134 </span>            : #if defined(MOZ_GECKO_PROFILER) &amp;&amp; !defined(XP_WIN)
+<span class="lineNum">     135 </span>            :   IOInterposeObserver::Operation op;
+<span class="lineNum">     136 </span>            : #endif
+<span class="lineNum">     137 </span>            : };
+<span class="lineNum">     138 </span>            : 
+<span class="lineNum">     139 </span>            : struct telemetry_file {
+<span class="lineNum">     140 </span>            :   // Base class.  Must be first
+<span class="lineNum">     141 </span>            :   sqlite3_file base;
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span>            :   // histograms pertaining to this file
+<span class="lineNum">     144 </span>            :   Histograms *histograms;
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span>            :   // quota object for this file
+<span class="lineNum">     147 </span>            :   RefPtr&lt;QuotaObject&gt; quotaObject;
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span>            :   // The chunk size for this file. See the documentation for
+<span class="lineNum">     150 </span>            :   // sqlite3_file_control() and FCNTL_CHUNK_SIZE.
+<span class="lineNum">     151 </span>            :   int fileChunkSize;
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span>            :   // This contains the vfs that actually does work
+<span class="lineNum">     154 </span>            :   sqlite3_file pReal[1];
+<span class="lineNum">     155 </span>            : };
+<a name="156"><span class="lineNum">     156 </span>            : </a>
+<span class="lineNum">     157 </span>            : const char*
+<span class="lineNum">     158 </span><span class="lineCov">          8 : DatabasePathFromWALPath(const char *zWALName)</span>
+<span class="lineNum">     159 </span>            : {
+<span class="lineNum">     160 </span>            :   /**
+<span class="lineNum">     161 </span>            :    * Do some sketchy pointer arithmetic to find the parameter key. The WAL
+<span class="lineNum">     162 </span>            :    * filename is in the middle of a big allocated block that contains:
+<span class="lineNum">     163 </span>            :    *
+<span class="lineNum">     164 </span>            :    *   - Random Values
+<span class="lineNum">     165 </span>            :    *   - Main Database Path
+<span class="lineNum">     166 </span>            :    *   - \0
+<span class="lineNum">     167 </span>            :    *   - Multiple URI components consisting of:
+<span class="lineNum">     168 </span>            :    *     - Key
+<span class="lineNum">     169 </span>            :    *     - \0
+<span class="lineNum">     170 </span>            :    *     - Value
+<span class="lineNum">     171 </span>            :    *     - \0
+<span class="lineNum">     172 </span>            :    *   - \0
+<span class="lineNum">     173 </span>            :    *   - Journal Path
+<span class="lineNum">     174 </span>            :    *   - \0
+<span class="lineNum">     175 </span>            :    *   - WAL Path (zWALName)
+<span class="lineNum">     176 </span>            :    *   - \0
+<span class="lineNum">     177 </span>            :    *
+<span class="lineNum">     178 </span>            :    * Because the main database path is preceded by a random value we have to be
+<span class="lineNum">     179 </span>            :    * careful when trying to figure out when we should terminate this loop.
+<span class="lineNum">     180 </span>            :    */
+<span class="lineNum">     181 </span><span class="lineCov">          8 :   MOZ_ASSERT(zWALName);</span>
+<span class="lineNum">     182 </span>            : 
+<span class="lineNum">     183 </span><span class="lineCov">         16 :   nsDependentCSubstring dbPath(zWALName, strlen(zWALName));</span>
+<span class="lineNum">     184 </span>            : 
+<span class="lineNum">     185 </span>            :   // Chop off the &quot;-wal&quot; suffix.
+<span class="lineNum">     186 </span><span class="lineCov">          8 :   NS_NAMED_LITERAL_CSTRING(kWALSuffix, &quot;-wal&quot;);</span>
+<span class="lineNum">     187 </span><span class="lineCov">          8 :   MOZ_ASSERT(StringEndsWith(dbPath, kWALSuffix));</span>
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span><span class="lineCov">          8 :   dbPath.Rebind(zWALName, dbPath.Length() - kWALSuffix.Length());</span>
+<span class="lineNum">     190 </span><span class="lineCov">          8 :   MOZ_ASSERT(!dbPath.IsEmpty());</span>
+<span class="lineNum">     191 </span>            : 
+<span class="lineNum">     192 </span>            :   // We want to scan to the end of the key/value URI pairs. Skip the preceding
+<span class="lineNum">     193 </span>            :   // null and go to the last char of the journal path.
+<span class="lineNum">     194 </span><span class="lineCov">          8 :   const char* cursor = zWALName - 2;</span>
+<span class="lineNum">     195 </span>            : 
+<span class="lineNum">     196 </span>            :   // Make sure we just skipped a null.
+<span class="lineNum">     197 </span><span class="lineCov">          8 :   MOZ_ASSERT(!*(cursor + 1));</span>
+<span class="lineNum">     198 </span>            : 
+<span class="lineNum">     199 </span>            :   // Walk backwards over the journal path.
+<span class="lineNum">     200 </span><span class="lineCov">        748 :   while (*cursor) {</span>
+<span class="lineNum">     201 </span><span class="lineCov">        370 :     cursor--;</span>
+<span class="lineNum">     202 </span>            :   }
+<span class="lineNum">     203 </span>            : 
+<span class="lineNum">     204 </span>            :   // There should be another null here.
+<span class="lineNum">     205 </span><span class="lineCov">          8 :   cursor--;</span>
+<span class="lineNum">     206 </span><span class="lineCov">          8 :   MOZ_ASSERT(!*cursor);</span>
+<span class="lineNum">     207 </span>            : 
+<span class="lineNum">     208 </span>            :   // Back up one more char to the last char of the previous string. It may be
+<span class="lineNum">     209 </span>            :   // the database path or it may be a key/value URI pair.
+<span class="lineNum">     210 </span><span class="lineCov">          8 :   cursor--;</span>
+<span class="lineNum">     211 </span>            : 
+<span class="lineNum">     212 </span>            : #ifdef DEBUG
+<span class="lineNum">     213 </span>            :   {
+<span class="lineNum">     214 </span>            :     // Verify that we just walked over the journal path. Account for the two
+<span class="lineNum">     215 </span>            :     // nulls we just skipped.
+<span class="lineNum">     216 </span><span class="lineCov">          8 :     const char *journalStart = cursor + 3;</span>
+<span class="lineNum">     217 </span>            : 
+<span class="lineNum">     218 </span>            :     nsDependentCSubstring journalPath(journalStart,
+<span class="lineNum">     219 </span><span class="lineCov">         16 :                                       strlen(journalStart));</span>
+<span class="lineNum">     220 </span>            : 
+<span class="lineNum">     221 </span>            :     // Chop off the &quot;-journal&quot; suffix.
+<span class="lineNum">     222 </span><span class="lineCov">          8 :     NS_NAMED_LITERAL_CSTRING(kJournalSuffix, &quot;-journal&quot;);</span>
+<span class="lineNum">     223 </span><span class="lineCov">          8 :     MOZ_ASSERT(StringEndsWith(journalPath, kJournalSuffix));</span>
+<span class="lineNum">     224 </span>            : 
+<span class="lineNum">     225 </span><span class="lineCov">          8 :     journalPath.Rebind(journalStart,</span>
+<span class="lineNum">     226 </span><span class="lineCov">         16 :                         journalPath.Length() - kJournalSuffix.Length());</span>
+<span class="lineNum">     227 </span><span class="lineCov">          8 :     MOZ_ASSERT(!journalPath.IsEmpty());</span>
+<span class="lineNum">     228 </span>            : 
+<span class="lineNum">     229 </span>            :     // Make sure that the database name is a substring of the journal name.
+<span class="lineNum">     230 </span><span class="lineCov">          8 :     MOZ_ASSERT(journalPath == dbPath);</span>
+<span class="lineNum">     231 </span>            :   }
+<span class="lineNum">     232 </span>            : #endif
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span>            :   // Now we're either at the end of the key/value URI pairs or we're at the
+<span class="lineNum">     235 </span>            :   // end of the database path. Carefully walk backwards one character at a
+<span class="lineNum">     236 </span>            :   // time to do this safely without running past the beginning of the database
+<span class="lineNum">     237 </span>            :   // path.
+<span class="lineNum">     238 </span><span class="lineCov">          8 :   const char *const dbPathStart = dbPath.BeginReading();</span>
+<span class="lineNum">     239 </span><span class="lineCov">          8 :   const char *dbPathCursor = dbPath.EndReading() - 1;</span>
+<span class="lineNum">     240 </span><span class="lineCov">          8 :   bool isDBPath = true;</span>
+<span class="lineNum">     241 </span>            : 
+<span class="lineNum">     242 </span>            :   while (true) {
+<span class="lineNum">     243 </span><span class="lineCov">        306 :     MOZ_ASSERT(*dbPathCursor, &quot;dbPathCursor should never see a null char!&quot;);</span>
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span><span class="lineCov">        306 :     if (isDBPath) {</span>
+<span class="lineNum">     246 </span><span class="lineCov">        612 :       isDBPath = dbPathStart &lt;= dbPathCursor &amp;&amp;</span>
+<span class="lineNum">     247 </span><span class="lineCov">        612 :                  *dbPathCursor == *cursor &amp;&amp;</span>
+<span class="lineNum">     248 </span><span class="lineCov">        306 :                  *cursor;</span>
+<span class="lineNum">     249 </span>            :     }
+<span class="lineNum">     250 </span>            : 
+<span class="lineNum">     251 </span><span class="lineCov">        306 :     if (!isDBPath) {</span>
+<span class="lineNum">     252 </span>            :       // This isn't the database path so it must be a value. Scan past it and
+<span class="lineNum">     253 </span>            :       // the key also.
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :       for (size_t stringCount = 0; stringCount &lt; 2; stringCount++) {</span>
+<span class="lineNum">     255 </span>            :         // Scan past the string to the preceding null character.
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :         while (*cursor) {</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :           cursor--;</span>
+<span class="lineNum">     258 </span>            :         }
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span>            :         // Back up one more char to the last char of preceding string.
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :         cursor--;</span>
+<span class="lineNum">     262 </span>            :       }
+<span class="lineNum">     263 </span>            : 
+<span class="lineNum">     264 </span>            :       // Reset and start again.
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :       dbPathCursor = dbPath.EndReading() - 1;</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :       isDBPath = true;</span>
+<span class="lineNum">     267 </span>            : 
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     269 </span>            :     }
+<span class="lineNum">     270 </span>            : 
+<span class="lineNum">     271 </span><span class="lineCov">        306 :     MOZ_ASSERT(isDBPath);</span>
+<span class="lineNum">     272 </span><span class="lineCov">        306 :     MOZ_ASSERT(*cursor);</span>
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span><span class="lineCov">        306 :     if (dbPathStart == dbPathCursor) {</span>
+<span class="lineNum">     275 </span>            :       // Found the full database path, we're all done.
+<span class="lineNum">     276 </span><span class="lineCov">          8 :       MOZ_ASSERT(nsDependentCString(cursor) == dbPath);</span>
+<span class="lineNum">     277 </span><span class="lineCov">         16 :       return cursor;</span>
+<span class="lineNum">     278 </span>            :     }
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span>            :     // Change the cursors and go through the loop again.
+<span class="lineNum">     281 </span><span class="lineCov">        298 :     cursor--;</span>
+<span class="lineNum">     282 </span><span class="lineCov">        298 :     dbPathCursor--;</span>
+<span class="lineNum">     283 </span><span class="lineCov">        298 :   }</span>
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span>            :   MOZ_CRASH(&quot;Should never get here!&quot;);
+<span class="lineNum">     286 </span>            : }
+<a name="287"><span class="lineNum">     287 </span>            : </a>
+<span class="lineNum">     288 </span>            : already_AddRefed&lt;QuotaObject&gt;
+<span class="lineNum">     289 </span><span class="lineCov">          8 : GetQuotaObjectFromNameAndParameters(const char *zName,</span>
+<span class="lineNum">     290 </span>            :                                     const char *zURIParameterKey)
+<span class="lineNum">     291 </span>            : {
+<span class="lineNum">     292 </span><span class="lineCov">          8 :   MOZ_ASSERT(zName);</span>
+<span class="lineNum">     293 </span><span class="lineCov">          8 :   MOZ_ASSERT(zURIParameterKey);</span>
+<span class="lineNum">     294 </span>            : 
+<span class="lineNum">     295 </span>            :   const char *persistenceType =
+<span class="lineNum">     296 </span><span class="lineCov">          8 :     sqlite3_uri_parameter(zURIParameterKey, &quot;persistenceType&quot;);</span>
+<span class="lineNum">     297 </span><span class="lineCov">          8 :   if (!persistenceType) {</span>
+<span class="lineNum">     298 </span><span class="lineCov">          8 :     return nullptr;</span>
+<span class="lineNum">     299 </span>            :   }
+<span class="lineNum">     300 </span>            : 
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :   const char *group = sqlite3_uri_parameter(zURIParameterKey, &quot;group&quot;);</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :   if (!group) {</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;SQLite URI had 'persistenceType' but not 'group'?!&quot;);</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     305 </span>            :   }
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :   const char *origin = sqlite3_uri_parameter(zURIParameterKey, &quot;origin&quot;);</span>
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :   if (!origin) {</span>
+<span class="lineNum">     309 </span>            :     NS_WARNING(&quot;SQLite URI had 'persistenceType' and 'group' but not &quot;
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :                &quot;'origin'?!&quot;);</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     312 </span>            :   }
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :   QuotaManager *quotaManager = QuotaManager::Get();</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(quotaManager);</span>
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span>            :   return quotaManager-&gt;GetQuotaObject(
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     PersistenceTypeFromText(nsDependentCString(persistenceType)),</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     nsDependentCString(group),</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     nsDependentCString(origin),</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     NS_ConvertUTF8toUTF16(zName));</span>
+<span class="lineNum">     322 </span>            : }
+<a name="323"><span class="lineNum">     323 </span>            : </a>
+<span class="lineNum">     324 </span>            : void
+<span class="lineNum">     325 </span><span class="lineCov">         18 : MaybeEstablishQuotaControl(const char *zName,</span>
+<span class="lineNum">     326 </span>            :                            telemetry_file *pFile,
+<span class="lineNum">     327 </span>            :                            int flags)
+<span class="lineNum">     328 </span>            : {
+<span class="lineNum">     329 </span><span class="lineCov">         18 :   MOZ_ASSERT(pFile);</span>
+<span class="lineNum">     330 </span><span class="lineCov">         18 :   MOZ_ASSERT(!pFile-&gt;quotaObject);</span>
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span><span class="lineCov">         18 :   if (!(flags &amp; (SQLITE_OPEN_URI | SQLITE_OPEN_WAL))) {</span>
+<span class="lineNum">     333 </span><span class="lineCov">         10 :     return;</span>
+<span class="lineNum">     334 </span>            :   }
+<span class="lineNum">     335 </span>            : 
+<span class="lineNum">     336 </span><span class="lineCov">          8 :   MOZ_ASSERT(zName);</span>
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span><span class="lineCov">          8 :   const char *zURIParameterKey = (flags &amp; SQLITE_OPEN_WAL) ?</span>
+<span class="lineNum">     339 </span>            :                                  DatabasePathFromWALPath(zName) :
+<span class="lineNum">     340 </span><span class="lineCov">          8 :                                  zName;</span>
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span><span class="lineCov">          8 :   MOZ_ASSERT(zURIParameterKey);</span>
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span>            :   pFile-&gt;quotaObject =
+<span class="lineNum">     345 </span><span class="lineCov">          8 :     GetQuotaObjectFromNameAndParameters(zName, zURIParameterKey);</span>
+<span class="lineNum">     346 </span>            : }
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span>            : /*
+<span class="lineNum">     349 </span>            : ** Close a telemetry_file.
+<a name="350"><span class="lineNum">     350 </span>            : */</a>
+<span class="lineNum">     351 </span>            : int
+<span class="lineNum">     352 </span><span class="lineCov">          2 : xClose(sqlite3_file *pFile)</span>
+<span class="lineNum">     353 </span>            : {
+<span class="lineNum">     354 </span><span class="lineCov">          2 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     355 </span>            :   int rc;
+<span class="lineNum">     356 </span>            :   { // Scope for IOThreadAutoTimer
+<span class="lineNum">     357 </span><span class="lineCov">          4 :     IOThreadAutoTimer ioTimer(IOInterposeObserver::OpClose);</span>
+<span class="lineNum">     358 </span><span class="lineCov">          2 :     rc = p-&gt;pReal-&gt;pMethods-&gt;xClose(p-&gt;pReal);</span>
+<span class="lineNum">     359 </span>            :   }
+<span class="lineNum">     360 </span><span class="lineCov">          2 :   if( rc==SQLITE_OK ){</span>
+<span class="lineNum">     361 </span><span class="lineCov">          2 :     delete p-&gt;base.pMethods;</span>
+<span class="lineNum">     362 </span><span class="lineCov">          2 :     p-&gt;base.pMethods = nullptr;</span>
+<span class="lineNum">     363 </span><span class="lineCov">          2 :     p-&gt;quotaObject = nullptr;</span>
+<span class="lineNum">     364 </span>            : #ifdef DEBUG
+<span class="lineNum">     365 </span><span class="lineCov">          2 :     p-&gt;fileChunkSize = 0;</span>
+<span class="lineNum">     366 </span>            : #endif
+<span class="lineNum">     367 </span>            :   }
+<span class="lineNum">     368 </span><span class="lineCov">          2 :   return rc;</span>
+<span class="lineNum">     369 </span>            : }
+<span class="lineNum">     370 </span>            : 
+<span class="lineNum">     371 </span>            : /*
+<span class="lineNum">     372 </span>            : ** Read data from a telemetry_file.
+<a name="373"><span class="lineNum">     373 </span>            : */</a>
+<span class="lineNum">     374 </span>            : int
+<span class="lineNum">     375 </span><span class="lineCov">         65 : xRead(sqlite3_file *pFile, void *zBuf, int iAmt, sqlite_int64 iOfst)</span>
+<span class="lineNum">     376 </span>            : {
+<span class="lineNum">     377 </span><span class="lineCov">         65 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     378 </span><span class="lineCov">        130 :   IOThreadAutoTimer ioTimer(p-&gt;histograms-&gt;readMS, IOInterposeObserver::OpRead);</span>
+<span class="lineNum">     379 </span>            :   int rc;
+<span class="lineNum">     380 </span><span class="lineCov">         65 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xRead(p-&gt;pReal, zBuf, iAmt, iOfst);</span>
+<span class="lineNum">     381 </span>            :   // sqlite likes to read from empty files, this is normal, ignore it.
+<span class="lineNum">     382 </span><span class="lineCov">         65 :   if (rc != SQLITE_IOERR_SHORT_READ)</span>
+<span class="lineNum">     383 </span><span class="lineCov">         65 :     Telemetry::Accumulate(p-&gt;histograms-&gt;readB, rc == SQLITE_OK ? iAmt : 0);</span>
+<span class="lineNum">     384 </span><span class="lineCov">        130 :   return rc;</span>
+<span class="lineNum">     385 </span>            : }
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span>            : /*
+<span class="lineNum">     388 </span>            : ** Return the current file-size of a telemetry_file.
+<a name="389"><span class="lineNum">     389 </span>            : */</a>
+<span class="lineNum">     390 </span>            : int
+<span class="lineNum">     391 </span><span class="lineCov">         70 : xFileSize(sqlite3_file *pFile, sqlite_int64 *pSize)</span>
+<span class="lineNum">     392 </span>            : {
+<span class="lineNum">     393 </span><span class="lineCov">        140 :   IOThreadAutoTimer ioTimer(IOInterposeObserver::OpStat);</span>
+<span class="lineNum">     394 </span><span class="lineCov">         70 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     395 </span>            :   int rc;
+<span class="lineNum">     396 </span><span class="lineCov">         70 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xFileSize(p-&gt;pReal, pSize);</span>
+<span class="lineNum">     397 </span><span class="lineCov">        140 :   return rc;</span>
+<span class="lineNum">     398 </span>            : }
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span>            : /*
+<span class="lineNum">     401 </span>            : ** Write data to a telemetry_file.
+<a name="402"><span class="lineNum">     402 </span>            : */</a>
+<span class="lineNum">     403 </span>            : int
+<span class="lineNum">     404 </span><span class="lineCov">         27 : xWrite(sqlite3_file *pFile, const void *zBuf, int iAmt, sqlite_int64 iOfst)</span>
+<span class="lineNum">     405 </span>            : {
+<span class="lineNum">     406 </span><span class="lineCov">         27 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     407 </span><span class="lineCov">         54 :   IOThreadAutoTimer ioTimer(p-&gt;histograms-&gt;writeMS, IOInterposeObserver::OpWrite);</span>
+<span class="lineNum">     408 </span>            :   int rc;
+<span class="lineNum">     409 </span><span class="lineCov">         27 :   if (p-&gt;quotaObject) {</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(INT64_MAX - iOfst &gt;= iAmt);</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :     if (!p-&gt;quotaObject-&gt;MaybeUpdateSize(iOfst + iAmt, /* aTruncate */ false)) {</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :       return SQLITE_FULL;</span>
+<span class="lineNum">     413 </span>            :     }
+<span class="lineNum">     414 </span>            :   }
+<span class="lineNum">     415 </span><span class="lineCov">         27 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xWrite(p-&gt;pReal, zBuf, iAmt, iOfst);</span>
+<span class="lineNum">     416 </span><span class="lineCov">         27 :   Telemetry::Accumulate(p-&gt;histograms-&gt;writeB, rc == SQLITE_OK ? iAmt : 0);</span>
+<span class="lineNum">     417 </span><span class="lineCov">         27 :   if (p-&gt;quotaObject &amp;&amp; rc != SQLITE_OK) {</span>
+<span class="lineNum">     418 </span>            :     NS_WARNING(&quot;xWrite failed on a quota-controlled file, attempting to &quot;
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :                &quot;update its current size...&quot;);</span>
+<span class="lineNum">     420 </span>            :     sqlite_int64 currentSize;
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :     if (xFileSize(pFile, &amp;currentSize) == SQLITE_OK) {</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :       p-&gt;quotaObject-&gt;MaybeUpdateSize(currentSize, /* aTruncate */ true);</span>
+<span class="lineNum">     423 </span>            :     }
+<span class="lineNum">     424 </span>            :   }
+<span class="lineNum">     425 </span><span class="lineCov">         27 :   return rc;</span>
+<span class="lineNum">     426 </span>            : }
+<span class="lineNum">     427 </span>            : 
+<span class="lineNum">     428 </span>            : /*
+<span class="lineNum">     429 </span>            : ** Truncate a telemetry_file.
+<a name="430"><span class="lineNum">     430 </span>            : */</a>
+<span class="lineNum">     431 </span>            : int
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 : xTruncate(sqlite3_file *pFile, sqlite_int64 size)</span>
+<span class="lineNum">     433 </span>            : {
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :   IOThreadAutoTimer ioTimer(Telemetry::MOZ_SQLITE_TRUNCATE_MS);</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     436 </span>            :   int rc;
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :   Telemetry::AutoTimer&lt;Telemetry::MOZ_SQLITE_TRUNCATE_MS&gt; timer;</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :   if (p-&gt;quotaObject) {</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :     if (p-&gt;fileChunkSize &gt; 0) {</span>
+<span class="lineNum">     440 </span>            :       // Round up to the smallest multiple of the chunk size that will hold all
+<span class="lineNum">     441 </span>            :       // the data.
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :       size =</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :         ((size + p-&gt;fileChunkSize - 1) / p-&gt;fileChunkSize) * p-&gt;fileChunkSize;</span>
+<span class="lineNum">     444 </span>            :     }
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :     if (!p-&gt;quotaObject-&gt;MaybeUpdateSize(size, /* aTruncate */ true)) {</span>
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :       return SQLITE_FULL;</span>
+<span class="lineNum">     447 </span>            :     }
+<span class="lineNum">     448 </span>            :   }
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xTruncate(p-&gt;pReal, size);</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :   if (p-&gt;quotaObject) {</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :     if (rc == SQLITE_OK) {</span>
+<span class="lineNum">     452 </span>            : #ifdef DEBUG
+<span class="lineNum">     453 </span>            :       // Make sure xTruncate set the size exactly as we calculated above.
+<span class="lineNum">     454 </span>            :       sqlite_int64 newSize;
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(xFileSize(pFile, &amp;newSize) == SQLITE_OK);</span>
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(newSize == size);</span>
+<span class="lineNum">     457 </span>            : #endif
+<span class="lineNum">     458 </span>            :     } else {
+<span class="lineNum">     459 </span>            :       NS_WARNING(&quot;xTruncate failed on a quota-controlled file, attempting to &quot;
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :                  &quot;update its current size...&quot;);</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :       if (xFileSize(pFile, &amp;size) == SQLITE_OK) {</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :         p-&gt;quotaObject-&gt;MaybeUpdateSize(size, /* aTruncate */ true);</span>
+<span class="lineNum">     463 </span>            :       }
+<span class="lineNum">     464 </span>            :     }
+<span class="lineNum">     465 </span>            :   }
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :   return rc;</span>
+<span class="lineNum">     467 </span>            : }
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span>            : /*
+<span class="lineNum">     470 </span>            : ** Sync a telemetry_file.
+<a name="471"><span class="lineNum">     471 </span>            : */</a>
+<span class="lineNum">     472 </span>            : int
+<span class="lineNum">     473 </span><span class="lineCov">          1 : xSync(sqlite3_file *pFile, int flags)</span>
+<span class="lineNum">     474 </span>            : {
+<span class="lineNum">     475 </span><span class="lineCov">          1 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     476 </span><span class="lineCov">          2 :   IOThreadAutoTimer ioTimer(p-&gt;histograms-&gt;syncMS, IOInterposeObserver::OpFSync);</span>
+<span class="lineNum">     477 </span><span class="lineCov">          2 :   return p-&gt;pReal-&gt;pMethods-&gt;xSync(p-&gt;pReal, flags);</span>
+<span class="lineNum">     478 </span>            : }
+<span class="lineNum">     479 </span>            : 
+<span class="lineNum">     480 </span>            : /*
+<span class="lineNum">     481 </span>            : ** Lock a telemetry_file.
+<a name="482"><span class="lineNum">     482 </span>            : */</a>
+<span class="lineNum">     483 </span>            : int
+<span class="lineNum">     484 </span><span class="lineCov">         21 : xLock(sqlite3_file *pFile, int eLock)</span>
+<span class="lineNum">     485 </span>            : {
+<span class="lineNum">     486 </span><span class="lineCov">         21 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     487 </span>            :   int rc;
+<span class="lineNum">     488 </span><span class="lineCov">         21 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xLock(p-&gt;pReal, eLock);</span>
+<span class="lineNum">     489 </span><span class="lineCov">         21 :   return rc;</span>
+<span class="lineNum">     490 </span>            : }
+<span class="lineNum">     491 </span>            : 
+<span class="lineNum">     492 </span>            : /*
+<span class="lineNum">     493 </span>            : ** Unlock a telemetry_file.
+<a name="494"><span class="lineNum">     494 </span>            : */</a>
+<span class="lineNum">     495 </span>            : int
+<span class="lineNum">     496 </span><span class="lineCov">         12 : xUnlock(sqlite3_file *pFile, int eLock)</span>
+<span class="lineNum">     497 </span>            : {
+<span class="lineNum">     498 </span><span class="lineCov">         12 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     499 </span>            :   int rc;
+<span class="lineNum">     500 </span><span class="lineCov">         12 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xUnlock(p-&gt;pReal, eLock);</span>
+<span class="lineNum">     501 </span><span class="lineCov">         12 :   return rc;</span>
+<span class="lineNum">     502 </span>            : }
+<span class="lineNum">     503 </span>            : 
+<span class="lineNum">     504 </span>            : /*
+<span class="lineNum">     505 </span>            : ** Check if another file-handle holds a RESERVED lock on a telemetry_file.
+<a name="506"><span class="lineNum">     506 </span>            : */</a>
+<span class="lineNum">     507 </span>            : int
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 : xCheckReservedLock(sqlite3_file *pFile, int *pResOut)</span>
+<span class="lineNum">     509 </span>            : {
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :   int rc = p-&gt;pReal-&gt;pMethods-&gt;xCheckReservedLock(p-&gt;pReal, pResOut);</span>
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :   return rc;</span>
+<span class="lineNum">     513 </span>            : }
+<span class="lineNum">     514 </span>            : 
+<span class="lineNum">     515 </span>            : /*
+<span class="lineNum">     516 </span>            : ** File control method. For custom operations on a telemetry_file.
+<a name="517"><span class="lineNum">     517 </span>            : */</a>
+<span class="lineNum">     518 </span>            : int
+<span class="lineNum">     519 </span><span class="lineCov">        123 : xFileControl(sqlite3_file *pFile, int op, void *pArg)</span>
+<span class="lineNum">     520 </span>            : {
+<span class="lineNum">     521 </span><span class="lineCov">        123 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     522 </span>            :   int rc;
+<span class="lineNum">     523 </span>            :   // Hook SQLITE_FCNTL_SIZE_HINT for quota-controlled files and do the necessary
+<span class="lineNum">     524 </span>            :   // work before passing to the SQLite VFS.
+<span class="lineNum">     525 </span><span class="lineCov">        123 :   if (op == SQLITE_FCNTL_SIZE_HINT &amp;&amp; p-&gt;quotaObject) {</span>
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :     sqlite3_int64 hintSize = *static_cast&lt;sqlite3_int64*&gt;(pArg);</span>
+<span class="lineNum">     527 </span>            :     sqlite3_int64 currentSize;
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :     rc = xFileSize(pFile, &amp;currentSize);</span>
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :     if (rc != SQLITE_OK) {</span>
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 :       return rc;</span>
+<span class="lineNum">     531 </span>            :     }
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :     if (hintSize &gt; currentSize) {</span>
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :       rc = xTruncate(pFile, hintSize);</span>
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :       if (rc != SQLITE_OK) {</span>
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :         return rc;</span>
+<span class="lineNum">     536 </span>            :       }
+<span class="lineNum">     537 </span>            :     }
+<span class="lineNum">     538 </span>            :   }
+<span class="lineNum">     539 </span><span class="lineCov">        123 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xFileControl(p-&gt;pReal, op, pArg);</span>
+<span class="lineNum">     540 </span>            :   // Grab the file chunk size after the SQLite VFS has approved.
+<span class="lineNum">     541 </span><span class="lineCov">        123 :   if (op == SQLITE_FCNTL_CHUNK_SIZE &amp;&amp; rc == SQLITE_OK) {</span>
+<span class="lineNum">     542 </span><span class="lineCov">          2 :     p-&gt;fileChunkSize = *static_cast&lt;int*&gt;(pArg);</span>
+<span class="lineNum">     543 </span>            :   }
+<span class="lineNum">     544 </span>            : #ifdef DEBUG
+<span class="lineNum">     545 </span><span class="lineCov">        123 :   if (op == SQLITE_FCNTL_SIZE_HINT &amp;&amp; p-&gt;quotaObject &amp;&amp; rc == SQLITE_OK) {</span>
+<span class="lineNum">     546 </span><span class="lineNoCov">          0 :     sqlite3_int64 hintSize = *static_cast&lt;sqlite3_int64*&gt;(pArg);</span>
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :     if (p-&gt;fileChunkSize &gt; 0) {</span>
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :       hintSize =</span>
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :         ((hintSize + p-&gt;fileChunkSize - 1) / p-&gt;fileChunkSize) *</span>
+<span class="lineNum">     550 </span><span class="lineNoCov">          0 :           p-&gt;fileChunkSize;</span>
+<span class="lineNum">     551 </span>            :     }
+<span class="lineNum">     552 </span>            :     sqlite3_int64 currentSize;
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(xFileSize(pFile, &amp;currentSize) == SQLITE_OK);</span>
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(currentSize &gt;= hintSize);</span>
+<span class="lineNum">     555 </span>            :   }
+<span class="lineNum">     556 </span>            : #endif
+<span class="lineNum">     557 </span><span class="lineCov">        123 :   return rc;</span>
+<span class="lineNum">     558 </span>            : }
+<span class="lineNum">     559 </span>            : 
+<span class="lineNum">     560 </span>            : /*
+<span class="lineNum">     561 </span>            : ** Return the sector-size in bytes for a telemetry_file.
+<a name="562"><span class="lineNum">     562 </span>            : */</a>
+<span class="lineNum">     563 </span>            : int
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 : xSectorSize(sqlite3_file *pFile)</span>
+<span class="lineNum">     565 </span>            : {
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     567 </span>            :   int rc;
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xSectorSize(p-&gt;pReal);</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :   return rc;</span>
+<span class="lineNum">     570 </span>            : }
+<span class="lineNum">     571 </span>            : 
+<span class="lineNum">     572 </span>            : /*
+<span class="lineNum">     573 </span>            : ** Return the device characteristic flags supported by a telemetry_file.
+<a name="574"><span class="lineNum">     574 </span>            : */</a>
+<span class="lineNum">     575 </span>            : int
+<span class="lineNum">     576 </span><span class="lineCov">         46 : xDeviceCharacteristics(sqlite3_file *pFile)</span>
+<span class="lineNum">     577 </span>            : {
+<span class="lineNum">     578 </span><span class="lineCov">         46 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     579 </span>            :   int rc;
+<span class="lineNum">     580 </span><span class="lineCov">         46 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xDeviceCharacteristics(p-&gt;pReal);</span>
+<span class="lineNum">     581 </span><span class="lineCov">         46 :   return rc;</span>
+<span class="lineNum">     582 </span>            : }
+<span class="lineNum">     583 </span>            : 
+<span class="lineNum">     584 </span>            : /*
+<span class="lineNum">     585 </span>            : ** Shared-memory operations.
+<a name="586"><span class="lineNum">     586 </span>            : */</a>
+<span class="lineNum">     587 </span>            : int
+<span class="lineNum">     588 </span><span class="lineCov">         88 : xShmLock(sqlite3_file *pFile, int ofst, int n, int flags)</span>
+<span class="lineNum">     589 </span>            : {
+<span class="lineNum">     590 </span><span class="lineCov">         88 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     591 </span><span class="lineCov">         88 :   return p-&gt;pReal-&gt;pMethods-&gt;xShmLock(p-&gt;pReal, ofst, n, flags);</span>
+<span class="lineNum">     592 </span>            : }
+<a name="593"><span class="lineNum">     593 </span>            : </a>
+<span class="lineNum">     594 </span>            : int
+<span class="lineNum">     595 </span><span class="lineCov">         12 : xShmMap(sqlite3_file *pFile, int iRegion, int szRegion, int isWrite, void volatile **pp)</span>
+<span class="lineNum">     596 </span>            : {
+<span class="lineNum">     597 </span><span class="lineCov">         12 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     598 </span>            :   int rc;
+<span class="lineNum">     599 </span><span class="lineCov">         12 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xShmMap(p-&gt;pReal, iRegion, szRegion, isWrite, pp);</span>
+<span class="lineNum">     600 </span><span class="lineCov">         12 :   return rc;</span>
+<span class="lineNum">     601 </span>            : }
+<a name="602"><span class="lineNum">     602 </span>            : </a>
+<span class="lineNum">     603 </span>            : void
+<span class="lineNum">     604 </span><span class="lineCov">         66 : xShmBarrier(sqlite3_file *pFile){</span>
+<span class="lineNum">     605 </span><span class="lineCov">         66 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     606 </span><span class="lineCov">         66 :   p-&gt;pReal-&gt;pMethods-&gt;xShmBarrier(p-&gt;pReal);</span>
+<span class="lineNum">     607 </span><span class="lineCov">         66 : }</span>
+<a name="608"><span class="lineNum">     608 </span>            : </a>
+<span class="lineNum">     609 </span>            : int
+<span class="lineNum">     610 </span><span class="lineCov">          1 : xShmUnmap(sqlite3_file *pFile, int delFlag){</span>
+<span class="lineNum">     611 </span><span class="lineCov">          1 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     612 </span>            :   int rc;
+<span class="lineNum">     613 </span><span class="lineCov">          1 :   rc = p-&gt;pReal-&gt;pMethods-&gt;xShmUnmap(p-&gt;pReal, delFlag);</span>
+<span class="lineNum">     614 </span><span class="lineCov">          1 :   return rc;</span>
+<span class="lineNum">     615 </span>            : }
+<a name="616"><span class="lineNum">     616 </span>            : </a>
+<span class="lineNum">     617 </span>            : int
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 : xFetch(sqlite3_file *pFile, sqlite3_int64 iOff, int iAmt, void **pp)</span>
+<span class="lineNum">     619 </span>            : {
+<span class="lineNum">     620 </span><span class="lineNoCov">          0 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     621 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(p-&gt;pReal-&gt;pMethods-&gt;iVersion &gt;= 3);</span>
+<span class="lineNum">     622 </span><span class="lineNoCov">          0 :   return p-&gt;pReal-&gt;pMethods-&gt;xFetch(p-&gt;pReal, iOff, iAmt, pp);</span>
+<span class="lineNum">     623 </span>            : }
+<a name="624"><span class="lineNum">     624 </span>            : </a>
+<span class="lineNum">     625 </span>            : int
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 : xUnfetch(sqlite3_file *pFile, sqlite3_int64 iOff, void *pResOut)</span>
+<span class="lineNum">     627 </span>            : {
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(p-&gt;pReal-&gt;pMethods-&gt;iVersion &gt;= 3);</span>
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 :   return p-&gt;pReal-&gt;pMethods-&gt;xUnfetch(p-&gt;pReal, iOff, pResOut);</span>
+<span class="lineNum">     631 </span>            : }
+<a name="632"><span class="lineNum">     632 </span>            : </a>
+<span class="lineNum">     633 </span>            : int
+<span class="lineNum">     634 </span><span class="lineCov">         18 : xOpen(sqlite3_vfs* vfs, const char *zName, sqlite3_file* pFile,</span>
+<span class="lineNum">     635 </span>            :           int flags, int *pOutFlags)
+<span class="lineNum">     636 </span>            : {
+<span class="lineNum">     637 </span>            :   IOThreadAutoTimer ioTimer(Telemetry::MOZ_SQLITE_OPEN_MS,
+<span class="lineNum">     638 </span><span class="lineCov">         36 :                             IOInterposeObserver::OpCreateOrOpen);</span>
+<span class="lineNum">     639 </span><span class="lineCov">         36 :   Telemetry::AutoTimer&lt;Telemetry::MOZ_SQLITE_OPEN_MS&gt; timer;</span>
+<span class="lineNum">     640 </span><span class="lineCov">         18 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     641 </span>            :   int rc;
+<span class="lineNum">     642 </span><span class="lineCov">         18 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     643 </span><span class="lineCov">         18 :   Histograms *h = nullptr;</span>
+<span class="lineNum">     644 </span>            :   // check if the filename is one we are probing for
+<span class="lineNum">     645 </span><span class="lineCov">         48 :   for(size_t i = 0;i &lt; sizeof(gHistograms)/sizeof(gHistograms[0]);i++) {</span>
+<span class="lineNum">     646 </span><span class="lineCov">         48 :     h = &amp;gHistograms[i];</span>
+<span class="lineNum">     647 </span>            :     // last probe is the fallback probe
+<span class="lineNum">     648 </span><span class="lineCov">         48 :     if (!h-&gt;name)</span>
+<span class="lineNum">     649 </span><span class="lineCov">          6 :       break;</span>
+<span class="lineNum">     650 </span><span class="lineCov">         42 :     if (!zName)</span>
+<span class="lineNum">     651 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     652 </span><span class="lineCov">         42 :     const char *match = strstr(zName, h-&gt;name);</span>
+<span class="lineNum">     653 </span><span class="lineCov">         42 :     if (!match)</span>
+<span class="lineNum">     654 </span><span class="lineCov">         30 :       continue;</span>
+<span class="lineNum">     655 </span><span class="lineCov">         12 :     char c = match[strlen(h-&gt;name)];</span>
+<span class="lineNum">     656 </span>            :     // include -wal/-journal too
+<span class="lineNum">     657 </span><span class="lineCov">         12 :     if (!c || c == '-')</span>
+<span class="lineNum">     658 </span>            :       break;
+<span class="lineNum">     659 </span>            :   }
+<span class="lineNum">     660 </span><span class="lineCov">         18 :   p-&gt;histograms = h;</span>
+<span class="lineNum">     661 </span>            : 
+<span class="lineNum">     662 </span><span class="lineCov">         18 :   MaybeEstablishQuotaControl(zName, p, flags);</span>
+<span class="lineNum">     663 </span>            : 
+<span class="lineNum">     664 </span><span class="lineCov">         18 :   rc = orig_vfs-&gt;xOpen(orig_vfs, zName, p-&gt;pReal, flags, pOutFlags);</span>
+<span class="lineNum">     665 </span><span class="lineCov">         18 :   if( rc != SQLITE_OK )</span>
+<span class="lineNum">     666 </span><span class="lineNoCov">          0 :     return rc;</span>
+<span class="lineNum">     667 </span><span class="lineCov">         18 :   if( p-&gt;pReal-&gt;pMethods ){</span>
+<span class="lineNum">     668 </span><span class="lineCov">         18 :     sqlite3_io_methods *pNew = new sqlite3_io_methods;</span>
+<span class="lineNum">     669 </span><span class="lineCov">         18 :     const sqlite3_io_methods *pSub = p-&gt;pReal-&gt;pMethods;</span>
+<span class="lineNum">     670 </span><span class="lineCov">         18 :     memset(pNew, 0, sizeof(*pNew));</span>
+<span class="lineNum">     671 </span>            :     // If the io_methods version is higher than the last known one, you should
+<span class="lineNum">     672 </span>            :     // update this VFS adding appropriate IO methods for any methods added in
+<span class="lineNum">     673 </span>            :     // the version change.
+<span class="lineNum">     674 </span><span class="lineCov">         18 :     pNew-&gt;iVersion = pSub-&gt;iVersion;</span>
+<span class="lineNum">     675 </span><span class="lineCov">         18 :     MOZ_ASSERT(pNew-&gt;iVersion &lt;= LAST_KNOWN_IOMETHODS_VERSION);</span>
+<span class="lineNum">     676 </span><span class="lineCov">         18 :     pNew-&gt;xClose = xClose;</span>
+<span class="lineNum">     677 </span><span class="lineCov">         18 :     pNew-&gt;xRead = xRead;</span>
+<span class="lineNum">     678 </span><span class="lineCov">         18 :     pNew-&gt;xWrite = xWrite;</span>
+<span class="lineNum">     679 </span><span class="lineCov">         18 :     pNew-&gt;xTruncate = xTruncate;</span>
+<span class="lineNum">     680 </span><span class="lineCov">         18 :     pNew-&gt;xSync = xSync;</span>
+<span class="lineNum">     681 </span><span class="lineCov">         18 :     pNew-&gt;xFileSize = xFileSize;</span>
+<span class="lineNum">     682 </span><span class="lineCov">         18 :     pNew-&gt;xLock = xLock;</span>
+<span class="lineNum">     683 </span><span class="lineCov">         18 :     pNew-&gt;xUnlock = xUnlock;</span>
+<span class="lineNum">     684 </span><span class="lineCov">         18 :     pNew-&gt;xCheckReservedLock = xCheckReservedLock;</span>
+<span class="lineNum">     685 </span><span class="lineCov">         18 :     pNew-&gt;xFileControl = xFileControl;</span>
+<span class="lineNum">     686 </span><span class="lineCov">         18 :     pNew-&gt;xSectorSize = xSectorSize;</span>
+<span class="lineNum">     687 </span><span class="lineCov">         18 :     pNew-&gt;xDeviceCharacteristics = xDeviceCharacteristics;</span>
+<span class="lineNum">     688 </span><span class="lineCov">         18 :     if (pNew-&gt;iVersion &gt;= 2) {</span>
+<span class="lineNum">     689 </span>            :       // Methods added in version 2.
+<span class="lineNum">     690 </span><span class="lineCov">         18 :       pNew-&gt;xShmMap = pSub-&gt;xShmMap ? xShmMap : 0;</span>
+<span class="lineNum">     691 </span><span class="lineCov">         18 :       pNew-&gt;xShmLock = pSub-&gt;xShmLock ? xShmLock : 0;</span>
+<span class="lineNum">     692 </span><span class="lineCov">         18 :       pNew-&gt;xShmBarrier = pSub-&gt;xShmBarrier ? xShmBarrier : 0;</span>
+<span class="lineNum">     693 </span><span class="lineCov">         18 :       pNew-&gt;xShmUnmap = pSub-&gt;xShmUnmap ? xShmUnmap : 0;</span>
+<span class="lineNum">     694 </span>            :     }
+<span class="lineNum">     695 </span><span class="lineCov">         18 :     if (pNew-&gt;iVersion &gt;= 3) {</span>
+<span class="lineNum">     696 </span>            :       // Methods added in version 3.
+<span class="lineNum">     697 </span>            :       // SQLite 3.7.17 calls these methods without checking for nullptr first,
+<span class="lineNum">     698 </span>            :       // so we always define them.  Verify that we're not going to call
+<span class="lineNum">     699 </span>            :       // nullptrs, though.
+<span class="lineNum">     700 </span><span class="lineCov">         18 :       MOZ_ASSERT(pSub-&gt;xFetch);</span>
+<span class="lineNum">     701 </span><span class="lineCov">         18 :       pNew-&gt;xFetch = xFetch;</span>
+<span class="lineNum">     702 </span><span class="lineCov">         18 :       MOZ_ASSERT(pSub-&gt;xUnfetch);</span>
+<span class="lineNum">     703 </span><span class="lineCov">         18 :       pNew-&gt;xUnfetch = xUnfetch;</span>
+<span class="lineNum">     704 </span>            :     }
+<span class="lineNum">     705 </span><span class="lineCov">         18 :     pFile-&gt;pMethods = pNew;</span>
+<span class="lineNum">     706 </span>            :   }
+<span class="lineNum">     707 </span><span class="lineCov">         18 :   return rc;</span>
+<span class="lineNum">     708 </span>            : }
+<a name="709"><span class="lineNum">     709 </span>            : </a>
+<span class="lineNum">     710 </span>            : int
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 : xDelete(sqlite3_vfs* vfs, const char *zName, int syncDir)</span>
+<span class="lineNum">     712 </span>            : {
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     714 </span>            :   int rc;
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :   RefPtr&lt;QuotaObject&gt; quotaObject;</span>
+<span class="lineNum">     716 </span>            : 
+<span class="lineNum">     717 </span><span class="lineNoCov">          0 :   if (StringEndsWith(nsDependentCString(zName), NS_LITERAL_CSTRING(&quot;-wal&quot;))) {</span>
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 :     const char *zURIParameterKey = DatabasePathFromWALPath(zName);</span>
+<span class="lineNum">     719 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(zURIParameterKey);</span>
+<span class="lineNum">     720 </span>            : 
+<span class="lineNum">     721 </span><span class="lineNoCov">          0 :     quotaObject = GetQuotaObjectFromNameAndParameters(zName, zURIParameterKey);</span>
+<span class="lineNum">     722 </span>            :   }
+<span class="lineNum">     723 </span>            : 
+<span class="lineNum">     724 </span><span class="lineNoCov">          0 :   rc = orig_vfs-&gt;xDelete(orig_vfs, zName, syncDir);</span>
+<span class="lineNum">     725 </span><span class="lineNoCov">          0 :   if (rc == SQLITE_OK &amp;&amp; quotaObject) {</span>
+<span class="lineNum">     726 </span><span class="lineNoCov">          0 :     MOZ_ALWAYS_TRUE(quotaObject-&gt;MaybeUpdateSize(0, /* aTruncate */ true));</span>
+<span class="lineNum">     727 </span>            :   }
+<span class="lineNum">     728 </span>            : 
+<span class="lineNum">     729 </span><span class="lineNoCov">          0 :   return rc;</span>
+<span class="lineNum">     730 </span>            : }
+<a name="731"><span class="lineNum">     731 </span>            : </a>
+<span class="lineNum">     732 </span>            : int
+<span class="lineNum">     733 </span><span class="lineCov">         36 : xAccess(sqlite3_vfs *vfs, const char *zName, int flags, int *pResOut)</span>
+<span class="lineNum">     734 </span>            : {
+<span class="lineNum">     735 </span><span class="lineCov">         36 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     736 </span><span class="lineCov">         36 :   return orig_vfs-&gt;xAccess(orig_vfs, zName, flags, pResOut);</span>
+<span class="lineNum">     737 </span>            : }
+<a name="738"><span class="lineNum">     738 </span>            : </a>
+<span class="lineNum">     739 </span>            : int
+<span class="lineNum">     740 </span><span class="lineCov">         12 : xFullPathname(sqlite3_vfs *vfs, const char *zName, int nOut, char *zOut)</span>
+<span class="lineNum">     741 </span>            : {
+<span class="lineNum">     742 </span><span class="lineCov">         12 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     743 </span><span class="lineCov">         12 :   return orig_vfs-&gt;xFullPathname(orig_vfs, zName, nOut, zOut);</span>
+<span class="lineNum">     744 </span>            : }
+<a name="745"><span class="lineNum">     745 </span>            : </a>
+<span class="lineNum">     746 </span>            : void*
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 : xDlOpen(sqlite3_vfs *vfs, const char *zFilename)</span>
+<span class="lineNum">     748 </span>            : {
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :   return orig_vfs-&gt;xDlOpen(orig_vfs, zFilename);</span>
+<span class="lineNum">     751 </span>            : }
+<a name="752"><span class="lineNum">     752 </span>            : </a>
+<span class="lineNum">     753 </span>            : void
+<span class="lineNum">     754 </span><span class="lineNoCov">          0 : xDlError(sqlite3_vfs *vfs, int nByte, char *zErrMsg)</span>
+<span class="lineNum">     755 </span>            : {
+<span class="lineNum">     756 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     757 </span><span class="lineNoCov">          0 :   orig_vfs-&gt;xDlError(orig_vfs, nByte, zErrMsg);</span>
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 : }</span>
+<a name="759"><span class="lineNum">     759 </span>            : </a>
+<span class="lineNum">     760 </span>            : void
+<span class="lineNum">     761 </span><span class="lineNoCov">          0 : (*xDlSym(sqlite3_vfs *vfs, void *pHdle, const char *zSym))(void){</span>
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     763 </span><span class="lineNoCov">          0 :   return orig_vfs-&gt;xDlSym(orig_vfs, pHdle, zSym);</span>
+<span class="lineNum">     764 </span>            : }
+<a name="765"><span class="lineNum">     765 </span>            : </a>
+<span class="lineNum">     766 </span>            : void
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 : xDlClose(sqlite3_vfs *vfs, void *pHandle)</span>
+<span class="lineNum">     768 </span>            : {
+<span class="lineNum">     769 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :   orig_vfs-&gt;xDlClose(orig_vfs, pHandle);</span>
+<span class="lineNum">     771 </span><span class="lineNoCov">          0 : }</span>
+<a name="772"><span class="lineNum">     772 </span>            : </a>
+<span class="lineNum">     773 </span>            : int
+<span class="lineNum">     774 </span><span class="lineCov">          1 : xRandomness(sqlite3_vfs *vfs, int nByte, char *zOut)</span>
+<span class="lineNum">     775 </span>            : {
+<span class="lineNum">     776 </span><span class="lineCov">          1 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     777 </span><span class="lineCov">          1 :   return orig_vfs-&gt;xRandomness(orig_vfs, nByte, zOut);</span>
+<span class="lineNum">     778 </span>            : }
+<a name="779"><span class="lineNum">     779 </span>            : </a>
+<span class="lineNum">     780 </span>            : int
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 : xSleep(sqlite3_vfs *vfs, int microseconds)</span>
+<span class="lineNum">     782 </span>            : {
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :   return orig_vfs-&gt;xSleep(orig_vfs, microseconds);</span>
+<span class="lineNum">     785 </span>            : }
+<a name="786"><span class="lineNum">     786 </span>            : </a>
+<span class="lineNum">     787 </span>            : int
+<span class="lineNum">     788 </span><span class="lineNoCov">          0 : xCurrentTime(sqlite3_vfs *vfs, double *prNow)</span>
+<span class="lineNum">     789 </span>            : {
+<span class="lineNum">     790 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     791 </span><span class="lineNoCov">          0 :   return orig_vfs-&gt;xCurrentTime(orig_vfs, prNow);</span>
+<span class="lineNum">     792 </span>            : }
+<a name="793"><span class="lineNum">     793 </span>            : </a>
+<span class="lineNum">     794 </span>            : int
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 : xGetLastError(sqlite3_vfs *vfs, int nBuf, char *zBuf)</span>
+<span class="lineNum">     796 </span>            : {
+<span class="lineNum">     797 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 :   return orig_vfs-&gt;xGetLastError(orig_vfs, nBuf, zBuf);</span>
+<span class="lineNum">     799 </span>            : }
+<a name="800"><span class="lineNum">     800 </span>            : </a>
+<span class="lineNum">     801 </span>            : int
+<span class="lineNum">     802 </span><span class="lineCov">          1 : xCurrentTimeInt64(sqlite3_vfs *vfs, sqlite3_int64 *piNow)</span>
+<span class="lineNum">     803 </span>            : {
+<span class="lineNum">     804 </span><span class="lineCov">          1 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     805 </span><span class="lineCov">          1 :   return orig_vfs-&gt;xCurrentTimeInt64(orig_vfs, piNow);</span>
+<span class="lineNum">     806 </span>            : }
+<span class="lineNum">     807 </span>            : 
+<a name="808"><span class="lineNum">     808 </span>            : static</a>
+<span class="lineNum">     809 </span>            : int
+<span class="lineNum">     810 </span><span class="lineNoCov">          0 : xSetSystemCall(sqlite3_vfs *vfs, const char *zName, sqlite3_syscall_ptr pFunc)</span>
+<span class="lineNum">     811 </span>            : {
+<span class="lineNum">     812 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     813 </span><span class="lineNoCov">          0 :   return orig_vfs-&gt;xSetSystemCall(orig_vfs, zName, pFunc);</span>
+<span class="lineNum">     814 </span>            : }
+<span class="lineNum">     815 </span>            : 
+<a name="816"><span class="lineNum">     816 </span>            : static</a>
+<span class="lineNum">     817 </span>            : sqlite3_syscall_ptr
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 : xGetSystemCall(sqlite3_vfs *vfs, const char *zName)</span>
+<span class="lineNum">     819 </span>            : {
+<span class="lineNum">     820 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     821 </span><span class="lineNoCov">          0 :   return orig_vfs-&gt;xGetSystemCall(orig_vfs, zName);</span>
+<span class="lineNum">     822 </span>            : }
+<span class="lineNum">     823 </span>            : 
+<a name="824"><span class="lineNum">     824 </span>            : static</a>
+<span class="lineNum">     825 </span>            : const char *
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 : xNextSystemCall(sqlite3_vfs *vfs, const char *zName)</span>
+<span class="lineNum">     827 </span>            : {
+<span class="lineNum">     828 </span><span class="lineNoCov">          0 :   sqlite3_vfs *orig_vfs = static_cast&lt;sqlite3_vfs*&gt;(vfs-&gt;pAppData);</span>
+<span class="lineNum">     829 </span><span class="lineNoCov">          0 :   return orig_vfs-&gt;xNextSystemCall(orig_vfs, zName);</span>
+<span class="lineNum">     830 </span>            : }
+<span class="lineNum">     831 </span>            : 
+<span class="lineNum">     832 </span>            : } // namespace
+<span class="lineNum">     833 </span>            : 
+<span class="lineNum">     834 </span>            : namespace mozilla {
+<a name="835"><span class="lineNum">     835 </span>            : namespace storage {</a>
+<span class="lineNum">     836 </span>            : 
+<span class="lineNum">     837 </span><span class="lineCov">          1 : sqlite3_vfs* ConstructTelemetryVFS()</span>
+<span class="lineNum">     838 </span>            : {
+<span class="lineNum">     839 </span>            : #if defined(XP_WIN)
+<span class="lineNum">     840 </span>            : #define EXPECTED_VFS     &quot;win32&quot;
+<span class="lineNum">     841 </span>            : #define EXPECTED_VFS_NFS &quot;win32&quot;
+<span class="lineNum">     842 </span>            : #else
+<span class="lineNum">     843 </span>            : #define EXPECTED_VFS     &quot;unix&quot;
+<span class="lineNum">     844 </span>            : #define EXPECTED_VFS_NFS &quot;unix-excl&quot;
+<span class="lineNum">     845 </span>            : #endif
+<span class="lineNum">     846 </span>            : 
+<span class="lineNum">     847 </span>            :   bool expected_vfs;
+<span class="lineNum">     848 </span>            :   sqlite3_vfs *vfs;
+<span class="lineNum">     849 </span><span class="lineCov">          1 :   if (Preferences::GetBool(PREF_NFS_FILESYSTEM)) {</span>
+<span class="lineNum">     850 </span><span class="lineNoCov">          0 :     vfs = sqlite3_vfs_find(EXPECTED_VFS_NFS);</span>
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :     expected_vfs = (vfs != nullptr);</span>
+<span class="lineNum">     852 </span>            :   }
+<span class="lineNum">     853 </span>            :   else {
+<span class="lineNum">     854 </span><span class="lineCov">          1 :     vfs = sqlite3_vfs_find(nullptr);</span>
+<span class="lineNum">     855 </span><span class="lineCov">          1 :     expected_vfs = vfs-&gt;zName &amp;&amp; !strcmp(vfs-&gt;zName, EXPECTED_VFS);</span>
+<span class="lineNum">     856 </span>            :   }
+<span class="lineNum">     857 </span><span class="lineCov">          1 :   if (!expected_vfs) {</span>
+<span class="lineNum">     858 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     859 </span>            :   }
+<span class="lineNum">     860 </span>            : 
+<span class="lineNum">     861 </span><span class="lineCov">          1 :   sqlite3_vfs *tvfs = new ::sqlite3_vfs;</span>
+<span class="lineNum">     862 </span><span class="lineCov">          1 :   memset(tvfs, 0, sizeof(::sqlite3_vfs));</span>
+<span class="lineNum">     863 </span>            :   // If the VFS version is higher than the last known one, you should update
+<span class="lineNum">     864 </span>            :   // this VFS adding appropriate methods for any methods added in the version
+<span class="lineNum">     865 </span>            :   // change.
+<span class="lineNum">     866 </span><span class="lineCov">          1 :   tvfs-&gt;iVersion = vfs-&gt;iVersion;</span>
+<span class="lineNum">     867 </span><span class="lineCov">          1 :   MOZ_ASSERT(vfs-&gt;iVersion &lt;= LAST_KNOWN_VFS_VERSION);</span>
+<span class="lineNum">     868 </span><span class="lineCov">          1 :   tvfs-&gt;szOsFile = sizeof(telemetry_file) - sizeof(sqlite3_file) + vfs-&gt;szOsFile;</span>
+<span class="lineNum">     869 </span><span class="lineCov">          1 :   tvfs-&gt;mxPathname = vfs-&gt;mxPathname;</span>
+<span class="lineNum">     870 </span><span class="lineCov">          1 :   tvfs-&gt;zName = &quot;telemetry-vfs&quot;;</span>
+<span class="lineNum">     871 </span><span class="lineCov">          1 :   tvfs-&gt;pAppData = vfs;</span>
+<span class="lineNum">     872 </span><span class="lineCov">          1 :   tvfs-&gt;xOpen = xOpen;</span>
+<span class="lineNum">     873 </span><span class="lineCov">          1 :   tvfs-&gt;xDelete = xDelete;</span>
+<span class="lineNum">     874 </span><span class="lineCov">          1 :   tvfs-&gt;xAccess = xAccess;</span>
+<span class="lineNum">     875 </span><span class="lineCov">          1 :   tvfs-&gt;xFullPathname = xFullPathname;</span>
+<span class="lineNum">     876 </span><span class="lineCov">          1 :   tvfs-&gt;xDlOpen = xDlOpen;</span>
+<span class="lineNum">     877 </span><span class="lineCov">          1 :   tvfs-&gt;xDlError = xDlError;</span>
+<span class="lineNum">     878 </span><span class="lineCov">          1 :   tvfs-&gt;xDlSym = xDlSym;</span>
+<span class="lineNum">     879 </span><span class="lineCov">          1 :   tvfs-&gt;xDlClose = xDlClose;</span>
+<span class="lineNum">     880 </span><span class="lineCov">          1 :   tvfs-&gt;xRandomness = xRandomness;</span>
+<span class="lineNum">     881 </span><span class="lineCov">          1 :   tvfs-&gt;xSleep = xSleep;</span>
+<span class="lineNum">     882 </span><span class="lineCov">          1 :   tvfs-&gt;xCurrentTime = xCurrentTime;</span>
+<span class="lineNum">     883 </span><span class="lineCov">          1 :   tvfs-&gt;xGetLastError = xGetLastError;</span>
+<span class="lineNum">     884 </span><span class="lineCov">          1 :   if (tvfs-&gt;iVersion &gt;= 2) {</span>
+<span class="lineNum">     885 </span>            :     // Methods added in version 2.
+<span class="lineNum">     886 </span><span class="lineCov">          1 :     tvfs-&gt;xCurrentTimeInt64 = xCurrentTimeInt64;</span>
+<span class="lineNum">     887 </span>            :   }
+<span class="lineNum">     888 </span><span class="lineCov">          1 :   if (tvfs-&gt;iVersion &gt;= 3) {</span>
+<span class="lineNum">     889 </span>            :     // Methods added in version 3.
+<span class="lineNum">     890 </span><span class="lineCov">          1 :     tvfs-&gt;xSetSystemCall = xSetSystemCall;</span>
+<span class="lineNum">     891 </span><span class="lineCov">          1 :     tvfs-&gt;xGetSystemCall = xGetSystemCall;</span>
+<span class="lineNum">     892 </span><span class="lineCov">          1 :     tvfs-&gt;xNextSystemCall = xNextSystemCall;</span>
+<span class="lineNum">     893 </span>            :   }
+<span class="lineNum">     894 </span><span class="lineCov">          1 :   return tvfs;</span>
+<span class="lineNum">     895 </span>            : }
+<a name="896"><span class="lineNum">     896 </span>            : </a>
+<span class="lineNum">     897 </span>            : already_AddRefed&lt;QuotaObject&gt;
+<span class="lineNum">     898 </span><span class="lineNoCov">          0 : GetQuotaObjectForFile(sqlite3_file *pFile)</span>
+<span class="lineNum">     899 </span>            : {
+<span class="lineNum">     900 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(pFile);</span>
+<span class="lineNum">     901 </span>            : 
+<span class="lineNum">     902 </span><span class="lineNoCov">          0 :   telemetry_file *p = (telemetry_file *)pFile;</span>
+<span class="lineNum">     903 </span><span class="lineNoCov">          0 :   RefPtr&lt;QuotaObject&gt; result = p-&gt;quotaObject;</span>
+<span class="lineNum">     904 </span><span class="lineNoCov">          0 :   return result.forget();</span>
+<span class="lineNum">     905 </span>            : }
+<span class="lineNum">     906 </span>            : 
+<span class="lineNum">     907 </span>            : } // namespace storage
+<span class="lineNum">     908 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

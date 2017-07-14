@@ -1,0 +1,967 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - dom/media/ADTSDemuxer.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">dom/media</a> - ADTSDemuxer.cpp<span style="font-size: 80%;"> (source / <a href="ADTSDemuxer.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">343</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">55</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            : * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            : * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;ADTSDemuxer.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;TimeUnits.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;VideoUtils.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/SizePrintfMacros.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/UniquePtr.h&quot;
+<span class="lineNum">      13 </span>            : #include &lt;inttypes.h&gt;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : extern mozilla::LazyLogModule gMediaDemuxerLog;
+<span class="lineNum">      16 </span>            : #define ADTSLOG(msg, ...) \
+<span class="lineNum">      17 </span>            :   MOZ_LOG(gMediaDemuxerLog, LogLevel::Debug, (&quot;ADTSDemuxer &quot; msg, ##__VA_ARGS__))
+<span class="lineNum">      18 </span>            : #define ADTSLOGV(msg, ...) \
+<span class="lineNum">      19 </span>            :   MOZ_LOG(gMediaDemuxerLog, LogLevel::Verbose, (&quot;ADTSDemuxer &quot; msg, ##__VA_ARGS__))
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : namespace mozilla {
+<span class="lineNum">      22 </span>            : namespace adts {
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : // adts::FrameHeader - Holds the ADTS frame header and its parsing
+<span class="lineNum">      25 </span>            : // state.
+<span class="lineNum">      26 </span>            : //
+<span class="lineNum">      27 </span>            : // ADTS Frame Structure
+<span class="lineNum">      28 </span>            : //
+<span class="lineNum">      29 </span>            : // 11111111 1111BCCD EEFFFFGH HHIJKLMM MMMMMMMM MMMOOOOO OOOOOOPP(QQQQQQQQ QQQQQQQQ)
+<span class="lineNum">      30 </span>            : //
+<span class="lineNum">      31 </span>            : // Header consists of 7 or 9 bytes(without or with CRC).
+<span class="lineNum">      32 </span>            : // Letter   Length(bits)  Description
+<span class="lineNum">      33 </span>            : // { sync } 12            syncword 0xFFF, all bits must be 1
+<span class="lineNum">      34 </span>            : // B        1             MPEG Version: 0 for MPEG-4, 1 for MPEG-2
+<span class="lineNum">      35 </span>            : // C        2             Layer: always 0
+<span class="lineNum">      36 </span>            : // D        1             protection absent, Warning, set to 1 if there is no
+<span class="lineNum">      37 </span>            : //                        CRC and 0 if there is CRC
+<span class="lineNum">      38 </span>            : // E        2             profile, the MPEG-4 Audio Object Type minus 1
+<span class="lineNum">      39 </span>            : // F        4             MPEG-4 Sampling Frequency Index (15 is forbidden)
+<span class="lineNum">      40 </span>            : // H        3             MPEG-4 Channel Configuration (in the case of 0, the
+<span class="lineNum">      41 </span>            : //                        channel configuration is sent via an in-band PCE)
+<span class="lineNum">      42 </span>            : // M        13            frame length, this value must include 7 or 9 bytes of
+<span class="lineNum">      43 </span>            : //                        header length: FrameLength =
+<span class="lineNum">      44 </span>            : //                          (ProtectionAbsent == 1 ? 7 : 9) + size(AACFrame)
+<span class="lineNum">      45 </span>            : // O        11            Buffer fullness
+<span class="lineNum">      46 </span>            : // P        2             Number of AAC frames(RDBs) in ADTS frame minus 1, for
+<span class="lineNum">      47 </span>            : //                        maximum compatibility always use 1 AAC frame per ADTS
+<span class="lineNum">      48 </span>            : //                        frame
+<span class="lineNum">      49 </span>            : // Q        16            CRC if protection absent is 0
+<span class="lineNum">      50 </span>            : class FrameHeader
+<span class="lineNum">      51 </span>            : {
+<span class="lineNum">      52 </span>            : public:
+<span class="lineNum">      53 </span>            :   uint32_t mFrameLength;
+<span class="lineNum">      54 </span>            :   uint32_t mSampleRate;
+<span class="lineNum">      55 </span>            :   uint32_t mSamples;
+<span class="lineNum">      56 </span>            :   uint32_t mChannels;
+<span class="lineNum">      57 </span>            :   uint8_t  mObjectType;
+<span class="lineNum">      58 </span>            :   uint8_t  mSamplingIndex;
+<span class="lineNum">      59 </span>            :   uint8_t  mChannelConfig;
+<span class="lineNum">      60 </span>            :   uint8_t  mNumAACFrames;
+<span class="lineNum">      61 </span>            :   bool     mHaveCrc;
+<a name="62"><span class="lineNum">      62 </span>            : </a>
+<span class="lineNum">      63 </span>            :   // Returns whether aPtr matches a valid ADTS header sync marker
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 :   static bool MatchesSync(const uint8_t* aPtr)</span>
+<span class="lineNum">      65 </span>            :   {
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 :     return aPtr[0] == 0xFF &amp;&amp; (aPtr[1] &amp; 0xF6) == 0xF0;</span>
+<a name="67"><span class="lineNum">      67 </span>            :   }</a>
+<span class="lineNum">      68 </span>            : 
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :   FrameHeader() { Reset(); }</span>
+<a name="70"><span class="lineNum">      70 </span>            : </a>
+<span class="lineNum">      71 </span>            :   // Header size
+<a name="72"><span class="lineNum">      72 </span><span class="lineNoCov">          0 :   size_t HeaderSize() const { return (mHaveCrc) ? 9 : 7; }</span></a>
+<span class="lineNum">      73 </span>            : 
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :   bool IsValid() const { return mFrameLength &gt; 0; }</span>
+<a name="75"><span class="lineNum">      75 </span>            : </a>
+<span class="lineNum">      76 </span>            :   // Resets the state to allow for a new parsing session.
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :   void Reset() { PodZero(this); }</span>
+<a name="78"><span class="lineNum">      78 </span>            : </a>
+<span class="lineNum">      79 </span>            :   // Returns whether the byte creates a valid sequence up to this point.
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :   bool Parse(const uint8_t* aPtr)</span>
+<span class="lineNum">      81 </span>            :   {
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :     const uint8_t* p = aPtr;</span>
+<span class="lineNum">      83 </span>            : 
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :     if (!MatchesSync(p)) {</span>
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">      86 </span>            :     }
+<span class="lineNum">      87 </span>            : 
+<span class="lineNum">      88 </span>            :     // AAC has 1024 samples per frame per channel.
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :     mSamples = 1024;</span>
+<span class="lineNum">      90 </span>            : 
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :     mHaveCrc = !(p[1] &amp; 0x01);</span>
+<span class="lineNum">      92 </span><span class="lineNoCov">          0 :     mObjectType = ((p[2] &amp; 0xC0) &gt;&gt; 6) + 1;</span>
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :     mSamplingIndex = (p[2] &amp; 0x3C) &gt;&gt; 2;</span>
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :     mChannelConfig = (p[2] &amp; 0x01) &lt;&lt; 2 | (p[3] &amp; 0xC0) &gt;&gt; 6;</span>
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :     mFrameLength =</span>
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :       (p[3] &amp; 0x03) &lt;&lt; 11 | (p[4] &amp; 0xFF) &lt;&lt; 3 | (p[5] &amp; 0xE0) &gt;&gt; 5;</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :     mNumAACFrames = (p[6] &amp; 0x03) + 1;</span>
+<span class="lineNum">      98 </span>            : 
+<span class="lineNum">      99 </span>            :     static const int32_t SAMPLE_RATES[16] = {
+<span class="lineNum">     100 </span>            :       96000, 88200, 64000, 48000,
+<span class="lineNum">     101 </span>            :       44100, 32000, 24000, 22050,
+<span class="lineNum">     102 </span>            :       16000, 12000, 11025,  8000,
+<span class="lineNum">     103 </span>            :       7350
+<span class="lineNum">     104 </span>            :     };
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :     mSampleRate = SAMPLE_RATES[mSamplingIndex];</span>
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mChannelConfig &lt; 8);</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :     mChannels = (mChannelConfig == 7) ? 8 : mChannelConfig;</span>
+<span class="lineNum">     109 </span>            : 
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     111 </span>            :   }
+<span class="lineNum">     112 </span>            : };
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span>            : 
+<span class="lineNum">     115 </span>            : // adts::Frame - Frame meta container used to parse and hold a frame
+<span class="lineNum">     116 </span>            : // header and side info.
+<span class="lineNum">     117 </span>            : class Frame
+<a name="118"><span class="lineNum">     118 </span>            : {</a>
+<span class="lineNum">     119 </span>            : public:
+<a name="120"><span class="lineNum">     120 </span><span class="lineNoCov">          0 :   Frame() : mOffset(0), mHeader() { }</span></a>
+<a name="121"><span class="lineNum">     121 </span>            : </a>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :   int64_t Offset() const { return mOffset; }</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :   size_t Length() const</span>
+<span class="lineNum">     124 </span>            :   {
+<span class="lineNum">     125 </span>            :     // TODO: If fields are zero'd when invalid, this check wouldn't be
+<span class="lineNum">     126 </span>            :     // necessary.
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :     if (!mHeader.IsValid()) {</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :       return 0;</span>
+<span class="lineNum">     129 </span>            :     }
+<span class="lineNum">     130 </span>            : 
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :     return mHeader.mFrameLength;</span>
+<span class="lineNum">     132 </span>            :   }
+<a name="133"><span class="lineNum">     133 </span>            : </a>
+<span class="lineNum">     134 </span>            :   // Returns the offset to the start of frame's raw data.
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :   int64_t PayloadOffset() const { return mOffset + mHeader.HeaderSize(); }</span>
+<a name="136"><span class="lineNum">     136 </span>            : </a>
+<span class="lineNum">     137 </span>            :   // Returns the length of the frame's raw data (excluding the header) in bytes.
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :   size_t PayloadLength() const</span>
+<span class="lineNum">     139 </span>            :   {
+<span class="lineNum">     140 </span>            :     // TODO: If fields are zero'd when invalid, this check wouldn't be
+<span class="lineNum">     141 </span>            :     // necessary.
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :     if (!mHeader.IsValid()) {</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :       return 0;</span>
+<span class="lineNum">     144 </span>            :     }
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :     return mHeader.mFrameLength - mHeader.HeaderSize();</span>
+<span class="lineNum">     147 </span>            :   }
+<a name="148"><span class="lineNum">     148 </span>            : </a>
+<span class="lineNum">     149 </span>            :   // Returns the parsed frame header.
+<a name="150"><span class="lineNum">     150 </span><span class="lineNoCov">          0 :   const FrameHeader&amp; Header() const { return mHeader; }</span></a>
+<span class="lineNum">     151 </span>            : 
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :   bool IsValid() const { return mHeader.IsValid(); }</span>
+<a name="153"><span class="lineNum">     153 </span>            : </a>
+<span class="lineNum">     154 </span>            :   // Resets the frame header and data.
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :   void Reset()</span>
+<span class="lineNum">     156 </span>            :   {
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :     mHeader.Reset();</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     mOffset = 0;</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :   }</span>
+<a name="160"><span class="lineNum">     160 </span>            : </a>
+<span class="lineNum">     161 </span>            :   // Returns whether the valid
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   bool Parse(int64_t aOffset, const uint8_t* aStart, const uint8_t* aEnd)</span>
+<span class="lineNum">     163 </span>            :   {
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(aStart &amp;&amp; aEnd);</span>
+<span class="lineNum">     165 </span>            : 
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     bool found = false;</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :     const uint8_t* ptr = aStart;</span>
+<span class="lineNum">     168 </span>            :     // Require at least 7 bytes of data at the end of the buffer for the minimum
+<span class="lineNum">     169 </span>            :     // ADTS frame header.
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :     while (ptr &lt; aEnd - 7 &amp;&amp; !found) {</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :       found = mHeader.Parse(ptr);</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :       ptr++;</span>
+<span class="lineNum">     173 </span>            :     }
+<span class="lineNum">     174 </span>            : 
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :     mOffset = aOffset + (ptr - aStart) - 1;</span>
+<span class="lineNum">     176 </span>            : 
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :     return found;</span>
+<span class="lineNum">     178 </span>            :   }
+<span class="lineNum">     179 </span>            : 
+<span class="lineNum">     180 </span>            : private:
+<span class="lineNum">     181 </span>            :   // The offset to the start of the header.
+<span class="lineNum">     182 </span>            :   int64_t mOffset;
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span>            :   // The currently parsed frame header.
+<span class="lineNum">     185 </span>            :   FrameHeader mHeader;
+<span class="lineNum">     186 </span>            : };
+<a name="187"><span class="lineNum">     187 </span>            : </a>
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 : class FrameParser</span>
+<span class="lineNum">     190 </span>            : {
+<span class="lineNum">     191 </span>            : public:
+<a name="192"><span class="lineNum">     192 </span>            : </a>
+<span class="lineNum">     193 </span>            :   // Returns the currently parsed frame. Reset via Reset or EndFrameSession.
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :   const Frame&amp; CurrentFrame() const { return mFrame; }</span>
+<span class="lineNum">     195 </span>            : 
+<a name="196"><span class="lineNum">     196 </span>            : </a>
+<span class="lineNum">     197 </span>            :   // Returns the first parsed frame. Reset via Reset.
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :   const Frame&amp; FirstFrame() const { return mFirstFrame; }</span>
+<a name="199"><span class="lineNum">     199 </span>            : </a>
+<span class="lineNum">     200 </span>            :   // Resets the parser. Don't use between frames as first frame data is reset.
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :   void Reset()</span>
+<span class="lineNum">     202 </span>            :   {
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :     EndFrameSession();</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :     mFirstFrame.Reset();</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     206 </span>            : 
+<span class="lineNum">     207 </span>            :   // Clear the last parsed frame to allow for next frame parsing, i.e.:
+<span class="lineNum">     208 </span>            :   // - sets PrevFrame to CurrentFrame
+<a name="209"><span class="lineNum">     209 </span>            :   // - resets the CurrentFrame</a>
+<span class="lineNum">     210 </span>            :   // - resets ID3Header if no valid header was parsed yet
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :   void EndFrameSession()</span>
+<span class="lineNum">     212 </span>            :   {
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     mFrame.Reset();</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     215 </span>            : 
+<span class="lineNum">     216 </span>            :   // Parses contents of given ByteReader for a valid frame header and returns
+<span class="lineNum">     217 </span>            :   // true if one was found. After returning, the variable passed to
+<a name="218"><span class="lineNum">     218 </span>            :   // 'aBytesToSkip' holds the amount of bytes to be skipped (if any) in order to</a>
+<span class="lineNum">     219 </span>            :   // jump across a large ID3v2 tag spanning multiple buffers.
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :   bool Parse(int64_t aOffset, const uint8_t* aStart, const uint8_t* aEnd)</span>
+<span class="lineNum">     221 </span>            :   {
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :     const bool found = mFrame.Parse(aOffset, aStart, aEnd);</span>
+<span class="lineNum">     223 </span>            : 
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     if (mFrame.Length() &amp;&amp; !mFirstFrame.Length()) {</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :       mFirstFrame = mFrame;</span>
+<span class="lineNum">     226 </span>            :     }
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :     return found;</span>
+<span class="lineNum">     229 </span>            :   }
+<span class="lineNum">     230 </span>            : 
+<span class="lineNum">     231 </span>            : private:
+<span class="lineNum">     232 </span>            :   // We keep the first parsed frame around for static info access, the
+<span class="lineNum">     233 </span>            :   // previously parsed frame for debugging and the currently parsed frame.
+<span class="lineNum">     234 </span>            :   Frame mFirstFrame;
+<span class="lineNum">     235 </span>            :   Frame mFrame;
+<span class="lineNum">     236 </span>            : };
+<span class="lineNum">     237 </span>            : 
+<span class="lineNum">     238 </span>            : 
+<span class="lineNum">     239 </span>            : // Return the AAC Profile Level Indication based upon sample rate and channels
+<a name="240"><span class="lineNum">     240 </span>            : // Information based upon table 1.10 from ISO/IEC 14496-3:2005(E)</a>
+<span class="lineNum">     241 </span>            : static int8_t
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 : ProfileLevelIndication(const Frame&amp; frame)</span>
+<span class="lineNum">     243 </span>            : {
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   const FrameHeader&amp; header = frame.Header();</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(header.IsValid());</span>
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   if (!header.IsValid()) {</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     249 </span>            :   }
+<span class="lineNum">     250 </span>            : 
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :   const int channels = header.mChannels;</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :   const int sampleRate = header.mSampleRate;</span>
+<span class="lineNum">     253 </span>            : 
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :   if (channels &lt;= 2) {</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :     if (sampleRate &lt;= 24000) {</span>
+<span class="lineNum">     256 </span>            :       // AAC Profile  L1
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :       return 0x28;</span>
+<span class="lineNum">     258 </span>            :     }
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :     else if (sampleRate &lt;= 48000) {</span>
+<span class="lineNum">     260 </span>            :       // AAC Profile  L2
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :       return 0x29;</span>
+<span class="lineNum">     262 </span>            :     }
+<span class="lineNum">     263 </span>            :   }
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :   else if (channels &lt;= 5) {</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :     if (sampleRate &lt;= 48000) {</span>
+<span class="lineNum">     266 </span>            :       // AAC Profile  L4
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :       return 0x2A;</span>
+<span class="lineNum">     268 </span>            :     }
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :     else if (sampleRate &lt;= 96000) {</span>
+<span class="lineNum">     270 </span>            :       // AAC Profile  L5
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :       return 0x2B;</span>
+<span class="lineNum">     272 </span>            :     }
+<span class="lineNum">     273 </span>            :   }
+<span class="lineNum">     274 </span>            : 
+<span class="lineNum">     275 </span>            :   // TODO: Should this be 0xFE for 'no audio profile specified'?
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :   return 0;</span>
+<span class="lineNum">     277 </span>            : }
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span>            : // Initialize the AAC AudioSpecificConfig.
+<a name="281"><span class="lineNum">     281 </span>            : // Only handles two-byte version for AAC-LC.</a>
+<span class="lineNum">     282 </span>            : static void
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 : InitAudioSpecificConfig(const Frame&amp; frame,</span>
+<span class="lineNum">     284 </span>            :                         MediaByteBuffer* aBuffer)
+<span class="lineNum">     285 </span>            : {
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :   const FrameHeader&amp; header = frame.Header();</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(header.IsValid());</span>
+<span class="lineNum">     288 </span>            : 
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   int audioObjectType = header.mObjectType;</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   int samplingFrequencyIndex = header.mSamplingIndex;</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   int channelConfig = header.mChannelConfig;</span>
+<span class="lineNum">     292 </span>            : 
+<span class="lineNum">     293 </span>            :   uint8_t asc[2];
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :   asc[0] = (audioObjectType &amp; 0x1F) &lt;&lt; 3 | (samplingFrequencyIndex &amp; 0x0E) &gt;&gt; 1;</span>
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :   asc[1] = (samplingFrequencyIndex &amp; 0x01) &lt;&lt; 7 | (channelConfig &amp; 0x0F) &lt;&lt; 3;</span>
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :   aBuffer-&gt;AppendElements(asc, 2);</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     299 </span>            : 
+<span class="lineNum">     300 </span>            : } // namespace adts
+<span class="lineNum">     301 </span>            : 
+<span class="lineNum">     302 </span>            : using media::TimeUnit;
+<span class="lineNum">     303 </span>            : 
+<a name="304"><span class="lineNum">     304 </span>            : // ADTSDemuxer</a>
+<span class="lineNum">     305 </span>            : 
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 : ADTSDemuxer::ADTSDemuxer(MediaResource* aSource)</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :   : mSource(aSource)</span>
+<span class="lineNum">     308 </span>            : {
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 : }</span>
+<a name="310"><span class="lineNum">     310 </span>            : </a>
+<span class="lineNum">     311 </span>            : bool
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 : ADTSDemuxer::InitInternal()</span>
+<span class="lineNum">     313 </span>            : {
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :   if (!mTrackDemuxer) {</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :     mTrackDemuxer = new ADTSTrackDemuxer(mSource);</span>
+<span class="lineNum">     316 </span>            :   }
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :   return mTrackDemuxer-&gt;Init();</span>
+<span class="lineNum">     318 </span>            : }
+<a name="319"><span class="lineNum">     319 </span>            : </a>
+<span class="lineNum">     320 </span>            : RefPtr&lt;ADTSDemuxer::InitPromise&gt;
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 : ADTSDemuxer::Init()</span>
+<span class="lineNum">     322 </span>            : {
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :   if (!InitInternal()) {</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :     ADTSLOG(&quot;Init() failure: waiting for data&quot;);</span>
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span>            :     return InitPromise::CreateAndReject(
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :       NS_ERROR_DOM_MEDIA_METADATA_ERR, __func__);</span>
+<span class="lineNum">     328 </span>            :   }
+<span class="lineNum">     329 </span>            : 
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :   ADTSLOG(&quot;Init() successful&quot;);</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :   return InitPromise::CreateAndResolve(NS_OK, __func__);</span>
+<span class="lineNum">     332 </span>            : }
+<a name="333"><span class="lineNum">     333 </span>            : </a>
+<span class="lineNum">     334 </span>            : bool
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 : ADTSDemuxer::HasTrackType(TrackInfo::TrackType aType) const</span>
+<span class="lineNum">     336 </span>            : {
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :   return aType == TrackInfo::kAudioTrack;</span>
+<span class="lineNum">     338 </span>            : }
+<a name="339"><span class="lineNum">     339 </span>            : </a>
+<span class="lineNum">     340 </span>            : uint32_t
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 : ADTSDemuxer::GetNumberTracks(TrackInfo::TrackType aType) const</span>
+<span class="lineNum">     342 </span>            : {
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :   return (aType == TrackInfo::kAudioTrack) ? 1 : 0;</span>
+<span class="lineNum">     344 </span>            : }
+<a name="345"><span class="lineNum">     345 </span>            : </a>
+<span class="lineNum">     346 </span>            : already_AddRefed&lt;MediaTrackDemuxer&gt;
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 : ADTSDemuxer::GetTrackDemuxer(TrackInfo::TrackType aType, uint32_t aTrackNumber)</span>
+<span class="lineNum">     348 </span>            : {
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :   if (!mTrackDemuxer) {</span>
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     351 </span>            :   }
+<span class="lineNum">     352 </span>            : 
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :   return RefPtr&lt;ADTSTrackDemuxer&gt;(mTrackDemuxer).forget();</span>
+<span class="lineNum">     354 </span>            : }
+<a name="355"><span class="lineNum">     355 </span>            : </a>
+<span class="lineNum">     356 </span>            : bool
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 : ADTSDemuxer::IsSeekable() const</span>
+<span class="lineNum">     358 </span>            : {
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :   int64_t length = mSource-&gt;GetLength();</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   if (length &gt; -1)</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :   return false;</span>
+<span class="lineNum">     363 </span>            : }
+<span class="lineNum">     364 </span>            : 
+<a name="365"><span class="lineNum">     365 </span>            : </a>
+<span class="lineNum">     366 </span>            : // ADTSTrackDemuxer
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::ADTSTrackDemuxer(MediaResource* aSource)</span>
+<span class="lineNum">     368 </span>            :   : mSource(aSource)
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :   , mParser(new adts::FrameParser())</span>
+<span class="lineNum">     370 </span>            :   , mOffset(0)
+<span class="lineNum">     371 </span>            :   , mNumParsedFrames(0)
+<span class="lineNum">     372 </span>            :   , mFrameIndex(0)
+<span class="lineNum">     373 </span>            :   , mTotalFrameLen(0)
+<span class="lineNum">     374 </span>            :   , mSamplesPerFrame(0)
+<span class="lineNum">     375 </span>            :   , mSamplesPerSecond(0)
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :   , mChannels(0)</span>
+<span class="lineNum">     377 </span>            : {
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :   Reset();</span>
+<a name="379"><span class="lineNum">     379 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     380 </span>            : 
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::~ADTSTrackDemuxer()</span>
+<span class="lineNum">     382 </span>            : {
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :   delete mParser;</span>
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 : }</span>
+<a name="385"><span class="lineNum">     385 </span>            : </a>
+<span class="lineNum">     386 </span>            : bool
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::Init()</span>
+<span class="lineNum">     388 </span>            : {
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :   FastSeek(TimeUnit::Zero());</span>
+<span class="lineNum">     390 </span>            :   // Read the first frame to fetch sample rate and other meta data.
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :   RefPtr&lt;MediaRawData&gt; frame(GetNextFrame(FindNextFrame(true)));</span>
+<span class="lineNum">     392 </span>            : 
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :   ADTSLOG(&quot;Init StreamLength()=%&quot; PRId64 &quot; first-frame-found=%d&quot;,</span>
+<span class="lineNum">     394 </span>            :           StreamLength(), !!frame);
+<span class="lineNum">     395 </span>            : 
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :   if (!frame) {</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     398 </span>            :   }
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span>            :   // Rewind back to the stream begin to avoid dropping the first frame.
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :   FastSeek(TimeUnit::Zero());</span>
+<span class="lineNum">     402 </span>            : 
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :   if (!mInfo) {</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :     mInfo = MakeUnique&lt;AudioInfo&gt;();</span>
+<span class="lineNum">     405 </span>            :   }
+<span class="lineNum">     406 </span>            : 
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :   mInfo-&gt;mRate = mSamplesPerSecond;</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :   mInfo-&gt;mChannels = mChannels;</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :   mInfo-&gt;mBitDepth = 16;</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :   mInfo-&gt;mDuration = Duration();</span>
+<span class="lineNum">     411 </span>            : 
+<span class="lineNum">     412 </span>            :   // AAC Specific information
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :   mInfo-&gt;mMimeType = &quot;audio/mp4a-latm&quot;;</span>
+<span class="lineNum">     414 </span>            : 
+<span class="lineNum">     415 </span>            :   // Configure AAC codec-specific values.
+<span class="lineNum">     416 </span>            : 
+<span class="lineNum">     417 </span>            :   // According to
+<span class="lineNum">     418 </span>            :   // https://msdn.microsoft.com/en-us/library/windows/desktop/dd742784%28v=vs.85%29.aspx,
+<span class="lineNum">     419 </span>            :   // wAudioProfileLevelIndication, which is passed mInfo-&gt;mProfile, is
+<span class="lineNum">     420 </span>            :   // a value from Table 1.12 -- audioProfileLevelIndication values, ISO/IEC 14496-3.
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :   mInfo-&gt;mProfile = ProfileLevelIndication(mParser-&gt;FirstFrame());</span>
+<span class="lineNum">     422 </span>            :   // For AAC, mExtendedProfile contains the audioObjectType from Table
+<span class="lineNum">     423 </span>            :   // 1.3 -- Audio Profile definition, ISO/IEC 14496-3. Eg. 2 == AAC LC
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :   mInfo-&gt;mExtendedProfile = mParser-&gt;FirstFrame().Header().mObjectType;</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :   InitAudioSpecificConfig(mParser-&gt;FirstFrame(), mInfo-&gt;mCodecSpecificConfig);</span>
+<span class="lineNum">     426 </span>            : 
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :   ADTSLOG(&quot;Init mInfo={mRate=%u mChannels=%u mBitDepth=%u mDuration=%&quot; PRId64</span>
+<span class="lineNum">     428 </span>            :           &quot;}&quot;,
+<span class="lineNum">     429 </span>            :           mInfo-&gt;mRate, mInfo-&gt;mChannels, mInfo-&gt;mBitDepth,
+<span class="lineNum">     430 </span>            :           mInfo-&gt;mDuration.ToMicroseconds());
+<span class="lineNum">     431 </span>            : 
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :   return mSamplesPerSecond &amp;&amp; mChannels;</span>
+<span class="lineNum">     433 </span>            : }
+<a name="434"><span class="lineNum">     434 </span>            : </a>
+<span class="lineNum">     435 </span>            : UniquePtr&lt;TrackInfo&gt;
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::GetInfo() const</span>
+<span class="lineNum">     437 </span>            : {
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :   return mInfo-&gt;Clone();</span>
+<span class="lineNum">     439 </span>            : }
+<a name="440"><span class="lineNum">     440 </span>            : </a>
+<span class="lineNum">     441 </span>            : RefPtr&lt;ADTSTrackDemuxer::SeekPromise&gt;
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::Seek(const TimeUnit&amp; aTime)</span>
+<span class="lineNum">     443 </span>            : {
+<span class="lineNum">     444 </span>            :   // Efficiently seek to the position.
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :   FastSeek(aTime);</span>
+<span class="lineNum">     446 </span>            :   // Correct seek position by scanning the next frames.
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :   const TimeUnit seekTime = ScanUntil(aTime);</span>
+<span class="lineNum">     448 </span>            : 
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :   return SeekPromise::CreateAndResolve(seekTime, __func__);</span>
+<span class="lineNum">     450 </span>            : }
+<a name="451"><span class="lineNum">     451 </span>            : </a>
+<span class="lineNum">     452 </span>            : TimeUnit
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::FastSeek(const TimeUnit&amp; aTime)</span>
+<span class="lineNum">     454 </span>            : {
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :   ADTSLOG(&quot;FastSeek(%&quot; PRId64 &quot;) avgFrameLen=%f mNumParsedFrames=%&quot; PRIu64</span>
+<span class="lineNum">     456 </span>            :          &quot; mFrameIndex=%&quot; PRId64 &quot; mOffset=%&quot; PRIu64,
+<span class="lineNum">     457 </span>            :          aTime.ToMicroseconds(), AverageFrameLength(), mNumParsedFrames,
+<span class="lineNum">     458 </span>            :          mFrameIndex, mOffset);
+<span class="lineNum">     459 </span>            : 
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :   const int64_t firstFrameOffset = mParser-&gt;FirstFrame().Offset();</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :   if (!aTime.ToMicroseconds()) {</span>
+<span class="lineNum">     462 </span>            :     // Quick seek to the beginning of the stream.
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :     mOffset = firstFrameOffset;</span>
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :   } else if (AverageFrameLength() &gt; 0) {</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :     mOffset = firstFrameOffset + FrameIndexFromTime(aTime) *</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :       AverageFrameLength();</span>
+<span class="lineNum">     467 </span>            :   }
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :   if (mOffset &gt; firstFrameOffset &amp;&amp; StreamLength() &gt; 0) {</span>
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :     mOffset = std::min(StreamLength() - 1, mOffset);</span>
+<span class="lineNum">     471 </span>            :   }
+<span class="lineNum">     472 </span>            : 
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :   mFrameIndex = FrameIndexFromOffset(mOffset);</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :   mParser-&gt;EndFrameSession();</span>
+<span class="lineNum">     475 </span>            : 
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :   ADTSLOG(&quot;FastSeek End avgFrameLen=%f mNumParsedFrames=%&quot; PRIu64</span>
+<span class="lineNum">     477 </span>            :           &quot; mFrameIndex=%&quot; PRId64 &quot; mFirstFrameOffset=%&quot; PRIu64 &quot; mOffset=%&quot; PRIu64
+<span class="lineNum">     478 </span>            :           &quot; SL=%&quot; PRIu64 &quot;&quot;,
+<span class="lineNum">     479 </span>            :           AverageFrameLength(), mNumParsedFrames, mFrameIndex,
+<span class="lineNum">     480 </span>            :           firstFrameOffset, mOffset, StreamLength());
+<span class="lineNum">     481 </span>            : 
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :   return Duration(mFrameIndex);</span>
+<span class="lineNum">     483 </span>            : }
+<a name="484"><span class="lineNum">     484 </span>            : </a>
+<span class="lineNum">     485 </span>            : TimeUnit
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::ScanUntil(const TimeUnit&amp; aTime)</span>
+<span class="lineNum">     487 </span>            : {
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :   ADTSLOG(&quot;ScanUntil(%&quot; PRId64 &quot;) avgFrameLen=%f mNumParsedFrames=%&quot; PRIu64</span>
+<span class="lineNum">     489 </span>            :           &quot; mFrameIndex=%&quot; PRId64 &quot; mOffset=%&quot; PRIu64,
+<span class="lineNum">     490 </span>            :           aTime.ToMicroseconds(), AverageFrameLength(), mNumParsedFrames,
+<span class="lineNum">     491 </span>            :           mFrameIndex, mOffset);
+<span class="lineNum">     492 </span>            : 
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :   if (!aTime.ToMicroseconds()) {</span>
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :     return FastSeek(aTime);</span>
+<span class="lineNum">     495 </span>            :   }
+<span class="lineNum">     496 </span>            : 
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 :   if (Duration(mFrameIndex) &gt; aTime) {</span>
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :     FastSeek(aTime);</span>
+<span class="lineNum">     499 </span>            :   }
+<span class="lineNum">     500 </span>            : 
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :   while (SkipNextFrame(FindNextFrame()) &amp;&amp; Duration(mFrameIndex + 1) &lt; aTime) {</span>
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :     ADTSLOGV(&quot;ScanUntil* avgFrameLen=%f mNumParsedFrames=%&quot; PRIu64</span>
+<span class="lineNum">     503 </span>            :              &quot; mFrameIndex=%&quot; PRId64 &quot; mOffset=%&quot; PRIu64 &quot; Duration=%&quot; PRId64,
+<span class="lineNum">     504 </span>            :              AverageFrameLength(), mNumParsedFrames, mFrameIndex,
+<span class="lineNum">     505 </span>            :              mOffset, Duration(mFrameIndex + 1).ToMicroseconds());
+<span class="lineNum">     506 </span>            :   }
+<span class="lineNum">     507 </span>            : 
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :   ADTSLOG(&quot;ScanUntil End avgFrameLen=%f mNumParsedFrames=%&quot; PRIu64</span>
+<span class="lineNum">     509 </span>            :           &quot; mFrameIndex=%&quot; PRId64 &quot; mOffset=%&quot; PRIu64,
+<span class="lineNum">     510 </span>            :           AverageFrameLength(), mNumParsedFrames, mFrameIndex, mOffset);
+<span class="lineNum">     511 </span>            : 
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :   return Duration(mFrameIndex);</span>
+<span class="lineNum">     513 </span>            : }
+<a name="514"><span class="lineNum">     514 </span>            : </a>
+<span class="lineNum">     515 </span>            : RefPtr&lt;ADTSTrackDemuxer::SamplesPromise&gt;
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::GetSamples(int32_t aNumSamples)</span>
+<span class="lineNum">     517 </span>            : {
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :   ADTSLOGV(&quot;GetSamples(%d) Begin mOffset=%&quot; PRIu64 &quot; mNumParsedFrames=%&quot; PRIu64</span>
+<span class="lineNum">     519 </span>            :            &quot; mFrameIndex=%&quot; PRId64 &quot; mTotalFrameLen=%&quot; PRIu64
+<span class="lineNum">     520 </span>            :            &quot; mSamplesPerFrame=%d &quot;
+<span class="lineNum">     521 </span>            :            &quot;mSamplesPerSecond=%d mChannels=%d&quot;,
+<span class="lineNum">     522 </span>            :            aNumSamples, mOffset, mNumParsedFrames, mFrameIndex, mTotalFrameLen,
+<span class="lineNum">     523 </span>            :            mSamplesPerFrame, mSamplesPerSecond, mChannels);
+<span class="lineNum">     524 </span>            : 
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aNumSamples);</span>
+<span class="lineNum">     526 </span>            : 
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :   RefPtr&lt;SamplesHolder&gt; frames = new SamplesHolder();</span>
+<span class="lineNum">     528 </span>            : 
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :   while (aNumSamples--) {</span>
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 :     RefPtr&lt;MediaRawData&gt; frame(GetNextFrame(FindNextFrame()));</span>
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :     if (!frame)</span>
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     533 </span>            : 
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :     frames-&gt;mSamples.AppendElement(frame);</span>
+<span class="lineNum">     535 </span>            :   }
+<span class="lineNum">     536 </span>            : 
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :   ADTSLOGV(&quot;GetSamples() End mSamples.Size()=%&quot; PRIuSIZE &quot; aNumSamples=%d mOffset=%&quot; PRIu64</span>
+<span class="lineNum">     538 </span>            :            &quot; mNumParsedFrames=%&quot; PRIu64 &quot; mFrameIndex=%&quot; PRId64
+<span class="lineNum">     539 </span>            :            &quot; mTotalFrameLen=%&quot; PRIu64
+<span class="lineNum">     540 </span>            :            &quot; mSamplesPerFrame=%d mSamplesPerSecond=%d &quot;
+<span class="lineNum">     541 </span>            :            &quot;mChannels=%d&quot;,
+<span class="lineNum">     542 </span>            :            frames-&gt;mSamples.Length(), aNumSamples, mOffset, mNumParsedFrames,
+<span class="lineNum">     543 </span>            :            mFrameIndex, mTotalFrameLen, mSamplesPerFrame, mSamplesPerSecond,
+<span class="lineNum">     544 </span>            :            mChannels);
+<span class="lineNum">     545 </span>            : 
+<span class="lineNum">     546 </span><span class="lineNoCov">          0 :   if (frames-&gt;mSamples.IsEmpty()) {</span>
+<span class="lineNum">     547 </span>            :     return SamplesPromise::CreateAndReject(
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :       NS_ERROR_DOM_MEDIA_END_OF_STREAM, __func__);</span>
+<span class="lineNum">     549 </span>            :   }
+<span class="lineNum">     550 </span>            : 
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :   return SamplesPromise::CreateAndResolve(frames, __func__);</span>
+<span class="lineNum">     552 </span>            : }
+<a name="553"><span class="lineNum">     553 </span>            : </a>
+<span class="lineNum">     554 </span>            : void
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::Reset()</span>
+<span class="lineNum">     556 </span>            : {
+<span class="lineNum">     557 </span><span class="lineNoCov">          0 :   ADTSLOG(&quot;Reset()&quot;);</span>
+<span class="lineNum">     558 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mParser);</span>
+<span class="lineNum">     559 </span><span class="lineNoCov">          0 :   if (mParser) {</span>
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 :     mParser-&gt;Reset();</span>
+<span class="lineNum">     561 </span>            :   }
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :   FastSeek(TimeUnit::Zero());</span>
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 : }</span>
+<a name="564"><span class="lineNum">     564 </span>            : </a>
+<span class="lineNum">     565 </span>            : RefPtr&lt;ADTSTrackDemuxer::SkipAccessPointPromise&gt;
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::SkipToNextRandomAccessPoint(const TimeUnit&amp; aTimeThreshold)</span>
+<span class="lineNum">     567 </span>            : {
+<span class="lineNum">     568 </span>            :   // Will not be called for audio-only resources.
+<span class="lineNum">     569 </span>            :   return SkipAccessPointPromise::CreateAndReject(
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :     SkipFailureHolder(NS_ERROR_DOM_MEDIA_DEMUXER_ERR, 0), __func__);</span>
+<span class="lineNum">     571 </span>            : }
+<a name="572"><span class="lineNum">     572 </span>            : </a>
+<span class="lineNum">     573 </span>            : int64_t
+<span class="lineNum">     574 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::GetResourceOffset() const</span>
+<span class="lineNum">     575 </span>            : {
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :   return mOffset;</span>
+<span class="lineNum">     577 </span>            : }
+<a name="578"><span class="lineNum">     578 </span>            : </a>
+<span class="lineNum">     579 </span>            : media::TimeIntervals
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::GetBuffered()</span>
+<span class="lineNum">     581 </span>            : {
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :   auto duration = Duration();</span>
+<span class="lineNum">     583 </span>            : 
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 :   if (!duration.IsPositive()) {</span>
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :     return media::TimeIntervals();</span>
+<span class="lineNum">     586 </span>            :   }
+<span class="lineNum">     587 </span>            : 
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :   AutoPinned&lt;MediaResource&gt; stream(mSource.GetResource());</span>
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 :   return GetEstimatedBufferedTimeRanges(stream, duration.ToMicroseconds());</span>
+<span class="lineNum">     590 </span>            : }
+<a name="591"><span class="lineNum">     591 </span>            : </a>
+<span class="lineNum">     592 </span>            : int64_t
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::StreamLength() const</span>
+<span class="lineNum">     594 </span>            : {
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :   return mSource.GetLength();</span>
+<span class="lineNum">     596 </span>            : }
+<a name="597"><span class="lineNum">     597 </span>            : </a>
+<span class="lineNum">     598 </span>            : TimeUnit
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::Duration() const</span>
+<span class="lineNum">     600 </span>            : {
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :   if (!mNumParsedFrames) {</span>
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :     return TimeUnit::FromMicroseconds(-1);</span>
+<span class="lineNum">     603 </span>            :   }
+<span class="lineNum">     604 </span>            : 
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :   const int64_t streamLen = StreamLength();</span>
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :   if (streamLen &lt; 0) {</span>
+<span class="lineNum">     607 </span>            :     // Unknown length, we can't estimate duration.
+<span class="lineNum">     608 </span><span class="lineNoCov">          0 :     return TimeUnit::FromMicroseconds(-1);</span>
+<span class="lineNum">     609 </span>            :   }
+<span class="lineNum">     610 </span><span class="lineNoCov">          0 :   const int64_t firstFrameOffset = mParser-&gt;FirstFrame().Offset();</span>
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :   int64_t numFrames = (streamLen - firstFrameOffset) / AverageFrameLength();</span>
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :   return Duration(numFrames);</span>
+<span class="lineNum">     613 </span>            : }
+<a name="614"><span class="lineNum">     614 </span>            : </a>
+<span class="lineNum">     615 </span>            : TimeUnit
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::Duration(int64_t aNumFrames) const</span>
+<span class="lineNum">     617 </span>            : {
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 :   if (!mSamplesPerSecond) {</span>
+<span class="lineNum">     619 </span><span class="lineNoCov">          0 :     return TimeUnit::FromMicroseconds(-1);</span>
+<span class="lineNum">     620 </span>            :   }
+<span class="lineNum">     621 </span>            : 
+<span class="lineNum">     622 </span><span class="lineNoCov">          0 :   return FramesToTimeUnit(aNumFrames * mSamplesPerFrame, mSamplesPerSecond);</span>
+<span class="lineNum">     623 </span>            : }
+<a name="624"><span class="lineNum">     624 </span>            : </a>
+<span class="lineNum">     625 </span>            : const adts::Frame&amp;
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::FindNextFrame(bool findFirstFrame /*= false*/)</span>
+<span class="lineNum">     627 </span>            : {
+<span class="lineNum">     628 </span>            :   static const int BUFFER_SIZE = 4096;
+<span class="lineNum">     629 </span>            :   static const int MAX_SKIPPED_BYTES = 10 * BUFFER_SIZE;
+<span class="lineNum">     630 </span>            : 
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :   ADTSLOGV(&quot;FindNext() Begin mOffset=%&quot; PRIu64 &quot; mNumParsedFrames=%&quot; PRIu64</span>
+<span class="lineNum">     632 </span>            :           &quot; mFrameIndex=%&quot; PRId64 &quot; mTotalFrameLen=%&quot; PRIu64
+<span class="lineNum">     633 </span>            :           &quot; mSamplesPerFrame=%d mSamplesPerSecond=%d mChannels=%d&quot;,
+<span class="lineNum">     634 </span>            :           mOffset, mNumParsedFrames, mFrameIndex, mTotalFrameLen,
+<span class="lineNum">     635 </span>            :           mSamplesPerFrame, mSamplesPerSecond, mChannels);
+<span class="lineNum">     636 </span>            : 
+<span class="lineNum">     637 </span>            :   uint8_t buffer[BUFFER_SIZE];
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 :   int32_t read = 0;</span>
+<span class="lineNum">     639 </span>            : 
+<span class="lineNum">     640 </span><span class="lineNoCov">          0 :   bool foundFrame = false;</span>
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :   int64_t frameHeaderOffset = mOffset;</span>
+<span class="lineNum">     642 </span>            : 
+<span class="lineNum">     643 </span>            :   // Prepare the parser for the next frame parsing session.
+<span class="lineNum">     644 </span><span class="lineNoCov">          0 :   mParser-&gt;EndFrameSession();</span>
+<span class="lineNum">     645 </span>            : 
+<span class="lineNum">     646 </span>            :   // Check whether we've found a valid ADTS frame.
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :   while (!foundFrame) {</span>
+<span class="lineNum">     648 </span><span class="lineNoCov">          0 :     if ((read = Read(buffer, frameHeaderOffset, BUFFER_SIZE)) == 0) {</span>
+<span class="lineNum">     649 </span><span class="lineNoCov">          0 :       ADTSLOG(&quot;FindNext() EOS without a frame&quot;);</span>
+<span class="lineNum">     650 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     651 </span>            :     }
+<span class="lineNum">     652 </span>            : 
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 :     if (frameHeaderOffset - mOffset &gt; MAX_SKIPPED_BYTES) {</span>
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 :       ADTSLOG(&quot;FindNext() exceeded MAX_SKIPPED_BYTES without a frame&quot;);</span>
+<span class="lineNum">     655 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     656 </span>            :     }
+<span class="lineNum">     657 </span>            : 
+<span class="lineNum">     658 </span><span class="lineNoCov">          0 :     const adts::Frame&amp; currentFrame = mParser-&gt;CurrentFrame();</span>
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :     foundFrame = mParser-&gt;Parse(frameHeaderOffset, buffer, buffer + read);</span>
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :     if (findFirstFrame &amp;&amp; foundFrame) {</span>
+<span class="lineNum">     661 </span>            :       // Check for sync marker after the found frame, since it's
+<span class="lineNum">     662 </span>            :       // possible to find sync marker in AAC data. If sync marker
+<span class="lineNum">     663 </span>            :       // exists after the current frame then we've found a frame
+<span class="lineNum">     664 </span>            :       // header.
+<span class="lineNum">     665 </span>            :       int64_t nextFrameHeaderOffset =
+<span class="lineNum">     666 </span><span class="lineNoCov">          0 :         currentFrame.Offset() + currentFrame.Length();</span>
+<span class="lineNum">     667 </span><span class="lineNoCov">          0 :       int32_t read = Read(buffer, nextFrameHeaderOffset, 2);</span>
+<span class="lineNum">     668 </span><span class="lineNoCov">          0 :       if (read != 2 || !adts::FrameHeader::MatchesSync(buffer)) {</span>
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :         frameHeaderOffset = currentFrame.Offset() + 1;</span>
+<span class="lineNum">     670 </span><span class="lineNoCov">          0 :         mParser-&gt;Reset();</span>
+<span class="lineNum">     671 </span><span class="lineNoCov">          0 :         foundFrame = false;</span>
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :         continue;</span>
+<span class="lineNum">     673 </span>            :       }
+<span class="lineNum">     674 </span>            :     }
+<span class="lineNum">     675 </span>            : 
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :     if (foundFrame) {</span>
+<span class="lineNum">     677 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     678 </span>            :     }
+<span class="lineNum">     679 </span>            : 
+<span class="lineNum">     680 </span>            :     // Minimum header size is 7 bytes.
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :     int64_t advance = read - 7;</span>
+<span class="lineNum">     682 </span>            : 
+<span class="lineNum">     683 </span>            :     // Check for offset overflow.
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :     if (frameHeaderOffset + advance &lt;= frameHeaderOffset) {</span>
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     686 </span>            :     }
+<span class="lineNum">     687 </span>            : 
+<span class="lineNum">     688 </span><span class="lineNoCov">          0 :     frameHeaderOffset += advance;</span>
+<span class="lineNum">     689 </span>            :   }
+<span class="lineNum">     690 </span>            : 
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :   if (!foundFrame || !mParser-&gt;CurrentFrame().Length()) {</span>
+<span class="lineNum">     692 </span><span class="lineNoCov">          0 :     ADTSLOG(&quot;FindNext() Exit foundFrame=%d mParser-&gt;CurrentFrame().Length()=%&quot; PRIuSIZE &quot; &quot;,</span>
+<span class="lineNum">     693 </span>            :            foundFrame, mParser-&gt;CurrentFrame().Length());
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :     mParser-&gt;Reset();</span>
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :     return mParser-&gt;CurrentFrame();</span>
+<span class="lineNum">     696 </span>            :   }
+<span class="lineNum">     697 </span>            : 
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :   ADTSLOGV(&quot;FindNext() End mOffset=%&quot; PRIu64 &quot; mNumParsedFrames=%&quot; PRIu64</span>
+<span class="lineNum">     699 </span>            :           &quot; mFrameIndex=%&quot; PRId64 &quot; frameHeaderOffset=%&quot; PRId64
+<span class="lineNum">     700 </span>            :           &quot; mTotalFrameLen=%&quot; PRIu64 &quot; mSamplesPerFrame=%d mSamplesPerSecond=%d&quot;
+<span class="lineNum">     701 </span>            :           &quot; mChannels=%d&quot;,
+<span class="lineNum">     702 </span>            :           mOffset, mNumParsedFrames, mFrameIndex, frameHeaderOffset,
+<span class="lineNum">     703 </span>            :           mTotalFrameLen, mSamplesPerFrame, mSamplesPerSecond, mChannels);
+<span class="lineNum">     704 </span>            : 
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :   return mParser-&gt;CurrentFrame();</span>
+<span class="lineNum">     706 </span>            : }
+<a name="707"><span class="lineNum">     707 </span>            : </a>
+<span class="lineNum">     708 </span>            : bool
+<span class="lineNum">     709 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::SkipNextFrame(const adts::Frame&amp; aFrame)</span>
+<span class="lineNum">     710 </span>            : {
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :   if (!mNumParsedFrames || !aFrame.Length()) {</span>
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :     RefPtr&lt;MediaRawData&gt; frame(GetNextFrame(aFrame));</span>
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :     return frame;</span>
+<span class="lineNum">     714 </span>            :   }
+<span class="lineNum">     715 </span>            : 
+<span class="lineNum">     716 </span><span class="lineNoCov">          0 :   UpdateState(aFrame);</span>
+<span class="lineNum">     717 </span>            : 
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 :   ADTSLOGV(&quot;SkipNext() End mOffset=%&quot; PRIu64 &quot; mNumParsedFrames=%&quot; PRIu64</span>
+<span class="lineNum">     719 </span>            :           &quot; mFrameIndex=%&quot; PRId64 &quot; mTotalFrameLen=%&quot; PRIu64
+<span class="lineNum">     720 </span>            :           &quot; mSamplesPerFrame=%d mSamplesPerSecond=%d mChannels=%d&quot;,
+<span class="lineNum">     721 </span>            :           mOffset, mNumParsedFrames, mFrameIndex, mTotalFrameLen,
+<span class="lineNum">     722 </span>            :           mSamplesPerFrame, mSamplesPerSecond, mChannels);
+<span class="lineNum">     723 </span>            : 
+<span class="lineNum">     724 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">     725 </span>            : }
+<a name="726"><span class="lineNum">     726 </span>            : </a>
+<span class="lineNum">     727 </span>            : already_AddRefed&lt;MediaRawData&gt;
+<span class="lineNum">     728 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::GetNextFrame(const adts::Frame&amp; aFrame)</span>
+<span class="lineNum">     729 </span>            : {
+<span class="lineNum">     730 </span><span class="lineNoCov">          0 :   ADTSLOG(&quot;GetNext() Begin({mOffset=%&quot; PRId64 &quot; HeaderSize()=%&quot; PRIuSIZE</span>
+<span class="lineNum">     731 </span>            :           &quot; Length()=%&quot; PRIuSIZE &quot;})&quot;,
+<span class="lineNum">     732 </span>            :          aFrame.Offset(), aFrame.Header().HeaderSize(), aFrame.PayloadLength());
+<span class="lineNum">     733 </span><span class="lineNoCov">          0 :   if (!aFrame.IsValid())</span>
+<span class="lineNum">     734 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     735 </span>            : 
+<span class="lineNum">     736 </span><span class="lineNoCov">          0 :   const int64_t offset = aFrame.PayloadOffset();</span>
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :   const uint32_t length = aFrame.PayloadLength();</span>
+<span class="lineNum">     738 </span>            : 
+<span class="lineNum">     739 </span><span class="lineNoCov">          0 :   RefPtr&lt;MediaRawData&gt; frame = new MediaRawData();</span>
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :   frame-&gt;mOffset = offset;</span>
+<span class="lineNum">     741 </span>            : 
+<span class="lineNum">     742 </span><span class="lineNoCov">          0 :   UniquePtr&lt;MediaRawDataWriter&gt; frameWriter(frame-&gt;CreateWriter());</span>
+<span class="lineNum">     743 </span><span class="lineNoCov">          0 :   if (!frameWriter-&gt;SetSize(length)) {</span>
+<span class="lineNum">     744 </span><span class="lineNoCov">          0 :     ADTSLOG(&quot;GetNext() Exit failed to allocated media buffer&quot;);</span>
+<span class="lineNum">     745 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     746 </span>            :   }
+<span class="lineNum">     747 </span>            : 
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :   const uint32_t read = Read(frameWriter-&gt;Data(), offset, length);</span>
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :   if (read != length) {</span>
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :     ADTSLOG(&quot;GetNext() Exit read=%u frame-&gt;Size()=%&quot; PRIuSIZE, read, frame-&gt;Size());</span>
+<span class="lineNum">     751 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     752 </span>            :   }
+<span class="lineNum">     753 </span>            : 
+<span class="lineNum">     754 </span><span class="lineNoCov">          0 :   UpdateState(aFrame);</span>
+<span class="lineNum">     755 </span>            : 
+<span class="lineNum">     756 </span><span class="lineNoCov">          0 :   frame-&gt;mTime = Duration(mFrameIndex - 1);</span>
+<span class="lineNum">     757 </span><span class="lineNoCov">          0 :   frame-&gt;mDuration = Duration(1);</span>
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :   frame-&gt;mTimecode = frame-&gt;mTime;</span>
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 :   frame-&gt;mKeyframe = true;</span>
+<span class="lineNum">     760 </span>            : 
+<span class="lineNum">     761 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!frame-&gt;mTime.IsNegative());</span>
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(frame-&gt;mDuration.IsPositive());</span>
+<span class="lineNum">     763 </span>            : 
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 :   ADTSLOGV(&quot;GetNext() End mOffset=%&quot; PRIu64 &quot; mNumParsedFrames=%&quot; PRIu64</span>
+<span class="lineNum">     765 </span>            :            &quot; mFrameIndex=%&quot; PRId64 &quot; mTotalFrameLen=%&quot; PRIu64
+<span class="lineNum">     766 </span>            :            &quot; mSamplesPerFrame=%d mSamplesPerSecond=%d mChannels=%d&quot;,
+<span class="lineNum">     767 </span>            :            mOffset, mNumParsedFrames, mFrameIndex, mTotalFrameLen,
+<span class="lineNum">     768 </span>            :            mSamplesPerFrame, mSamplesPerSecond, mChannels);
+<span class="lineNum">     769 </span>            : 
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :   return frame.forget();</span>
+<span class="lineNum">     771 </span>            : }
+<a name="772"><span class="lineNum">     772 </span>            : </a>
+<span class="lineNum">     773 </span>            : int64_t
+<span class="lineNum">     774 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::FrameIndexFromOffset(int64_t aOffset) const</span>
+<span class="lineNum">     775 </span>            : {
+<span class="lineNum">     776 </span><span class="lineNoCov">          0 :   int64_t frameIndex = 0;</span>
+<span class="lineNum">     777 </span>            : 
+<span class="lineNum">     778 </span><span class="lineNoCov">          0 :   if (AverageFrameLength() &gt; 0) {</span>
+<span class="lineNum">     779 </span><span class="lineNoCov">          0 :     frameIndex =</span>
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 :       (aOffset - mParser-&gt;FirstFrame().Offset()) / AverageFrameLength();</span>
+<span class="lineNum">     781 </span>            :   }
+<span class="lineNum">     782 </span>            : 
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :   ADTSLOGV(&quot;FrameIndexFromOffset(%&quot; PRId64 &quot;) -&gt; %&quot; PRId64, aOffset, frameIndex);</span>
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :   return std::max&lt;int64_t&gt;(0, frameIndex);</span>
+<span class="lineNum">     785 </span>            : }
+<a name="786"><span class="lineNum">     786 </span>            : </a>
+<span class="lineNum">     787 </span>            : int64_t
+<span class="lineNum">     788 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::FrameIndexFromTime(const TimeUnit&amp; aTime) const</span>
+<span class="lineNum">     789 </span>            : {
+<span class="lineNum">     790 </span><span class="lineNoCov">          0 :   int64_t frameIndex = 0;</span>
+<span class="lineNum">     791 </span><span class="lineNoCov">          0 :   if (mSamplesPerSecond &gt; 0 &amp;&amp; mSamplesPerFrame &gt; 0) {</span>
+<span class="lineNum">     792 </span><span class="lineNoCov">          0 :     frameIndex = aTime.ToSeconds() * mSamplesPerSecond / mSamplesPerFrame - 1;</span>
+<span class="lineNum">     793 </span>            :   }
+<span class="lineNum">     794 </span>            : 
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :   ADTSLOGV(&quot;FrameIndexFromOffset(%fs) -&gt; %&quot; PRId64,</span>
+<span class="lineNum">     796 </span>            :            aTime.ToSeconds(), frameIndex);
+<span class="lineNum">     797 </span><span class="lineNoCov">          0 :   return std::max&lt;int64_t&gt;(0, frameIndex);</span>
+<span class="lineNum">     798 </span>            : }
+<a name="799"><span class="lineNum">     799 </span>            : </a>
+<span class="lineNum">     800 </span>            : void
+<span class="lineNum">     801 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::UpdateState(const adts::Frame&amp; aFrame)</span>
+<span class="lineNum">     802 </span>            : {
+<span class="lineNum">     803 </span><span class="lineNoCov">          0 :   int32_t frameLength = aFrame.Length();</span>
+<span class="lineNum">     804 </span>            :   // Prevent overflow.
+<span class="lineNum">     805 </span><span class="lineNoCov">          0 :   if (mTotalFrameLen + frameLength &lt; mTotalFrameLen) {</span>
+<span class="lineNum">     806 </span>            :     // These variables have a linear dependency and are only used to derive the
+<span class="lineNum">     807 </span>            :     // average frame length.
+<span class="lineNum">     808 </span><span class="lineNoCov">          0 :     mTotalFrameLen /= 2;</span>
+<span class="lineNum">     809 </span><span class="lineNoCov">          0 :     mNumParsedFrames /= 2;</span>
+<span class="lineNum">     810 </span>            :   }
+<span class="lineNum">     811 </span>            : 
+<span class="lineNum">     812 </span>            :   // Full frame parsed, move offset to its end.
+<span class="lineNum">     813 </span><span class="lineNoCov">          0 :   mOffset = aFrame.Offset() + frameLength;</span>
+<span class="lineNum">     814 </span><span class="lineNoCov">          0 :   mTotalFrameLen += frameLength;</span>
+<span class="lineNum">     815 </span>            : 
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 :   if (!mSamplesPerFrame) {</span>
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :     const adts::FrameHeader&amp; header = aFrame.Header();</span>
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 :     mSamplesPerFrame = header.mSamples;</span>
+<span class="lineNum">     819 </span><span class="lineNoCov">          0 :     mSamplesPerSecond = header.mSampleRate;</span>
+<span class="lineNum">     820 </span><span class="lineNoCov">          0 :     mChannels = header.mChannels;</span>
+<span class="lineNum">     821 </span>            :   }
+<span class="lineNum">     822 </span>            : 
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 :   ++mNumParsedFrames;</span>
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :   ++mFrameIndex;</span>
+<span class="lineNum">     825 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mFrameIndex &gt; 0);</span>
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 : }</span>
+<a name="827"><span class="lineNum">     827 </span>            : </a>
+<span class="lineNum">     828 </span>            : int32_t
+<span class="lineNum">     829 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::Read(uint8_t* aBuffer, int64_t aOffset, int32_t aSize)</span>
+<span class="lineNum">     830 </span>            : {
+<span class="lineNum">     831 </span><span class="lineNoCov">          0 :   ADTSLOGV(&quot;ADTSTrackDemuxer::Read(%p %&quot; PRId64 &quot; %d)&quot;,</span>
+<span class="lineNum">     832 </span>            :            aBuffer, aOffset, aSize);
+<span class="lineNum">     833 </span>            : 
+<span class="lineNum">     834 </span><span class="lineNoCov">          0 :   const int64_t streamLen = StreamLength();</span>
+<span class="lineNum">     835 </span><span class="lineNoCov">          0 :   if (mInfo &amp;&amp; streamLen &gt; 0) {</span>
+<span class="lineNum">     836 </span>            :     // Prevent blocking reads after successful initialization.
+<span class="lineNum">     837 </span><span class="lineNoCov">          0 :     aSize = std::min&lt;int64_t&gt;(aSize, streamLen - aOffset);</span>
+<span class="lineNum">     838 </span>            :   }
+<span class="lineNum">     839 </span>            : 
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :   uint32_t read = 0;</span>
+<span class="lineNum">     841 </span><span class="lineNoCov">          0 :   ADTSLOGV(&quot;ADTSTrackDemuxer::Read        -&gt; ReadAt(%d)&quot;, aSize);</span>
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :   const nsresult rv = mSource.ReadAt(aOffset, reinterpret_cast&lt;char*&gt;(aBuffer),</span>
+<span class="lineNum">     843 </span><span class="lineNoCov">          0 :                                      static_cast&lt;uint32_t&gt;(aSize), &amp;read);</span>
+<span class="lineNum">     844 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, 0);</span>
+<span class="lineNum">     845 </span><span class="lineNoCov">          0 :   return static_cast&lt;int32_t&gt;(read);</span>
+<span class="lineNum">     846 </span>            : }
+<a name="847"><span class="lineNum">     847 </span>            : </a>
+<span class="lineNum">     848 </span>            : double
+<span class="lineNum">     849 </span><span class="lineNoCov">          0 : ADTSTrackDemuxer::AverageFrameLength() const</span>
+<span class="lineNum">     850 </span>            : {
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :   if (mNumParsedFrames) {</span>
+<span class="lineNum">     852 </span><span class="lineNoCov">          0 :     return static_cast&lt;double&gt;(mTotalFrameLen) / mNumParsedFrames;</span>
+<span class="lineNum">     853 </span>            :   }
+<span class="lineNum">     854 </span>            : 
+<span class="lineNum">     855 </span><span class="lineNoCov">          0 :   return 0.0;</span>
+<span class="lineNum">     856 </span>            : }
+<a name="857"><span class="lineNum">     857 </span>            : </a>
+<span class="lineNum">     858 </span>            : /* static */ bool
+<span class="lineNum">     859 </span><span class="lineNoCov">          0 : ADTSDemuxer::ADTSSniffer(const uint8_t* aData, const uint32_t aLength)</span>
+<span class="lineNum">     860 </span>            : {
+<span class="lineNum">     861 </span><span class="lineNoCov">          0 :   if (aLength &lt; 7) {</span>
+<span class="lineNum">     862 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     863 </span>            :   }
+<span class="lineNum">     864 </span><span class="lineNoCov">          0 :   if (!adts::FrameHeader::MatchesSync(aData)) {</span>
+<span class="lineNum">     865 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     866 </span>            :   }
+<span class="lineNum">     867 </span><span class="lineNoCov">          0 :   auto parser = MakeUnique&lt;adts::FrameParser&gt;();</span>
+<span class="lineNum">     868 </span>            : 
+<span class="lineNum">     869 </span><span class="lineNoCov">          0 :   if (!parser-&gt;Parse(0, aData, aData + aLength)) {</span>
+<span class="lineNum">     870 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     871 </span>            :   }
+<span class="lineNum">     872 </span><span class="lineNoCov">          0 :   const adts::Frame&amp; currentFrame = parser-&gt;CurrentFrame();</span>
+<span class="lineNum">     873 </span>            :   // Check for sync marker after the found frame, since it's
+<span class="lineNum">     874 </span>            :   // possible to find sync marker in AAC data. If sync marker
+<span class="lineNum">     875 </span>            :   // exists after the current frame then we've found a frame
+<span class="lineNum">     876 </span>            :   // header.
+<span class="lineNum">     877 </span><span class="lineNoCov">          0 :   int64_t nextFrameHeaderOffset = currentFrame.Offset() + currentFrame.Length();</span>
+<span class="lineNum">     878 </span><span class="lineNoCov">          0 :   return int64_t(aLength) &gt; nextFrameHeaderOffset &amp;&amp;</span>
+<span class="lineNum">     879 </span><span class="lineNoCov">          0 :          aLength - nextFrameHeaderOffset &gt;= 2 &amp;&amp;</span>
+<span class="lineNum">     880 </span><span class="lineNoCov">          0 :          adts::FrameHeader::MatchesSync(aData + nextFrameHeaderOffset);</span>
+<span class="lineNum">     881 </span>            : }
+<span class="lineNum">     882 </span>            : 
+<span class="lineNum">     883 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,996 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - gfx/ots/src/cff_type2_charstring.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">gfx/ots/src</a> - cff_type2_charstring.cc<span style="font-size: 80%;"> (source / <a href="cff_type2_charstring.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">378</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">5</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : // Copyright (c) 2010 The Chromium Authors. All rights reserved.</a>
+<span class="lineNum">       2 </span>            : // Use of this source code is governed by a BSD-style license that can be
+<span class="lineNum">       3 </span>            : // found in the LICENSE file.
+<span class="lineNum">       4 </span>            : 
+<span class="lineNum">       5 </span>            : // A parser for the Type 2 Charstring Format.
+<span class="lineNum">       6 </span>            : // http://www.adobe.com/devnet/font/pdfs/5177.Type2.pdf
+<span class="lineNum">       7 </span>            : 
+<span class="lineNum">       8 </span>            : #include &quot;cff_type2_charstring.h&quot;
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &lt;climits&gt;
+<span class="lineNum">      11 </span>            : #include &lt;cstdio&gt;
+<span class="lineNum">      12 </span>            : #include &lt;cstring&gt;
+<span class="lineNum">      13 </span>            : #include &lt;stack&gt;
+<span class="lineNum">      14 </span>            : #include &lt;string&gt;
+<span class="lineNum">      15 </span>            : #include &lt;utility&gt;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : #define TABLE_NAME &quot;CFF&quot;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : namespace {
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : // Type 2 Charstring Implementation Limits. See Appendix. B in Adobe Technical
+<span class="lineNum">      22 </span>            : // Note #5177.
+<span class="lineNum">      23 </span>            : const int32_t kMaxSubrsCount = 65536;
+<span class="lineNum">      24 </span>            : const size_t kMaxCharStringLength = 65535;
+<span class="lineNum">      25 </span>            : const size_t kMaxArgumentStack = 48;
+<span class="lineNum">      26 </span>            : const size_t kMaxNumberOfStemHints = 96;
+<span class="lineNum">      27 </span>            : const size_t kMaxSubrNesting = 10;
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : // |dummy_result| should be a huge positive integer so callsubr and callgsubr
+<span class="lineNum">      30 </span>            : // will fail with the dummy value.
+<span class="lineNum">      31 </span>            : const int32_t dummy_result = INT_MAX;
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : bool ExecuteType2CharString(ots::Font *font,
+<span class="lineNum">      34 </span>            :                             size_t call_depth,
+<span class="lineNum">      35 </span>            :                             const ots::CFFIndex&amp; global_subrs_index,
+<span class="lineNum">      36 </span>            :                             const ots::CFFIndex&amp; local_subrs_index,
+<span class="lineNum">      37 </span>            :                             ots::Buffer *cff_table,
+<span class="lineNum">      38 </span>            :                             ots::Buffer *char_string,
+<span class="lineNum">      39 </span>            :                             std::stack&lt;int32_t&gt; *argument_stack,
+<span class="lineNum">      40 </span>            :                             bool *out_found_endchar,
+<span class="lineNum">      41 </span>            :                             bool *out_found_width,
+<span class="lineNum">      42 </span>            :                             size_t *in_out_num_stems);
+<span class="lineNum">      43 </span>            : 
+<span class="lineNum">      44 </span>            : #ifdef DUMP_T2CHARSTRING
+<span class="lineNum">      45 </span>            : // Converts |op| to a string and returns it.
+<span class="lineNum">      46 </span>            : const char *Type2CharStringOperatorToString(ots::Type2CharStringOperator op) {
+<span class="lineNum">      47 </span>            :   switch (op) {
+<span class="lineNum">      48 </span>            :   case ots::kHStem:
+<span class="lineNum">      49 </span>            :     return &quot;HStem&quot;;
+<span class="lineNum">      50 </span>            :   case ots::kVStem:
+<span class="lineNum">      51 </span>            :     return &quot;VStem&quot;;
+<span class="lineNum">      52 </span>            :   case ots::kVMoveTo:
+<span class="lineNum">      53 </span>            :     return &quot;VMoveTo&quot;;
+<span class="lineNum">      54 </span>            :   case ots::kRLineTo:
+<span class="lineNum">      55 </span>            :     return &quot;RLineTo&quot;;
+<span class="lineNum">      56 </span>            :   case ots::kHLineTo:
+<span class="lineNum">      57 </span>            :     return &quot;HLineTo&quot;;
+<span class="lineNum">      58 </span>            :   case ots::kVLineTo:
+<span class="lineNum">      59 </span>            :     return &quot;VLineTo&quot;;
+<span class="lineNum">      60 </span>            :   case ots::kRRCurveTo:
+<span class="lineNum">      61 </span>            :     return &quot;RRCurveTo&quot;;
+<span class="lineNum">      62 </span>            :   case ots::kCallSubr:
+<span class="lineNum">      63 </span>            :     return &quot;CallSubr&quot;;
+<span class="lineNum">      64 </span>            :   case ots::kReturn:
+<span class="lineNum">      65 </span>            :     return &quot;Return&quot;;
+<span class="lineNum">      66 </span>            :   case ots::kEndChar:
+<span class="lineNum">      67 </span>            :     return &quot;EndChar&quot;;
+<span class="lineNum">      68 </span>            :   case ots::kHStemHm:
+<span class="lineNum">      69 </span>            :     return &quot;HStemHm&quot;;
+<span class="lineNum">      70 </span>            :   case ots::kHintMask:
+<span class="lineNum">      71 </span>            :     return &quot;HintMask&quot;;
+<span class="lineNum">      72 </span>            :   case ots::kCntrMask:
+<span class="lineNum">      73 </span>            :     return &quot;CntrMask&quot;;
+<span class="lineNum">      74 </span>            :   case ots::kRMoveTo:
+<span class="lineNum">      75 </span>            :     return &quot;RMoveTo&quot;;
+<span class="lineNum">      76 </span>            :   case ots::kHMoveTo:
+<span class="lineNum">      77 </span>            :     return &quot;HMoveTo&quot;;
+<span class="lineNum">      78 </span>            :   case ots::kVStemHm:
+<span class="lineNum">      79 </span>            :     return &quot;VStemHm&quot;;
+<span class="lineNum">      80 </span>            :   case ots::kRCurveLine:
+<span class="lineNum">      81 </span>            :     return &quot;RCurveLine&quot;;
+<span class="lineNum">      82 </span>            :   case ots::kRLineCurve:
+<span class="lineNum">      83 </span>            :     return &quot;RLineCurve&quot;;
+<span class="lineNum">      84 </span>            :   case ots::kVVCurveTo:
+<span class="lineNum">      85 </span>            :     return &quot;VVCurveTo&quot;;
+<span class="lineNum">      86 </span>            :   case ots::kHHCurveTo:
+<span class="lineNum">      87 </span>            :     return &quot;HHCurveTo&quot;;
+<span class="lineNum">      88 </span>            :   case ots::kCallGSubr:
+<span class="lineNum">      89 </span>            :     return &quot;CallGSubr&quot;;
+<span class="lineNum">      90 </span>            :   case ots::kVHCurveTo:
+<span class="lineNum">      91 </span>            :     return &quot;VHCurveTo&quot;;
+<span class="lineNum">      92 </span>            :   case ots::kHVCurveTo:
+<span class="lineNum">      93 </span>            :     return &quot;HVCurveTo&quot;;
+<span class="lineNum">      94 </span>            :   case ots::kDotSection:
+<span class="lineNum">      95 </span>            :     return &quot;DotSection&quot;;
+<span class="lineNum">      96 </span>            :   case ots::kAnd:
+<span class="lineNum">      97 </span>            :     return &quot;And&quot;;
+<span class="lineNum">      98 </span>            :   case ots::kOr:
+<span class="lineNum">      99 </span>            :     return &quot;Or&quot;;
+<span class="lineNum">     100 </span>            :   case ots::kNot:
+<span class="lineNum">     101 </span>            :     return &quot;Not&quot;;
+<span class="lineNum">     102 </span>            :   case ots::kAbs:
+<span class="lineNum">     103 </span>            :     return &quot;Abs&quot;;
+<span class="lineNum">     104 </span>            :   case ots::kAdd:
+<span class="lineNum">     105 </span>            :     return &quot;Add&quot;;
+<span class="lineNum">     106 </span>            :   case ots::kSub:
+<span class="lineNum">     107 </span>            :     return &quot;Sub&quot;;
+<span class="lineNum">     108 </span>            :   case ots::kDiv:
+<span class="lineNum">     109 </span>            :     return &quot;Div&quot;;
+<span class="lineNum">     110 </span>            :   case ots::kNeg:
+<span class="lineNum">     111 </span>            :     return &quot;Neg&quot;;
+<span class="lineNum">     112 </span>            :   case ots::kEq:
+<span class="lineNum">     113 </span>            :     return &quot;Eq&quot;;
+<span class="lineNum">     114 </span>            :   case ots::kDrop:
+<span class="lineNum">     115 </span>            :     return &quot;Drop&quot;;
+<span class="lineNum">     116 </span>            :   case ots::kPut:
+<span class="lineNum">     117 </span>            :     return &quot;Put&quot;;
+<span class="lineNum">     118 </span>            :   case ots::kGet:
+<span class="lineNum">     119 </span>            :     return &quot;Get&quot;;
+<span class="lineNum">     120 </span>            :   case ots::kIfElse:
+<span class="lineNum">     121 </span>            :     return &quot;IfElse&quot;;
+<span class="lineNum">     122 </span>            :   case ots::kRandom:
+<span class="lineNum">     123 </span>            :     return &quot;Random&quot;;
+<span class="lineNum">     124 </span>            :   case ots::kMul:
+<span class="lineNum">     125 </span>            :     return &quot;Mul&quot;;
+<span class="lineNum">     126 </span>            :   case ots::kSqrt:
+<span class="lineNum">     127 </span>            :     return &quot;Sqrt&quot;;
+<span class="lineNum">     128 </span>            :   case ots::kDup:
+<span class="lineNum">     129 </span>            :     return &quot;Dup&quot;;
+<span class="lineNum">     130 </span>            :   case ots::kExch:
+<span class="lineNum">     131 </span>            :     return &quot;Exch&quot;;
+<span class="lineNum">     132 </span>            :   case ots::kIndex:
+<span class="lineNum">     133 </span>            :     return &quot;Index&quot;;
+<span class="lineNum">     134 </span>            :   case ots::kRoll:
+<span class="lineNum">     135 </span>            :     return &quot;Roll&quot;;
+<span class="lineNum">     136 </span>            :   case ots::kHFlex:
+<span class="lineNum">     137 </span>            :     return &quot;HFlex&quot;;
+<span class="lineNum">     138 </span>            :   case ots::kFlex:
+<span class="lineNum">     139 </span>            :     return &quot;Flex&quot;;
+<span class="lineNum">     140 </span>            :   case ots::kHFlex1:
+<span class="lineNum">     141 </span>            :     return &quot;HFlex1&quot;;
+<span class="lineNum">     142 </span>            :   case ots::kFlex1:
+<span class="lineNum">     143 </span>            :     return &quot;Flex1&quot;;
+<span class="lineNum">     144 </span>            :   }
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span>            :   return &quot;UNKNOWN&quot;;
+<span class="lineNum">     147 </span>            : }
+<span class="lineNum">     148 </span>            : #endif
+<span class="lineNum">     149 </span>            : 
+<span class="lineNum">     150 </span>            : // Read one or more bytes from the |char_string| buffer and stores the number
+<a name="151"><span class="lineNum">     151 </span>            : // read on |out_number|. If the number read is an operator (ex 'vstem'), sets</a>
+<span class="lineNum">     152 </span>            : // true on |out_is_operator|. Returns true if the function read a number.
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 : bool ReadNextNumberFromType2CharString(ots::Buffer *char_string,</span>
+<span class="lineNum">     154 </span>            :                                        int32_t *out_number,
+<span class="lineNum">     155 </span>            :                                        bool *out_is_operator) {
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :   uint8_t v = 0;</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :   if (!char_string-&gt;ReadU8(&amp;v)) {</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     return OTS_FAILURE();</span>
+<span class="lineNum">     159 </span>            :   }
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :   *out_is_operator = false;</span>
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span>            :   // The conversion algorithm is described in Adobe Technical Note #5177, page
+<span class="lineNum">     163 </span>            :   // 13, Table 1.
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :   if (v &lt;= 11) {</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :     *out_number = v;</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     *out_is_operator = true;</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :   } else if (v == 12) {</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :     uint16_t result = (v &lt;&lt; 8);</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :     if (!char_string-&gt;ReadU8(&amp;v)) {</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     171 </span>            :     }
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :     result += v;</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :     *out_number = result;</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :     *out_is_operator = true;</span>
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :   } else if (v &lt;= 27) {</span>
+<span class="lineNum">     176 </span>            :     // Special handling for v==19 and v==20 are implemented in
+<span class="lineNum">     177 </span>            :     // ExecuteType2CharStringOperator().
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :     *out_number = v;</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :     *out_is_operator = true;</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :   } else if (v == 28) {</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :     if (!char_string-&gt;ReadU8(&amp;v)) {</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     183 </span>            :     }
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :     uint16_t result = (v &lt;&lt; 8);</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :     if (!char_string-&gt;ReadU8(&amp;v)) {</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     187 </span>            :     }
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :     result += v;</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :     *out_number = result;</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :   } else if (v &lt;= 31) {</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :     *out_number = v;</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :     *out_is_operator = true;</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :   } else if (v &lt;= 246) {</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :     *out_number = static_cast&lt;int32_t&gt;(v) - 139;</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :   } else if (v &lt;= 250) {</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :     uint8_t w = 0;</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :     if (!char_string-&gt;ReadU8(&amp;w)) {</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     199 </span>            :     }
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :     *out_number = ((static_cast&lt;int32_t&gt;(v) - 247) * 256) +</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :         static_cast&lt;int32_t&gt;(w) + 108;</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :   } else if (v &lt;= 254) {</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :     uint8_t w = 0;</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :     if (!char_string-&gt;ReadU8(&amp;w)) {</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     206 </span>            :     }
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :     *out_number = -((static_cast&lt;int32_t&gt;(v) - 251) * 256) -</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :         static_cast&lt;int32_t&gt;(w) - 108;</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :   } else if (v == 255) {</span>
+<span class="lineNum">     210 </span>            :     // TODO(yusukes): We should not skip the 4 bytes. Note that when v is 255,
+<span class="lineNum">     211 </span>            :     // we should treat the following 4-bytes as a 16.16 fixed-point number
+<span class="lineNum">     212 </span>            :     // rather than 32bit signed int.
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     if (!char_string-&gt;Skip(4)) {</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     215 </span>            :     }
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :     *out_number = dummy_result;</span>
+<span class="lineNum">     217 </span>            :   } else {
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :     return OTS_FAILURE();</span>
+<span class="lineNum">     219 </span>            :   }
+<span class="lineNum">     220 </span>            : 
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">     222 </span>            : }
+<span class="lineNum">     223 </span>            : 
+<span class="lineNum">     224 </span>            : // Executes |op| and updates |argument_stack|. Returns true if the execution
+<span class="lineNum">     225 </span>            : // succeeds. If the |op| is kCallSubr or kCallGSubr, the function recursively
+<a name="226"><span class="lineNum">     226 </span>            : // calls ExecuteType2CharString() function. The arguments other than |op| and</a>
+<span class="lineNum">     227 </span>            : // |argument_stack| are passed for that reason.
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 : bool ExecuteType2CharStringOperator(ots::Font *font,</span>
+<span class="lineNum">     229 </span>            :                                     int32_t op,
+<span class="lineNum">     230 </span>            :                                     size_t call_depth,
+<span class="lineNum">     231 </span>            :                                     const ots::CFFIndex&amp; global_subrs_index,
+<span class="lineNum">     232 </span>            :                                     const ots::CFFIndex&amp; local_subrs_index,
+<span class="lineNum">     233 </span>            :                                     ots::Buffer *cff_table,
+<span class="lineNum">     234 </span>            :                                     ots::Buffer *char_string,
+<span class="lineNum">     235 </span>            :                                     std::stack&lt;int32_t&gt; *argument_stack,
+<span class="lineNum">     236 </span>            :                                     bool *out_found_endchar,
+<span class="lineNum">     237 </span>            :                                     bool *in_out_found_width,
+<span class="lineNum">     238 </span>            :                                     size_t *in_out_num_stems) {
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :   const size_t stack_size = argument_stack-&gt;size();</span>
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :   switch (op) {</span>
+<span class="lineNum">     242 </span>            :   case ots::kCallSubr:
+<span class="lineNum">     243 </span>            :   case ots::kCallGSubr: {
+<span class="lineNum">     244 </span>            :     const ots::CFFIndex&amp; subrs_index =
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :         (op == ots::kCallSubr ? local_subrs_index : global_subrs_index);</span>
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 1) {</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     249 </span>            :     }
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :     int32_t subr_number = argument_stack-&gt;top();</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     if (subr_number == dummy_result) {</span>
+<span class="lineNum">     253 </span>            :       // For safety, we allow subr calls only with immediate subr numbers for
+<span class="lineNum">     254 </span>            :       // now. For example, we allow &quot;123 callgsubr&quot;, but does not allow &quot;100 12
+<span class="lineNum">     255 </span>            :       // add callgsubr&quot;. Please note that arithmetic and conditional operators
+<span class="lineNum">     256 </span>            :       // always push the |dummy_result| in this implementation.
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     258 </span>            :     }
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span>            :     // See Adobe Technical Note #5176 (CFF), &quot;16. Local/GlobalSubrs INDEXes.&quot;
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :     int32_t bias = 32768;</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :     if (subrs_index.count &lt; 1240) {</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :       bias = 107;</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     } else if (subrs_index.count &lt; 33900) {</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :       bias = 1131;</span>
+<span class="lineNum">     266 </span>            :     }
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     subr_number += bias;</span>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span>            :     // Sanity checks of |subr_number|.
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :     if (subr_number &lt; 0) {</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     272 </span>            :     }
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     if (subr_number &gt;= kMaxSubrsCount) {</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     275 </span>            :     }
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :     if (subrs_index.offsets.size() &lt;= static_cast&lt;size_t&gt;(subr_number + 1)) {</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();  // The number is out-of-bounds.</span>
+<span class="lineNum">     278 </span>            :     }
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span>            :     // Prepare ots::Buffer where we're going to jump.
+<span class="lineNum">     281 </span>            :     const size_t length =
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :       subrs_index.offsets[subr_number + 1] - subrs_index.offsets[subr_number];</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :     if (length &gt; kMaxCharStringLength) {</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     285 </span>            :     }
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :     const size_t offset = subrs_index.offsets[subr_number];</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :     cff_table-&gt;set_offset(offset);</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :     if (!cff_table-&gt;Skip(length)) {</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     290 </span>            :     }
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :     ots::Buffer char_string_to_jump(cff_table-&gt;buffer() + offset, length);</span>
+<span class="lineNum">     292 </span>            : 
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :     return ExecuteType2CharString(font,</span>
+<span class="lineNum">     294 </span>            :                                   call_depth + 1,
+<span class="lineNum">     295 </span>            :                                   global_subrs_index,
+<span class="lineNum">     296 </span>            :                                   local_subrs_index,
+<span class="lineNum">     297 </span>            :                                   cff_table,
+<span class="lineNum">     298 </span>            :                                   &amp;char_string_to_jump,
+<span class="lineNum">     299 </span>            :                                   argument_stack,
+<span class="lineNum">     300 </span>            :                                   out_found_endchar,
+<span class="lineNum">     301 </span>            :                                   in_out_found_width,
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :                                   in_out_num_stems);</span>
+<span class="lineNum">     303 </span>            :   }
+<span class="lineNum">     304 </span>            : 
+<span class="lineNum">     305 </span>            :   case ots::kReturn:
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     307 </span>            : 
+<span class="lineNum">     308 </span>            :   case ots::kEndChar:
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     *out_found_endchar = true;</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     *in_out_found_width = true;  // just in case.</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     312 </span>            : 
+<span class="lineNum">     313 </span>            :   case ots::kHStem:
+<span class="lineNum">     314 </span>            :   case ots::kVStem:
+<span class="lineNum">     315 </span>            :   case ots::kHStemHm:
+<span class="lineNum">     316 </span>            :   case ots::kVStemHm: {
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :     bool successful = false;</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 2) {</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     320 </span>            :     }
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     if ((stack_size % 2) == 0) {</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :     } else if ((!(*in_out_found_width)) &amp;&amp; (((stack_size - 1) % 2) == 0)) {</span>
+<span class="lineNum">     324 </span>            :       // The -1 is for &quot;width&quot; argument. For details, see Adobe Technical Note
+<span class="lineNum">     325 </span>            :       // #5177, page 16, note 4.
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     327 </span>            :     }
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :     (*in_out_num_stems) += (stack_size / 2);</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :     if ((*in_out_num_stems) &gt; kMaxNumberOfStemHints) {</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     331 </span>            :     }
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :     *in_out_found_width = true;  // always set true since &quot;w&quot; might be 0 byte.</span>
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :     return successful ? true : OTS_FAILURE();</span>
+<span class="lineNum">     336 </span>            :   }
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span>            :   case ots::kRMoveTo: {
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     bool successful = false;</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :     if (stack_size == 2) {</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :     } else if ((!(*in_out_found_width)) &amp;&amp; (stack_size - 1 == 2)) {</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     344 </span>            :     }
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :     *in_out_found_width = true;</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :     return successful ? true : OTS_FAILURE();</span>
+<span class="lineNum">     349 </span>            :   }
+<span class="lineNum">     350 </span>            : 
+<span class="lineNum">     351 </span>            :   case ots::kVMoveTo:
+<span class="lineNum">     352 </span>            :   case ots::kHMoveTo: {
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     bool successful = false;</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :     if (stack_size == 1) {</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :     } else if ((!(*in_out_found_width)) &amp;&amp; (stack_size - 1 == 1)) {</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     358 </span>            :     }
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :     *in_out_found_width = true;</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :     return successful ? true : OTS_FAILURE();</span>
+<span class="lineNum">     363 </span>            :   }
+<span class="lineNum">     364 </span>            : 
+<span class="lineNum">     365 </span>            :   case ots::kHintMask:
+<span class="lineNum">     366 </span>            :   case ots::kCntrMask: {
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :     bool successful = false;</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :     if (stack_size == 0) {</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :     } else if ((!(*in_out_found_width)) &amp;&amp; (stack_size == 1)) {</span>
+<span class="lineNum">     371 </span>            :       // A number for &quot;width&quot; is found.
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :     } else if ((!(*in_out_found_width)) ||  // in this case, any sizes are ok.</span>
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :                ((stack_size % 2) == 0)) {</span>
+<span class="lineNum">     375 </span>            :       // The numbers are vstem definition.
+<span class="lineNum">     376 </span>            :       // See Adobe Technical Note #5177, page 24, hintmask.
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :       (*in_out_num_stems) += (stack_size / 2);</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :       if ((*in_out_num_stems) &gt; kMaxNumberOfStemHints) {</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :         return OTS_FAILURE();</span>
+<span class="lineNum">     380 </span>            :       }
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     382 </span>            :     }
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :     if (!successful) {</span>
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :        return OTS_FAILURE();</span>
+<span class="lineNum">     385 </span>            :     }
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :     if ((*in_out_num_stems) == 0) {</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     389 </span>            :     }
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :     const size_t mask_bytes = (*in_out_num_stems + 7) / 8;</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :     if (!char_string-&gt;Skip(mask_bytes)) {</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     393 </span>            :     }
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :     *in_out_found_width = true;</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     398 </span>            :   }
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span>            :   case ots::kRLineTo:
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     402 </span>            :       // The first stack-clearing operator should be one of hstem, hstemhm,
+<span class="lineNum">     403 </span>            :       // vstem, vstemhm, cntrmask, hintmask, hmoveto, vmoveto, rmoveto, or
+<span class="lineNum">     404 </span>            :       // endchar. For details, see Adobe Technical Note #5177, page 16, note 4.
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     406 </span>            :     }
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 2) {</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     409 </span>            :     }
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :     if ((stack_size % 2) != 0) {</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     412 </span>            :     }
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     416 </span>            : 
+<span class="lineNum">     417 </span>            :   case ots::kHLineTo:
+<span class="lineNum">     418 </span>            :   case ots::kVLineTo:
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     421 </span>            :     }
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 1) {</span>
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     424 </span>            :     }
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     428 </span>            : 
+<span class="lineNum">     429 </span>            :   case ots::kRRCurveTo:
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     432 </span>            :     }
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 6) {</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     435 </span>            :     }
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :     if ((stack_size % 6) != 0) {</span>
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     438 </span>            :     }
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     442 </span>            : 
+<span class="lineNum">     443 </span>            :   case ots::kRCurveLine:
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     446 </span>            :     }
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 8) {</span>
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     449 </span>            :     }
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :     if (((stack_size - 2) % 6) != 0) {</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     452 </span>            :     }
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     456 </span>            : 
+<span class="lineNum">     457 </span>            :   case ots::kRLineCurve:
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     460 </span>            :     }
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 8) {</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     463 </span>            :     }
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :     if (((stack_size - 6) % 2) != 0) {</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     466 </span>            :     }
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     470 </span>            : 
+<span class="lineNum">     471 </span>            :   case ots::kVVCurveTo:
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     474 </span>            :     }
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 4) {</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     477 </span>            :     }
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :     if (((stack_size % 4) != 0) &amp;&amp;</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :         (((stack_size - 1) % 4) != 0)) {</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     481 </span>            :     }
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     485 </span>            : 
+<span class="lineNum">     486 </span>            :   case ots::kHHCurveTo: {
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :     bool successful = false;</span>
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     490 </span>            :     }
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 4) {</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     493 </span>            :     }
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :     if ((stack_size % 4) == 0) {</span>
+<span class="lineNum">     495 </span>            :       // {dxa dxb dyb dxc}+
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 :     } else if (((stack_size - 1) % 4) == 0) {</span>
+<span class="lineNum">     498 </span>            :       // dy1? {dxa dxb dyb dxc}+
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     500 </span>            :     }
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :     return successful ? true : OTS_FAILURE();</span>
+<span class="lineNum">     504 </span>            :   }
+<span class="lineNum">     505 </span>            : 
+<span class="lineNum">     506 </span>            :   case ots::kVHCurveTo:
+<span class="lineNum">     507 </span>            :   case ots::kHVCurveTo: {
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :     bool successful = false;</span>
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     511 </span>            :     }
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 4) {</span>
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     514 </span>            :     }
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :     if (((stack_size - 4) % 8) == 0) {</span>
+<span class="lineNum">     516 </span>            :       // dx1 dx2 dy2 dy3 {dya dxb dyb dxc dxd dxe dye dyf}*
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :     } else if ((stack_size &gt;= 5) &amp;&amp;</span>
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :                ((stack_size - 5) % 8) == 0) {</span>
+<span class="lineNum">     520 </span>            :       // dx1 dx2 dy2 dy3 {dya dxb dyb dxc dxd dxe dye dyf}* dxf
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :     } else if ((stack_size &gt;= 8) &amp;&amp;</span>
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :                ((stack_size - 8) % 8) == 0) {</span>
+<span class="lineNum">     524 </span>            :       // {dxa dxb dyb dyc dyd dxe dye dxf}+
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :     } else if ((stack_size &gt;= 9) &amp;&amp;</span>
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :                ((stack_size - 9) % 8) == 0) {</span>
+<span class="lineNum">     528 </span>            :       // {dxa dxb dyb dyc dyd dxe dye dxf}+ dyf?
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :       successful = true;</span>
+<span class="lineNum">     530 </span>            :     }
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :     return successful ? true : OTS_FAILURE();</span>
+<span class="lineNum">     534 </span>            :   }
+<span class="lineNum">     535 </span>            : 
+<span class="lineNum">     536 </span>            :   case ots::kDotSection:
+<span class="lineNum">     537 </span>            :     // Deprecated operator but harmless, we probably should drop it some how.
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :     if (stack_size != 0) {</span>
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     540 </span>            :     }
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     542 </span>            : 
+<span class="lineNum">     543 </span>            :   case ots::kAnd:
+<span class="lineNum">     544 </span>            :   case ots::kOr:
+<span class="lineNum">     545 </span>            :   case ots::kEq:
+<span class="lineNum">     546 </span>            :   case ots::kAdd:
+<span class="lineNum">     547 </span>            :   case ots::kSub:
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 2) {</span>
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     550 </span>            :     }
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :     argument_stack-&gt;push(dummy_result);</span>
+<span class="lineNum">     554 </span>            :     // TODO(yusukes): Implement this. We should push a real value for all
+<span class="lineNum">     555 </span>            :     // arithmetic and conditional operations.
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     557 </span>            : 
+<span class="lineNum">     558 </span>            :   case ots::kNot:
+<span class="lineNum">     559 </span>            :   case ots::kAbs:
+<span class="lineNum">     560 </span>            :   case ots::kNeg:
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 1) {</span>
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     563 </span>            :     }
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :     argument_stack-&gt;push(dummy_result);</span>
+<span class="lineNum">     566 </span>            :     // TODO(yusukes): Implement this. We should push a real value for all
+<span class="lineNum">     567 </span>            :     // arithmetic and conditional operations.
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     569 </span>            : 
+<span class="lineNum">     570 </span>            :   case ots::kDiv:
+<span class="lineNum">     571 </span>            :     // TODO(yusukes): Should detect div-by-zero errors.
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 2) {</span>
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     574 </span>            :     }
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     577 </span><span class="lineNoCov">          0 :     argument_stack-&gt;push(dummy_result);</span>
+<span class="lineNum">     578 </span>            :     // TODO(yusukes): Implement this. We should push a real value for all
+<span class="lineNum">     579 </span>            :     // arithmetic and conditional operations.
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     581 </span>            : 
+<span class="lineNum">     582 </span>            :   case ots::kDrop:
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 1) {</span>
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     585 </span>            :     }
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     588 </span>            : 
+<span class="lineNum">     589 </span>            :   case ots::kPut:
+<span class="lineNum">     590 </span>            :   case ots::kGet:
+<span class="lineNum">     591 </span>            :   case ots::kIndex:
+<span class="lineNum">     592 </span>            :     // For now, just call OTS_FAILURE since there is no way to check whether the
+<span class="lineNum">     593 </span>            :     // index argument, |i|, is out-of-bounds or not. Fortunately, no OpenType
+<span class="lineNum">     594 </span>            :     // fonts I have (except malicious ones!) use the operators.
+<span class="lineNum">     595 </span>            :     // TODO(yusukes): Implement them in a secure way.
+<span class="lineNum">     596 </span><span class="lineNoCov">          0 :     return OTS_FAILURE();</span>
+<span class="lineNum">     597 </span>            : 
+<span class="lineNum">     598 </span>            :   case ots::kRoll:
+<span class="lineNum">     599 </span>            :     // Likewise, just call OTS_FAILURE for kRoll since there is no way to check
+<span class="lineNum">     600 </span>            :     // whether |N| is smaller than the current stack depth or not.
+<span class="lineNum">     601 </span>            :     // TODO(yusukes): Implement them in a secure way.
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :     return OTS_FAILURE();</span>
+<span class="lineNum">     603 </span>            : 
+<span class="lineNum">     604 </span>            :   case ots::kRandom:
+<span class="lineNum">     605 </span>            :     // For now, we don't handle the 'random' operator since the operator makes
+<span class="lineNum">     606 </span>            :     // it hard to analyze hinting code statically.
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :     return OTS_FAILURE();</span>
+<span class="lineNum">     608 </span>            : 
+<span class="lineNum">     609 </span>            :   case ots::kIfElse:
+<span class="lineNum">     610 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 4) {</span>
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     612 </span>            :     }
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     617 </span><span class="lineNoCov">          0 :     argument_stack-&gt;push(dummy_result);</span>
+<span class="lineNum">     618 </span>            :     // TODO(yusukes): Implement this. We should push a real value for all
+<span class="lineNum">     619 </span>            :     // arithmetic and conditional operations.
+<span class="lineNum">     620 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     621 </span>            : 
+<span class="lineNum">     622 </span>            :   case ots::kMul:
+<span class="lineNum">     623 </span>            :     // TODO(yusukes): Should detect overflows.
+<span class="lineNum">     624 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 2) {</span>
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     626 </span>            :     }
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :     argument_stack-&gt;push(dummy_result);</span>
+<span class="lineNum">     630 </span>            :     // TODO(yusukes): Implement this. We should push a real value for all
+<span class="lineNum">     631 </span>            :     // arithmetic and conditional operations.
+<span class="lineNum">     632 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     633 </span>            : 
+<span class="lineNum">     634 </span>            :   case ots::kSqrt:
+<span class="lineNum">     635 </span>            :     // TODO(yusukes): Should check if the argument is negative.
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 1) {</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     638 </span>            :     }
+<span class="lineNum">     639 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     640 </span><span class="lineNoCov">          0 :     argument_stack-&gt;push(dummy_result);</span>
+<span class="lineNum">     641 </span>            :     // TODO(yusukes): Implement this. We should push a real value for all
+<span class="lineNum">     642 </span>            :     // arithmetic and conditional operations.
+<span class="lineNum">     643 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     644 </span>            : 
+<span class="lineNum">     645 </span>            :   case ots::kDup:
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 1) {</span>
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     648 </span>            :     }
+<span class="lineNum">     649 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     650 </span><span class="lineNoCov">          0 :     argument_stack-&gt;push(dummy_result);</span>
+<span class="lineNum">     651 </span><span class="lineNoCov">          0 :     argument_stack-&gt;push(dummy_result);</span>
+<span class="lineNum">     652 </span><span class="lineNoCov">          0 :     if (argument_stack-&gt;size() &gt; kMaxArgumentStack) {</span>
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     654 </span>            :     }
+<span class="lineNum">     655 </span>            :     // TODO(yusukes): Implement this. We should push a real value for all
+<span class="lineNum">     656 </span>            :     // arithmetic and conditional operations.
+<span class="lineNum">     657 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     658 </span>            : 
+<span class="lineNum">     659 </span>            :   case ots::kExch:
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :     if (stack_size &lt; 2) {</span>
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     662 </span>            :     }
+<span class="lineNum">     663 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :     argument_stack-&gt;pop();</span>
+<span class="lineNum">     665 </span><span class="lineNoCov">          0 :     argument_stack-&gt;push(dummy_result);</span>
+<span class="lineNum">     666 </span><span class="lineNoCov">          0 :     argument_stack-&gt;push(dummy_result);</span>
+<span class="lineNum">     667 </span>            :     // TODO(yusukes): Implement this. We should push a real value for all
+<span class="lineNum">     668 </span>            :     // arithmetic and conditional operations.
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     670 </span>            : 
+<span class="lineNum">     671 </span>            :   case ots::kHFlex:
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     674 </span>            :     }
+<span class="lineNum">     675 </span><span class="lineNoCov">          0 :     if (stack_size != 7) {</span>
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     677 </span>            :     }
+<span class="lineNum">     678 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     679 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     681 </span>            : 
+<span class="lineNum">     682 </span>            :   case ots::kFlex:
+<span class="lineNum">     683 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     685 </span>            :     }
+<span class="lineNum">     686 </span><span class="lineNoCov">          0 :     if (stack_size != 13) {</span>
+<span class="lineNum">     687 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     688 </span>            :     }
+<span class="lineNum">     689 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     690 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     692 </span>            : 
+<span class="lineNum">     693 </span>            :   case ots::kHFlex1:
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     696 </span>            :     }
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :     if (stack_size != 9) {</span>
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     699 </span>            :     }
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     702 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     703 </span>            : 
+<span class="lineNum">     704 </span>            :   case ots::kFlex1:
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :     if (!(*in_out_found_width)) {</span>
+<span class="lineNum">     706 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     707 </span>            :     }
+<span class="lineNum">     708 </span><span class="lineNoCov">          0 :     if (stack_size != 11) {</span>
+<span class="lineNum">     709 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     710 </span>            :     }
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :     while (!argument_stack-&gt;empty())</span>
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :       argument_stack-&gt;pop();</span>
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     714 </span>            :   }
+<span class="lineNum">     715 </span>            : 
+<span class="lineNum">     716 </span><span class="lineNoCov">          0 :   return OTS_FAILURE_MSG(&quot;Undefined operator: %d (0x%x)&quot;, op, op);</span>
+<span class="lineNum">     717 </span>            : }
+<span class="lineNum">     718 </span>            : 
+<span class="lineNum">     719 </span>            : // Executes |char_string| and updates |argument_stack|.
+<span class="lineNum">     720 </span>            : //
+<span class="lineNum">     721 </span>            : // call_depth: The current call depth. Initial value is zero.
+<span class="lineNum">     722 </span>            : // global_subrs_index: Global subroutines.
+<span class="lineNum">     723 </span>            : // local_subrs_index: Local subroutines for the current glyph.
+<span class="lineNum">     724 </span>            : // cff_table: A whole CFF table which contains all global and local subroutines.
+<span class="lineNum">     725 </span>            : // char_string: A charstring we'll execute. |char_string| can be a main routine
+<span class="lineNum">     726 </span>            : //              in CharString INDEX, or a subroutine in GlobalSubr/LocalSubr.
+<span class="lineNum">     727 </span>            : // argument_stack: The stack which an operator in |char_string| operates.
+<span class="lineNum">     728 </span>            : // out_found_endchar: true is set if |char_string| contains 'endchar'.
+<span class="lineNum">     729 </span>            : // in_out_found_width: true is set if |char_string| contains 'width' byte (which
+<a name="730"><span class="lineNum">     730 </span>            : //                     is 0 or 1 byte.)</a>
+<span class="lineNum">     731 </span>            : // in_out_num_stems: total number of hstems and vstems processed so far.
+<span class="lineNum">     732 </span><span class="lineNoCov">          0 : bool ExecuteType2CharString(ots::Font *font,</span>
+<span class="lineNum">     733 </span>            :                             size_t call_depth,
+<span class="lineNum">     734 </span>            :                             const ots::CFFIndex&amp; global_subrs_index,
+<span class="lineNum">     735 </span>            :                             const ots::CFFIndex&amp; local_subrs_index,
+<span class="lineNum">     736 </span>            :                             ots::Buffer *cff_table,
+<span class="lineNum">     737 </span>            :                             ots::Buffer *char_string,
+<span class="lineNum">     738 </span>            :                             std::stack&lt;int32_t&gt; *argument_stack,
+<span class="lineNum">     739 </span>            :                             bool *out_found_endchar,
+<span class="lineNum">     740 </span>            :                             bool *in_out_found_width,
+<span class="lineNum">     741 </span>            :                             size_t *in_out_num_stems) {
+<span class="lineNum">     742 </span><span class="lineNoCov">          0 :   if (call_depth &gt; kMaxSubrNesting) {</span>
+<span class="lineNum">     743 </span><span class="lineNoCov">          0 :     return OTS_FAILURE();</span>
+<span class="lineNum">     744 </span>            :   }
+<span class="lineNum">     745 </span><span class="lineNoCov">          0 :   *out_found_endchar = false;</span>
+<span class="lineNum">     746 </span>            : 
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 :   const size_t length = char_string-&gt;length();</span>
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :   while (char_string-&gt;offset() &lt; length) {</span>
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :     int32_t operator_or_operand = 0;</span>
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :     bool is_operator = false;</span>
+<span class="lineNum">     751 </span><span class="lineNoCov">          0 :     if (!ReadNextNumberFromType2CharString(char_string,</span>
+<span class="lineNum">     752 </span>            :                                            &amp;operator_or_operand,
+<span class="lineNum">     753 </span>            :                                            &amp;is_operator)) {
+<span class="lineNum">     754 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     755 </span>            :     }
+<span class="lineNum">     756 </span>            : 
+<span class="lineNum">     757 </span>            : #ifdef DUMP_T2CHARSTRING
+<span class="lineNum">     758 </span>            :     /*
+<span class="lineNum">     759 </span>            :       You can dump all operators and operands (except mask bytes for hintmask
+<span class="lineNum">     760 </span>            :       and cntrmask) by the following code:
+<span class="lineNum">     761 </span>            :     */
+<span class="lineNum">     762 </span>            : 
+<span class="lineNum">     763 </span>            :       if (!is_operator) {
+<span class="lineNum">     764 </span>            :         std::fprintf(stderr, &quot;#%d# &quot;, operator_or_operand);
+<span class="lineNum">     765 </span>            :       } else {
+<span class="lineNum">     766 </span>            :         std::fprintf(stderr, &quot;#%s#\n&quot;,
+<span class="lineNum">     767 </span>            :            Type2CharStringOperatorToString(
+<span class="lineNum">     768 </span>            :                ots::Type2CharStringOperator(operator_or_operand))
+<span class="lineNum">     769 </span>            :            );
+<span class="lineNum">     770 </span>            :       }
+<span class="lineNum">     771 </span>            : #endif
+<span class="lineNum">     772 </span>            : 
+<span class="lineNum">     773 </span><span class="lineNoCov">          0 :     if (!is_operator) {</span>
+<span class="lineNum">     774 </span><span class="lineNoCov">          0 :       argument_stack-&gt;push(operator_or_operand);</span>
+<span class="lineNum">     775 </span><span class="lineNoCov">          0 :       if (argument_stack-&gt;size() &gt; kMaxArgumentStack) {</span>
+<span class="lineNum">     776 </span><span class="lineNoCov">          0 :         return OTS_FAILURE();</span>
+<span class="lineNum">     777 </span>            :       }
+<span class="lineNum">     778 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     779 </span>            :     }
+<span class="lineNum">     780 </span>            : 
+<span class="lineNum">     781 </span>            :     // An operator is found. Execute it.
+<span class="lineNum">     782 </span><span class="lineNoCov">          0 :     if (!ExecuteType2CharStringOperator(font,</span>
+<span class="lineNum">     783 </span>            :                                         operator_or_operand,
+<span class="lineNum">     784 </span>            :                                         call_depth,
+<span class="lineNum">     785 </span>            :                                         global_subrs_index,
+<span class="lineNum">     786 </span>            :                                         local_subrs_index,
+<span class="lineNum">     787 </span>            :                                         cff_table,
+<span class="lineNum">     788 </span>            :                                         char_string,
+<span class="lineNum">     789 </span>            :                                         argument_stack,
+<span class="lineNum">     790 </span>            :                                         out_found_endchar,
+<span class="lineNum">     791 </span>            :                                         in_out_found_width,
+<span class="lineNum">     792 </span>            :                                         in_out_num_stems)) {
+<span class="lineNum">     793 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     794 </span>            :     }
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :     if (*out_found_endchar) {</span>
+<span class="lineNum">     796 </span><span class="lineNoCov">          0 :       return true;</span>
+<span class="lineNum">     797 </span>            :     }
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 :     if (operator_or_operand == ots::kReturn) {</span>
+<span class="lineNum">     799 </span><span class="lineNoCov">          0 :       return true;</span>
+<span class="lineNum">     800 </span>            :     }
+<span class="lineNum">     801 </span>            :   }
+<span class="lineNum">     802 </span>            : 
+<span class="lineNum">     803 </span>            :   // No endchar operator is found.
+<span class="lineNum">     804 </span><span class="lineNoCov">          0 :   return OTS_FAILURE();</span>
+<span class="lineNum">     805 </span>            : }
+<span class="lineNum">     806 </span>            : 
+<a name="807"><span class="lineNum">     807 </span>            : // Selects a set of subroutings for |glyph_index| from |cff| and sets it on</a>
+<span class="lineNum">     808 </span>            : // |out_local_subrs_to_use|. Returns true on success.
+<span class="lineNum">     809 </span><span class="lineNoCov">          0 : bool SelectLocalSubr(const std::map&lt;uint16_t, uint8_t&gt; &amp;fd_select,</span>
+<span class="lineNum">     810 </span>            :                      const std::vector&lt;ots::CFFIndex *&gt; &amp;local_subrs_per_font,
+<span class="lineNum">     811 </span>            :                      const ots::CFFIndex *local_subrs,
+<span class="lineNum">     812 </span>            :                      uint16_t glyph_index,  // 0-origin
+<span class="lineNum">     813 </span>            :                      const ots::CFFIndex **out_local_subrs_to_use) {
+<span class="lineNum">     814 </span><span class="lineNoCov">          0 :   *out_local_subrs_to_use = NULL;</span>
+<span class="lineNum">     815 </span>            : 
+<span class="lineNum">     816 </span>            :   // First, find local subrs from |local_subrs_per_font|.
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :   if ((fd_select.size() &gt; 0) &amp;&amp;</span>
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 :       (!local_subrs_per_font.empty())) {</span>
+<span class="lineNum">     819 </span>            :     // Look up FDArray index for the glyph.
+<span class="lineNum">     820 </span>            :     std::map&lt;uint16_t, uint8_t&gt;::const_iterator iter =
+<span class="lineNum">     821 </span><span class="lineNoCov">          0 :         fd_select.find(glyph_index);</span>
+<span class="lineNum">     822 </span><span class="lineNoCov">          0 :     if (iter == fd_select.end()) {</span>
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     824 </span>            :     }
+<span class="lineNum">     825 </span><span class="lineNoCov">          0 :     const uint8_t fd_index = iter-&gt;second;</span>
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 :     if (fd_index &gt;= local_subrs_per_font.size()) {</span>
+<span class="lineNum">     827 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     828 </span>            :     }
+<span class="lineNum">     829 </span><span class="lineNoCov">          0 :     *out_local_subrs_to_use = local_subrs_per_font.at(fd_index);</span>
+<span class="lineNum">     830 </span><span class="lineNoCov">          0 :   } else if (local_subrs) {</span>
+<span class="lineNum">     831 </span>            :     // Second, try to use |local_subrs|. Most Latin fonts don't have FDSelect
+<span class="lineNum">     832 </span>            :     // entries. If The font has a local subrs index associated with the Top
+<span class="lineNum">     833 </span>            :     // DICT (not FDArrays), use it.
+<span class="lineNum">     834 </span><span class="lineNoCov">          0 :     *out_local_subrs_to_use = local_subrs;</span>
+<span class="lineNum">     835 </span>            :   } else {
+<span class="lineNum">     836 </span>            :     // Just return NULL.
+<span class="lineNum">     837 </span><span class="lineNoCov">          0 :     *out_local_subrs_to_use = NULL;</span>
+<span class="lineNum">     838 </span>            :   }
+<span class="lineNum">     839 </span>            : 
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">     841 </span>            : }
+<span class="lineNum">     842 </span>            : 
+<span class="lineNum">     843 </span>            : }  // namespace
+<span class="lineNum">     844 </span>            : 
+<a name="845"><span class="lineNum">     845 </span>            : namespace ots {</a>
+<span class="lineNum">     846 </span>            : 
+<span class="lineNum">     847 </span><span class="lineNoCov">          0 : bool ValidateType2CharStringIndex(</span>
+<span class="lineNum">     848 </span>            :     ots::Font *font,
+<span class="lineNum">     849 </span>            :     const CFFIndex&amp; char_strings_index,
+<span class="lineNum">     850 </span>            :     const CFFIndex&amp; global_subrs_index,
+<span class="lineNum">     851 </span>            :     const std::map&lt;uint16_t, uint8_t&gt; &amp;fd_select,
+<span class="lineNum">     852 </span>            :     const std::vector&lt;CFFIndex *&gt; &amp;local_subrs_per_font,
+<span class="lineNum">     853 </span>            :     const CFFIndex *local_subrs,
+<span class="lineNum">     854 </span>            :     Buffer* cff_table) {
+<span class="lineNum">     855 </span><span class="lineNoCov">          0 :   if (char_strings_index.offsets.size() == 0) {</span>
+<span class="lineNum">     856 </span><span class="lineNoCov">          0 :     return OTS_FAILURE();  // no charstring.</span>
+<span class="lineNum">     857 </span>            :   }
+<span class="lineNum">     858 </span>            : 
+<span class="lineNum">     859 </span>            :   // For each glyph, validate the corresponding charstring.
+<span class="lineNum">     860 </span><span class="lineNoCov">          0 :   for (unsigned i = 1; i &lt; char_strings_index.offsets.size(); ++i) {</span>
+<span class="lineNum">     861 </span>            :     // Prepare a Buffer object, |char_string|, which contains the charstring
+<span class="lineNum">     862 </span>            :     // for the |i|-th glyph.
+<span class="lineNum">     863 </span>            :     const size_t length =
+<span class="lineNum">     864 </span><span class="lineNoCov">          0 :       char_strings_index.offsets[i] - char_strings_index.offsets[i - 1];</span>
+<span class="lineNum">     865 </span><span class="lineNoCov">          0 :     if (length &gt; kMaxCharStringLength) {</span>
+<span class="lineNum">     866 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     867 </span>            :     }
+<span class="lineNum">     868 </span><span class="lineNoCov">          0 :     const size_t offset = char_strings_index.offsets[i - 1];</span>
+<span class="lineNum">     869 </span><span class="lineNoCov">          0 :     cff_table-&gt;set_offset(offset);</span>
+<span class="lineNum">     870 </span><span class="lineNoCov">          0 :     if (!cff_table-&gt;Skip(length)) {</span>
+<span class="lineNum">     871 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     872 </span>            :     }
+<span class="lineNum">     873 </span><span class="lineNoCov">          0 :     Buffer char_string(cff_table-&gt;buffer() + offset, length);</span>
+<span class="lineNum">     874 </span>            : 
+<span class="lineNum">     875 </span>            :     // Get a local subrs for the glyph.
+<span class="lineNum">     876 </span><span class="lineNoCov">          0 :     const unsigned glyph_index = i - 1;  // index in the map is 0-origin.</span>
+<span class="lineNum">     877 </span><span class="lineNoCov">          0 :     const CFFIndex *local_subrs_to_use = NULL;</span>
+<span class="lineNum">     878 </span><span class="lineNoCov">          0 :     if (!SelectLocalSubr(fd_select,</span>
+<span class="lineNum">     879 </span>            :                          local_subrs_per_font,
+<span class="lineNum">     880 </span>            :                          local_subrs,
+<span class="lineNum">     881 </span>            :                          glyph_index,
+<span class="lineNum">     882 </span>            :                          &amp;local_subrs_to_use)) {
+<span class="lineNum">     883 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     884 </span>            :     }
+<span class="lineNum">     885 </span>            :     // If |local_subrs_to_use| is still NULL, use an empty one.
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 :     CFFIndex default_empty_subrs;</span>
+<span class="lineNum">     887 </span><span class="lineNoCov">          0 :     if (!local_subrs_to_use){</span>
+<span class="lineNum">     888 </span><span class="lineNoCov">          0 :       local_subrs_to_use = &amp;default_empty_subrs;</span>
+<span class="lineNum">     889 </span>            :     }
+<span class="lineNum">     890 </span>            : 
+<span class="lineNum">     891 </span>            :     // Check a charstring for the |i|-th glyph.
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :     std::stack&lt;int32_t&gt; argument_stack;</span>
+<span class="lineNum">     893 </span><span class="lineNoCov">          0 :     bool found_endchar = false;</span>
+<span class="lineNum">     894 </span><span class="lineNoCov">          0 :     bool found_width = false;</span>
+<span class="lineNum">     895 </span><span class="lineNoCov">          0 :     size_t num_stems = 0;</span>
+<span class="lineNum">     896 </span><span class="lineNoCov">          0 :     if (!ExecuteType2CharString(font,</span>
+<span class="lineNum">     897 </span>            :                                 0 /* initial call_depth is zero */,
+<span class="lineNum">     898 </span>            :                                 global_subrs_index, *local_subrs_to_use,
+<span class="lineNum">     899 </span>            :                                 cff_table, &amp;char_string, &amp;argument_stack,
+<span class="lineNum">     900 </span>            :                                 &amp;found_endchar, &amp;found_width, &amp;num_stems)) {
+<span class="lineNum">     901 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     902 </span>            :     }
+<span class="lineNum">     903 </span><span class="lineNoCov">          0 :     if (!found_endchar) {</span>
+<span class="lineNum">     904 </span><span class="lineNoCov">          0 :       return OTS_FAILURE();</span>
+<span class="lineNum">     905 </span>            :     }
+<span class="lineNum">     906 </span>            :   }
+<span class="lineNum">     907 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">     908 </span>            : }
+<span class="lineNum">     909 </span>            : 
+<span class="lineNum">     910 </span>            : }  // namespace ots
+<span class="lineNum">     911 </span>            : 
+<span class="lineNum">     912 </span>            : #undef TABLE_NAME
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

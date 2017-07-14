@@ -1,0 +1,239 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/rtp_rtcp/source/flexfec_sender.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/rtp_rtcp/source</a> - flexfec_sender.cc<span style="font-size: 80%;"> (source / <a href="flexfec_sender.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">63</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">7</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2016 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;webrtc/modules/rtp_rtcp/include/flexfec_sender.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &lt;utility&gt;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #include &quot;webrtc/base/logging.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;webrtc/modules/rtp_rtcp/include/rtp_rtcp_defines.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/forward_error_correction.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/rtp_header_extensions.h&quot;
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : namespace webrtc {
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : namespace {
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : // Let first sequence number be in the first half of the interval.
+<span class="lineNum">      25 </span>            : constexpr uint16_t kMaxInitRtpSeqNumber = 0x7fff;
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : // See breakdown in flexfec_header_reader_writer.cc.
+<span class="lineNum">      28 </span>            : constexpr size_t kFlexfecMaxHeaderSize = 32;
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : // Since we will mainly use FlexFEC to protect video streams, we use a 90 kHz
+<span class="lineNum">      31 </span>            : // clock for the RTP timestamps. (This is according to the RFC, which states
+<span class="lineNum">      32 </span>            : // that it is RECOMMENDED to use the same clock frequency for FlexFEC as for
+<span class="lineNum">      33 </span>            : // the protected media stream.)
+<span class="lineNum">      34 </span>            : // The constant converts from clock millisecond timestamps to the 90 kHz
+<span class="lineNum">      35 </span>            : // RTP timestamp.
+<span class="lineNum">      36 </span>            : const int kMsToRtpTimestamp = kVideoPayloadTypeFrequency / 1000;
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            : // How often to log the generated FEC packets to the text log.
+<a name="39"><span class="lineNum">      39 </span>            : constexpr int64_t kPacketLogIntervalMs = 10000;</a>
+<span class="lineNum">      40 </span>            : 
+<span class="lineNum">      41 </span><span class="lineNoCov">          0 : RtpHeaderExtensionMap RegisterBweExtensions(</span>
+<span class="lineNum">      42 </span>            :     const std::vector&lt;RtpExtension&gt;&amp; rtp_header_extensions) {
+<span class="lineNum">      43 </span><span class="lineNoCov">          0 :   RtpHeaderExtensionMap map;</span>
+<span class="lineNum">      44 </span><span class="lineNoCov">          0 :   for (const auto&amp; extension : rtp_header_extensions) {</span>
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 :     if (extension.uri == TransportSequenceNumber::kUri) {</span>
+<span class="lineNum">      46 </span><span class="lineNoCov">          0 :       map.Register&lt;TransportSequenceNumber&gt;(extension.id);</span>
+<span class="lineNum">      47 </span><span class="lineNoCov">          0 :     } else if (extension.uri == AbsoluteSendTime::kUri) {</span>
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 :       map.Register&lt;AbsoluteSendTime&gt;(extension.id);</span>
+<span class="lineNum">      49 </span><span class="lineNoCov">          0 :     } else if (extension.uri == TransmissionOffset::kUri) {</span>
+<span class="lineNum">      50 </span><span class="lineNoCov">          0 :       map.Register&lt;TransmissionOffset&gt;(extension.id);</span>
+<span class="lineNum">      51 </span>            :     } else {
+<span class="lineNum">      52 </span><span class="lineNoCov">          0 :       LOG(LS_INFO) &lt;&lt; &quot;FlexfecSender only supports RTP header extensions for &quot;</span>
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot;BWE, so the extension &quot; &lt;&lt; extension.ToString()</span>
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; will not be used.&quot;;</span>
+<span class="lineNum">      55 </span>            :     }
+<span class="lineNum">      56 </span>            :   }
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :   return map;</span>
+<span class="lineNum">      58 </span>            : }
+<span class="lineNum">      59 </span>            : 
+<a name="60"><span class="lineNum">      60 </span>            : }  // namespace</a>
+<span class="lineNum">      61 </span>            : 
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 : FlexfecSender::FlexfecSender(</span>
+<span class="lineNum">      63 </span>            :     int payload_type,
+<span class="lineNum">      64 </span>            :     uint32_t ssrc,
+<span class="lineNum">      65 </span>            :     uint32_t protected_media_ssrc,
+<span class="lineNum">      66 </span>            :     const std::vector&lt;RtpExtension&gt;&amp; rtp_header_extensions,
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :     Clock* clock)</span>
+<span class="lineNum">      68 </span>            :     : clock_(clock),
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :       random_(clock_-&gt;TimeInMicroseconds()),</span>
+<span class="lineNum">      70 </span>            :       last_generated_packet_ms_(-1),
+<span class="lineNum">      71 </span>            :       payload_type_(payload_type),
+<span class="lineNum">      72 </span>            :       // Initialize the timestamp offset and RTP sequence numbers randomly.
+<span class="lineNum">      73 </span>            :       // (This is not intended to be cryptographically strong.)
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :       timestamp_offset_(random_.Rand&lt;uint32_t&gt;()),</span>
+<span class="lineNum">      75 </span>            :       ssrc_(ssrc),
+<span class="lineNum">      76 </span>            :       protected_media_ssrc_(protected_media_ssrc),
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :       seq_num_(random_.Rand(1, kMaxInitRtpSeqNumber)),</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :       ulpfec_generator_(ForwardErrorCorrection::CreateFlexfec()),</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :       rtp_header_extension_map_(RegisterBweExtensions(rtp_header_extensions)) {</span>
+<span class="lineNum">      80 </span>            :   // This object should not have been instantiated if FlexFEC is disabled.
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GE(payload_type, 0);</span>
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(payload_type, 127);</span>
+<span class="lineNum">      83 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span>            : FlexfecSender::~FlexfecSender() = default;
+<span class="lineNum">      86 </span>            : 
+<a name="87"><span class="lineNum">      87 </span>            : // We are reusing the implementation from UlpfecGenerator for SetFecParameters,</a>
+<span class="lineNum">      88 </span>            : // AddRtpPacketAndGenerateFec, and FecAvailable.
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 : void FlexfecSender::SetFecParameters(const FecProtectionParams&amp; params) {</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :   ulpfec_generator_.SetFecParameters(params);</span>
+<a name="91"><span class="lineNum">      91 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      92 </span>            : 
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 : bool FlexfecSender::AddRtpPacketAndGenerateFec(const RtpPacketToSend&amp; packet) {</span>
+<span class="lineNum">      94 </span>            :   // TODO(brandtr): Generalize this SSRC check when we support multistream
+<span class="lineNum">      95 </span>            :   // protection.
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(packet.Ssrc(), protected_media_ssrc_);</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   return ulpfec_generator_.AddRtpPacketAndGenerateFec(</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :              packet.data(), packet.payload_size(), packet.headers_size()) == 0;</span>
+<a name="99"><span class="lineNum">      99 </span>            : }</a>
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 : bool FlexfecSender::FecAvailable() const {</span>
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :   return ulpfec_generator_.FecAvailable();</span>
+<a name="103"><span class="lineNum">     103 </span>            : }</a>
+<span class="lineNum">     104 </span>            : 
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 : std::vector&lt;std::unique_ptr&lt;RtpPacketToSend&gt;&gt; FlexfecSender::GetFecPackets() {</span>
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :   std::vector&lt;std::unique_ptr&lt;RtpPacketToSend&gt;&gt; fec_packets_to_send;</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :   fec_packets_to_send.reserve(ulpfec_generator_.generated_fec_packets_.size());</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :   for (const auto&amp; fec_packet : ulpfec_generator_.generated_fec_packets_) {</span>
+<span class="lineNum">     109 </span>            :     std::unique_ptr&lt;RtpPacketToSend&gt; fec_packet_to_send(
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :         new RtpPacketToSend(&amp;rtp_header_extension_map_));</span>
+<span class="lineNum">     111 </span>            : 
+<span class="lineNum">     112 </span>            :     // RTP header.
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :     fec_packet_to_send-&gt;SetMarker(false);</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :     fec_packet_to_send-&gt;SetPayloadType(payload_type_);</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :     fec_packet_to_send-&gt;SetSequenceNumber(seq_num_++);</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :     fec_packet_to_send-&gt;SetTimestamp(</span>
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :         timestamp_offset_ +</span>
+<span class="lineNum">     118 </span>            :         static_cast&lt;uint32_t&gt;(kMsToRtpTimestamp *
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :                               clock_-&gt;TimeInMilliseconds()));</span>
+<span class="lineNum">     120 </span>            :     // Set &quot;capture time&quot; so that the TransmissionOffset header extension
+<span class="lineNum">     121 </span>            :     // can be set by the RTPSender.
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :     fec_packet_to_send-&gt;set_capture_time_ms(clock_-&gt;TimeInMilliseconds());</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :     fec_packet_to_send-&gt;SetSsrc(ssrc_);</span>
+<span class="lineNum">     124 </span>            :     // Reserve extensions, if registered. These will be set by the RTPSender.
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :     fec_packet_to_send-&gt;ReserveExtension&lt;AbsoluteSendTime&gt;();</span>
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :     fec_packet_to_send-&gt;ReserveExtension&lt;TransmissionOffset&gt;();</span>
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :     fec_packet_to_send-&gt;ReserveExtension&lt;TransportSequenceNumber&gt;();</span>
+<span class="lineNum">     128 </span>            : 
+<span class="lineNum">     129 </span>            :     // RTP payload.
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :     uint8_t* payload = fec_packet_to_send-&gt;AllocatePayload(fec_packet-&gt;length);</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :     memcpy(payload, fec_packet-&gt;data, fec_packet-&gt;length);</span>
+<span class="lineNum">     132 </span>            : 
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :     fec_packets_to_send.push_back(std::move(fec_packet_to_send));</span>
+<span class="lineNum">     134 </span>            :   }
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :   ulpfec_generator_.ResetState();</span>
+<span class="lineNum">     136 </span>            : 
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :   int64_t now_ms = clock_-&gt;TimeInMilliseconds();</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :   if (!fec_packets_to_send.empty() &amp;&amp;</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :       now_ms - last_generated_packet_ms_ &gt; kPacketLogIntervalMs) {</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     LOG(LS_VERBOSE) &lt;&lt; &quot;Generated &quot; &lt;&lt; fec_packets_to_send.size()</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :                     &lt;&lt; &quot; FlexFEC packets with payload type: &quot; &lt;&lt; payload_type_</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :                     &lt;&lt; &quot; and SSRC: &quot; &lt;&lt; ssrc_ &lt;&lt; &quot;.&quot;;</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :     last_generated_packet_ms_ = now_ms;</span>
+<span class="lineNum">     144 </span>            :   }
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :   return fec_packets_to_send;</span>
+<span class="lineNum">     147 </span>            : }
+<a name="148"><span class="lineNum">     148 </span>            : </a>
+<span class="lineNum">     149 </span>            : // The overhead is BWE RTP header extensions and FlexFEC header.
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 : size_t FlexfecSender::MaxPacketOverhead() const {</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :   return rtp_header_extension_map_.GetTotalLengthInBytes() +</span>
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :          kFlexfecMaxHeaderSize;</span>
+<span class="lineNum">     153 </span>            : }
+<span class="lineNum">     154 </span>            : 
+<span class="lineNum">     155 </span>            : }  // namespace webrtc
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

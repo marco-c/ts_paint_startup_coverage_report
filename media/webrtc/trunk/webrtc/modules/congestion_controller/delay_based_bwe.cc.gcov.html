@@ -1,0 +1,479 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/congestion_controller/delay_based_bwe.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/congestion_controller</a> - delay_based_bwe.cc<span style="font-size: 80%;"> (source / <a href="delay_based_bwe.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">204</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">17</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2016 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;webrtc/modules/congestion_controller/delay_based_bwe.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      14 </span>            : #include &lt;cmath&gt;
+<span class="lineNum">      15 </span>            : #include &lt;string&gt;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;webrtc/base/constructormagic.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;webrtc/base/logging.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;webrtc/base/thread_annotations.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;webrtc/modules/congestion_controller/include/congestion_controller.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;webrtc/modules/pacing/paced_sender.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;webrtc/modules/remote_bitrate_estimator/include/remote_bitrate_estimator.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;webrtc/modules/remote_bitrate_estimator/test/bwe_test_logging.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;webrtc/system_wrappers/include/field_trial.h&quot;
+<span class="lineNum">      26 </span>            : #include &quot;webrtc/system_wrappers/include/metrics.h&quot;
+<span class="lineNum">      27 </span>            : #include &quot;webrtc/typedefs.h&quot;
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : namespace {
+<span class="lineNum">      30 </span>            : constexpr int kTimestampGroupLengthMs = 5;
+<span class="lineNum">      31 </span>            : constexpr int kAbsSendTimeFraction = 18;
+<span class="lineNum">      32 </span>            : constexpr int kAbsSendTimeInterArrivalUpshift = 8;
+<span class="lineNum">      33 </span>            : constexpr int kInterArrivalShift =
+<span class="lineNum">      34 </span>            :     kAbsSendTimeFraction + kAbsSendTimeInterArrivalUpshift;
+<span class="lineNum">      35 </span>            : constexpr double kTimestampToMs =
+<span class="lineNum">      36 </span>            :     1000.0 / static_cast&lt;double&gt;(1 &lt;&lt; kInterArrivalShift);
+<span class="lineNum">      37 </span>            : // This ssrc is used to fulfill the current API but will be removed
+<span class="lineNum">      38 </span>            : // after the API has been changed.
+<span class="lineNum">      39 </span>            : constexpr uint32_t kFixedSsrc = 0;
+<span class="lineNum">      40 </span>            : constexpr int kInitialRateWindowMs = 500;
+<span class="lineNum">      41 </span>            : constexpr int kRateWindowMs = 150;
+<span class="lineNum">      42 </span>            : 
+<span class="lineNum">      43 </span>            : // Parameters for linear least squares fit of regression line to noisy data.
+<span class="lineNum">      44 </span>            : constexpr size_t kDefaultTrendlineWindowSize = 15;
+<span class="lineNum">      45 </span>            : constexpr double kDefaultTrendlineSmoothingCoeff = 0.9;
+<span class="lineNum">      46 </span>            : constexpr double kDefaultTrendlineThresholdGain = 4.0;
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span>            : // Parameters for Theil-Sen robust fitting of line to noisy data.
+<span class="lineNum">      49 </span>            : constexpr size_t kDefaultMedianSlopeWindowSize = 20;
+<span class="lineNum">      50 </span>            : constexpr double kDefaultMedianSlopeThresholdGain = 4.0;
+<span class="lineNum">      51 </span>            : 
+<span class="lineNum">      52 </span>            : const char kBitrateEstimateExperiment[] = &quot;WebRTC-ImprovedBitrateEstimate&quot;;
+<span class="lineNum">      53 </span>            : const char kBweTrendlineFilterExperiment[] = &quot;WebRTC-BweTrendlineFilter&quot;;
+<a name="54"><span class="lineNum">      54 </span>            : const char kBweMedianSlopeFilterExperiment[] = &quot;WebRTC-BweMedianSlopeFilter&quot;;</a>
+<span class="lineNum">      55 </span>            : 
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 : bool BitrateEstimateExperimentIsEnabled() {</span>
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :   return webrtc::field_trial::FindFullName(kBitrateEstimateExperiment) ==</span>
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 :          &quot;Enabled&quot;;</span>
+<a name="59"><span class="lineNum">      59 </span>            : }</a>
+<span class="lineNum">      60 </span>            : 
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 : bool TrendlineFilterExperimentIsEnabled() {</span>
+<span class="lineNum">      62 </span>            :   std::string experiment_string =
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :       webrtc::field_trial::FindFullName(kBweTrendlineFilterExperiment);</span>
+<span class="lineNum">      64 </span>            :   // The experiment is enabled iff the field trial string begins with &quot;Enabled&quot;.
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :   return experiment_string.find(&quot;Enabled&quot;) == 0;</span>
+<a name="66"><span class="lineNum">      66 </span>            : }</a>
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 : bool MedianSlopeFilterExperimentIsEnabled() {</span>
+<span class="lineNum">      69 </span>            :   std::string experiment_string =
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :       webrtc::field_trial::FindFullName(kBweMedianSlopeFilterExperiment);</span>
+<span class="lineNum">      71 </span>            :   // The experiment is enabled iff the field trial string begins with &quot;Enabled&quot;.
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :   return experiment_string.find(&quot;Enabled&quot;) == 0;</span>
+<a name="73"><span class="lineNum">      73 </span>            : }</a>
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 : bool ReadTrendlineFilterExperimentParameters(size_t* window_size,</span>
+<span class="lineNum">      76 </span>            :                                              double* smoothing_coef,
+<span class="lineNum">      77 </span>            :                                              double* threshold_gain) {
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :   RTC_DCHECK(TrendlineFilterExperimentIsEnabled());</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!MedianSlopeFilterExperimentIsEnabled());</span>
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :   RTC_DCHECK(window_size != nullptr);</span>
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :   RTC_DCHECK(smoothing_coef != nullptr);</span>
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :   RTC_DCHECK(threshold_gain != nullptr);</span>
+<span class="lineNum">      83 </span>            :   std::string experiment_string =
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :       webrtc::field_trial::FindFullName(kBweTrendlineFilterExperiment);</span>
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :   int parsed_values = sscanf(experiment_string.c_str(), &quot;Enabled-%zu,%lf,%lf&quot;,</span>
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :                              window_size, smoothing_coef, threshold_gain);</span>
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :   if (parsed_values == 3) {</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :     RTC_CHECK_GT(*window_size, 1) &lt;&lt; &quot;Need at least 2 points to fit a line.&quot;;</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :     RTC_CHECK(0 &lt;= *smoothing_coef &amp;&amp; *smoothing_coef &lt;= 1)</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :         &lt;&lt; &quot;Coefficient needs to be between 0 and 1 for weighted average.&quot;;</span>
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :     RTC_CHECK_GT(*threshold_gain, 0) &lt;&lt; &quot;Threshold gain needs to be positive.&quot;;</span>
+<span class="lineNum">      92 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">      93 </span>            :   }
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :   LOG(LS_WARNING) &lt;&lt; &quot;Failed to parse parameters for BweTrendlineFilter &quot;</span>
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :                      &quot;experiment from field trial string. Using default.&quot;;</span>
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :   *window_size = kDefaultTrendlineWindowSize;</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   *smoothing_coef = kDefaultTrendlineSmoothingCoeff;</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :   *threshold_gain = kDefaultTrendlineThresholdGain;</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :   return false;</span>
+<a name="100"><span class="lineNum">     100 </span>            : }</a>
+<span class="lineNum">     101 </span>            : 
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 : bool ReadMedianSlopeFilterExperimentParameters(size_t* window_size,</span>
+<span class="lineNum">     103 </span>            :                                                double* threshold_gain) {
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!TrendlineFilterExperimentIsEnabled());</span>
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :   RTC_DCHECK(MedianSlopeFilterExperimentIsEnabled());</span>
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :   RTC_DCHECK(window_size != nullptr);</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :   RTC_DCHECK(threshold_gain != nullptr);</span>
+<span class="lineNum">     108 </span>            :   std::string experiment_string =
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :       webrtc::field_trial::FindFullName(kBweMedianSlopeFilterExperiment);</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :   int parsed_values = sscanf(experiment_string.c_str(), &quot;Enabled-%zu,%lf&quot;,</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :                              window_size, threshold_gain);</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :   if (parsed_values == 2) {</span>
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :     RTC_CHECK_GT(*window_size, 1) &lt;&lt; &quot;Need at least 2 points to fit a line.&quot;;</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :     RTC_CHECK_GT(*threshold_gain, 0) &lt;&lt; &quot;Threshold gain needs to be positive.&quot;;</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     116 </span>            :   }
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :   LOG(LS_WARNING) &lt;&lt; &quot;Failed to parse parameters for BweMedianSlopeFilter &quot;</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :                      &quot;experiment from field trial string. Using default.&quot;;</span>
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :   *window_size = kDefaultMedianSlopeWindowSize;</span>
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :   *threshold_gain = kDefaultMedianSlopeThresholdGain;</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :   return false;</span>
+<span class="lineNum">     122 </span>            : }
+<span class="lineNum">     123 </span>            : }  // namespace
+<span class="lineNum">     124 </span>            : 
+<a name="125"><span class="lineNum">     125 </span>            : namespace webrtc {</a>
+<span class="lineNum">     126 </span>            : 
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 : DelayBasedBwe::BitrateEstimator::BitrateEstimator()</span>
+<span class="lineNum">     128 </span>            :     : sum_(0),
+<span class="lineNum">     129 </span>            :       current_win_ms_(0),
+<span class="lineNum">     130 </span>            :       prev_time_ms_(-1),
+<span class="lineNum">     131 </span>            :       bitrate_estimate_(-1.0f),
+<span class="lineNum">     132 </span>            :       bitrate_estimate_var_(50.0f),
+<span class="lineNum">     133 </span>            :       old_estimator_(kBitrateWindowMs, 8000),
+<a name="134"><span class="lineNum">     134 </span><span class="lineNoCov">          0 :       in_experiment_(BitrateEstimateExperimentIsEnabled()) {}</span></a>
+<span class="lineNum">     135 </span>            : 
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 : void DelayBasedBwe::BitrateEstimator::Update(int64_t now_ms, int bytes) {</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :   if (!in_experiment_) {</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :     old_estimator_.Update(bytes, now_ms);</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :     rtc::Optional&lt;uint32_t&gt; rate = old_estimator_.Rate(now_ms);</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     bitrate_estimate_ = -1.0f;</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :     if (rate)</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :       bitrate_estimate_ = *rate / 1000.0f;</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     144 </span>            :   }
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :   int rate_window_ms = kRateWindowMs;</span>
+<span class="lineNum">     146 </span>            :   // We use a larger window at the beginning to get a more stable sample that
+<span class="lineNum">     147 </span>            :   // we can use to initialize the estimate.
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :   if (bitrate_estimate_ &lt; 0.f)</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     rate_window_ms = kInitialRateWindowMs;</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :   float bitrate_sample = UpdateWindow(now_ms, bytes, rate_window_ms);</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :   if (bitrate_sample &lt; 0.0f)</span>
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :   if (bitrate_estimate_ &lt; 0.0f) {</span>
+<span class="lineNum">     154 </span>            :     // This is the very first sample we get. Use it to initialize the estimate.
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :     bitrate_estimate_ = bitrate_sample;</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     157 </span>            :   }
+<span class="lineNum">     158 </span>            :   // Define the sample uncertainty as a function of how far away it is from the
+<span class="lineNum">     159 </span>            :   // current estimate.
+<span class="lineNum">     160 </span>            :   float sample_uncertainty =
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :       10.0f * std::abs(bitrate_estimate_ - bitrate_sample) / bitrate_estimate_;</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   float sample_var = sample_uncertainty * sample_uncertainty;</span>
+<span class="lineNum">     163 </span>            :   // Update a bayesian estimate of the rate, weighting it lower if the sample
+<span class="lineNum">     164 </span>            :   // uncertainty is large.
+<span class="lineNum">     165 </span>            :   // The bitrate estimate uncertainty is increased with each update to model
+<span class="lineNum">     166 </span>            :   // that the bitrate changes over time.
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :   float pred_bitrate_estimate_var = bitrate_estimate_var_ + 5.f;</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :   bitrate_estimate_ = (sample_var * bitrate_estimate_ +</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :                        pred_bitrate_estimate_var * bitrate_sample) /</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :                       (sample_var + pred_bitrate_estimate_var);</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :   bitrate_estimate_var_ = sample_var * pred_bitrate_estimate_var /</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :                           (sample_var + pred_bitrate_estimate_var);</span>
+<a name="173"><span class="lineNum">     173 </span>            : }</a>
+<span class="lineNum">     174 </span>            : 
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 : float DelayBasedBwe::BitrateEstimator::UpdateWindow(int64_t now_ms,</span>
+<span class="lineNum">     176 </span>            :                                                     int bytes,
+<span class="lineNum">     177 </span>            :                                                     int rate_window_ms) {
+<span class="lineNum">     178 </span>            :   // Reset if time moves backwards.
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   if (now_ms &lt; prev_time_ms_) {</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :     prev_time_ms_ = -1;</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :     sum_ = 0;</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :     current_win_ms_ = 0;</span>
+<span class="lineNum">     183 </span>            :   }
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :   if (prev_time_ms_ &gt;= 0) {</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :     current_win_ms_ += now_ms - prev_time_ms_;</span>
+<span class="lineNum">     186 </span>            :     // Reset if nothing has been received for more than a full window.
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :     if (now_ms - prev_time_ms_ &gt; rate_window_ms) {</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :       sum_ = 0;</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :       current_win_ms_ %= rate_window_ms;</span>
+<span class="lineNum">     190 </span>            :     }
+<span class="lineNum">     191 </span>            :   }
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :   prev_time_ms_ = now_ms;</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :   float bitrate_sample = -1.0f;</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :   if (current_win_ms_ &gt;= rate_window_ms) {</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :     bitrate_sample = 8.0f * sum_ / static_cast&lt;float&gt;(rate_window_ms);</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :     current_win_ms_ -= rate_window_ms;</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :     sum_ = 0;</span>
+<span class="lineNum">     198 </span>            :   }
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :   sum_ += bytes;</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :   return bitrate_sample;</span>
+<a name="201"><span class="lineNum">     201 </span>            : }</a>
+<span class="lineNum">     202 </span>            : 
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 : rtc::Optional&lt;uint32_t&gt; DelayBasedBwe::BitrateEstimator::bitrate_bps() const {</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :   if (bitrate_estimate_ &lt; 0.f)</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :     return rtc::Optional&lt;uint32_t&gt;();</span>
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :   return rtc::Optional&lt;uint32_t&gt;(bitrate_estimate_ * 1000);</span>
+<a name="207"><span class="lineNum">     207 </span>            : }</a>
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 : DelayBasedBwe::DelayBasedBwe(Clock* clock)</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :     : in_trendline_experiment_(TrendlineFilterExperimentIsEnabled()),</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :       in_median_slope_experiment_(MedianSlopeFilterExperimentIsEnabled()),</span>
+<span class="lineNum">     212 </span>            :       clock_(clock),
+<span class="lineNum">     213 </span>            :       inter_arrival_(),
+<span class="lineNum">     214 </span>            :       kalman_estimator_(),
+<span class="lineNum">     215 </span>            :       trendline_estimator_(),
+<span class="lineNum">     216 </span>            :       detector_(),
+<span class="lineNum">     217 </span>            :       receiver_incoming_bitrate_(),
+<span class="lineNum">     218 </span>            :       last_update_ms_(-1),
+<span class="lineNum">     219 </span>            :       last_seen_packet_ms_(-1),
+<span class="lineNum">     220 </span>            :       uma_recorded_(false),
+<span class="lineNum">     221 </span>            :       trendline_window_size_(kDefaultTrendlineWindowSize),
+<span class="lineNum">     222 </span>            :       trendline_smoothing_coeff_(kDefaultTrendlineSmoothingCoeff),
+<span class="lineNum">     223 </span>            :       trendline_threshold_gain_(kDefaultTrendlineThresholdGain),
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :       probing_interval_estimator_(&amp;rate_control_),</span>
+<span class="lineNum">     225 </span>            :       median_slope_window_size_(kDefaultMedianSlopeWindowSize),
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :       median_slope_threshold_gain_(kDefaultMedianSlopeThresholdGain) {</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :   if (in_trendline_experiment_) {</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :     ReadTrendlineFilterExperimentParameters(&amp;trendline_window_size_,</span>
+<span class="lineNum">     229 </span>            :                                             &amp;trendline_smoothing_coeff_,
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :                                             &amp;trendline_threshold_gain_);</span>
+<span class="lineNum">     231 </span>            :   }
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   if (in_median_slope_experiment_) {</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :     ReadMedianSlopeFilterExperimentParameters(&amp;median_slope_window_size_,</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :                                               &amp;median_slope_threshold_gain_);</span>
+<span class="lineNum">     235 </span>            :   }
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :   network_thread_.DetachFromThread();</span>
+<a name="238"><span class="lineNum">     238 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     239 </span>            : 
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 : DelayBasedBwe::Result DelayBasedBwe::IncomingPacketFeedbackVector(</span>
+<span class="lineNum">     241 </span>            :     const std::vector&lt;PacketInfo&gt;&amp; packet_feedback_vector) {
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :   RTC_DCHECK(network_thread_.CalledOnValidThread());</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   if (!uma_recorded_) {</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :     RTC_HISTOGRAM_ENUMERATION(kBweTypeHistogram,</span>
+<span class="lineNum">     245 </span>            :                               BweNames::kSendSideTransportSeqNum,
+<span class="lineNum">     246 </span>            :                               BweNames::kBweNamesMax);
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :     uma_recorded_ = true;</span>
+<span class="lineNum">     248 </span>            :   }
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :   Result aggregated_result;</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   for (const auto&amp; packet_info : packet_feedback_vector) {</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     Result result = IncomingPacketInfo(packet_info);</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     if (result.updated)</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :       aggregated_result = result;</span>
+<span class="lineNum">     254 </span>            :   }
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :   return aggregated_result;</span>
+<a name="256"><span class="lineNum">     256 </span>            : }</a>
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 : DelayBasedBwe::Result DelayBasedBwe::IncomingPacketInfo(</span>
+<span class="lineNum">     259 </span>            :     const PacketInfo&amp; info) {
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :   int64_t now_ms = clock_-&gt;TimeInMilliseconds();</span>
+<span class="lineNum">     261 </span>            : 
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   receiver_incoming_bitrate_.Update(info.arrival_time_ms, info.payload_size);</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :   Result result;</span>
+<span class="lineNum">     264 </span>            :   // Reset if the stream has timed out.
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :   if (last_seen_packet_ms_ == -1 ||</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :       now_ms - last_seen_packet_ms_ &gt; kStreamTimeOutMs) {</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     inter_arrival_.reset(</span>
+<span class="lineNum">     268 </span>            :         new InterArrival((kTimestampGroupLengthMs &lt;&lt; kInterArrivalShift) / 1000,
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :                          kTimestampToMs, true));</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :     kalman_estimator_.reset(new OveruseEstimator(OverUseDetectorOptions()));</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :     trendline_estimator_.reset(new TrendlineEstimator(</span>
+<span class="lineNum">     272 </span>            :         trendline_window_size_, trendline_smoothing_coeff_,
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :         trendline_threshold_gain_));</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     median_slope_estimator_.reset(new MedianSlopeEstimator(</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :         median_slope_window_size_, median_slope_threshold_gain_));</span>
+<span class="lineNum">     276 </span>            :   }
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   last_seen_packet_ms_ = now_ms;</span>
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span>            :   uint32_t send_time_24bits =
+<span class="lineNum">     280 </span>            :       static_cast&lt;uint32_t&gt;(
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :           ((static_cast&lt;uint64_t&gt;(info.send_time_ms) &lt;&lt; kAbsSendTimeFraction) +</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :            500) /</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :           1000) &amp;</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :       0x00FFFFFF;</span>
+<span class="lineNum">     285 </span>            :   // Shift up send time to use the full 32 bits that inter_arrival works with,
+<span class="lineNum">     286 </span>            :   // so wrapping works properly.
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   uint32_t timestamp = send_time_24bits &lt;&lt; kAbsSendTimeInterArrivalUpshift;</span>
+<span class="lineNum">     288 </span>            : 
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   uint32_t ts_delta = 0;</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   int64_t t_delta = 0;</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   int size_delta = 0;</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :   if (inter_arrival_-&gt;ComputeDeltas(timestamp, info.arrival_time_ms, now_ms,</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :                                     info.payload_size, &amp;ts_delta, &amp;t_delta,</span>
+<span class="lineNum">     294 </span>            :                                     &amp;size_delta)) {
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :     double ts_delta_ms = (1000.0 * ts_delta) / (1 &lt;&lt; kInterArrivalShift);</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :     if (in_trendline_experiment_) {</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :       trendline_estimator_-&gt;Update(t_delta, ts_delta_ms, info.arrival_time_ms);</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :       detector_.Detect(trendline_estimator_-&gt;trendline_slope(), ts_delta_ms,</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :                        trendline_estimator_-&gt;num_of_deltas(),</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :                        info.arrival_time_ms);</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :     } else if (in_median_slope_experiment_) {</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :       median_slope_estimator_-&gt;Update(t_delta, ts_delta_ms,</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :                                       info.arrival_time_ms);</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :       detector_.Detect(median_slope_estimator_-&gt;trendline_slope(), ts_delta_ms,</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :                        median_slope_estimator_-&gt;num_of_deltas(),</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :                        info.arrival_time_ms);</span>
+<span class="lineNum">     307 </span>            :     } else {
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :       kalman_estimator_-&gt;Update(t_delta, ts_delta_ms, size_delta,</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :                                 detector_.State(), info.arrival_time_ms);</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :       detector_.Detect(kalman_estimator_-&gt;offset(), ts_delta_ms,</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :                        kalman_estimator_-&gt;num_of_deltas(),</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :                        info.arrival_time_ms);</span>
+<span class="lineNum">     313 </span>            :     }
+<span class="lineNum">     314 </span>            :   }
+<span class="lineNum">     315 </span>            : 
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :   int probing_bps = 0;</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :   if (info.probe_cluster_id != PacketInfo::kNotAProbe) {</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     probing_bps = probe_bitrate_estimator_.HandleProbeAndEstimateBitrate(info);</span>
+<span class="lineNum">     319 </span>            :   }
+<span class="lineNum">     320 </span>            :   rtc::Optional&lt;uint32_t&gt; acked_bitrate_bps =
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :       receiver_incoming_bitrate_.bitrate_bps();</span>
+<span class="lineNum">     322 </span>            :   // Currently overusing the bandwidth.
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :   if (detector_.State() == kBwOverusing) {</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :     if (acked_bitrate_bps &amp;&amp;</span>
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :         rate_control_.TimeToReduceFurther(now_ms, *acked_bitrate_bps)) {</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :       result.updated =</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :           UpdateEstimate(info.arrival_time_ms, now_ms, acked_bitrate_bps,</span>
+<span class="lineNum">     328 </span>            :                          &amp;result.target_bitrate_bps);
+<span class="lineNum">     329 </span>            :     }
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :   } else if (probing_bps &gt; 0) {</span>
+<span class="lineNum">     331 </span>            :     // No overuse, but probing measured a bitrate.
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     rate_control_.SetEstimate(probing_bps, info.arrival_time_ms);</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :     result.probe = true;</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :     result.updated =</span>
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :         UpdateEstimate(info.arrival_time_ms, now_ms, acked_bitrate_bps,</span>
+<span class="lineNum">     336 </span>            :                        &amp;result.target_bitrate_bps);
+<span class="lineNum">     337 </span>            :   }
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :   if (!result.updated &amp;&amp;</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :       (last_update_ms_ == -1 ||</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :        now_ms - last_update_ms_ &gt; rate_control_.GetFeedbackInterval())) {</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :     result.updated =</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :         UpdateEstimate(info.arrival_time_ms, now_ms, acked_bitrate_bps,</span>
+<span class="lineNum">     343 </span>            :                        &amp;result.target_bitrate_bps);
+<span class="lineNum">     344 </span>            :   }
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :   if (result.updated) {</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :     last_update_ms_ = now_ms;</span>
+<span class="lineNum">     347 </span>            :     BWE_TEST_LOGGING_PLOT(1, &quot;target_bitrate_bps&quot;, now_ms,
+<span class="lineNum">     348 </span>            :                           result.target_bitrate_bps);
+<span class="lineNum">     349 </span>            :   }
+<span class="lineNum">     350 </span>            : 
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :   return result;</span>
+<a name="352"><span class="lineNum">     352 </span>            : }</a>
+<span class="lineNum">     353 </span>            : 
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 : bool DelayBasedBwe::UpdateEstimate(int64_t arrival_time_ms,</span>
+<span class="lineNum">     355 </span>            :                                    int64_t now_ms,
+<span class="lineNum">     356 </span>            :                                    rtc::Optional&lt;uint32_t&gt; acked_bitrate_bps,
+<span class="lineNum">     357 </span>            :                                    uint32_t* target_bitrate_bps) {
+<span class="lineNum">     358 </span>            :   // TODO(terelius): RateControlInput::noise_var is deprecated and will be
+<span class="lineNum">     359 </span>            :   // removed. In the meantime, we set it to zero.
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   const RateControlInput input(detector_.State(), acked_bitrate_bps, 0);</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :   rate_control_.Update(&amp;input, now_ms);</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :   *target_bitrate_bps = rate_control_.UpdateBandwidthEstimate(now_ms);</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :   return rate_control_.ValidEstimate();</span>
+<a name="364"><span class="lineNum">     364 </span>            : }</a>
+<span class="lineNum">     365 </span>            : 
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 : void DelayBasedBwe::OnRttUpdate(int64_t avg_rtt_ms, int64_t max_rtt_ms) {</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :   rate_control_.SetRtt(avg_rtt_ms);</span>
+<a name="368"><span class="lineNum">     368 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     369 </span>            : 
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 : bool DelayBasedBwe::LatestEstimate(std::vector&lt;uint32_t&gt;* ssrcs,</span>
+<span class="lineNum">     371 </span>            :                                    uint32_t* bitrate_bps) const {
+<span class="lineNum">     372 </span>            :   // Currently accessed from both the process thread (see
+<span class="lineNum">     373 </span>            :   // ModuleRtpRtcpImpl::Process()) and the configuration thread (see
+<span class="lineNum">     374 </span>            :   // Call::GetStats()). Should in the future only be accessed from a single
+<span class="lineNum">     375 </span>            :   // thread.
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :   RTC_DCHECK(ssrcs);</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :   RTC_DCHECK(bitrate_bps);</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :   if (!rate_control_.ValidEstimate())</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     380 </span>            : 
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :   *ssrcs = {kFixedSsrc};</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :   *bitrate_bps = rate_control_.LatestEstimate();</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="384"><span class="lineNum">     384 </span>            : }</a>
+<span class="lineNum">     385 </span>            : 
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 : void DelayBasedBwe::SetMinBitrate(int min_bitrate_bps) {</span>
+<span class="lineNum">     387 </span>            :   // Called from both the configuration thread and the network thread. Shouldn't
+<span class="lineNum">     388 </span>            :   // be called from the network thread in the future.
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :   rate_control_.SetMinBitrate(min_bitrate_bps);</span>
+<a name="390"><span class="lineNum">     390 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     391 </span>            : 
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 : int64_t DelayBasedBwe::GetProbingIntervalMs() const {</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :   return probing_interval_estimator_.GetIntervalMs();</span>
+<span class="lineNum">     394 </span>            : }
+<span class="lineNum">     395 </span>            : }  // namespace webrtc
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

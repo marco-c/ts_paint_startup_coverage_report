@@ -1,0 +1,1541 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - nsprpub/pr/src/io/prmwait.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">nsprpub/pr/src/io</a> - prmwait.c<span style="font-size: 80%;"> (source / <a href="prmwait.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">8</td>
+            <td class="headerCovTableEntry">420</td>
+            <td class="headerCovTableEntryLo">1.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">1</td>
+            <td class="headerCovTableEntry">10</td>
+            <td class="headerCovTableEntryLo">10.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       3 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       4 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       5 </span>            : 
+<span class="lineNum">       6 </span>            : #include &quot;primpl.h&quot;
+<span class="lineNum">       7 </span>            : #include &quot;pprmwait.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #define _MW_REHASH_MAX 11
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : static PRLock *mw_lock = NULL;
+<span class="lineNum">      12 </span>            : static _PRGlobalState *mw_state = NULL;
+<span class="lineNum">      13 </span>            : 
+<span class="lineNum">      14 </span>            : static PRIntervalTime max_polling_interval;
+<span class="lineNum">      15 </span>            : 
+<span class="lineNum">      16 </span>            : #ifdef WINNT
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : typedef struct TimerEvent {
+<span class="lineNum">      19 </span>            :     PRIntervalTime absolute;
+<span class="lineNum">      20 </span>            :     void (*func)(void *);
+<span class="lineNum">      21 </span>            :     void *arg;
+<span class="lineNum">      22 </span>            :     LONG ref_count;
+<span class="lineNum">      23 </span>            :     PRCList links;
+<span class="lineNum">      24 </span>            : } TimerEvent;
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : #define TIMER_EVENT_PTR(_qp) \
+<span class="lineNum">      27 </span>            :     ((TimerEvent *) ((char *) (_qp) - offsetof(TimerEvent, links)))
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : struct {
+<span class="lineNum">      30 </span>            :     PRLock *ml;
+<span class="lineNum">      31 </span>            :     PRCondVar *new_timer;
+<span class="lineNum">      32 </span>            :     PRCondVar *cancel_timer;
+<span class="lineNum">      33 </span>            :     PRThread *manager_thread;
+<span class="lineNum">      34 </span>            :     PRCList timer_queue;
+<span class="lineNum">      35 </span>            : } tm_vars;
+<span class="lineNum">      36 </span>            : 
+<span class="lineNum">      37 </span>            : static PRStatus TimerInit(void);
+<span class="lineNum">      38 </span>            : static void TimerManager(void *arg);
+<span class="lineNum">      39 </span>            : static TimerEvent *CreateTimer(PRIntervalTime timeout,
+<span class="lineNum">      40 </span>            :     void (*func)(void *), void *arg);
+<span class="lineNum">      41 </span>            : static PRBool CancelTimer(TimerEvent *timer);
+<span class="lineNum">      42 </span>            : 
+<span class="lineNum">      43 </span>            : static void TimerManager(void *arg)
+<span class="lineNum">      44 </span>            : {
+<span class="lineNum">      45 </span>            :     PRIntervalTime now;
+<span class="lineNum">      46 </span>            :     PRIntervalTime timeout;
+<span class="lineNum">      47 </span>            :     PRCList *head;
+<span class="lineNum">      48 </span>            :     TimerEvent *timer;
+<span class="lineNum">      49 </span>            : 
+<span class="lineNum">      50 </span>            :     PR_Lock(tm_vars.ml);
+<span class="lineNum">      51 </span>            :     while (1)
+<span class="lineNum">      52 </span>            :     {
+<span class="lineNum">      53 </span>            :         if (PR_CLIST_IS_EMPTY(&amp;tm_vars.timer_queue))
+<span class="lineNum">      54 </span>            :         {
+<span class="lineNum">      55 </span>            :             PR_WaitCondVar(tm_vars.new_timer, PR_INTERVAL_NO_TIMEOUT);
+<span class="lineNum">      56 </span>            :         }
+<span class="lineNum">      57 </span>            :         else
+<span class="lineNum">      58 </span>            :         {
+<span class="lineNum">      59 </span>            :             now = PR_IntervalNow();
+<span class="lineNum">      60 </span>            :             head = PR_LIST_HEAD(&amp;tm_vars.timer_queue);
+<span class="lineNum">      61 </span>            :             timer = TIMER_EVENT_PTR(head);
+<span class="lineNum">      62 </span>            :             if ((PRInt32) (now - timer-&gt;absolute) &gt;= 0)
+<span class="lineNum">      63 </span>            :             {
+<span class="lineNum">      64 </span>            :                 PR_REMOVE_LINK(head);
+<span class="lineNum">      65 </span>            :                 /*
+<span class="lineNum">      66 </span>            :                  * make its prev and next point to itself so that
+<span class="lineNum">      67 </span>            :                  * it's obvious that it's not on the timer_queue.
+<span class="lineNum">      68 </span>            :                  */
+<span class="lineNum">      69 </span>            :                 PR_INIT_CLIST(head);
+<span class="lineNum">      70 </span>            :                 PR_ASSERT(2 == timer-&gt;ref_count);
+<span class="lineNum">      71 </span>            :                 PR_Unlock(tm_vars.ml);
+<span class="lineNum">      72 </span>            :                 timer-&gt;func(timer-&gt;arg);
+<span class="lineNum">      73 </span>            :                 PR_Lock(tm_vars.ml);
+<span class="lineNum">      74 </span>            :                 timer-&gt;ref_count -= 1;
+<span class="lineNum">      75 </span>            :                 if (0 == timer-&gt;ref_count)
+<span class="lineNum">      76 </span>            :                 {
+<span class="lineNum">      77 </span>            :                     PR_NotifyAllCondVar(tm_vars.cancel_timer);
+<span class="lineNum">      78 </span>            :                 }
+<span class="lineNum">      79 </span>            :             }
+<span class="lineNum">      80 </span>            :             else
+<span class="lineNum">      81 </span>            :             {
+<span class="lineNum">      82 </span>            :                 timeout = (PRIntervalTime)(timer-&gt;absolute - now);
+<span class="lineNum">      83 </span>            :                 PR_WaitCondVar(tm_vars.new_timer, timeout);
+<span class="lineNum">      84 </span>            :             } 
+<span class="lineNum">      85 </span>            :         }
+<span class="lineNum">      86 </span>            :     }
+<span class="lineNum">      87 </span>            :     PR_Unlock(tm_vars.ml);
+<span class="lineNum">      88 </span>            : }
+<span class="lineNum">      89 </span>            : 
+<span class="lineNum">      90 </span>            : static TimerEvent *CreateTimer(
+<span class="lineNum">      91 </span>            :     PRIntervalTime timeout,
+<span class="lineNum">      92 </span>            :     void (*func)(void *),
+<span class="lineNum">      93 </span>            :     void *arg)
+<span class="lineNum">      94 </span>            : {
+<span class="lineNum">      95 </span>            :     TimerEvent *timer;
+<span class="lineNum">      96 </span>            :     PRCList *links, *tail;
+<span class="lineNum">      97 </span>            :     TimerEvent *elem;
+<span class="lineNum">      98 </span>            : 
+<span class="lineNum">      99 </span>            :     timer = PR_NEW(TimerEvent);
+<span class="lineNum">     100 </span>            :     if (NULL == timer)
+<span class="lineNum">     101 </span>            :     {
+<span class="lineNum">     102 </span>            :         PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+<span class="lineNum">     103 </span>            :         return timer;
+<span class="lineNum">     104 </span>            :     }
+<span class="lineNum">     105 </span>            :     timer-&gt;absolute = PR_IntervalNow() + timeout;
+<span class="lineNum">     106 </span>            :     timer-&gt;func = func;
+<span class="lineNum">     107 </span>            :     timer-&gt;arg = arg;
+<span class="lineNum">     108 </span>            :     timer-&gt;ref_count = 2;
+<span class="lineNum">     109 </span>            :     PR_Lock(tm_vars.ml);
+<span class="lineNum">     110 </span>            :     tail = links = PR_LIST_TAIL(&amp;tm_vars.timer_queue);
+<span class="lineNum">     111 </span>            :     while (links-&gt;prev != tail)
+<span class="lineNum">     112 </span>            :     {
+<span class="lineNum">     113 </span>            :         elem = TIMER_EVENT_PTR(links);
+<span class="lineNum">     114 </span>            :         if ((PRInt32)(timer-&gt;absolute - elem-&gt;absolute) &gt;= 0)
+<span class="lineNum">     115 </span>            :         {
+<span class="lineNum">     116 </span>            :             break;
+<span class="lineNum">     117 </span>            :         }
+<span class="lineNum">     118 </span>            :         links = links-&gt;prev;
+<span class="lineNum">     119 </span>            :     }
+<span class="lineNum">     120 </span>            :     PR_INSERT_AFTER(&amp;timer-&gt;links, links);
+<span class="lineNum">     121 </span>            :     PR_NotifyCondVar(tm_vars.new_timer);
+<span class="lineNum">     122 </span>            :     PR_Unlock(tm_vars.ml);
+<span class="lineNum">     123 </span>            :     return timer;
+<span class="lineNum">     124 </span>            : }
+<span class="lineNum">     125 </span>            : 
+<span class="lineNum">     126 </span>            : static PRBool CancelTimer(TimerEvent *timer)
+<span class="lineNum">     127 </span>            : {
+<span class="lineNum">     128 </span>            :     PRBool canceled = PR_FALSE;
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span>            :     PR_Lock(tm_vars.ml);
+<span class="lineNum">     131 </span>            :     timer-&gt;ref_count -= 1;
+<span class="lineNum">     132 </span>            :     if (timer-&gt;links.prev == &amp;timer-&gt;links)
+<span class="lineNum">     133 </span>            :     {
+<span class="lineNum">     134 </span>            :         while (timer-&gt;ref_count == 1)
+<span class="lineNum">     135 </span>            :         {
+<span class="lineNum">     136 </span>            :             PR_WaitCondVar(tm_vars.cancel_timer, PR_INTERVAL_NO_TIMEOUT);
+<span class="lineNum">     137 </span>            :         }
+<span class="lineNum">     138 </span>            :     }
+<span class="lineNum">     139 </span>            :     else
+<span class="lineNum">     140 </span>            :     {
+<span class="lineNum">     141 </span>            :         PR_REMOVE_LINK(&amp;timer-&gt;links);
+<span class="lineNum">     142 </span>            :         canceled = PR_TRUE;
+<span class="lineNum">     143 </span>            :     }
+<span class="lineNum">     144 </span>            :     PR_Unlock(tm_vars.ml);
+<span class="lineNum">     145 </span>            :     PR_DELETE(timer);
+<span class="lineNum">     146 </span>            :     return canceled; 
+<span class="lineNum">     147 </span>            : }
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span>            : static PRStatus TimerInit(void)
+<span class="lineNum">     150 </span>            : {
+<span class="lineNum">     151 </span>            :     tm_vars.ml = PR_NewLock();
+<span class="lineNum">     152 </span>            :     if (NULL == tm_vars.ml)
+<span class="lineNum">     153 </span>            :     {
+<span class="lineNum">     154 </span>            :         goto failed;
+<span class="lineNum">     155 </span>            :     }
+<span class="lineNum">     156 </span>            :     tm_vars.new_timer = PR_NewCondVar(tm_vars.ml);
+<span class="lineNum">     157 </span>            :     if (NULL == tm_vars.new_timer)
+<span class="lineNum">     158 </span>            :     {
+<span class="lineNum">     159 </span>            :         goto failed;
+<span class="lineNum">     160 </span>            :     }
+<span class="lineNum">     161 </span>            :     tm_vars.cancel_timer = PR_NewCondVar(tm_vars.ml);
+<span class="lineNum">     162 </span>            :     if (NULL == tm_vars.cancel_timer)
+<span class="lineNum">     163 </span>            :     {
+<span class="lineNum">     164 </span>            :         goto failed;
+<span class="lineNum">     165 </span>            :     }
+<span class="lineNum">     166 </span>            :     PR_INIT_CLIST(&amp;tm_vars.timer_queue);
+<span class="lineNum">     167 </span>            :     tm_vars.manager_thread = PR_CreateThread(
+<span class="lineNum">     168 </span>            :         PR_SYSTEM_THREAD, TimerManager, NULL, PR_PRIORITY_NORMAL,
+<span class="lineNum">     169 </span>            :         PR_LOCAL_THREAD, PR_UNJOINABLE_THREAD, 0);
+<span class="lineNum">     170 </span>            :     if (NULL == tm_vars.manager_thread)
+<span class="lineNum">     171 </span>            :     {
+<span class="lineNum">     172 </span>            :         goto failed;
+<span class="lineNum">     173 </span>            :     }
+<span class="lineNum">     174 </span>            :     return PR_SUCCESS;
+<span class="lineNum">     175 </span>            : 
+<span class="lineNum">     176 </span>            : failed:
+<span class="lineNum">     177 </span>            :     if (NULL != tm_vars.cancel_timer)
+<span class="lineNum">     178 </span>            :     {
+<span class="lineNum">     179 </span>            :         PR_DestroyCondVar(tm_vars.cancel_timer);
+<span class="lineNum">     180 </span>            :     }
+<span class="lineNum">     181 </span>            :     if (NULL != tm_vars.new_timer)
+<span class="lineNum">     182 </span>            :     {
+<span class="lineNum">     183 </span>            :         PR_DestroyCondVar(tm_vars.new_timer);
+<span class="lineNum">     184 </span>            :     }
+<span class="lineNum">     185 </span>            :     if (NULL != tm_vars.ml)
+<span class="lineNum">     186 </span>            :     {
+<span class="lineNum">     187 </span>            :         PR_DestroyLock(tm_vars.ml);
+<span class="lineNum">     188 </span>            :     }
+<span class="lineNum">     189 </span>            :     return PR_FAILURE;
+<span class="lineNum">     190 </span>            : }
+<span class="lineNum">     191 </span>            : 
+<span class="lineNum">     192 </span>            : #endif /* WINNT */
+<span class="lineNum">     193 </span>            : 
+<span class="lineNum">     194 </span>            : /******************************************************************/
+<span class="lineNum">     195 </span>            : /******************************************************************/
+<span class="lineNum">     196 </span>            : /************************ The private portion *********************/
+<a name="197"><span class="lineNum">     197 </span>            : /******************************************************************/</a>
+<span class="lineNum">     198 </span>            : /******************************************************************/
+<span class="lineNum">     199 </span><span class="lineCov">          3 : void _PR_InitMW(void)</span>
+<span class="lineNum">     200 </span>            : {
+<span class="lineNum">     201 </span>            : #ifdef WINNT
+<span class="lineNum">     202 </span>            :     /*
+<span class="lineNum">     203 </span>            :      * We use NT 4's InterlockedCompareExchange() to operate
+<span class="lineNum">     204 </span>            :      * on PRMWStatus variables.
+<span class="lineNum">     205 </span>            :      */
+<span class="lineNum">     206 </span>            :     PR_ASSERT(sizeof(LONG) == sizeof(PRMWStatus));
+<span class="lineNum">     207 </span>            :     TimerInit();
+<span class="lineNum">     208 </span>            : #endif
+<span class="lineNum">     209 </span><span class="lineCov">          3 :     mw_lock = PR_NewLock();</span>
+<span class="lineNum">     210 </span><span class="lineCov">          3 :     PR_ASSERT(NULL != mw_lock);</span>
+<span class="lineNum">     211 </span><span class="lineCov">          3 :     mw_state = PR_NEWZAP(_PRGlobalState);</span>
+<span class="lineNum">     212 </span><span class="lineCov">          3 :     PR_ASSERT(NULL != mw_state);</span>
+<span class="lineNum">     213 </span><span class="lineCov">          3 :     PR_INIT_CLIST(&amp;mw_state-&gt;group_list);</span>
+<span class="lineNum">     214 </span><span class="lineCov">          3 :     max_polling_interval = PR_MillisecondsToInterval(MAX_POLLING_INTERVAL);</span>
+<a name="215"><span class="lineNum">     215 </span><span class="lineCov">          3 : }  /* _PR_InitMW */</span></a>
+<span class="lineNum">     216 </span>            : 
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 : void _PR_CleanupMW(void)</span>
+<span class="lineNum">     218 </span>            : {
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :     PR_DestroyLock(mw_lock);</span>
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :     mw_lock = NULL;</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :     if (mw_state-&gt;group) {</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :         PR_DestroyWaitGroup(mw_state-&gt;group);</span>
+<span class="lineNum">     223 </span>            :         /* mw_state-&gt;group is set to NULL as a side effect. */
+<span class="lineNum">     224 </span>            :     }
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :     PR_DELETE(mw_state);</span>
+<a name="226"><span class="lineNum">     226 </span><span class="lineNoCov">          0 : }  /* _PR_CleanupMW */</span></a>
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 : static PRWaitGroup *MW_Init2(void)</span>
+<span class="lineNum">     229 </span>            : {
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :     PRWaitGroup *group = mw_state-&gt;group;  /* it's the null group */</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     if (NULL == group)  /* there is this special case */</span>
+<span class="lineNum">     232 </span>            :     {
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :         group = PR_CreateWaitGroup(_PR_DEFAULT_HASH_LENGTH);</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :         if (NULL == group) goto failed_alloc;</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :         PR_Lock(mw_lock);</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :         if (NULL == mw_state-&gt;group)</span>
+<span class="lineNum">     237 </span>            :         {
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :             mw_state-&gt;group = group;</span>
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :             group = NULL;</span>
+<span class="lineNum">     240 </span>            :         }
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :         PR_Unlock(mw_lock);</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :         if (group != NULL) (void)PR_DestroyWaitGroup(group);</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :         group = mw_state-&gt;group;  /* somebody beat us to it */</span>
+<span class="lineNum">     244 </span>            :     }
+<span class="lineNum">     245 </span>            : failed_alloc:
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :     return group;  /* whatever */</span>
+<a name="247"><span class="lineNum">     247 </span>            : }  /* MW_Init2 */</a>
+<span class="lineNum">     248 </span>            : 
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 : static _PR_HashStory MW_AddHashInternal(PRRecvWait *desc, _PRWaiterHash *hash)</span>
+<span class="lineNum">     250 </span>            : {
+<span class="lineNum">     251 </span>            :     /*
+<span class="lineNum">     252 </span>            :     ** The entries are put in the table using the fd (PRFileDesc*) of
+<span class="lineNum">     253 </span>            :     ** the receive descriptor as the key. This allows us to locate
+<span class="lineNum">     254 </span>            :     ** the appropriate entry aqain when the poll operation finishes.
+<span class="lineNum">     255 </span>            :     **
+<span class="lineNum">     256 </span>            :     ** The pointer to the file descriptor object is first divided by
+<span class="lineNum">     257 </span>            :     ** the natural alignment of a pointer in the belief that object
+<span class="lineNum">     258 </span>            :     ** will have at least that many zeros in the low order bits.
+<span class="lineNum">     259 </span>            :     ** This may not be a good assuption.
+<span class="lineNum">     260 </span>            :     **
+<span class="lineNum">     261 </span>            :     ** We try to put the entry in by rehashing _MW_REHASH_MAX times. After
+<span class="lineNum">     262 </span>            :     ** that we declare defeat and force the table to be reconstructed.
+<span class="lineNum">     263 </span>            :     ** Since some fds might be added more than once, won't that cause
+<span class="lineNum">     264 </span>            :     ** collisions even in an empty table?
+<span class="lineNum">     265 </span>            :     */
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :     PRIntn rehash = _MW_REHASH_MAX;</span>
+<span class="lineNum">     267 </span>            :     PRRecvWait **waiter;
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :     PRUintn hidx = _MW_HASH(desc-&gt;fd, hash-&gt;length);</span>
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :     PRUintn hoffset = 0;</span>
+<span class="lineNum">     270 </span>            : 
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :     while (rehash-- &gt; 0)</span>
+<span class="lineNum">     272 </span>            :     {
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :         waiter = &amp;hash-&gt;recv_wait;</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :         if (NULL == waiter[hidx])</span>
+<span class="lineNum">     275 </span>            :         {
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :             waiter[hidx] = desc;</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :             hash-&gt;count += 1;</span>
+<span class="lineNum">     278 </span>            : #if 0
+<span class="lineNum">     279 </span>            :             printf(&quot;Adding 0x%x-&gt;0x%x &quot;, desc, desc-&gt;fd);
+<span class="lineNum">     280 </span>            :             printf(
+<span class="lineNum">     281 </span>            :                 &quot;table[%u:%u:*%u]: 0x%x-&gt;0x%x\n&quot;,
+<span class="lineNum">     282 </span>            :                 hidx, hash-&gt;count, hash-&gt;length, waiter[hidx], waiter[hidx]-&gt;fd);
+<span class="lineNum">     283 </span>            : #endif
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :             return _prmw_success;</span>
+<span class="lineNum">     285 </span>            :         }
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :         if (desc == waiter[hidx])</span>
+<span class="lineNum">     287 </span>            :         {
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :             PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);  /* desc already in table */</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :             return _prmw_error;</span>
+<span class="lineNum">     290 </span>            :         }
+<span class="lineNum">     291 </span>            : #if 0
+<span class="lineNum">     292 </span>            :         printf(&quot;Failing 0x%x-&gt;0x%x &quot;, desc, desc-&gt;fd);
+<span class="lineNum">     293 </span>            :         printf(
+<span class="lineNum">     294 </span>            :             &quot;table[*%u:%u:%u]: 0x%x-&gt;0x%x\n&quot;,
+<span class="lineNum">     295 </span>            :             hidx, hash-&gt;count, hash-&gt;length, waiter[hidx], waiter[hidx]-&gt;fd);
+<span class="lineNum">     296 </span>            : #endif
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :         if (0 == hoffset)</span>
+<span class="lineNum">     298 </span>            :         {
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :             hoffset = _MW_HASH2(desc-&gt;fd, hash-&gt;length);</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :             PR_ASSERT(0 != hoffset);</span>
+<span class="lineNum">     301 </span>            :         }
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :         hidx = (hidx + hoffset) % (hash-&gt;length);</span>
+<span class="lineNum">     303 </span>            :     }
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :     return _prmw_rehash;    </span>
+<a name="305"><span class="lineNum">     305 </span>            : }  /* MW_AddHashInternal */</a>
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 : static _PR_HashStory MW_ExpandHashInternal(PRWaitGroup *group)</span>
+<span class="lineNum">     308 </span>            : {
+<span class="lineNum">     309 </span>            :     PRRecvWait **desc;
+<span class="lineNum">     310 </span>            :     PRUint32 pidx, length;
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :     _PRWaiterHash *newHash, *oldHash = group-&gt;waiter;</span>
+<span class="lineNum">     312 </span>            :     PRBool retry;
+<span class="lineNum">     313 </span>            :     _PR_HashStory hrv;
+<span class="lineNum">     314 </span>            : 
+<span class="lineNum">     315 </span>            :     static const PRInt32 prime_number[] = {
+<span class="lineNum">     316 </span>            :         _PR_DEFAULT_HASH_LENGTH, 179, 521, 907, 1427,
+<span class="lineNum">     317 </span>            :         2711, 3917, 5021, 8219, 11549, 18911, 26711, 33749, 44771};
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     PRUintn primes = (sizeof(prime_number) / sizeof(PRInt32));</span>
+<span class="lineNum">     319 </span>            : 
+<span class="lineNum">     320 </span>            :     /* look up the next size we'd like to use for the hash table */
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     for (pidx = 0; pidx &lt; primes; ++pidx)</span>
+<span class="lineNum">     322 </span>            :     {
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :         if (prime_number[pidx] == oldHash-&gt;length)</span>
+<span class="lineNum">     324 </span>            :         {
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     326 </span>            :         }
+<span class="lineNum">     327 </span>            :     }
+<span class="lineNum">     328 </span>            :     /* table size must be one of the prime numbers */
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :     PR_ASSERT(pidx &lt; primes);</span>
+<span class="lineNum">     330 </span>            : 
+<span class="lineNum">     331 </span>            :     /* if pidx == primes - 1, we can't expand the table any more */
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     while (pidx &lt; primes - 1)</span>
+<span class="lineNum">     333 </span>            :     {
+<span class="lineNum">     334 </span>            :         /* next size */
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :         ++pidx;</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :         length = prime_number[pidx];</span>
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span>            :         /* allocate the new hash table and fill it in with the old */
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :         newHash = (_PRWaiterHash*)PR_CALLOC(</span>
+<span class="lineNum">     340 </span>            :             sizeof(_PRWaiterHash) + (length * sizeof(PRRecvWait*)));
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :         if (NULL == newHash)</span>
+<span class="lineNum">     342 </span>            :         {
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :             PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :             return _prmw_error;</span>
+<span class="lineNum">     345 </span>            :         }
+<span class="lineNum">     346 </span>            : 
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :         newHash-&gt;length = length;</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :         retry = PR_FALSE;</span>
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :         for (desc = &amp;oldHash-&gt;recv_wait;</span>
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :             newHash-&gt;count &lt; oldHash-&gt;count; ++desc)</span>
+<span class="lineNum">     351 </span>            :         {
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :             PR_ASSERT(desc &lt; &amp;oldHash-&gt;recv_wait + oldHash-&gt;length);</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :             if (NULL != *desc)</span>
+<span class="lineNum">     354 </span>            :             {
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :                 hrv = MW_AddHashInternal(*desc, newHash);</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :                 PR_ASSERT(_prmw_error != hrv);</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :                 if (_prmw_success != hrv)</span>
+<span class="lineNum">     358 </span>            :                 {
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :                     PR_DELETE(newHash);</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :                     retry = PR_TRUE;</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">     362 </span>            :                 }
+<span class="lineNum">     363 </span>            :             }
+<span class="lineNum">     364 </span>            :         }
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :         if (retry) continue;</span>
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :         PR_DELETE(group-&gt;waiter);</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :         group-&gt;waiter = newHash;</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :         group-&gt;p_timestamp += 1;</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :         return _prmw_success;</span>
+<span class="lineNum">     371 </span>            :     }
+<span class="lineNum">     372 </span>            : 
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :     PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);</span>
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :     return _prmw_error;  /* we're hosed */</span>
+<span class="lineNum">     375 </span>            : }  /* MW_ExpandHashInternal */
+<a name="376"><span class="lineNum">     376 </span>            : </a>
+<span class="lineNum">     377 </span>            : #ifndef WINNT
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 : static void _MW_DoneInternal(</span>
+<span class="lineNum">     379 </span>            :     PRWaitGroup *group, PRRecvWait **waiter, PRMWStatus outcome)
+<span class="lineNum">     380 </span>            : {
+<span class="lineNum">     381 </span>            :     /*
+<span class="lineNum">     382 </span>            :     ** Add this receive wait object to the list of finished I/O
+<span class="lineNum">     383 </span>            :     ** operations for this particular group. If there are other
+<span class="lineNum">     384 </span>            :     ** threads waiting on the group, notify one. If not, arrange
+<span class="lineNum">     385 </span>            :     ** for this thread to return.
+<span class="lineNum">     386 </span>            :     */
+<span class="lineNum">     387 </span>            : 
+<span class="lineNum">     388 </span>            : #if 0
+<span class="lineNum">     389 </span>            :     printf(&quot;Removing 0x%x-&gt;0x%x\n&quot;, *waiter, (*waiter)-&gt;fd);
+<span class="lineNum">     390 </span>            : #endif
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :     (*waiter)-&gt;outcome = outcome;</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :     PR_APPEND_LINK(&amp;((*waiter)-&gt;internal), &amp;group-&gt;io_ready);</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :     PR_NotifyCondVar(group-&gt;io_complete);</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :     PR_ASSERT(0 != group-&gt;waiter-&gt;count);</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :     group-&gt;waiter-&gt;count -= 1;</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :     *waiter = NULL;</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 : }  /* _MW_DoneInternal */</span>
+<a name="398"><span class="lineNum">     398 </span>            : #endif /* WINNT */</a>
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 : static PRRecvWait **_MW_LookupInternal(PRWaitGroup *group, PRFileDesc *fd)</span>
+<span class="lineNum">     401 </span>            : {
+<span class="lineNum">     402 </span>            :     /*
+<span class="lineNum">     403 </span>            :     ** Find the receive wait object corresponding to the file descriptor.
+<span class="lineNum">     404 </span>            :     ** Only search the wait group specified.
+<span class="lineNum">     405 </span>            :     */
+<span class="lineNum">     406 </span>            :     PRRecvWait **desc;
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :     PRIntn rehash = _MW_REHASH_MAX;</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :     _PRWaiterHash *hash = group-&gt;waiter;</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :     PRUintn hidx = _MW_HASH(fd, hash-&gt;length);</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :     PRUintn hoffset = 0;</span>
+<span class="lineNum">     411 </span>            :     
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :     while (rehash-- &gt; 0)</span>
+<span class="lineNum">     413 </span>            :     {
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :         desc = (&amp;hash-&gt;recv_wait) + hidx;</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :         if ((*desc != NULL) &amp;&amp; ((*desc)-&gt;fd == fd)) return desc;</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :         if (0 == hoffset)</span>
+<span class="lineNum">     417 </span>            :         {
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :             hoffset = _MW_HASH2(fd, hash-&gt;length);</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :             PR_ASSERT(0 != hoffset);</span>
+<span class="lineNum">     420 </span>            :         }
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :         hidx = (hidx + hoffset) % (hash-&gt;length);</span>
+<span class="lineNum">     422 </span>            :     }
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :     return NULL;</span>
+<span class="lineNum">     424 </span>            : }  /* _MW_LookupInternal */
+<a name="425"><span class="lineNum">     425 </span>            : </a>
+<span class="lineNum">     426 </span>            : #ifndef WINNT
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 : static PRStatus _MW_PollInternal(PRWaitGroup *group)</span>
+<span class="lineNum">     428 </span>            : {
+<span class="lineNum">     429 </span>            :     PRRecvWait **waiter;
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :     PRStatus rv = PR_FAILURE;</span>
+<span class="lineNum">     431 </span>            :     PRInt32 count, count_ready;
+<span class="lineNum">     432 </span>            :     PRIntervalTime polling_interval;
+<span class="lineNum">     433 </span>            : 
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :     group-&gt;poller = PR_GetCurrentThread();</span>
+<span class="lineNum">     435 </span>            : 
+<span class="lineNum">     436 </span>            :     while (PR_TRUE)
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :     {</span>
+<span class="lineNum">     438 </span>            :         PRIntervalTime now, since_last_poll;
+<span class="lineNum">     439 </span>            :         PRPollDesc *poll_list;
+<span class="lineNum">     440 </span>            : 
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :         while (0 == group-&gt;waiter-&gt;count)</span>
+<span class="lineNum">     442 </span>            :         {
+<span class="lineNum">     443 </span>            :             PRStatus st;
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :             st = PR_WaitCondVar(group-&gt;new_business, PR_INTERVAL_NO_TIMEOUT);</span>
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :             if (_prmw_running != group-&gt;state)</span>
+<span class="lineNum">     446 </span>            :             {
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :                 PR_SetError(PR_INVALID_STATE_ERROR, 0);</span>
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :                 goto aborted;</span>
+<span class="lineNum">     449 </span>            :             }
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :             if (_MW_ABORTED(st)) goto aborted;</span>
+<span class="lineNum">     451 </span>            :         }
+<span class="lineNum">     452 </span>            : 
+<span class="lineNum">     453 </span>            :         /*
+<span class="lineNum">     454 </span>            :         ** There's something to do. See if our existing polling list
+<span class="lineNum">     455 </span>            :         ** is large enough for what we have to do?
+<span class="lineNum">     456 </span>            :         */
+<span class="lineNum">     457 </span>            : 
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :         while (group-&gt;polling_count &lt; group-&gt;waiter-&gt;count)</span>
+<span class="lineNum">     459 </span>            :         {
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :             PRUint32 old_count = group-&gt;waiter-&gt;count;</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :             PRUint32 new_count = PR_ROUNDUP(old_count, _PR_POLL_COUNT_FUDGE);</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :             PRSize new_size = sizeof(PRPollDesc) * new_count;</span>
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :             PRPollDesc *old_polling_list = group-&gt;polling_list;</span>
+<span class="lineNum">     464 </span>            : 
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :             PR_Unlock(group-&gt;ml);</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :             poll_list = (PRPollDesc*)PR_CALLOC(new_size);</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :             if (NULL == poll_list)</span>
+<span class="lineNum">     468 </span>            :             {
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :                 PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);</span>
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :                 PR_Lock(group-&gt;ml);</span>
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :                 goto failed_alloc;</span>
+<span class="lineNum">     472 </span>            :             }
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :             if (NULL != old_polling_list)</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :                 PR_DELETE(old_polling_list);</span>
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :             PR_Lock(group-&gt;ml);</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :             if (_prmw_running != group-&gt;state)</span>
+<span class="lineNum">     477 </span>            :             {
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :                 PR_DELETE(poll_list);</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :                 PR_SetError(PR_INVALID_STATE_ERROR, 0);</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :                 goto aborted;</span>
+<span class="lineNum">     481 </span>            :             }
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :             group-&gt;polling_list = poll_list;</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :             group-&gt;polling_count = new_count;</span>
+<span class="lineNum">     484 </span>            :         }
+<span class="lineNum">     485 </span>            : 
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :         now = PR_IntervalNow();</span>
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :         polling_interval = max_polling_interval;</span>
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :         since_last_poll = now - group-&gt;last_poll;</span>
+<span class="lineNum">     489 </span>            : 
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :         waiter = &amp;group-&gt;waiter-&gt;recv_wait;</span>
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :         poll_list = group-&gt;polling_list;</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :         for (count = 0; count &lt; group-&gt;waiter-&gt;count; ++waiter)</span>
+<span class="lineNum">     493 </span>            :         {
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :             PR_ASSERT(waiter &lt; &amp;group-&gt;waiter-&gt;recv_wait</span>
+<span class="lineNum">     495 </span>            :                 + group-&gt;waiter-&gt;length);
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :             if (NULL != *waiter)  /* a live one! */</span>
+<span class="lineNum">     497 </span>            :             {
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :                 if ((PR_INTERVAL_NO_TIMEOUT != (*waiter)-&gt;timeout)</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :                 &amp;&amp; (since_last_poll &gt;= (*waiter)-&gt;timeout))</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :                     _MW_DoneInternal(group, waiter, PR_MW_TIMEOUT);</span>
+<span class="lineNum">     501 </span>            :                 else
+<span class="lineNum">     502 </span>            :                 {
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :                     if (PR_INTERVAL_NO_TIMEOUT != (*waiter)-&gt;timeout)</span>
+<span class="lineNum">     504 </span>            :                     {
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :                         (*waiter)-&gt;timeout -= since_last_poll;</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :                         if ((*waiter)-&gt;timeout &lt; polling_interval)</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :                             polling_interval = (*waiter)-&gt;timeout;</span>
+<span class="lineNum">     508 </span>            :                     }
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :                     PR_ASSERT(poll_list &lt; group-&gt;polling_list</span>
+<span class="lineNum">     510 </span>            :                         + group-&gt;polling_count);
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :                     poll_list-&gt;fd = (*waiter)-&gt;fd;</span>
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :                     poll_list-&gt;in_flags = PR_POLL_READ;</span>
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :                     poll_list-&gt;out_flags = 0;</span>
+<span class="lineNum">     514 </span>            : #if 0
+<span class="lineNum">     515 </span>            :                     printf(
+<span class="lineNum">     516 </span>            :                         &quot;Polling 0x%x[%d]: [fd: 0x%x, tmo: %u]\n&quot;,
+<span class="lineNum">     517 </span>            :                         poll_list, count, poll_list-&gt;fd, (*waiter)-&gt;timeout);
+<span class="lineNum">     518 </span>            : #endif
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :                     poll_list += 1;</span>
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :                     count += 1;</span>
+<span class="lineNum">     521 </span>            :                 }
+<span class="lineNum">     522 </span>            :             }
+<span class="lineNum">     523 </span>            :         } 
+<span class="lineNum">     524 </span>            : 
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :         PR_ASSERT(count == group-&gt;waiter-&gt;count);</span>
+<span class="lineNum">     526 </span>            : 
+<span class="lineNum">     527 </span>            :         /*
+<span class="lineNum">     528 </span>            :         ** If there are no more threads waiting for completion,
+<span class="lineNum">     529 </span>            :         ** we need to return.
+<span class="lineNum">     530 </span>            :         */
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :         if ((!PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready))</span>
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :         &amp;&amp; (1 == group-&gt;waiting_threads)) break;</span>
+<span class="lineNum">     533 </span>            : 
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :         if (0 == count) continue;  /* wait for new business */</span>
+<span class="lineNum">     535 </span>            : 
+<span class="lineNum">     536 </span><span class="lineNoCov">          0 :         group-&gt;last_poll = now;</span>
+<span class="lineNum">     537 </span>            : 
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :         PR_Unlock(group-&gt;ml);</span>
+<span class="lineNum">     539 </span>            : 
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :         count_ready = PR_Poll(group-&gt;polling_list, count, polling_interval);</span>
+<span class="lineNum">     541 </span>            : 
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :         PR_Lock(group-&gt;ml);</span>
+<span class="lineNum">     543 </span>            : 
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :         if (_prmw_running != group-&gt;state)</span>
+<span class="lineNum">     545 </span>            :         {
+<span class="lineNum">     546 </span><span class="lineNoCov">          0 :             PR_SetError(PR_INVALID_STATE_ERROR, 0);</span>
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :             goto aborted;</span>
+<span class="lineNum">     548 </span>            :         }
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :         if (-1 == count_ready)</span>
+<span class="lineNum">     550 </span>            :         {
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :             goto failed_poll;  /* that's a shame */</span>
+<span class="lineNum">     552 </span>            :         }
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :         else if (0 &lt; count_ready)</span>
+<span class="lineNum">     554 </span>            :         {
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :             for (poll_list = group-&gt;polling_list; count &gt; 0;</span>
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :             poll_list++, count--)</span>
+<span class="lineNum">     557 </span>            :             {
+<span class="lineNum">     558 </span><span class="lineNoCov">          0 :                 PR_ASSERT(</span>
+<span class="lineNum">     559 </span>            :                     poll_list &lt; group-&gt;polling_list + group-&gt;polling_count);
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 :                 if (poll_list-&gt;out_flags != 0)</span>
+<span class="lineNum">     561 </span>            :                 {
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :                     waiter = _MW_LookupInternal(group, poll_list-&gt;fd);</span>
+<span class="lineNum">     563 </span>            :                     /*
+<span class="lineNum">     564 </span>            :                     ** If 'waiter' is NULL, that means the wait receive
+<span class="lineNum">     565 </span>            :                     ** descriptor has been canceled.
+<span class="lineNum">     566 </span>            :                     */
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :                     if (NULL != waiter)</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :                         _MW_DoneInternal(group, waiter, PR_MW_SUCCESS);</span>
+<span class="lineNum">     569 </span>            :                 }
+<span class="lineNum">     570 </span>            :             }
+<span class="lineNum">     571 </span>            :         }
+<span class="lineNum">     572 </span>            :         /*
+<span class="lineNum">     573 </span>            :         ** If there are no more threads waiting for completion,
+<span class="lineNum">     574 </span>            :         ** we need to return.
+<span class="lineNum">     575 </span>            :         ** This thread was &quot;borrowed&quot; to do the polling, but it really
+<span class="lineNum">     576 </span>            :         ** belongs to the client.
+<span class="lineNum">     577 </span>            :         */
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :         if ((!PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready))</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :         &amp;&amp; (1 == group-&gt;waiting_threads)) break;</span>
+<span class="lineNum">     580 </span>            :     }
+<span class="lineNum">     581 </span>            : 
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :     rv = PR_SUCCESS;</span>
+<span class="lineNum">     583 </span>            : 
+<span class="lineNum">     584 </span>            : aborted:
+<span class="lineNum">     585 </span>            : failed_poll:
+<span class="lineNum">     586 </span>            : failed_alloc:
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :     group-&gt;poller = NULL;  /* we were that, not we ain't */</span>
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :     if ((_prmw_running == group-&gt;state) &amp;&amp; (group-&gt;waiting_threads &gt; 1))</span>
+<span class="lineNum">     589 </span>            :     {
+<span class="lineNum">     590 </span>            :         /* Wake up one thread to become the new poller. */
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :         PR_NotifyCondVar(group-&gt;io_complete);</span>
+<span class="lineNum">     592 </span>            :     }
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :     return rv;  /* we return with the lock held */</span>
+<span class="lineNum">     594 </span>            : }  /* _MW_PollInternal */
+<a name="595"><span class="lineNum">     595 </span>            : #endif /* !WINNT */</a>
+<span class="lineNum">     596 </span>            : 
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 : static PRMWGroupState MW_TestForShutdownInternal(PRWaitGroup *group)</span>
+<span class="lineNum">     598 </span>            : {
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :     PRMWGroupState rv = group-&gt;state;</span>
+<span class="lineNum">     600 </span>            :     /*
+<span class="lineNum">     601 </span>            :     ** Looking at the group's fields is safe because
+<span class="lineNum">     602 </span>            :     ** once the group's state is no longer running, it
+<span class="lineNum">     603 </span>            :     ** cannot revert and there is a safe check on entry
+<span class="lineNum">     604 </span>            :     ** to make sure no more threads are made to wait.
+<span class="lineNum">     605 </span>            :     */
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :     if ((_prmw_stopping == rv)</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :     &amp;&amp; (0 == group-&gt;waiting_threads))</span>
+<span class="lineNum">     608 </span>            :     {
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :         rv = group-&gt;state = _prmw_stopped;</span>
+<span class="lineNum">     610 </span><span class="lineNoCov">          0 :         PR_NotifyCondVar(group-&gt;mw_manage);</span>
+<span class="lineNum">     611 </span>            :     }
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     613 </span>            : }  /* MW_TestForShutdownInternal */
+<a name="614"><span class="lineNum">     614 </span>            : </a>
+<span class="lineNum">     615 </span>            : #ifndef WINNT
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 : static void _MW_InitialRecv(PRCList *io_ready)</span>
+<span class="lineNum">     617 </span>            : {
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 :     PRRecvWait *desc = (PRRecvWait*)io_ready;</span>
+<span class="lineNum">     619 </span><span class="lineNoCov">          0 :     if ((NULL == desc-&gt;buffer.start)</span>
+<span class="lineNum">     620 </span><span class="lineNoCov">          0 :     || (0 == desc-&gt;buffer.length))</span>
+<span class="lineNum">     621 </span><span class="lineNoCov">          0 :         desc-&gt;bytesRecv = 0;</span>
+<span class="lineNum">     622 </span>            :     else
+<span class="lineNum">     623 </span>            :     {
+<span class="lineNum">     624 </span><span class="lineNoCov">          0 :         desc-&gt;bytesRecv = (desc-&gt;fd-&gt;methods-&gt;recv)(</span>
+<span class="lineNum">     625 </span>            :             desc-&gt;fd, desc-&gt;buffer.start,
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :             desc-&gt;buffer.length, 0, desc-&gt;timeout);</span>
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :         if (desc-&gt;bytesRecv &lt; 0)  /* SetError should already be there */</span>
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :             desc-&gt;outcome = PR_MW_FAILURE;</span>
+<span class="lineNum">     629 </span>            :     }
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 : }  /* _MW_InitialRecv */</span>
+<span class="lineNum">     631 </span>            : #endif
+<span class="lineNum">     632 </span>            : 
+<span class="lineNum">     633 </span>            : #ifdef WINNT
+<span class="lineNum">     634 </span>            : static void NT_TimeProc(void *arg)
+<span class="lineNum">     635 </span>            : {
+<span class="lineNum">     636 </span>            :     _MDOverlapped *overlapped = (_MDOverlapped *)arg;
+<span class="lineNum">     637 </span>            :     PRRecvWait *desc =  overlapped-&gt;data.mw.desc;
+<span class="lineNum">     638 </span>            :     PRFileDesc *bottom;
+<span class="lineNum">     639 </span>            :     
+<span class="lineNum">     640 </span>            :     if (InterlockedCompareExchange((LONG *)&amp;desc-&gt;outcome,
+<span class="lineNum">     641 </span>            :         (LONG)PR_MW_TIMEOUT, (LONG)PR_MW_PENDING) != (LONG)PR_MW_PENDING)
+<span class="lineNum">     642 </span>            :     {
+<span class="lineNum">     643 </span>            :         /* This wait recv descriptor has already completed. */
+<span class="lineNum">     644 </span>            :         return;
+<span class="lineNum">     645 </span>            :     }
+<span class="lineNum">     646 </span>            : 
+<span class="lineNum">     647 </span>            :     /* close the osfd to abort the outstanding async io request */
+<span class="lineNum">     648 </span>            :     /* $$$$
+<span class="lineNum">     649 </span>            :     ** Little late to be checking if NSPR's on the bottom of stack,
+<span class="lineNum">     650 </span>            :     ** but if we don't check, we can't assert that the private data
+<span class="lineNum">     651 </span>            :     ** is what we think it is.
+<span class="lineNum">     652 </span>            :     ** $$$$
+<span class="lineNum">     653 </span>            :     */
+<span class="lineNum">     654 </span>            :     bottom = PR_GetIdentitiesLayer(desc-&gt;fd, PR_NSPR_IO_LAYER);
+<span class="lineNum">     655 </span>            :     PR_ASSERT(NULL != bottom);
+<span class="lineNum">     656 </span>            :     if (NULL != bottom)  /* now what!?!?! */
+<span class="lineNum">     657 </span>            :     {
+<span class="lineNum">     658 </span>            :         bottom-&gt;secret-&gt;state = _PR_FILEDESC_CLOSED;
+<span class="lineNum">     659 </span>            :         if (closesocket(bottom-&gt;secret-&gt;md.osfd) == SOCKET_ERROR)
+<span class="lineNum">     660 </span>            :         {
+<span class="lineNum">     661 </span>            :             fprintf(stderr, &quot;closesocket failed: %d\n&quot;, WSAGetLastError());
+<span class="lineNum">     662 </span>            :             PR_NOT_REACHED(&quot;What shall I do?&quot;);
+<span class="lineNum">     663 </span>            :         }
+<span class="lineNum">     664 </span>            :     }
+<span class="lineNum">     665 </span>            :     return;
+<span class="lineNum">     666 </span>            : }  /* NT_TimeProc */
+<span class="lineNum">     667 </span>            : 
+<span class="lineNum">     668 </span>            : static PRStatus NT_HashRemove(PRWaitGroup *group, PRFileDesc *fd)
+<span class="lineNum">     669 </span>            : {
+<span class="lineNum">     670 </span>            :     PRRecvWait **waiter;
+<span class="lineNum">     671 </span>            : 
+<span class="lineNum">     672 </span>            :     _PR_MD_LOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">     673 </span>            :     waiter = _MW_LookupInternal(group, fd);
+<span class="lineNum">     674 </span>            :     if (NULL != waiter)
+<span class="lineNum">     675 </span>            :     {
+<span class="lineNum">     676 </span>            :         group-&gt;waiter-&gt;count -= 1;
+<span class="lineNum">     677 </span>            :         *waiter = NULL;
+<span class="lineNum">     678 </span>            :     }
+<span class="lineNum">     679 </span>            :     _PR_MD_UNLOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">     680 </span>            :     return (NULL != waiter) ? PR_SUCCESS : PR_FAILURE;
+<span class="lineNum">     681 </span>            : }
+<span class="lineNum">     682 </span>            : 
+<span class="lineNum">     683 </span>            : PRStatus NT_HashRemoveInternal(PRWaitGroup *group, PRFileDesc *fd)
+<span class="lineNum">     684 </span>            : {
+<span class="lineNum">     685 </span>            :     PRRecvWait **waiter;
+<span class="lineNum">     686 </span>            : 
+<span class="lineNum">     687 </span>            :     waiter = _MW_LookupInternal(group, fd);
+<span class="lineNum">     688 </span>            :     if (NULL != waiter)
+<span class="lineNum">     689 </span>            :     {
+<span class="lineNum">     690 </span>            :         group-&gt;waiter-&gt;count -= 1;
+<span class="lineNum">     691 </span>            :         *waiter = NULL;
+<span class="lineNum">     692 </span>            :     }
+<span class="lineNum">     693 </span>            :     return (NULL != waiter) ? PR_SUCCESS : PR_FAILURE;
+<span class="lineNum">     694 </span>            : }
+<span class="lineNum">     695 </span>            : #endif /* WINNT */
+<span class="lineNum">     696 </span>            : 
+<span class="lineNum">     697 </span>            : /******************************************************************/
+<span class="lineNum">     698 </span>            : /******************************************************************/
+<span class="lineNum">     699 </span>            : /********************** The public API portion ********************/
+<span class="lineNum">     700 </span>            : /******************************************************************/
+<span class="lineNum">     701 </span>            : /******************************************************************/
+<span class="lineNum">     702 </span>            : PR_IMPLEMENT(PRStatus) PR_AddWaitFileDesc(
+<span class="lineNum">     703 </span>            :     PRWaitGroup *group, PRRecvWait *desc)
+<span class="lineNum">     704 </span>            : {
+<span class="lineNum">     705 </span>            :     _PR_HashStory hrv;
+<span class="lineNum">     706 </span><span class="lineNoCov">          0 :     PRStatus rv = PR_FAILURE;</span>
+<span class="lineNum">     707 </span>            : #ifdef WINNT
+<span class="lineNum">     708 </span>            :     _MDOverlapped *overlapped;
+<span class="lineNum">     709 </span>            :     HANDLE hFile;
+<span class="lineNum">     710 </span>            :     BOOL bResult;
+<span class="lineNum">     711 </span>            :     DWORD dwError;
+<span class="lineNum">     712 </span>            :     PRFileDesc *bottom;
+<span class="lineNum">     713 </span>            : #endif
+<span class="lineNum">     714 </span>            : 
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :     if (!_pr_initialized) _PR_ImplicitInitialization();</span>
+<span class="lineNum">     716 </span><span class="lineNoCov">          0 :     if ((NULL == group) &amp;&amp; (NULL == (group = MW_Init2())))</span>
+<span class="lineNum">     717 </span>            :     {
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     719 </span>            :     }
+<span class="lineNum">     720 </span>            : 
+<span class="lineNum">     721 </span><span class="lineNoCov">          0 :     PR_ASSERT(NULL != desc-&gt;fd);</span>
+<span class="lineNum">     722 </span>            : 
+<span class="lineNum">     723 </span><span class="lineNoCov">          0 :     desc-&gt;outcome = PR_MW_PENDING;  /* nice, well known value */</span>
+<span class="lineNum">     724 </span><span class="lineNoCov">          0 :     desc-&gt;bytesRecv = 0;  /* likewise, though this value is ambiguious */</span>
+<span class="lineNum">     725 </span>            : 
+<span class="lineNum">     726 </span><span class="lineNoCov">          0 :     PR_Lock(group-&gt;ml);</span>
+<span class="lineNum">     727 </span>            : 
+<span class="lineNum">     728 </span><span class="lineNoCov">          0 :     if (_prmw_running != group-&gt;state)</span>
+<span class="lineNum">     729 </span>            :     {
+<span class="lineNum">     730 </span>            :         /* Not allowed to add after cancelling the group */
+<span class="lineNum">     731 </span><span class="lineNoCov">          0 :         desc-&gt;outcome = PR_MW_INTERRUPT;</span>
+<span class="lineNum">     732 </span><span class="lineNoCov">          0 :         PR_SetError(PR_INVALID_STATE_ERROR, 0);</span>
+<span class="lineNum">     733 </span><span class="lineNoCov">          0 :         PR_Unlock(group-&gt;ml);</span>
+<span class="lineNum">     734 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     735 </span>            :     }
+<span class="lineNum">     736 </span>            : 
+<span class="lineNum">     737 </span>            : #ifdef WINNT
+<span class="lineNum">     738 </span>            :     _PR_MD_LOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">     739 </span>            : #endif
+<span class="lineNum">     740 </span>            : 
+<span class="lineNum">     741 </span>            :     /*
+<span class="lineNum">     742 </span>            :     ** If the waiter count is zero at this point, there's no telling
+<span class="lineNum">     743 </span>            :     ** how long we've been idle. Therefore, initialize the beginning
+<span class="lineNum">     744 </span>            :     ** of the timing interval. As long as the list doesn't go empty,
+<span class="lineNum">     745 </span>            :     ** it will maintain itself.
+<span class="lineNum">     746 </span>            :     */
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 :     if (0 == group-&gt;waiter-&gt;count)</span>
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :         group-&gt;last_poll = PR_IntervalNow();</span>
+<span class="lineNum">     749 </span>            : 
+<span class="lineNum">     750 </span>            :     do
+<span class="lineNum">     751 </span>            :     {
+<span class="lineNum">     752 </span><span class="lineNoCov">          0 :         hrv = MW_AddHashInternal(desc, group-&gt;waiter);</span>
+<span class="lineNum">     753 </span><span class="lineNoCov">          0 :         if (_prmw_rehash != hrv) break;</span>
+<span class="lineNum">     754 </span><span class="lineNoCov">          0 :         hrv = MW_ExpandHashInternal(group);  /* gruesome */</span>
+<span class="lineNum">     755 </span><span class="lineNoCov">          0 :         if (_prmw_success != hrv) break;</span>
+<span class="lineNum">     756 </span>            :     } while (PR_TRUE);
+<span class="lineNum">     757 </span>            : 
+<span class="lineNum">     758 </span>            : #ifdef WINNT
+<span class="lineNum">     759 </span>            :     _PR_MD_UNLOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">     760 </span>            : #endif
+<span class="lineNum">     761 </span>            : 
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :     PR_NotifyCondVar(group-&gt;new_business);  /* tell the world */</span>
+<span class="lineNum">     763 </span><span class="lineNoCov">          0 :     rv = (_prmw_success == hrv) ? PR_SUCCESS : PR_FAILURE;</span>
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 :     PR_Unlock(group-&gt;ml);</span>
+<span class="lineNum">     765 </span>            : 
+<span class="lineNum">     766 </span>            : #ifdef WINNT
+<span class="lineNum">     767 </span>            :     overlapped = PR_NEWZAP(_MDOverlapped);
+<span class="lineNum">     768 </span>            :     if (NULL == overlapped)
+<span class="lineNum">     769 </span>            :     {
+<span class="lineNum">     770 </span>            :         PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);
+<span class="lineNum">     771 </span>            :         NT_HashRemove(group, desc-&gt;fd);
+<span class="lineNum">     772 </span>            :         return rv;
+<span class="lineNum">     773 </span>            :     }
+<span class="lineNum">     774 </span>            :     overlapped-&gt;ioModel = _MD_MultiWaitIO;
+<span class="lineNum">     775 </span>            :     overlapped-&gt;data.mw.desc = desc;
+<span class="lineNum">     776 </span>            :     overlapped-&gt;data.mw.group = group;
+<span class="lineNum">     777 </span>            :     if (desc-&gt;timeout != PR_INTERVAL_NO_TIMEOUT)
+<span class="lineNum">     778 </span>            :     {
+<span class="lineNum">     779 </span>            :         overlapped-&gt;data.mw.timer = CreateTimer(
+<span class="lineNum">     780 </span>            :             desc-&gt;timeout,
+<span class="lineNum">     781 </span>            :             NT_TimeProc,
+<span class="lineNum">     782 </span>            :             overlapped);
+<span class="lineNum">     783 </span>            :         if (0 == overlapped-&gt;data.mw.timer)
+<span class="lineNum">     784 </span>            :         {
+<span class="lineNum">     785 </span>            :             NT_HashRemove(group, desc-&gt;fd);
+<span class="lineNum">     786 </span>            :             PR_DELETE(overlapped);
+<span class="lineNum">     787 </span>            :             /*
+<span class="lineNum">     788 </span>            :              * XXX It appears that a maximum of 16 timer events can
+<span class="lineNum">     789 </span>            :              * be outstanding. GetLastError() returns 0 when I try it.
+<span class="lineNum">     790 </span>            :              */
+<span class="lineNum">     791 </span>            :             PR_SetError(PR_INSUFFICIENT_RESOURCES_ERROR, GetLastError());
+<span class="lineNum">     792 </span>            :             return PR_FAILURE;
+<span class="lineNum">     793 </span>            :         }
+<span class="lineNum">     794 </span>            :     }
+<span class="lineNum">     795 </span>            : 
+<span class="lineNum">     796 </span>            :     /* Reach to the bottom layer to get the OS fd */
+<span class="lineNum">     797 </span>            :     bottom = PR_GetIdentitiesLayer(desc-&gt;fd, PR_NSPR_IO_LAYER);
+<span class="lineNum">     798 </span>            :     PR_ASSERT(NULL != bottom);
+<span class="lineNum">     799 </span>            :     if (NULL == bottom)
+<span class="lineNum">     800 </span>            :     {
+<span class="lineNum">     801 </span>            :         PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);
+<span class="lineNum">     802 </span>            :         return PR_FAILURE;
+<span class="lineNum">     803 </span>            :     }
+<span class="lineNum">     804 </span>            :     hFile = (HANDLE)bottom-&gt;secret-&gt;md.osfd; 
+<span class="lineNum">     805 </span>            :     if (!bottom-&gt;secret-&gt;md.io_model_committed)
+<span class="lineNum">     806 </span>            :     {
+<span class="lineNum">     807 </span>            :         PRInt32 st;
+<span class="lineNum">     808 </span>            :         st = _md_Associate(hFile);
+<span class="lineNum">     809 </span>            :         PR_ASSERT(0 != st);
+<span class="lineNum">     810 </span>            :         bottom-&gt;secret-&gt;md.io_model_committed = PR_TRUE;
+<span class="lineNum">     811 </span>            :     }
+<span class="lineNum">     812 </span>            :     bResult = ReadFile(hFile,
+<span class="lineNum">     813 </span>            :         desc-&gt;buffer.start,
+<span class="lineNum">     814 </span>            :         (DWORD)desc-&gt;buffer.length,
+<span class="lineNum">     815 </span>            :         NULL,
+<span class="lineNum">     816 </span>            :         &amp;overlapped-&gt;overlapped);
+<span class="lineNum">     817 </span>            :     if (FALSE == bResult &amp;&amp; (dwError = GetLastError()) != ERROR_IO_PENDING)
+<span class="lineNum">     818 </span>            :     {
+<span class="lineNum">     819 </span>            :         if (desc-&gt;timeout != PR_INTERVAL_NO_TIMEOUT)
+<span class="lineNum">     820 </span>            :         {
+<span class="lineNum">     821 </span>            :             if (InterlockedCompareExchange((LONG *)&amp;desc-&gt;outcome,
+<span class="lineNum">     822 </span>            :                 (LONG)PR_MW_FAILURE, (LONG)PR_MW_PENDING)
+<span class="lineNum">     823 </span>            :                 == (LONG)PR_MW_PENDING)
+<span class="lineNum">     824 </span>            :             {
+<span class="lineNum">     825 </span>            :                 CancelTimer(overlapped-&gt;data.mw.timer);
+<span class="lineNum">     826 </span>            :             }
+<span class="lineNum">     827 </span>            :             NT_HashRemove(group, desc-&gt;fd);
+<span class="lineNum">     828 </span>            :             PR_DELETE(overlapped);
+<span class="lineNum">     829 </span>            :         }
+<span class="lineNum">     830 </span>            :         _PR_MD_MAP_READ_ERROR(dwError);
+<span class="lineNum">     831 </span>            :         rv = PR_FAILURE;
+<span class="lineNum">     832 </span>            :     }
+<span class="lineNum">     833 </span>            : #endif
+<span class="lineNum">     834 </span>            : 
+<span class="lineNum">     835 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     836 </span>            : }  /* PR_AddWaitFileDesc */
+<span class="lineNum">     837 </span>            : 
+<span class="lineNum">     838 </span>            : PR_IMPLEMENT(PRRecvWait*) PR_WaitRecvReady(PRWaitGroup *group)
+<span class="lineNum">     839 </span>            : {
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :     PRCList *io_ready = NULL;</span>
+<span class="lineNum">     841 </span>            : #ifdef WINNT
+<span class="lineNum">     842 </span>            :     PRThread *me = _PR_MD_CURRENT_THREAD();
+<span class="lineNum">     843 </span>            :     _MDOverlapped *overlapped;    
+<span class="lineNum">     844 </span>            : #endif
+<span class="lineNum">     845 </span>            : 
+<span class="lineNum">     846 </span><span class="lineNoCov">          0 :     if (!_pr_initialized) _PR_ImplicitInitialization();</span>
+<span class="lineNum">     847 </span><span class="lineNoCov">          0 :     if ((NULL == group) &amp;&amp; (NULL == (group = MW_Init2()))) goto failed_init;</span>
+<span class="lineNum">     848 </span>            : 
+<span class="lineNum">     849 </span><span class="lineNoCov">          0 :     PR_Lock(group-&gt;ml);</span>
+<span class="lineNum">     850 </span>            : 
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :     if (_prmw_running != group-&gt;state)</span>
+<span class="lineNum">     852 </span>            :     {
+<span class="lineNum">     853 </span><span class="lineNoCov">          0 :         PR_SetError(PR_INVALID_STATE_ERROR, 0);</span>
+<span class="lineNum">     854 </span><span class="lineNoCov">          0 :         goto invalid_state;</span>
+<span class="lineNum">     855 </span>            :     }
+<span class="lineNum">     856 </span>            : 
+<span class="lineNum">     857 </span><span class="lineNoCov">          0 :     group-&gt;waiting_threads += 1;  /* the polling thread is counted */</span>
+<span class="lineNum">     858 </span>            : 
+<span class="lineNum">     859 </span>            : #ifdef WINNT
+<span class="lineNum">     860 </span>            :     _PR_MD_LOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">     861 </span>            :     while (PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready))
+<span class="lineNum">     862 </span>            :     {
+<span class="lineNum">     863 </span>            :         _PR_THREAD_LOCK(me);
+<span class="lineNum">     864 </span>            :         me-&gt;state = _PR_IO_WAIT;
+<span class="lineNum">     865 </span>            :         PR_APPEND_LINK(&amp;me-&gt;waitQLinks, &amp;group-&gt;wait_list);
+<span class="lineNum">     866 </span>            :         if (!_PR_IS_NATIVE_THREAD(me))
+<span class="lineNum">     867 </span>            :         {
+<span class="lineNum">     868 </span>            :             _PR_SLEEPQ_LOCK(me-&gt;cpu);
+<span class="lineNum">     869 </span>            :             _PR_ADD_SLEEPQ(me, PR_INTERVAL_NO_TIMEOUT);
+<span class="lineNum">     870 </span>            :             _PR_SLEEPQ_UNLOCK(me-&gt;cpu);
+<span class="lineNum">     871 </span>            :         }
+<span class="lineNum">     872 </span>            :         _PR_THREAD_UNLOCK(me);
+<span class="lineNum">     873 </span>            :         _PR_MD_UNLOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">     874 </span>            :         PR_Unlock(group-&gt;ml);
+<span class="lineNum">     875 </span>            :         _PR_MD_WAIT(me, PR_INTERVAL_NO_TIMEOUT);
+<span class="lineNum">     876 </span>            :         me-&gt;state = _PR_RUNNING;
+<span class="lineNum">     877 </span>            :         PR_Lock(group-&gt;ml);
+<span class="lineNum">     878 </span>            :         _PR_MD_LOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">     879 </span>            :         if (_PR_PENDING_INTERRUPT(me)) {
+<span class="lineNum">     880 </span>            :             PR_REMOVE_LINK(&amp;me-&gt;waitQLinks);
+<span class="lineNum">     881 </span>            :             _PR_MD_UNLOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">     882 </span>            :             me-&gt;flags &amp;= ~_PR_INTERRUPT;
+<span class="lineNum">     883 </span>            :             me-&gt;io_suspended = PR_FALSE;
+<span class="lineNum">     884 </span>            :             PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);
+<span class="lineNum">     885 </span>            :             goto aborted;
+<span class="lineNum">     886 </span>            :         }
+<span class="lineNum">     887 </span>            :     }
+<span class="lineNum">     888 </span>            :     io_ready = PR_LIST_HEAD(&amp;group-&gt;io_ready);
+<span class="lineNum">     889 </span>            :     PR_ASSERT(io_ready != NULL);
+<span class="lineNum">     890 </span>            :     PR_REMOVE_LINK(io_ready);
+<span class="lineNum">     891 </span>            :     _PR_MD_UNLOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">     892 </span>            :     overlapped = (_MDOverlapped *)
+<span class="lineNum">     893 </span>            :         ((char *)io_ready - offsetof(_MDOverlapped, data));
+<span class="lineNum">     894 </span>            :     io_ready = &amp;overlapped-&gt;data.mw.desc-&gt;internal;
+<span class="lineNum">     895 </span>            : #else
+<span class="lineNum">     896 </span>            :     do
+<span class="lineNum">     897 </span>            :     {
+<span class="lineNum">     898 </span>            :         /*
+<span class="lineNum">     899 </span>            :         ** If the I/O ready list isn't empty, have this thread
+<span class="lineNum">     900 </span>            :         ** return with the first receive wait object that's available.
+<span class="lineNum">     901 </span>            :         */
+<span class="lineNum">     902 </span><span class="lineNoCov">          0 :         if (PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready))</span>
+<span class="lineNum">     903 </span>            :         {
+<span class="lineNum">     904 </span>            :             /*
+<span class="lineNum">     905 </span>            :             ** Is there a polling thread yet? If not, grab this thread
+<span class="lineNum">     906 </span>            :             ** and use it.
+<span class="lineNum">     907 </span>            :             */
+<span class="lineNum">     908 </span><span class="lineNoCov">          0 :             if (NULL == group-&gt;poller)</span>
+<span class="lineNum">     909 </span>            :             {
+<span class="lineNum">     910 </span>            :                 /*
+<span class="lineNum">     911 </span>            :                 ** This thread will stay do polling until it becomes the only one
+<span class="lineNum">     912 </span>            :                 ** left to service a completion. Then it will return and there will
+<span class="lineNum">     913 </span>            :                 ** be none left to actually poll or to run completions.
+<span class="lineNum">     914 </span>            :                 **
+<span class="lineNum">     915 </span>            :                 ** The polling function should only return w/ failure or
+<span class="lineNum">     916 </span>            :                 ** with some I/O ready.
+<span class="lineNum">     917 </span>            :                 */
+<span class="lineNum">     918 </span><span class="lineNoCov">          0 :                 if (PR_FAILURE == _MW_PollInternal(group)) goto failed_poll;</span>
+<span class="lineNum">     919 </span>            :             }
+<span class="lineNum">     920 </span>            :             else
+<span class="lineNum">     921 </span>            :             {
+<span class="lineNum">     922 </span>            :                 /*
+<span class="lineNum">     923 </span>            :                 ** There are four reasons a thread can be awakened from
+<span class="lineNum">     924 </span>            :                 ** a wait on the io_complete condition variable.
+<span class="lineNum">     925 </span>            :                 ** 1. Some I/O has completed, i.e., the io_ready list
+<span class="lineNum">     926 </span>            :                 **    is nonempty.
+<span class="lineNum">     927 </span>            :                 ** 2. The wait group is canceled.
+<span class="lineNum">     928 </span>            :                 ** 3. The thread is interrupted.
+<span class="lineNum">     929 </span>            :                 ** 4. The current polling thread has to leave and needs
+<span class="lineNum">     930 </span>            :                 **    a replacement.
+<span class="lineNum">     931 </span>            :                 ** The logic to find a new polling thread is made more
+<span class="lineNum">     932 </span>            :                 ** complicated by all the other possible events.
+<span class="lineNum">     933 </span>            :                 ** I tried my best to write the logic clearly, but
+<span class="lineNum">     934 </span>            :                 ** it is still full of if's with continue and goto.
+<span class="lineNum">     935 </span>            :                 */
+<span class="lineNum">     936 </span>            :                 PRStatus st;
+<span class="lineNum">     937 </span>            :                 do 
+<span class="lineNum">     938 </span>            :                 {
+<span class="lineNum">     939 </span><span class="lineNoCov">          0 :                     st = PR_WaitCondVar(group-&gt;io_complete, PR_INTERVAL_NO_TIMEOUT);</span>
+<span class="lineNum">     940 </span><span class="lineNoCov">          0 :                     if (_prmw_running != group-&gt;state)</span>
+<span class="lineNum">     941 </span>            :                     {
+<span class="lineNum">     942 </span><span class="lineNoCov">          0 :                         PR_SetError(PR_INVALID_STATE_ERROR, 0);</span>
+<span class="lineNum">     943 </span><span class="lineNoCov">          0 :                         goto aborted;</span>
+<span class="lineNum">     944 </span>            :                     }
+<span class="lineNum">     945 </span><span class="lineNoCov">          0 :                     if (_MW_ABORTED(st) || (NULL == group-&gt;poller)) break;</span>
+<span class="lineNum">     946 </span><span class="lineNoCov">          0 :                 } while (PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready));</span>
+<span class="lineNum">     947 </span>            : 
+<span class="lineNum">     948 </span>            :                 /*
+<span class="lineNum">     949 </span>            :                 ** The thread is interrupted and has to leave.  It might
+<span class="lineNum">     950 </span>            :                 ** have also been awakened to process ready i/o or be the
+<span class="lineNum">     951 </span>            :                 ** new poller.  To be safe, if either condition is true,
+<span class="lineNum">     952 </span>            :                 ** we awaken another thread to take its place.
+<span class="lineNum">     953 </span>            :                 */
+<span class="lineNum">     954 </span><span class="lineNoCov">          0 :                 if (_MW_ABORTED(st))</span>
+<span class="lineNum">     955 </span>            :                 {
+<span class="lineNum">     956 </span><span class="lineNoCov">          0 :                     if ((NULL == group-&gt;poller</span>
+<span class="lineNum">     957 </span><span class="lineNoCov">          0 :                     || !PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready))</span>
+<span class="lineNum">     958 </span><span class="lineNoCov">          0 :                     &amp;&amp; group-&gt;waiting_threads &gt; 1)</span>
+<span class="lineNum">     959 </span><span class="lineNoCov">          0 :                         PR_NotifyCondVar(group-&gt;io_complete);</span>
+<span class="lineNum">     960 </span><span class="lineNoCov">          0 :                     goto aborted;</span>
+<span class="lineNum">     961 </span>            :                 }
+<span class="lineNum">     962 </span>            : 
+<span class="lineNum">     963 </span>            :                 /*
+<span class="lineNum">     964 </span>            :                 ** A new poller is needed, but can I be the new poller?
+<span class="lineNum">     965 </span>            :                 ** If there is no i/o ready, sure.  But if there is any
+<span class="lineNum">     966 </span>            :                 ** i/o ready, it has a higher priority.  I want to
+<span class="lineNum">     967 </span>            :                 ** process the ready i/o first and wake up another
+<span class="lineNum">     968 </span>            :                 ** thread to be the new poller.
+<span class="lineNum">     969 </span>            :                 */ 
+<span class="lineNum">     970 </span><span class="lineNoCov">          0 :                 if (NULL == group-&gt;poller)</span>
+<span class="lineNum">     971 </span>            :                 {
+<span class="lineNum">     972 </span><span class="lineNoCov">          0 :                     if (PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready))</span>
+<span class="lineNum">     973 </span><span class="lineNoCov">          0 :                         continue;</span>
+<span class="lineNum">     974 </span><span class="lineNoCov">          0 :                     if (group-&gt;waiting_threads &gt; 1)</span>
+<span class="lineNum">     975 </span><span class="lineNoCov">          0 :                         PR_NotifyCondVar(group-&gt;io_complete);</span>
+<span class="lineNum">     976 </span>            :                 }
+<span class="lineNum">     977 </span>            :             }
+<span class="lineNum">     978 </span><span class="lineNoCov">          0 :             PR_ASSERT(!PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready));</span>
+<span class="lineNum">     979 </span>            :         }
+<span class="lineNum">     980 </span><span class="lineNoCov">          0 :         io_ready = PR_LIST_HEAD(&amp;group-&gt;io_ready);</span>
+<span class="lineNum">     981 </span><span class="lineNoCov">          0 :         PR_NotifyCondVar(group-&gt;io_taken);</span>
+<span class="lineNum">     982 </span><span class="lineNoCov">          0 :         PR_ASSERT(io_ready != NULL);</span>
+<span class="lineNum">     983 </span><span class="lineNoCov">          0 :         PR_REMOVE_LINK(io_ready);</span>
+<span class="lineNum">     984 </span><span class="lineNoCov">          0 :     } while (NULL == io_ready);</span>
+<span class="lineNum">     985 </span>            : 
+<span class="lineNum">     986 </span>            : failed_poll:
+<span class="lineNum">     987 </span>            : 
+<span class="lineNum">     988 </span>            : #endif
+<span class="lineNum">     989 </span>            : 
+<span class="lineNum">     990 </span>            : aborted:
+<span class="lineNum">     991 </span>            : 
+<span class="lineNum">     992 </span><span class="lineNoCov">          0 :     group-&gt;waiting_threads -= 1;</span>
+<span class="lineNum">     993 </span>            : invalid_state:
+<span class="lineNum">     994 </span><span class="lineNoCov">          0 :     (void)MW_TestForShutdownInternal(group);</span>
+<span class="lineNum">     995 </span><span class="lineNoCov">          0 :     PR_Unlock(group-&gt;ml);</span>
+<span class="lineNum">     996 </span>            : 
+<span class="lineNum">     997 </span>            : failed_init:
+<span class="lineNum">     998 </span><span class="lineNoCov">          0 :     if (NULL != io_ready)</span>
+<span class="lineNum">     999 </span>            :     {
+<span class="lineNum">    1000 </span>            :         /* If the operation failed, record the reason why */
+<span class="lineNum">    1001 </span><span class="lineNoCov">          0 :         switch (((PRRecvWait*)io_ready)-&gt;outcome)</span>
+<span class="lineNum">    1002 </span>            :         {
+<span class="lineNum">    1003 </span>            :             case PR_MW_PENDING:
+<span class="lineNum">    1004 </span><span class="lineNoCov">          0 :                 PR_ASSERT(0);</span>
+<span class="lineNum">    1005 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">    1006 </span>            :             case PR_MW_SUCCESS:
+<span class="lineNum">    1007 </span>            : #ifndef WINNT
+<span class="lineNum">    1008 </span><span class="lineNoCov">          0 :                 _MW_InitialRecv(io_ready);</span>
+<span class="lineNum">    1009 </span>            : #endif
+<span class="lineNum">    1010 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">    1011 </span>            : #ifdef WINNT
+<span class="lineNum">    1012 </span>            :             case PR_MW_FAILURE:
+<span class="lineNum">    1013 </span>            :                 _PR_MD_MAP_READ_ERROR(overlapped-&gt;data.mw.error);
+<span class="lineNum">    1014 </span>            :                 break;
+<span class="lineNum">    1015 </span>            : #endif
+<span class="lineNum">    1016 </span>            :             case PR_MW_TIMEOUT:
+<span class="lineNum">    1017 </span><span class="lineNoCov">          0 :                 PR_SetError(PR_IO_TIMEOUT_ERROR, 0);</span>
+<span class="lineNum">    1018 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">    1019 </span>            :             case PR_MW_INTERRUPT:
+<span class="lineNum">    1020 </span><span class="lineNoCov">          0 :                 PR_SetError(PR_PENDING_INTERRUPT_ERROR, 0);</span>
+<span class="lineNum">    1021 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">    1022 </span><span class="lineNoCov">          0 :             default: break;</span>
+<span class="lineNum">    1023 </span>            :         }
+<span class="lineNum">    1024 </span>            : #ifdef WINNT
+<span class="lineNum">    1025 </span>            :         if (NULL != overlapped-&gt;data.mw.timer)
+<span class="lineNum">    1026 </span>            :         {
+<span class="lineNum">    1027 </span>            :             PR_ASSERT(PR_INTERVAL_NO_TIMEOUT
+<span class="lineNum">    1028 </span>            :                 != overlapped-&gt;data.mw.desc-&gt;timeout);
+<span class="lineNum">    1029 </span>            :             CancelTimer(overlapped-&gt;data.mw.timer);
+<span class="lineNum">    1030 </span>            :         }
+<span class="lineNum">    1031 </span>            :         else
+<span class="lineNum">    1032 </span>            :         {
+<span class="lineNum">    1033 </span>            :             PR_ASSERT(PR_INTERVAL_NO_TIMEOUT
+<span class="lineNum">    1034 </span>            :                 == overlapped-&gt;data.mw.desc-&gt;timeout);
+<span class="lineNum">    1035 </span>            :         }
+<span class="lineNum">    1036 </span>            :         PR_DELETE(overlapped);
+<span class="lineNum">    1037 </span>            : #endif
+<span class="lineNum">    1038 </span>            :     }
+<span class="lineNum">    1039 </span><span class="lineNoCov">          0 :     return (PRRecvWait*)io_ready;</span>
+<span class="lineNum">    1040 </span>            : }  /* PR_WaitRecvReady */
+<span class="lineNum">    1041 </span>            : 
+<span class="lineNum">    1042 </span>            : PR_IMPLEMENT(PRStatus) PR_CancelWaitFileDesc(PRWaitGroup *group, PRRecvWait *desc)
+<span class="lineNum">    1043 </span>            : {
+<span class="lineNum">    1044 </span>            : #if !defined(WINNT)
+<span class="lineNum">    1045 </span>            :     PRRecvWait **recv_wait;
+<span class="lineNum">    1046 </span>            : #endif
+<span class="lineNum">    1047 </span><span class="lineNoCov">          0 :     PRStatus rv = PR_SUCCESS;</span>
+<span class="lineNum">    1048 </span><span class="lineNoCov">          0 :     if (NULL == group) group = mw_state-&gt;group;</span>
+<span class="lineNum">    1049 </span><span class="lineNoCov">          0 :     PR_ASSERT(NULL != group);</span>
+<span class="lineNum">    1050 </span><span class="lineNoCov">          0 :     if (NULL == group)</span>
+<span class="lineNum">    1051 </span>            :     {
+<span class="lineNum">    1052 </span><span class="lineNoCov">          0 :         PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);</span>
+<span class="lineNum">    1053 </span><span class="lineNoCov">          0 :         return PR_FAILURE;</span>
+<span class="lineNum">    1054 </span>            :     }
+<span class="lineNum">    1055 </span>            : 
+<span class="lineNum">    1056 </span><span class="lineNoCov">          0 :     PR_Lock(group-&gt;ml);</span>
+<span class="lineNum">    1057 </span>            : 
+<span class="lineNum">    1058 </span><span class="lineNoCov">          0 :     if (_prmw_running != group-&gt;state)</span>
+<span class="lineNum">    1059 </span>            :     {
+<span class="lineNum">    1060 </span><span class="lineNoCov">          0 :         PR_SetError(PR_INVALID_STATE_ERROR, 0);</span>
+<span class="lineNum">    1061 </span><span class="lineNoCov">          0 :         rv = PR_FAILURE;</span>
+<span class="lineNum">    1062 </span><span class="lineNoCov">          0 :         goto unlock;</span>
+<span class="lineNum">    1063 </span>            :     }
+<span class="lineNum">    1064 </span>            : 
+<span class="lineNum">    1065 </span>            : #ifdef WINNT
+<span class="lineNum">    1066 </span>            :     if (InterlockedCompareExchange((LONG *)&amp;desc-&gt;outcome,
+<span class="lineNum">    1067 </span>            :         (LONG)PR_MW_INTERRUPT, (LONG)PR_MW_PENDING) == (LONG)PR_MW_PENDING)
+<span class="lineNum">    1068 </span>            :     {
+<span class="lineNum">    1069 </span>            :         PRFileDesc *bottom = PR_GetIdentitiesLayer(desc-&gt;fd, PR_NSPR_IO_LAYER);
+<span class="lineNum">    1070 </span>            :         PR_ASSERT(NULL != bottom);
+<span class="lineNum">    1071 </span>            :         if (NULL == bottom)
+<span class="lineNum">    1072 </span>            :         {
+<span class="lineNum">    1073 </span>            :             PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);
+<span class="lineNum">    1074 </span>            :             goto unlock;
+<span class="lineNum">    1075 </span>            :         }
+<span class="lineNum">    1076 </span>            :         bottom-&gt;secret-&gt;state = _PR_FILEDESC_CLOSED;
+<span class="lineNum">    1077 </span>            : #if 0
+<span class="lineNum">    1078 </span>            :         fprintf(stderr, &quot;cancel wait recv: closing socket\n&quot;);
+<span class="lineNum">    1079 </span>            : #endif
+<span class="lineNum">    1080 </span>            :         if (closesocket(bottom-&gt;secret-&gt;md.osfd) == SOCKET_ERROR)
+<span class="lineNum">    1081 </span>            :         {
+<span class="lineNum">    1082 </span>            :             fprintf(stderr, &quot;closesocket failed: %d\n&quot;, WSAGetLastError());
+<span class="lineNum">    1083 </span>            :             exit(1);
+<span class="lineNum">    1084 </span>            :         }
+<span class="lineNum">    1085 </span>            :     }
+<span class="lineNum">    1086 </span>            : #else
+<span class="lineNum">    1087 </span><span class="lineNoCov">          0 :     if (NULL != (recv_wait = _MW_LookupInternal(group, desc-&gt;fd)))</span>
+<span class="lineNum">    1088 </span>            :     {
+<span class="lineNum">    1089 </span>            :         /* it was in the wait table */
+<span class="lineNum">    1090 </span><span class="lineNoCov">          0 :         _MW_DoneInternal(group, recv_wait, PR_MW_INTERRUPT);</span>
+<span class="lineNum">    1091 </span><span class="lineNoCov">          0 :         goto unlock;</span>
+<span class="lineNum">    1092 </span>            :     }
+<span class="lineNum">    1093 </span><span class="lineNoCov">          0 :     if (!PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready))</span>
+<span class="lineNum">    1094 </span>            :     {
+<span class="lineNum">    1095 </span>            :         /* is it already complete? */
+<span class="lineNum">    1096 </span><span class="lineNoCov">          0 :         PRCList *head = PR_LIST_HEAD(&amp;group-&gt;io_ready);</span>
+<span class="lineNum">    1097 </span>            :         do
+<span class="lineNum">    1098 </span>            :         {
+<span class="lineNum">    1099 </span><span class="lineNoCov">          0 :             PRRecvWait *done = (PRRecvWait*)head;</span>
+<span class="lineNum">    1100 </span><span class="lineNoCov">          0 :             if (done == desc) goto unlock;</span>
+<span class="lineNum">    1101 </span><span class="lineNoCov">          0 :             head = PR_NEXT_LINK(head);</span>
+<span class="lineNum">    1102 </span><span class="lineNoCov">          0 :         } while (head != &amp;group-&gt;io_ready);</span>
+<span class="lineNum">    1103 </span>            :     }
+<span class="lineNum">    1104 </span><span class="lineNoCov">          0 :     PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);</span>
+<span class="lineNum">    1105 </span><span class="lineNoCov">          0 :     rv = PR_FAILURE;</span>
+<span class="lineNum">    1106 </span>            : 
+<span class="lineNum">    1107 </span>            : #endif
+<span class="lineNum">    1108 </span>            : unlock:
+<span class="lineNum">    1109 </span><span class="lineNoCov">          0 :     PR_Unlock(group-&gt;ml);</span>
+<span class="lineNum">    1110 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">    1111 </span>            : }  /* PR_CancelWaitFileDesc */
+<span class="lineNum">    1112 </span>            : 
+<span class="lineNum">    1113 </span>            : PR_IMPLEMENT(PRRecvWait*) PR_CancelWaitGroup(PRWaitGroup *group)
+<span class="lineNum">    1114 </span>            : {
+<span class="lineNum">    1115 </span>            :     PRRecvWait **desc;
+<span class="lineNum">    1116 </span><span class="lineNoCov">          0 :     PRRecvWait *recv_wait = NULL;</span>
+<span class="lineNum">    1117 </span>            : #ifdef WINNT
+<span class="lineNum">    1118 </span>            :     _MDOverlapped *overlapped;
+<span class="lineNum">    1119 </span>            :     PRRecvWait **end;
+<span class="lineNum">    1120 </span>            :     PRThread *me = _PR_MD_CURRENT_THREAD();
+<span class="lineNum">    1121 </span>            : #endif
+<span class="lineNum">    1122 </span>            : 
+<span class="lineNum">    1123 </span><span class="lineNoCov">          0 :     if (NULL == group) group = mw_state-&gt;group;</span>
+<span class="lineNum">    1124 </span><span class="lineNoCov">          0 :     PR_ASSERT(NULL != group);</span>
+<span class="lineNum">    1125 </span><span class="lineNoCov">          0 :     if (NULL == group)</span>
+<span class="lineNum">    1126 </span>            :     {
+<span class="lineNum">    1127 </span><span class="lineNoCov">          0 :         PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);</span>
+<span class="lineNum">    1128 </span><span class="lineNoCov">          0 :         return NULL;</span>
+<span class="lineNum">    1129 </span>            :     }
+<span class="lineNum">    1130 </span>            : 
+<span class="lineNum">    1131 </span><span class="lineNoCov">          0 :     PR_Lock(group-&gt;ml);</span>
+<span class="lineNum">    1132 </span><span class="lineNoCov">          0 :     if (_prmw_stopped != group-&gt;state)</span>
+<span class="lineNum">    1133 </span>            :     {
+<span class="lineNum">    1134 </span><span class="lineNoCov">          0 :         if (_prmw_running == group-&gt;state)</span>
+<span class="lineNum">    1135 </span><span class="lineNoCov">          0 :             group-&gt;state = _prmw_stopping;  /* so nothing new comes in */</span>
+<span class="lineNum">    1136 </span><span class="lineNoCov">          0 :         if (0 == group-&gt;waiting_threads)  /* is there anybody else? */</span>
+<span class="lineNum">    1137 </span><span class="lineNoCov">          0 :             group-&gt;state = _prmw_stopped;  /* we can stop right now */</span>
+<span class="lineNum">    1138 </span>            :         else
+<span class="lineNum">    1139 </span>            :         {
+<span class="lineNum">    1140 </span><span class="lineNoCov">          0 :             PR_NotifyAllCondVar(group-&gt;new_business);</span>
+<span class="lineNum">    1141 </span><span class="lineNoCov">          0 :             PR_NotifyAllCondVar(group-&gt;io_complete);</span>
+<span class="lineNum">    1142 </span>            :         }
+<span class="lineNum">    1143 </span><span class="lineNoCov">          0 :         while (_prmw_stopped != group-&gt;state)</span>
+<span class="lineNum">    1144 </span><span class="lineNoCov">          0 :             (void)PR_WaitCondVar(group-&gt;mw_manage, PR_INTERVAL_NO_TIMEOUT);</span>
+<span class="lineNum">    1145 </span>            :     }
+<span class="lineNum">    1146 </span>            : 
+<span class="lineNum">    1147 </span>            : #ifdef WINNT
+<span class="lineNum">    1148 </span>            :     _PR_MD_LOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">    1149 </span>            : #endif
+<span class="lineNum">    1150 </span>            :     /* make all the existing descriptors look done/interrupted */
+<span class="lineNum">    1151 </span>            : #ifdef WINNT
+<span class="lineNum">    1152 </span>            :     end = &amp;group-&gt;waiter-&gt;recv_wait + group-&gt;waiter-&gt;length;
+<span class="lineNum">    1153 </span>            :     for (desc = &amp;group-&gt;waiter-&gt;recv_wait; desc &lt; end; ++desc)
+<span class="lineNum">    1154 </span>            :     {
+<span class="lineNum">    1155 </span>            :         if (NULL != *desc)
+<span class="lineNum">    1156 </span>            :         {
+<span class="lineNum">    1157 </span>            :             if (InterlockedCompareExchange((LONG *)&amp;(*desc)-&gt;outcome,
+<span class="lineNum">    1158 </span>            :                 (LONG)PR_MW_INTERRUPT, (LONG)PR_MW_PENDING)
+<span class="lineNum">    1159 </span>            :                 == (LONG)PR_MW_PENDING)
+<span class="lineNum">    1160 </span>            :             {
+<span class="lineNum">    1161 </span>            :                 PRFileDesc *bottom = PR_GetIdentitiesLayer(
+<span class="lineNum">    1162 </span>            :                     (*desc)-&gt;fd, PR_NSPR_IO_LAYER);
+<span class="lineNum">    1163 </span>            :                 PR_ASSERT(NULL != bottom);
+<span class="lineNum">    1164 </span>            :                 if (NULL == bottom)
+<span class="lineNum">    1165 </span>            :                 {
+<span class="lineNum">    1166 </span>            :                     PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);
+<span class="lineNum">    1167 </span>            :                     goto invalid_arg;
+<span class="lineNum">    1168 </span>            :                 }
+<span class="lineNum">    1169 </span>            :                 bottom-&gt;secret-&gt;state = _PR_FILEDESC_CLOSED;
+<span class="lineNum">    1170 </span>            : #if 0
+<span class="lineNum">    1171 </span>            :                 fprintf(stderr, &quot;cancel wait group: closing socket\n&quot;);
+<span class="lineNum">    1172 </span>            : #endif
+<span class="lineNum">    1173 </span>            :                 if (closesocket(bottom-&gt;secret-&gt;md.osfd) == SOCKET_ERROR)
+<span class="lineNum">    1174 </span>            :                 {
+<span class="lineNum">    1175 </span>            :                     fprintf(stderr, &quot;closesocket failed: %d\n&quot;,
+<span class="lineNum">    1176 </span>            :                         WSAGetLastError());
+<span class="lineNum">    1177 </span>            :                     exit(1);
+<span class="lineNum">    1178 </span>            :                 }
+<span class="lineNum">    1179 </span>            :             }
+<span class="lineNum">    1180 </span>            :         }
+<span class="lineNum">    1181 </span>            :     }
+<span class="lineNum">    1182 </span>            :     while (group-&gt;waiter-&gt;count &gt; 0)
+<span class="lineNum">    1183 </span>            :     {
+<span class="lineNum">    1184 </span>            :         _PR_THREAD_LOCK(me);
+<span class="lineNum">    1185 </span>            :         me-&gt;state = _PR_IO_WAIT;
+<span class="lineNum">    1186 </span>            :         PR_APPEND_LINK(&amp;me-&gt;waitQLinks, &amp;group-&gt;wait_list);
+<span class="lineNum">    1187 </span>            :         if (!_PR_IS_NATIVE_THREAD(me))
+<span class="lineNum">    1188 </span>            :         {
+<span class="lineNum">    1189 </span>            :             _PR_SLEEPQ_LOCK(me-&gt;cpu);
+<span class="lineNum">    1190 </span>            :             _PR_ADD_SLEEPQ(me, PR_INTERVAL_NO_TIMEOUT);
+<span class="lineNum">    1191 </span>            :             _PR_SLEEPQ_UNLOCK(me-&gt;cpu);
+<span class="lineNum">    1192 </span>            :         }
+<span class="lineNum">    1193 </span>            :         _PR_THREAD_UNLOCK(me);
+<span class="lineNum">    1194 </span>            :         _PR_MD_UNLOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">    1195 </span>            :         PR_Unlock(group-&gt;ml);
+<span class="lineNum">    1196 </span>            :         _PR_MD_WAIT(me, PR_INTERVAL_NO_TIMEOUT);
+<span class="lineNum">    1197 </span>            :         me-&gt;state = _PR_RUNNING;
+<span class="lineNum">    1198 </span>            :         PR_Lock(group-&gt;ml);
+<span class="lineNum">    1199 </span>            :         _PR_MD_LOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">    1200 </span>            :     }
+<span class="lineNum">    1201 </span>            : #else
+<span class="lineNum">    1202 </span><span class="lineNoCov">          0 :     for (desc = &amp;group-&gt;waiter-&gt;recv_wait; group-&gt;waiter-&gt;count &gt; 0; ++desc)</span>
+<span class="lineNum">    1203 </span>            :     {
+<span class="lineNum">    1204 </span><span class="lineNoCov">          0 :         PR_ASSERT(desc &lt; &amp;group-&gt;waiter-&gt;recv_wait + group-&gt;waiter-&gt;length);</span>
+<span class="lineNum">    1205 </span><span class="lineNoCov">          0 :         if (NULL != *desc)</span>
+<span class="lineNum">    1206 </span><span class="lineNoCov">          0 :             _MW_DoneInternal(group, desc, PR_MW_INTERRUPT);</span>
+<span class="lineNum">    1207 </span>            :     }
+<span class="lineNum">    1208 </span>            : #endif
+<span class="lineNum">    1209 </span>            : 
+<span class="lineNum">    1210 </span>            :     /* take first element of finished list and return it or NULL */
+<span class="lineNum">    1211 </span><span class="lineNoCov">          0 :     if (PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready))</span>
+<span class="lineNum">    1212 </span><span class="lineNoCov">          0 :         PR_SetError(PR_GROUP_EMPTY_ERROR, 0);</span>
+<span class="lineNum">    1213 </span>            :     else
+<span class="lineNum">    1214 </span>            :     {
+<span class="lineNum">    1215 </span><span class="lineNoCov">          0 :         PRCList *head = PR_LIST_HEAD(&amp;group-&gt;io_ready);</span>
+<span class="lineNum">    1216 </span><span class="lineNoCov">          0 :         PR_REMOVE_AND_INIT_LINK(head);</span>
+<span class="lineNum">    1217 </span>            : #ifdef WINNT
+<span class="lineNum">    1218 </span>            :         overlapped = (_MDOverlapped *)
+<span class="lineNum">    1219 </span>            :             ((char *)head - offsetof(_MDOverlapped, data));
+<span class="lineNum">    1220 </span>            :         head = &amp;overlapped-&gt;data.mw.desc-&gt;internal;
+<span class="lineNum">    1221 </span>            :         if (NULL != overlapped-&gt;data.mw.timer)
+<span class="lineNum">    1222 </span>            :         {
+<span class="lineNum">    1223 </span>            :             PR_ASSERT(PR_INTERVAL_NO_TIMEOUT
+<span class="lineNum">    1224 </span>            :                 != overlapped-&gt;data.mw.desc-&gt;timeout);
+<span class="lineNum">    1225 </span>            :             CancelTimer(overlapped-&gt;data.mw.timer);
+<span class="lineNum">    1226 </span>            :         }
+<span class="lineNum">    1227 </span>            :         else
+<span class="lineNum">    1228 </span>            :         {
+<span class="lineNum">    1229 </span>            :             PR_ASSERT(PR_INTERVAL_NO_TIMEOUT
+<span class="lineNum">    1230 </span>            :                 == overlapped-&gt;data.mw.desc-&gt;timeout);
+<span class="lineNum">    1231 </span>            :         }
+<span class="lineNum">    1232 </span>            :         PR_DELETE(overlapped);
+<span class="lineNum">    1233 </span>            : #endif
+<span class="lineNum">    1234 </span><span class="lineNoCov">          0 :         recv_wait = (PRRecvWait*)head;</span>
+<span class="lineNum">    1235 </span>            :     }
+<span class="lineNum">    1236 </span>            : #ifdef WINNT
+<span class="lineNum">    1237 </span>            : invalid_arg:
+<span class="lineNum">    1238 </span>            :     _PR_MD_UNLOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">    1239 </span>            : #endif
+<span class="lineNum">    1240 </span><span class="lineNoCov">          0 :     PR_Unlock(group-&gt;ml);</span>
+<span class="lineNum">    1241 </span>            : 
+<span class="lineNum">    1242 </span><span class="lineNoCov">          0 :     return recv_wait;</span>
+<span class="lineNum">    1243 </span>            : }  /* PR_CancelWaitGroup */
+<span class="lineNum">    1244 </span>            : 
+<span class="lineNum">    1245 </span>            : PR_IMPLEMENT(PRWaitGroup*) PR_CreateWaitGroup(PRInt32 size /* ignored */)
+<span class="lineNum">    1246 </span>            : {
+<span class="lineNum">    1247 </span>            :     PRWaitGroup *wg;
+<span class="lineNum">    1248 </span>            : 
+<span class="lineNum">    1249 </span><span class="lineNoCov">          0 :     if (NULL == (wg = PR_NEWZAP(PRWaitGroup)))</span>
+<span class="lineNum">    1250 </span>            :     {
+<span class="lineNum">    1251 </span><span class="lineNoCov">          0 :         PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);</span>
+<span class="lineNum">    1252 </span><span class="lineNoCov">          0 :         goto failed;</span>
+<span class="lineNum">    1253 </span>            :     }
+<span class="lineNum">    1254 </span>            :     /* the wait group itself */
+<span class="lineNum">    1255 </span><span class="lineNoCov">          0 :     wg-&gt;ml = PR_NewLock();</span>
+<span class="lineNum">    1256 </span><span class="lineNoCov">          0 :     if (NULL == wg-&gt;ml) goto failed_lock;</span>
+<span class="lineNum">    1257 </span><span class="lineNoCov">          0 :     wg-&gt;io_taken = PR_NewCondVar(wg-&gt;ml);</span>
+<span class="lineNum">    1258 </span><span class="lineNoCov">          0 :     if (NULL == wg-&gt;io_taken) goto failed_cvar0;</span>
+<span class="lineNum">    1259 </span><span class="lineNoCov">          0 :     wg-&gt;io_complete = PR_NewCondVar(wg-&gt;ml);</span>
+<span class="lineNum">    1260 </span><span class="lineNoCov">          0 :     if (NULL == wg-&gt;io_complete) goto failed_cvar1;</span>
+<span class="lineNum">    1261 </span><span class="lineNoCov">          0 :     wg-&gt;new_business = PR_NewCondVar(wg-&gt;ml);</span>
+<span class="lineNum">    1262 </span><span class="lineNoCov">          0 :     if (NULL == wg-&gt;new_business) goto failed_cvar2;</span>
+<span class="lineNum">    1263 </span><span class="lineNoCov">          0 :     wg-&gt;mw_manage = PR_NewCondVar(wg-&gt;ml);</span>
+<span class="lineNum">    1264 </span><span class="lineNoCov">          0 :     if (NULL == wg-&gt;mw_manage) goto failed_cvar3;</span>
+<span class="lineNum">    1265 </span>            : 
+<span class="lineNum">    1266 </span><span class="lineNoCov">          0 :     PR_INIT_CLIST(&amp;wg-&gt;group_link);</span>
+<span class="lineNum">    1267 </span><span class="lineNoCov">          0 :     PR_INIT_CLIST(&amp;wg-&gt;io_ready);</span>
+<span class="lineNum">    1268 </span>            : 
+<span class="lineNum">    1269 </span>            :     /* the waiters sequence */
+<span class="lineNum">    1270 </span><span class="lineNoCov">          0 :     wg-&gt;waiter = (_PRWaiterHash*)PR_CALLOC(</span>
+<span class="lineNum">    1271 </span>            :         sizeof(_PRWaiterHash) +
+<span class="lineNum">    1272 </span>            :         (_PR_DEFAULT_HASH_LENGTH * sizeof(PRRecvWait*)));
+<span class="lineNum">    1273 </span><span class="lineNoCov">          0 :     if (NULL == wg-&gt;waiter)</span>
+<span class="lineNum">    1274 </span>            :     {
+<span class="lineNum">    1275 </span><span class="lineNoCov">          0 :         PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);</span>
+<span class="lineNum">    1276 </span><span class="lineNoCov">          0 :         goto failed_waiter;</span>
+<span class="lineNum">    1277 </span>            :     }
+<span class="lineNum">    1278 </span><span class="lineNoCov">          0 :     wg-&gt;waiter-&gt;count = 0;</span>
+<span class="lineNum">    1279 </span><span class="lineNoCov">          0 :     wg-&gt;waiter-&gt;length = _PR_DEFAULT_HASH_LENGTH;</span>
+<span class="lineNum">    1280 </span>            : 
+<span class="lineNum">    1281 </span>            : #ifdef WINNT
+<span class="lineNum">    1282 </span>            :     _PR_MD_NEW_LOCK(&amp;wg-&gt;mdlock);
+<span class="lineNum">    1283 </span>            :     PR_INIT_CLIST(&amp;wg-&gt;wait_list);
+<span class="lineNum">    1284 </span>            : #endif /* WINNT */
+<span class="lineNum">    1285 </span>            : 
+<span class="lineNum">    1286 </span><span class="lineNoCov">          0 :     PR_Lock(mw_lock);</span>
+<span class="lineNum">    1287 </span><span class="lineNoCov">          0 :     PR_APPEND_LINK(&amp;wg-&gt;group_link, &amp;mw_state-&gt;group_list);</span>
+<span class="lineNum">    1288 </span><span class="lineNoCov">          0 :     PR_Unlock(mw_lock);</span>
+<span class="lineNum">    1289 </span><span class="lineNoCov">          0 :     return wg;</span>
+<span class="lineNum">    1290 </span>            : 
+<span class="lineNum">    1291 </span>            : failed_waiter:
+<span class="lineNum">    1292 </span><span class="lineNoCov">          0 :     PR_DestroyCondVar(wg-&gt;mw_manage);</span>
+<span class="lineNum">    1293 </span>            : failed_cvar3:
+<span class="lineNum">    1294 </span><span class="lineNoCov">          0 :     PR_DestroyCondVar(wg-&gt;new_business);</span>
+<span class="lineNum">    1295 </span>            : failed_cvar2:
+<span class="lineNum">    1296 </span><span class="lineNoCov">          0 :     PR_DestroyCondVar(wg-&gt;io_complete);</span>
+<span class="lineNum">    1297 </span>            : failed_cvar1:
+<span class="lineNum">    1298 </span><span class="lineNoCov">          0 :     PR_DestroyCondVar(wg-&gt;io_taken);</span>
+<span class="lineNum">    1299 </span>            : failed_cvar0:
+<span class="lineNum">    1300 </span><span class="lineNoCov">          0 :     PR_DestroyLock(wg-&gt;ml);</span>
+<span class="lineNum">    1301 </span>            : failed_lock:
+<span class="lineNum">    1302 </span><span class="lineNoCov">          0 :     PR_DELETE(wg);</span>
+<span class="lineNum">    1303 </span><span class="lineNoCov">          0 :     wg = NULL;</span>
+<span class="lineNum">    1304 </span>            : 
+<span class="lineNum">    1305 </span>            : failed:
+<span class="lineNum">    1306 </span><span class="lineNoCov">          0 :     return wg;</span>
+<span class="lineNum">    1307 </span>            : }  /* MW_CreateWaitGroup */
+<span class="lineNum">    1308 </span>            : 
+<span class="lineNum">    1309 </span>            : PR_IMPLEMENT(PRStatus) PR_DestroyWaitGroup(PRWaitGroup *group)
+<span class="lineNum">    1310 </span>            : {
+<span class="lineNum">    1311 </span><span class="lineNoCov">          0 :     PRStatus rv = PR_SUCCESS;</span>
+<span class="lineNum">    1312 </span><span class="lineNoCov">          0 :     if (NULL == group) group = mw_state-&gt;group;</span>
+<span class="lineNum">    1313 </span><span class="lineNoCov">          0 :     PR_ASSERT(NULL != group);</span>
+<span class="lineNum">    1314 </span><span class="lineNoCov">          0 :     if (NULL != group)</span>
+<span class="lineNum">    1315 </span>            :     {
+<span class="lineNum">    1316 </span><span class="lineNoCov">          0 :         PR_Lock(group-&gt;ml);</span>
+<span class="lineNum">    1317 </span><span class="lineNoCov">          0 :         if ((group-&gt;waiting_threads == 0)</span>
+<span class="lineNum">    1318 </span><span class="lineNoCov">          0 :         &amp;&amp; (group-&gt;waiter-&gt;count == 0)</span>
+<span class="lineNum">    1319 </span><span class="lineNoCov">          0 :         &amp;&amp; PR_CLIST_IS_EMPTY(&amp;group-&gt;io_ready))</span>
+<span class="lineNum">    1320 </span>            :         {
+<span class="lineNum">    1321 </span><span class="lineNoCov">          0 :             group-&gt;state = _prmw_stopped;</span>
+<span class="lineNum">    1322 </span>            :         }
+<span class="lineNum">    1323 </span>            :         else
+<span class="lineNum">    1324 </span>            :         {
+<span class="lineNum">    1325 </span><span class="lineNoCov">          0 :             PR_SetError(PR_INVALID_STATE_ERROR, 0);</span>
+<span class="lineNum">    1326 </span><span class="lineNoCov">          0 :             rv = PR_FAILURE;</span>
+<span class="lineNum">    1327 </span>            :         }
+<span class="lineNum">    1328 </span><span class="lineNoCov">          0 :         PR_Unlock(group-&gt;ml);</span>
+<span class="lineNum">    1329 </span><span class="lineNoCov">          0 :         if (PR_FAILURE == rv) return rv;</span>
+<span class="lineNum">    1330 </span>            : 
+<span class="lineNum">    1331 </span><span class="lineNoCov">          0 :         PR_Lock(mw_lock);</span>
+<span class="lineNum">    1332 </span><span class="lineNoCov">          0 :         PR_REMOVE_LINK(&amp;group-&gt;group_link);</span>
+<span class="lineNum">    1333 </span><span class="lineNoCov">          0 :         PR_Unlock(mw_lock);</span>
+<span class="lineNum">    1334 </span>            : 
+<span class="lineNum">    1335 </span>            : #ifdef WINNT
+<span class="lineNum">    1336 </span>            :         /*
+<span class="lineNum">    1337 </span>            :          * XXX make sure wait_list is empty and waiter is empty.
+<span class="lineNum">    1338 </span>            :          * These must be checked while holding mdlock.
+<span class="lineNum">    1339 </span>            :          */
+<span class="lineNum">    1340 </span>            :         _PR_MD_FREE_LOCK(&amp;group-&gt;mdlock);
+<span class="lineNum">    1341 </span>            : #endif
+<span class="lineNum">    1342 </span>            : 
+<span class="lineNum">    1343 </span><span class="lineNoCov">          0 :         PR_DELETE(group-&gt;waiter);</span>
+<span class="lineNum">    1344 </span><span class="lineNoCov">          0 :         PR_DELETE(group-&gt;polling_list);</span>
+<span class="lineNum">    1345 </span><span class="lineNoCov">          0 :         PR_DestroyCondVar(group-&gt;mw_manage);</span>
+<span class="lineNum">    1346 </span><span class="lineNoCov">          0 :         PR_DestroyCondVar(group-&gt;new_business);</span>
+<span class="lineNum">    1347 </span><span class="lineNoCov">          0 :         PR_DestroyCondVar(group-&gt;io_complete);</span>
+<span class="lineNum">    1348 </span><span class="lineNoCov">          0 :         PR_DestroyCondVar(group-&gt;io_taken);</span>
+<span class="lineNum">    1349 </span><span class="lineNoCov">          0 :         PR_DestroyLock(group-&gt;ml);</span>
+<span class="lineNum">    1350 </span><span class="lineNoCov">          0 :         if (group == mw_state-&gt;group) mw_state-&gt;group = NULL;</span>
+<span class="lineNum">    1351 </span><span class="lineNoCov">          0 :         PR_DELETE(group);</span>
+<span class="lineNum">    1352 </span>            :     }
+<span class="lineNum">    1353 </span>            :     else
+<span class="lineNum">    1354 </span>            :     {
+<span class="lineNum">    1355 </span>            :         /* The default wait group is not created yet. */
+<span class="lineNum">    1356 </span><span class="lineNoCov">          0 :         PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);</span>
+<span class="lineNum">    1357 </span><span class="lineNoCov">          0 :         rv = PR_FAILURE;</span>
+<span class="lineNum">    1358 </span>            :     }
+<span class="lineNum">    1359 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">    1360 </span>            : }  /* PR_DestroyWaitGroup */
+<span class="lineNum">    1361 </span>            : 
+<span class="lineNum">    1362 </span>            : /**********************************************************************
+<span class="lineNum">    1363 </span>            : ***********************************************************************
+<span class="lineNum">    1364 </span>            : ******************** Wait group enumerations **************************
+<span class="lineNum">    1365 </span>            : ***********************************************************************
+<span class="lineNum">    1366 </span>            : **********************************************************************/
+<span class="lineNum">    1367 </span>            : 
+<span class="lineNum">    1368 </span>            : PR_IMPLEMENT(PRMWaitEnumerator*) PR_CreateMWaitEnumerator(PRWaitGroup *group)
+<span class="lineNum">    1369 </span>            : {
+<span class="lineNum">    1370 </span><span class="lineNoCov">          0 :     PRMWaitEnumerator *enumerator = PR_NEWZAP(PRMWaitEnumerator);</span>
+<span class="lineNum">    1371 </span><span class="lineNoCov">          0 :     if (NULL == enumerator) PR_SetError(PR_OUT_OF_MEMORY_ERROR, 0);</span>
+<span class="lineNum">    1372 </span>            :     else
+<span class="lineNum">    1373 </span>            :     {
+<span class="lineNum">    1374 </span><span class="lineNoCov">          0 :         enumerator-&gt;group = group;</span>
+<span class="lineNum">    1375 </span><span class="lineNoCov">          0 :         enumerator-&gt;seal = _PR_ENUM_SEALED;</span>
+<span class="lineNum">    1376 </span>            :     }
+<span class="lineNum">    1377 </span><span class="lineNoCov">          0 :     return enumerator;</span>
+<span class="lineNum">    1378 </span>            : }  /* PR_CreateMWaitEnumerator */
+<span class="lineNum">    1379 </span>            : 
+<span class="lineNum">    1380 </span>            : PR_IMPLEMENT(PRStatus) PR_DestroyMWaitEnumerator(PRMWaitEnumerator* enumerator)
+<span class="lineNum">    1381 </span>            : {
+<span class="lineNum">    1382 </span><span class="lineNoCov">          0 :     PR_ASSERT(NULL != enumerator);</span>
+<span class="lineNum">    1383 </span><span class="lineNoCov">          0 :     PR_ASSERT(_PR_ENUM_SEALED == enumerator-&gt;seal);</span>
+<span class="lineNum">    1384 </span><span class="lineNoCov">          0 :     if ((NULL == enumerator) || (_PR_ENUM_SEALED != enumerator-&gt;seal))</span>
+<span class="lineNum">    1385 </span>            :     {
+<span class="lineNum">    1386 </span><span class="lineNoCov">          0 :         PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);</span>
+<span class="lineNum">    1387 </span><span class="lineNoCov">          0 :         return PR_FAILURE;</span>
+<span class="lineNum">    1388 </span>            :     }
+<span class="lineNum">    1389 </span><span class="lineNoCov">          0 :     enumerator-&gt;seal = _PR_ENUM_UNSEALED;</span>
+<span class="lineNum">    1390 </span><span class="lineNoCov">          0 :     PR_Free(enumerator);</span>
+<span class="lineNum">    1391 </span><span class="lineNoCov">          0 :     return PR_SUCCESS;</span>
+<span class="lineNum">    1392 </span>            : }  /* PR_DestroyMWaitEnumerator */
+<span class="lineNum">    1393 </span>            : 
+<span class="lineNum">    1394 </span>            : PR_IMPLEMENT(PRRecvWait*) PR_EnumerateWaitGroup(
+<span class="lineNum">    1395 </span>            :     PRMWaitEnumerator *enumerator, const PRRecvWait *previous)
+<span class="lineNum">    1396 </span>            : {
+<span class="lineNum">    1397 </span><span class="lineNoCov">          0 :     PRRecvWait *result = NULL;</span>
+<span class="lineNum">    1398 </span>            :     
+<span class="lineNum">    1399 </span>            :     /* entry point sanity checking */
+<span class="lineNum">    1400 </span><span class="lineNoCov">          0 :     PR_ASSERT(NULL != enumerator);</span>
+<span class="lineNum">    1401 </span><span class="lineNoCov">          0 :     PR_ASSERT(_PR_ENUM_SEALED == enumerator-&gt;seal);</span>
+<span class="lineNum">    1402 </span><span class="lineNoCov">          0 :     if ((NULL == enumerator)</span>
+<span class="lineNum">    1403 </span><span class="lineNoCov">          0 :     || (_PR_ENUM_SEALED != enumerator-&gt;seal)) goto bad_argument;</span>
+<span class="lineNum">    1404 </span>            : 
+<span class="lineNum">    1405 </span>            :     /* beginning of enumeration */
+<span class="lineNum">    1406 </span><span class="lineNoCov">          0 :     if (NULL == previous)</span>
+<span class="lineNum">    1407 </span>            :     {
+<span class="lineNum">    1408 </span><span class="lineNoCov">          0 :         if (NULL == enumerator-&gt;group)</span>
+<span class="lineNum">    1409 </span>            :         {
+<span class="lineNum">    1410 </span><span class="lineNoCov">          0 :             enumerator-&gt;group = mw_state-&gt;group;</span>
+<span class="lineNum">    1411 </span><span class="lineNoCov">          0 :             if (NULL == enumerator-&gt;group)</span>
+<span class="lineNum">    1412 </span>            :             {
+<span class="lineNum">    1413 </span><span class="lineNoCov">          0 :                 PR_SetError(PR_GROUP_EMPTY_ERROR, 0);</span>
+<span class="lineNum">    1414 </span><span class="lineNoCov">          0 :                 return NULL;</span>
+<span class="lineNum">    1415 </span>            :             }
+<span class="lineNum">    1416 </span>            :         }
+<span class="lineNum">    1417 </span><span class="lineNoCov">          0 :         enumerator-&gt;waiter = &amp;enumerator-&gt;group-&gt;waiter-&gt;recv_wait;</span>
+<span class="lineNum">    1418 </span><span class="lineNoCov">          0 :         enumerator-&gt;p_timestamp = enumerator-&gt;group-&gt;p_timestamp;</span>
+<span class="lineNum">    1419 </span><span class="lineNoCov">          0 :         enumerator-&gt;thread = PR_GetCurrentThread();</span>
+<span class="lineNum">    1420 </span><span class="lineNoCov">          0 :         enumerator-&gt;index = 0;</span>
+<span class="lineNum">    1421 </span>            :     }
+<span class="lineNum">    1422 </span>            :     /* continuing an enumeration */
+<span class="lineNum">    1423 </span>            :     else
+<span class="lineNum">    1424 </span>            :     {
+<span class="lineNum">    1425 </span><span class="lineNoCov">          0 :         PRThread *me = PR_GetCurrentThread();</span>
+<span class="lineNum">    1426 </span><span class="lineNoCov">          0 :         PR_ASSERT(me == enumerator-&gt;thread);</span>
+<span class="lineNum">    1427 </span><span class="lineNoCov">          0 :         if (me != enumerator-&gt;thread) goto bad_argument;</span>
+<span class="lineNum">    1428 </span>            : 
+<span class="lineNum">    1429 </span>            :         /* need to restart the enumeration */
+<span class="lineNum">    1430 </span><span class="lineNoCov">          0 :         if (enumerator-&gt;p_timestamp != enumerator-&gt;group-&gt;p_timestamp)</span>
+<span class="lineNum">    1431 </span><span class="lineNoCov">          0 :             return PR_EnumerateWaitGroup(enumerator, NULL);</span>
+<span class="lineNum">    1432 </span>            :     }
+<span class="lineNum">    1433 </span>            : 
+<span class="lineNum">    1434 </span>            :     /* actually progress the enumeration */
+<span class="lineNum">    1435 </span>            : #if defined(WINNT)
+<span class="lineNum">    1436 </span>            :     _PR_MD_LOCK(&amp;enumerator-&gt;group-&gt;mdlock);
+<span class="lineNum">    1437 </span>            : #else
+<span class="lineNum">    1438 </span><span class="lineNoCov">          0 :     PR_Lock(enumerator-&gt;group-&gt;ml);</span>
+<span class="lineNum">    1439 </span>            : #endif
+<span class="lineNum">    1440 </span><span class="lineNoCov">          0 :     while (enumerator-&gt;index++ &lt; enumerator-&gt;group-&gt;waiter-&gt;length)</span>
+<span class="lineNum">    1441 </span>            :     {
+<span class="lineNum">    1442 </span><span class="lineNoCov">          0 :         if (NULL != (result = *(enumerator-&gt;waiter)++)) break;</span>
+<span class="lineNum">    1443 </span>            :     }
+<span class="lineNum">    1444 </span>            : #if defined(WINNT)
+<span class="lineNum">    1445 </span>            :     _PR_MD_UNLOCK(&amp;enumerator-&gt;group-&gt;mdlock);
+<span class="lineNum">    1446 </span>            : #else
+<span class="lineNum">    1447 </span><span class="lineNoCov">          0 :     PR_Unlock(enumerator-&gt;group-&gt;ml);</span>
+<span class="lineNum">    1448 </span>            : #endif
+<span class="lineNum">    1449 </span>            : 
+<span class="lineNum">    1450 </span><span class="lineNoCov">          0 :     return result;  /* what we live for */</span>
+<span class="lineNum">    1451 </span>            : 
+<span class="lineNum">    1452 </span>            : bad_argument:
+<span class="lineNum">    1453 </span><span class="lineNoCov">          0 :     PR_SetError(PR_INVALID_ARGUMENT_ERROR, 0);</span>
+<span class="lineNum">    1454 </span><span class="lineNoCov">          0 :     return NULL;  /* probably ambiguous */</span>
+<span class="lineNum">    1455 </span>            : }  /* PR_EnumerateWaitGroup */
+<span class="lineNum">    1456 </span>            : 
+<span class="lineNum">    1457 </span>            : /* prmwait.c */
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

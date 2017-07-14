@@ -1,0 +1,508 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/call/bitrate_allocator.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/call</a> - bitrate_allocator.cc<span style="font-size: 80%;"> (source / <a href="bitrate_allocator.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">230</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">18</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2015 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  *
+<span class="lineNum">      10 </span>            :  */
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : #include &quot;webrtc/call/bitrate_allocator.h&quot;
+<span class="lineNum">      13 </span>            : 
+<span class="lineNum">      14 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      15 </span>            : #include &lt;utility&gt;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;webrtc/base/logging.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;webrtc/modules/bitrate_controller/include/bitrate_controller.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;webrtc/system_wrappers/include/clock.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;webrtc/system_wrappers/include/metrics.h&quot;
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : namespace webrtc {
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : // Allow packets to be transmitted in up to 2 times max video bitrate if the
+<span class="lineNum">      26 </span>            : // bandwidth estimate allows it.
+<span class="lineNum">      27 </span>            : const int kTransmissionMaxBitrateMultiplier = 2;
+<span class="lineNum">      28 </span>            : const int kDefaultBitrateBps = 300000;
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : // Require a bitrate increase of max(10%, 20kbps) to resume paused streams.
+<span class="lineNum">      31 </span>            : const double kToggleFactor = 0.1;
+<span class="lineNum">      32 </span>            : const uint32_t kMinToggleBitrateBps = 20000;
+<span class="lineNum">      33 </span>            : 
+<span class="lineNum">      34 </span>            : const int64_t kBweLogIntervalMs = 5000;
+<span class="lineNum">      35 </span>            : 
+<a name="36"><span class="lineNum">      36 </span>            : namespace {</a>
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span><span class="lineNoCov">          0 : double MediaRatio(uint32_t allocated_bitrate, uint32_t protection_bitrate) {</span>
+<span class="lineNum">      39 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GT(allocated_bitrate, 0);</span>
+<span class="lineNum">      40 </span><span class="lineNoCov">          0 :   if (protection_bitrate == 0)</span>
+<span class="lineNum">      41 </span><span class="lineNoCov">          0 :     return 1.0;</span>
+<span class="lineNum">      42 </span>            : 
+<span class="lineNum">      43 </span><span class="lineNoCov">          0 :   uint32_t media_bitrate = allocated_bitrate - protection_bitrate;</span>
+<span class="lineNum">      44 </span><span class="lineNoCov">          0 :   return media_bitrate / static_cast&lt;double&gt;(allocated_bitrate);</span>
+<span class="lineNum">      45 </span>            : }
+<a name="46"><span class="lineNum">      46 </span>            : }  // namespace</a>
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 : BitrateAllocator::BitrateAllocator(LimitObserver* limit_observer)</span>
+<span class="lineNum">      49 </span>            :     : limit_observer_(limit_observer),
+<span class="lineNum">      50 </span>            :       bitrate_observer_configs_(),
+<span class="lineNum">      51 </span>            :       last_bitrate_bps_(0),
+<span class="lineNum">      52 </span>            :       last_non_zero_bitrate_bps_(kDefaultBitrateBps),
+<span class="lineNum">      53 </span>            :       last_fraction_loss_(0),
+<span class="lineNum">      54 </span>            :       last_rtt_(0),
+<span class="lineNum">      55 </span>            :       num_pause_events_(0),
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :       clock_(Clock::GetRealTimeClock()),</span>
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :       last_bwe_log_time_(0) {</span>
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 :   sequenced_checker_.Detach();</span>
+<a name="59"><span class="lineNum">      59 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      60 </span>            : 
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 : BitrateAllocator::~BitrateAllocator() {</span>
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :   RTC_HISTOGRAM_COUNTS_100(&quot;WebRTC.Call.NumberOfPauseEvents&quot;,</span>
+<span class="lineNum">      63 </span>            :                            num_pause_events_);
+<a name="64"><span class="lineNum">      64 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      65 </span>            : 
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 : void BitrateAllocator::OnNetworkChanged(uint32_t target_bitrate_bps,</span>
+<span class="lineNum">      67 </span>            :                                         uint8_t fraction_loss,
+<span class="lineNum">      68 </span>            :                                         int64_t rtt,
+<span class="lineNum">      69 </span>            :                                         int64_t probing_interval_ms) {
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :   last_bitrate_bps_ = target_bitrate_bps;</span>
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :   last_non_zero_bitrate_bps_ =</span>
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :       target_bitrate_bps &gt; 0 ? target_bitrate_bps : last_non_zero_bitrate_bps_;</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :   last_fraction_loss_ = fraction_loss;</span>
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 :   last_rtt_ = rtt;</span>
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :   last_probing_interval_ms_ = probing_interval_ms;</span>
+<span class="lineNum">      77 </span>            : 
+<span class="lineNum">      78 </span>            :   // Periodically log the incoming BWE.
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :   int64_t now = clock_-&gt;TimeInMilliseconds();</span>
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :   if (now &gt; last_bwe_log_time_ + kBweLogIntervalMs) {</span>
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :     LOG(LS_INFO) &lt;&lt; &quot;Current BWE &quot; &lt;&lt; target_bitrate_bps;</span>
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :     last_bwe_log_time_ = now;</span>
+<span class="lineNum">      83 </span>            :   }
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :   ObserverAllocation allocation = AllocateBitrates(target_bitrate_bps);</span>
+<span class="lineNum">      86 </span>            : 
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :   for (auto&amp; config : bitrate_observer_configs_) {</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :     uint32_t allocated_bitrate = allocation[config.observer];</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :     uint32_t protection_bitrate = config.observer-&gt;OnBitrateUpdated(</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :         allocated_bitrate, last_fraction_loss_, last_rtt_,</span>
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :         last_probing_interval_ms_);</span>
+<span class="lineNum">      92 </span>            : 
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :     if (allocated_bitrate == 0 &amp;&amp; config.allocated_bitrate_bps &gt; 0) {</span>
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :       if (target_bitrate_bps &gt; 0)</span>
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :         ++num_pause_events_;</span>
+<span class="lineNum">      96 </span>            :       // The protection bitrate is an estimate based on the ratio between media
+<span class="lineNum">      97 </span>            :       // and protection used before this observer was muted.
+<span class="lineNum">      98 </span>            :       uint32_t predicted_protection_bps =
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :           (1.0 - config.media_ratio) * config.min_bitrate_bps;</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :       LOG(LS_INFO) &lt;&lt; &quot;Pausing observer &quot; &lt;&lt; config.observer</span>
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; with configured min bitrate &quot; &lt;&lt; config.min_bitrate_bps</span>
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; and current estimate of &quot; &lt;&lt; target_bitrate_bps</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; and protection bitrate &quot; &lt;&lt; predicted_protection_bps;</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :     } else if (allocated_bitrate &gt; 0 &amp;&amp; config.allocated_bitrate_bps == 0) {</span>
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :       if (target_bitrate_bps &gt; 0)</span>
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :         ++num_pause_events_;</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :       LOG(LS_INFO) &lt;&lt; &quot;Resuming observer &quot; &lt;&lt; config.observer</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot;, configured min bitrate &quot; &lt;&lt; config.min_bitrate_bps</span>
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot;, current allocation &quot; &lt;&lt; allocated_bitrate</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; and protection bitrate &quot; &lt;&lt; protection_bitrate;</span>
+<span class="lineNum">     111 </span>            :     }
+<span class="lineNum">     112 </span>            : 
+<span class="lineNum">     113 </span>            :     // Only update the media ratio if the observer got an allocation.
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :     if (allocated_bitrate &gt; 0)</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :       config.media_ratio = MediaRatio(allocated_bitrate, protection_bitrate);</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :     config.allocated_bitrate_bps = allocated_bitrate;</span>
+<span class="lineNum">     117 </span>            :   }
+<a name="118"><span class="lineNum">     118 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     119 </span>            : 
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 : void BitrateAllocator::AddObserver(BitrateAllocatorObserver* observer,</span>
+<span class="lineNum">     121 </span>            :                                    uint32_t min_bitrate_bps,
+<span class="lineNum">     122 </span>            :                                    uint32_t max_bitrate_bps,
+<span class="lineNum">     123 </span>            :                                    uint32_t pad_up_bitrate_bps,
+<span class="lineNum">     124 </span>            :                                    bool enforce_min_bitrate) {
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :   auto it = FindObserverConfig(observer);</span>
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span>            :   // Update settings if the observer already exists, create a new one otherwise.
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :   if (it != bitrate_observer_configs_.end()) {</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :     it-&gt;min_bitrate_bps = min_bitrate_bps;</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :     it-&gt;max_bitrate_bps = max_bitrate_bps;</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :     it-&gt;pad_up_bitrate_bps = pad_up_bitrate_bps;</span>
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :     it-&gt;enforce_min_bitrate = enforce_min_bitrate;</span>
+<span class="lineNum">     134 </span>            :   } else {
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :     bitrate_observer_configs_.push_back(</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :         ObserverConfig(observer, min_bitrate_bps, max_bitrate_bps,</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :                        pad_up_bitrate_bps, enforce_min_bitrate));</span>
+<span class="lineNum">     138 </span>            :   }
+<span class="lineNum">     139 </span>            : 
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :   ObserverAllocation allocation;</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :   if (last_bitrate_bps_ &gt; 0) {</span>
+<span class="lineNum">     142 </span>            :     // Calculate a new allocation and update all observers.
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :     allocation = AllocateBitrates(last_bitrate_bps_);</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :     for (auto&amp; config : bitrate_observer_configs_) {</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :       uint32_t allocated_bitrate = allocation[config.observer];</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :       uint32_t protection_bitrate = config.observer-&gt;OnBitrateUpdated(</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :           allocated_bitrate, last_fraction_loss_, last_rtt_,</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :           last_probing_interval_ms_);</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :       config.allocated_bitrate_bps = allocated_bitrate;</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :       if (allocated_bitrate &gt; 0)</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :         config.media_ratio = MediaRatio(allocated_bitrate, protection_bitrate);</span>
+<span class="lineNum">     152 </span>            :     }
+<span class="lineNum">     153 </span>            :   } else {
+<span class="lineNum">     154 </span>            :     // Currently, an encoder is not allowed to produce frames.
+<span class="lineNum">     155 </span>            :     // But we still have to return the initial config bitrate + let the
+<span class="lineNum">     156 </span>            :     // observer know that it can not produce frames.
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :     allocation = AllocateBitrates(last_non_zero_bitrate_bps_);</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     observer-&gt;OnBitrateUpdated(0, last_fraction_loss_, last_rtt_,</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :                                last_probing_interval_ms_);</span>
+<span class="lineNum">     160 </span>            :   }
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :   UpdateAllocationLimits();</span>
+<a name="162"><span class="lineNum">     162 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     163 </span>            : 
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 : void BitrateAllocator::UpdateAllocationLimits() {</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :   uint32_t total_requested_padding_bitrate = 0;</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :   uint32_t total_requested_min_bitrate = 0;</span>
+<span class="lineNum">     168 </span>            : 
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :   for (const auto&amp; config : bitrate_observer_configs_) {</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :     if (config.enforce_min_bitrate) {</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :       total_requested_min_bitrate += config.min_bitrate_bps;</span>
+<span class="lineNum">     172 </span>            :     }
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :     total_requested_padding_bitrate += config.pad_up_bitrate_bps;</span>
+<span class="lineNum">     174 </span>            :   }
+<span class="lineNum">     175 </span>            : 
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :   LOG(LS_INFO) &lt;&lt; &quot;UpdateAllocationLimits : total_requested_min_bitrate: &quot;</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :                &lt;&lt; total_requested_min_bitrate</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :                &lt;&lt; &quot;bps, total_requested_padding_bitrate: &quot;</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :                &lt;&lt; total_requested_padding_bitrate &lt;&lt; &quot;bps&quot;;</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :   limit_observer_-&gt;OnAllocationLimitsChanged(total_requested_min_bitrate,</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :                                              total_requested_padding_bitrate);</span>
+<a name="182"><span class="lineNum">     182 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 : void BitrateAllocator::RemoveObserver(BitrateAllocatorObserver* observer) {</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :   auto it = FindObserverConfig(observer);</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :   if (it != bitrate_observer_configs_.end()) {</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :     bitrate_observer_configs_.erase(it);</span>
+<span class="lineNum">     189 </span>            :   }
+<span class="lineNum">     190 </span>            : 
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :   UpdateAllocationLimits();</span>
+<a name="192"><span class="lineNum">     192 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     193 </span>            : 
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 : int BitrateAllocator::GetStartBitrate(BitrateAllocatorObserver* observer) {</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :   const auto&amp; it = FindObserverConfig(observer);</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   if (it == bitrate_observer_configs_.end()) {</span>
+<span class="lineNum">     198 </span>            :     // This observer hasn't been added yet, just give it its fair share.
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :     return last_non_zero_bitrate_bps_ /</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :            static_cast&lt;int&gt;((bitrate_observer_configs_.size() + 1));</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :   } else if (it-&gt;allocated_bitrate_bps == -1) {</span>
+<span class="lineNum">     202 </span>            :     // This observer hasn't received an allocation yet, so do the same.
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :     return last_non_zero_bitrate_bps_ /</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :            static_cast&lt;int&gt;(bitrate_observer_configs_.size());</span>
+<span class="lineNum">     205 </span>            :   } else {
+<span class="lineNum">     206 </span>            :     // This observer already has an allocation.
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :     return it-&gt;allocated_bitrate_bps;</span>
+<span class="lineNum">     208 </span>            :   }
+<span class="lineNum">     209 </span>            : }
+<a name="210"><span class="lineNum">     210 </span>            : </a>
+<span class="lineNum">     211 </span>            : BitrateAllocator::ObserverConfigs::iterator
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 : BitrateAllocator::FindObserverConfig(const BitrateAllocatorObserver* observer) {</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :   for (auto it = bitrate_observer_configs_.begin();</span>
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :        it != bitrate_observer_configs_.end(); ++it) {</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :     if (it-&gt;observer == observer)</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :       return it;</span>
+<span class="lineNum">     218 </span>            :   }
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :   return bitrate_observer_configs_.end();</span>
+<a name="220"><span class="lineNum">     220 </span>            : }</a>
+<span class="lineNum">     221 </span>            : 
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 : BitrateAllocator::ObserverAllocation BitrateAllocator::AllocateBitrates(</span>
+<span class="lineNum">     223 </span>            :     uint32_t bitrate) {
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :   if (bitrate_observer_configs_.empty())</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :     return ObserverAllocation();</span>
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :   if (bitrate == 0)</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     return ZeroRateAllocation();</span>
+<span class="lineNum">     230 </span>            : 
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :   uint32_t sum_min_bitrates = 0;</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   uint32_t sum_max_bitrates = 0;</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :   for (const auto&amp; observer_config : bitrate_observer_configs_) {</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :     sum_min_bitrates += observer_config.min_bitrate_bps;</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :     sum_max_bitrates += observer_config.max_bitrate_bps;</span>
+<span class="lineNum">     236 </span>            :   }
+<span class="lineNum">     237 </span>            : 
+<span class="lineNum">     238 </span>            :   // Not enough for all observers to get an allocation, allocate according to:
+<span class="lineNum">     239 </span>            :   // enforced min bitrate -&gt; allocated bitrate previous round -&gt; restart paused
+<span class="lineNum">     240 </span>            :   // streams.
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :   if (!EnoughBitrateForAllObservers(bitrate, sum_min_bitrates))</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :     return LowRateAllocation(bitrate);</span>
+<span class="lineNum">     243 </span>            : 
+<span class="lineNum">     244 </span>            :   // All observers will get their min bitrate plus an even share of the rest.
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :   if (bitrate &lt;= sum_max_bitrates)</span>
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :     return NormalRateAllocation(bitrate, sum_min_bitrates);</span>
+<span class="lineNum">     247 </span>            : 
+<span class="lineNum">     248 </span>            :   // All observers will get up to kTransmissionMaxBitrateMultiplier x max.
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :   return MaxRateAllocation(bitrate, sum_max_bitrates);</span>
+<a name="250"><span class="lineNum">     250 </span>            : }</a>
+<span class="lineNum">     251 </span>            : 
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 : BitrateAllocator::ObserverAllocation BitrateAllocator::ZeroRateAllocation() {</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :   ObserverAllocation allocation;</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :   for (const auto&amp; observer_config : bitrate_observer_configs_)</span>
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :     allocation[observer_config.observer] = 0;</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :   return allocation;</span>
+<a name="258"><span class="lineNum">     258 </span>            : }</a>
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 : BitrateAllocator::ObserverAllocation BitrateAllocator::LowRateAllocation(</span>
+<span class="lineNum">     261 </span>            :     uint32_t bitrate) {
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :   ObserverAllocation allocation;</span>
+<span class="lineNum">     264 </span>            :   // Start by allocating bitrate to observers enforcing a min bitrate, hence
+<span class="lineNum">     265 </span>            :   // remaining_bitrate might turn negative.
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :   int64_t remaining_bitrate = bitrate;</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :   for (const auto&amp; observer_config : bitrate_observer_configs_) {</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :     int32_t allocated_bitrate = 0;</span>
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :     if (observer_config.enforce_min_bitrate)</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :       allocated_bitrate = observer_config.min_bitrate_bps;</span>
+<span class="lineNum">     271 </span>            : 
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :     allocation[observer_config.observer] = allocated_bitrate;</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     remaining_bitrate -= allocated_bitrate;</span>
+<span class="lineNum">     274 </span>            :   }
+<span class="lineNum">     275 </span>            : 
+<span class="lineNum">     276 </span>            :   // Allocate bitrate to all previously active streams.
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   if (remaining_bitrate &gt; 0) {</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :     for (const auto&amp; observer_config : bitrate_observer_configs_) {</span>
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :       if (observer_config.enforce_min_bitrate ||</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :           LastAllocatedBitrate(observer_config) == 0)</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :         continue;</span>
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :       uint32_t required_bitrate = MinBitrateWithHysteresis(observer_config);</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :       if (remaining_bitrate &gt;= required_bitrate) {</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :         allocation[observer_config.observer] = required_bitrate;</span>
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :         remaining_bitrate -= required_bitrate;</span>
+<span class="lineNum">     287 </span>            :       }
+<span class="lineNum">     288 </span>            :     }
+<span class="lineNum">     289 </span>            :   }
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span>            :   // Allocate bitrate to previously paused streams.
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :   if (remaining_bitrate &gt; 0) {</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :     for (const auto&amp; observer_config : bitrate_observer_configs_) {</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :       if (LastAllocatedBitrate(observer_config) != 0)</span>
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :         continue;</span>
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span>            :       // Add a hysteresis to avoid toggling.
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :       uint32_t required_bitrate = MinBitrateWithHysteresis(observer_config);</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :       if (remaining_bitrate &gt;= required_bitrate) {</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :         allocation[observer_config.observer] = required_bitrate;</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :         remaining_bitrate -= required_bitrate;</span>
+<span class="lineNum">     302 </span>            :       }
+<span class="lineNum">     303 </span>            :     }
+<span class="lineNum">     304 </span>            :   }
+<span class="lineNum">     305 </span>            : 
+<span class="lineNum">     306 </span>            :   // Split a possible remainder evenly on all streams with an allocation.
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :   if (remaining_bitrate &gt; 0)</span>
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :     DistributeBitrateEvenly(remaining_bitrate, false, 1, &amp;allocation);</span>
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(allocation.size(), bitrate_observer_configs_.size());</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :   return allocation;</span>
+<a name="312"><span class="lineNum">     312 </span>            : }</a>
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 : BitrateAllocator::ObserverAllocation BitrateAllocator::NormalRateAllocation(</span>
+<span class="lineNum">     315 </span>            :     uint32_t bitrate,
+<span class="lineNum">     316 </span>            :     uint32_t sum_min_bitrates) {
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :   ObserverAllocation allocation;</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :   for (const auto&amp; observer_config : bitrate_observer_configs_)</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     allocation[observer_config.observer] = observer_config.min_bitrate_bps;</span>
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :   bitrate -= sum_min_bitrates;</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :   if (bitrate &gt; 0)</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :     DistributeBitrateEvenly(bitrate, true, 1, &amp;allocation);</span>
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :   return allocation;</span>
+<a name="327"><span class="lineNum">     327 </span>            : }</a>
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 : BitrateAllocator::ObserverAllocation BitrateAllocator::MaxRateAllocation(</span>
+<span class="lineNum">     330 </span>            :     uint32_t bitrate,
+<span class="lineNum">     331 </span>            :     uint32_t sum_max_bitrates) {
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :   ObserverAllocation allocation;</span>
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :   for (const auto&amp; observer_config : bitrate_observer_configs_) {</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :     allocation[observer_config.observer] = observer_config.max_bitrate_bps;</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :     bitrate -= observer_config.max_bitrate_bps;</span>
+<span class="lineNum">     338 </span>            :   }
+<span class="lineNum">     339 </span>            :   DistributeBitrateEvenly(bitrate, true, kTransmissionMaxBitrateMultiplier,
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :                           &amp;allocation);</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :   return allocation;</span>
+<a name="342"><span class="lineNum">     342 </span>            : }</a>
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 : uint32_t BitrateAllocator::LastAllocatedBitrate(</span>
+<span class="lineNum">     345 </span>            :     const ObserverConfig&amp; observer_config) {
+<span class="lineNum">     346 </span>            :   // Return the configured minimum bitrate for newly added observers, to avoid
+<span class="lineNum">     347 </span>            :   // requiring an extra high bitrate for the observer to get an allocated
+<span class="lineNum">     348 </span>            :   // bitrate.
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :   return observer_config.allocated_bitrate_bps == -1</span>
+<span class="lineNum">     350 </span>            :              ? observer_config.min_bitrate_bps
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :              : observer_config.allocated_bitrate_bps;</span>
+<a name="352"><span class="lineNum">     352 </span>            : }</a>
+<span class="lineNum">     353 </span>            : 
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 : uint32_t BitrateAllocator::MinBitrateWithHysteresis(</span>
+<span class="lineNum">     355 </span>            :     const ObserverConfig&amp; observer_config) {
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :   uint32_t min_bitrate = observer_config.min_bitrate_bps;</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :   if (LastAllocatedBitrate(observer_config) == 0) {</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :     min_bitrate += std::max(static_cast&lt;uint32_t&gt;(kToggleFactor * min_bitrate),</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :                             kMinToggleBitrateBps);</span>
+<span class="lineNum">     360 </span>            :   }
+<span class="lineNum">     361 </span>            :   // Account for protection bitrate used by this observer in the previous
+<span class="lineNum">     362 </span>            :   // allocation.
+<span class="lineNum">     363 </span>            :   // Note: the ratio will only be updated when the stream is active, meaning a
+<span class="lineNum">     364 </span>            :   // paused stream won't get any ratio updates. This might lead to waiting a bit
+<span class="lineNum">     365 </span>            :   // longer than necessary if the network condition improves, but this is to
+<span class="lineNum">     366 </span>            :   // avoid too much toggling.
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :   if (observer_config.media_ratio &gt; 0.0 &amp;&amp; observer_config.media_ratio &lt; 1.0)</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :     min_bitrate += min_bitrate * (1.0 - observer_config.media_ratio);</span>
+<span class="lineNum">     369 </span>            : 
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :   return min_bitrate;</span>
+<a name="371"><span class="lineNum">     371 </span>            : }</a>
+<span class="lineNum">     372 </span>            : 
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 : void BitrateAllocator::DistributeBitrateEvenly(uint32_t bitrate,</span>
+<span class="lineNum">     374 </span>            :                                                bool include_zero_allocations,
+<span class="lineNum">     375 </span>            :                                                int max_multiplier,
+<span class="lineNum">     376 </span>            :                                                ObserverAllocation* allocation) {
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(allocation-&gt;size(), bitrate_observer_configs_.size());</span>
+<span class="lineNum">     379 </span>            : 
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :   ObserverSortingMap list_max_bitrates;</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :   for (const auto&amp; observer_config : bitrate_observer_configs_) {</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :     if (include_zero_allocations ||</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :         allocation-&gt;at(observer_config.observer) != 0) {</span>
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :       list_max_bitrates.insert(std::pair&lt;uint32_t, const ObserverConfig*&gt;(</span>
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :           observer_config.max_bitrate_bps, &amp;observer_config));</span>
+<span class="lineNum">     386 </span>            :     }
+<span class="lineNum">     387 </span>            :   }
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :   auto it = list_max_bitrates.begin();</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :   while (it != list_max_bitrates.end()) {</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :     RTC_DCHECK_GT(bitrate, 0);</span>
+<span class="lineNum">     391 </span>            :     uint32_t extra_allocation =
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :         bitrate / static_cast&lt;uint32_t&gt;(list_max_bitrates.size());</span>
+<span class="lineNum">     393 </span>            :     uint32_t total_allocation =
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :         extra_allocation + allocation-&gt;at(it-&gt;second-&gt;observer);</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :     bitrate -= extra_allocation;</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :     if (total_allocation &gt; max_multiplier * it-&gt;first) {</span>
+<span class="lineNum">     397 </span>            :       // There is more than we can fit for this observer, carry over to the
+<span class="lineNum">     398 </span>            :       // remaining observers.
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :       bitrate += total_allocation - max_multiplier * it-&gt;first;</span>
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :       total_allocation = max_multiplier * it-&gt;first;</span>
+<span class="lineNum">     401 </span>            :     }
+<span class="lineNum">     402 </span>            :     // Finally, update the allocation for this observer.
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :     allocation-&gt;at(it-&gt;second-&gt;observer) = total_allocation;</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :     it = list_max_bitrates.erase(it);</span>
+<span class="lineNum">     405 </span>            :   }
+<a name="406"><span class="lineNum">     406 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     407 </span>            : 
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 : bool BitrateAllocator::EnoughBitrateForAllObservers(uint32_t bitrate,</span>
+<span class="lineNum">     409 </span>            :                                                     uint32_t sum_min_bitrates) {
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :   RTC_DCHECK_CALLED_SEQUENTIALLY(&amp;sequenced_checker_);</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :   if (bitrate &lt; sum_min_bitrates)</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     413 </span>            : 
+<span class="lineNum">     414 </span>            :   uint32_t extra_bitrate_per_observer =
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :       (bitrate - sum_min_bitrates) /</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :       static_cast&lt;uint32_t&gt;(bitrate_observer_configs_.size());</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :   for (const auto&amp; observer_config : bitrate_observer_configs_) {</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :     if (observer_config.min_bitrate_bps + extra_bitrate_per_observer &lt;</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :         MinBitrateWithHysteresis(observer_config))</span>
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     421 </span>            :   }
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">     423 </span>            : }
+<span class="lineNum">     424 </span>            : }  // namespace webrtc
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

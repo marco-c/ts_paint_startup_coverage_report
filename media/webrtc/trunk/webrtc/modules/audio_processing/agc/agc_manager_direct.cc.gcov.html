@@ -1,0 +1,539 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/audio_processing/agc/agc_manager_direct.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/audio_processing/agc</a> - agc_manager_direct.cc<span style="font-size: 80%;"> (source / <a href="agc_manager_direct.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">193</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">18</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2013 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;webrtc/modules/audio_processing/agc/agc_manager_direct.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &lt;cmath&gt;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">      16 </span>            : #include &lt;cstdio&gt;
+<span class="lineNum">      17 </span>            : #endif
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;webrtc/modules/audio_processing/agc/gain_map_internal.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;webrtc/modules/audio_processing/gain_control_impl.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;webrtc/modules/include/module_common_types.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;webrtc/system_wrappers/include/logging.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;webrtc/system_wrappers/include/metrics.h&quot;
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : namespace webrtc {
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : namespace {
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : // Amount the microphone level is lowered with every clipping event.
+<span class="lineNum">      31 </span>            : const int kClippedLevelStep = 15;
+<span class="lineNum">      32 </span>            : // Proportion of clipped samples required to declare a clipping event.
+<span class="lineNum">      33 </span>            : const float kClippedRatioThreshold = 0.1f;
+<span class="lineNum">      34 </span>            : // Time in frames to wait after a clipping event before checking again.
+<span class="lineNum">      35 </span>            : const int kClippedWaitFrames = 300;
+<span class="lineNum">      36 </span>            : 
+<span class="lineNum">      37 </span>            : // Amount of error we tolerate in the microphone level (presumably due to OS
+<span class="lineNum">      38 </span>            : // quantization) before we assume the user has manually adjusted the microphone.
+<span class="lineNum">      39 </span>            : const int kLevelQuantizationSlack = 25;
+<span class="lineNum">      40 </span>            : 
+<span class="lineNum">      41 </span>            : const int kDefaultCompressionGain = 7;
+<span class="lineNum">      42 </span>            : const int kMaxCompressionGain = 12;
+<span class="lineNum">      43 </span>            : const int kMinCompressionGain = 2;
+<span class="lineNum">      44 </span>            : // Controls the rate of compression changes towards the target.
+<span class="lineNum">      45 </span>            : const float kCompressionGainStep = 0.05f;
+<span class="lineNum">      46 </span>            : 
+<span class="lineNum">      47 </span>            : const int kMaxMicLevel = 255;
+<span class="lineNum">      48 </span>            : static_assert(kGainMapSize &gt; kMaxMicLevel, &quot;gain map too small&quot;);
+<span class="lineNum">      49 </span>            : const int kMinMicLevel = 12;
+<span class="lineNum">      50 </span>            : 
+<span class="lineNum">      51 </span>            : // Prevent very large microphone level changes.
+<span class="lineNum">      52 </span>            : const int kMaxResidualGainChange = 15;
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span>            : // Maximum additional gain allowed to compensate for microphone level
+<span class="lineNum">      55 </span>            : // restrictions from clipping events.
+<a name="56"><span class="lineNum">      56 </span>            : const int kSurplusCompressionGain = 6;</a>
+<span class="lineNum">      57 </span>            : 
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 : int ClampLevel(int mic_level) {</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :   return std::min(std::max(kMinMicLevel, mic_level), kMaxMicLevel);</span>
+<a name="60"><span class="lineNum">      60 </span>            : }</a>
+<span class="lineNum">      61 </span>            : 
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 : int LevelFromGainError(int gain_error, int level) {</span>
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GE(level, 0);</span>
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(level, kMaxMicLevel);</span>
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :   if (gain_error == 0) {</span>
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 :     return level;</span>
+<span class="lineNum">      67 </span>            :   }
+<span class="lineNum">      68 </span>            :   // TODO(ajm): Could be made more efficient with a binary search.
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :   int new_level = level;</span>
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :   if (gain_error &gt; 0) {</span>
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :     while (kGainMap[new_level] - kGainMap[level] &lt; gain_error &amp;&amp;</span>
+<span class="lineNum">      72 </span>            :           new_level &lt; kMaxMicLevel) {
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :       ++new_level;</span>
+<span class="lineNum">      74 </span>            :     }
+<span class="lineNum">      75 </span>            :   } else {
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :     while (kGainMap[new_level] - kGainMap[level] &gt; gain_error &amp;&amp;</span>
+<span class="lineNum">      77 </span>            :           new_level &gt; kMinMicLevel) {
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :       --new_level;</span>
+<span class="lineNum">      79 </span>            :     }
+<span class="lineNum">      80 </span>            :   }
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :   return new_level;</span>
+<span class="lineNum">      82 </span>            : }
+<span class="lineNum">      83 </span>            : 
+<span class="lineNum">      84 </span>            : }  // namespace
+<span class="lineNum">      85 </span>            : 
+<span class="lineNum">      86 </span>            : // Facility for dumping debug audio files. All methods are no-ops in the
+<span class="lineNum">      87 </span>            : // default case where WEBRTC_AGC_DEBUG_DUMP is undefined.
+<span class="lineNum">      88 </span>            : class DebugFile {
+<span class="lineNum">      89 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">      90 </span>            :  public:
+<span class="lineNum">      91 </span>            :   explicit DebugFile(const char* filename)
+<span class="lineNum">      92 </span>            :       : file_(fopen(filename, &quot;wb&quot;)) {
+<span class="lineNum">      93 </span>            :     RTC_DCHECK(file_);
+<span class="lineNum">      94 </span>            :   }
+<span class="lineNum">      95 </span>            :   ~DebugFile() {
+<span class="lineNum">      96 </span>            :     fclose(file_);
+<span class="lineNum">      97 </span>            :   }
+<span class="lineNum">      98 </span>            :   void Write(const int16_t* data, size_t length_samples) {
+<span class="lineNum">      99 </span>            :     fwrite(data, 1, length_samples * sizeof(int16_t), file_);
+<span class="lineNum">     100 </span>            :   }
+<span class="lineNum">     101 </span>            :  private:
+<span class="lineNum">     102 </span>            :   FILE* file_;
+<a name="103"><span class="lineNum">     103 </span>            : #else</a>
+<span class="lineNum">     104 </span>            :  public:
+<a name="105"><span class="lineNum">     105 </span><span class="lineNoCov">          0 :   explicit DebugFile(const char* filename) {</span></a>
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :   }</span>
+<a name="107"><span class="lineNum">     107 </span><span class="lineNoCov">          0 :   ~DebugFile() {</span></a>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :   void Write(const int16_t* data, size_t length_samples) {</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     111 </span>            : #endif  // WEBRTC_AGC_DEBUG_DUMP
+<a name="112"><span class="lineNum">     112 </span>            : };</a>
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 : AgcManagerDirect::AgcManagerDirect(GainControl* gctrl,</span>
+<span class="lineNum">     115 </span>            :                                    VolumeCallbacks* volume_callbacks,
+<span class="lineNum">     116 </span>            :                                    int startup_min_level,
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :                                    int clipped_level_min)</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :     : agc_(new Agc()),</span>
+<span class="lineNum">     119 </span>            :       gctrl_(gctrl),
+<span class="lineNum">     120 </span>            :       volume_callbacks_(volume_callbacks),
+<span class="lineNum">     121 </span>            :       frames_since_clipped_(kClippedWaitFrames),
+<span class="lineNum">     122 </span>            :       level_(0),
+<span class="lineNum">     123 </span>            :       max_level_(kMaxMicLevel),
+<span class="lineNum">     124 </span>            :       max_compression_gain_(kMaxCompressionGain),
+<span class="lineNum">     125 </span>            :       target_compression_(kDefaultCompressionGain),
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :       compression_(target_compression_),</span>
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :       compression_accumulator_(compression_),</span>
+<span class="lineNum">     128 </span>            :       capture_muted_(false),
+<span class="lineNum">     129 </span>            :       check_volume_on_next_process_(true),  // Check at startup.
+<span class="lineNum">     130 </span>            :       startup_(true),
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :       startup_min_level_(ClampLevel(startup_min_level)),</span>
+<span class="lineNum">     132 </span>            :       clipped_level_min_(clipped_level_min),
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :       file_preproc_(new DebugFile(&quot;agc_preproc.pcm&quot;)),</span>
+<a name="134"><span class="lineNum">     134 </span><span class="lineNoCov">          0 :       file_postproc_(new DebugFile(&quot;agc_postproc.pcm&quot;)) {}</span></a>
+<span class="lineNum">     135 </span>            : 
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 : AgcManagerDirect::AgcManagerDirect(Agc* agc,</span>
+<span class="lineNum">     137 </span>            :                                    GainControl* gctrl,
+<span class="lineNum">     138 </span>            :                                    VolumeCallbacks* volume_callbacks,
+<span class="lineNum">     139 </span>            :                                    int startup_min_level,
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :                                    int clipped_level_min)</span>
+<span class="lineNum">     141 </span>            :     : agc_(agc),
+<span class="lineNum">     142 </span>            :       gctrl_(gctrl),
+<span class="lineNum">     143 </span>            :       volume_callbacks_(volume_callbacks),
+<span class="lineNum">     144 </span>            :       frames_since_clipped_(kClippedWaitFrames),
+<span class="lineNum">     145 </span>            :       level_(0),
+<span class="lineNum">     146 </span>            :       max_level_(kMaxMicLevel),
+<span class="lineNum">     147 </span>            :       max_compression_gain_(kMaxCompressionGain),
+<span class="lineNum">     148 </span>            :       target_compression_(kDefaultCompressionGain),
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :       compression_(target_compression_),</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :       compression_accumulator_(compression_),</span>
+<span class="lineNum">     151 </span>            :       capture_muted_(false),
+<span class="lineNum">     152 </span>            :       check_volume_on_next_process_(true),  // Check at startup.
+<span class="lineNum">     153 </span>            :       startup_(true),
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :       startup_min_level_(ClampLevel(startup_min_level)),</span>
+<span class="lineNum">     155 </span>            :       clipped_level_min_(clipped_level_min),
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :       file_preproc_(new DebugFile(&quot;agc_preproc.pcm&quot;)),</span>
+<a name="157"><span class="lineNum">     157 </span><span class="lineNoCov">          0 :       file_postproc_(new DebugFile(&quot;agc_postproc.pcm&quot;)) {}</span></a>
+<span class="lineNum">     158 </span>            : 
+<a name="159"><span class="lineNum">     159 </span><span class="lineNoCov">          0 : AgcManagerDirect::~AgcManagerDirect() {}</span></a>
+<span class="lineNum">     160 </span>            : 
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 : int AgcManagerDirect::Initialize() {</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   max_level_ = kMaxMicLevel;</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :   max_compression_gain_ = kMaxCompressionGain;</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :   target_compression_ = kDefaultCompressionGain;</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :   compression_ = target_compression_;</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :   compression_accumulator_ = compression_;</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :   capture_muted_ = false;</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :   check_volume_on_next_process_ = true;</span>
+<span class="lineNum">     169 </span>            :   // TODO(bjornv): Investigate if we need to reset |startup_| as well. For
+<span class="lineNum">     170 </span>            :   // example, what happens when we change devices.
+<span class="lineNum">     171 </span>            : 
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :   if (gctrl_-&gt;set_mode(GainControl::kFixedDigital) != 0) {</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;set_mode(GainControl::kFixedDigital) failed.&quot;;</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     175 </span>            :   }
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :   if (gctrl_-&gt;set_target_level_dbfs(2) != 0) {</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;set_target_level_dbfs(2) failed.&quot;;</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     179 </span>            :   }
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :   if (gctrl_-&gt;set_compression_gain_db(kDefaultCompressionGain) != 0) {</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;set_compression_gain_db(kDefaultCompressionGain) failed.&quot;;</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     183 </span>            :   }
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :   if (gctrl_-&gt;enable_limiter(true) != 0) {</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;enable_limiter(true) failed.&quot;;</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     187 </span>            :   }
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="189"><span class="lineNum">     189 </span>            : }</a>
+<span class="lineNum">     190 </span>            : 
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 : void AgcManagerDirect::AnalyzePreProcess(int16_t* audio,</span>
+<span class="lineNum">     192 </span>            :                                          int num_channels,
+<span class="lineNum">     193 </span>            :                                          size_t samples_per_channel) {
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :   size_t length = num_channels * samples_per_channel;</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :   if (capture_muted_) {</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     197 </span>            :   }
+<span class="lineNum">     198 </span>            : 
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :   file_preproc_-&gt;Write(audio, length);</span>
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :   if (frames_since_clipped_ &lt; kClippedWaitFrames) {</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :     ++frames_since_clipped_;</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     204 </span>            :   }
+<span class="lineNum">     205 </span>            : 
+<span class="lineNum">     206 </span>            :   // Check for clipped samples, as the AGC has difficulty detecting pitch
+<span class="lineNum">     207 </span>            :   // under clipping distortion. We do this in the preprocessing phase in order
+<span class="lineNum">     208 </span>            :   // to catch clipped echo as well.
+<span class="lineNum">     209 </span>            :   //
+<span class="lineNum">     210 </span>            :   // If we find a sufficiently clipped frame, drop the current microphone level
+<span class="lineNum">     211 </span>            :   // and enforce a new maximum level, dropped the same amount from the current
+<span class="lineNum">     212 </span>            :   // maximum. This harsh treatment is an effort to avoid repeated clipped echo
+<span class="lineNum">     213 </span>            :   // events. As compensation for this restriction, the maximum compression
+<span class="lineNum">     214 </span>            :   // gain is increased, through SetMaxLevel().
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :   float clipped_ratio = agc_-&gt;AnalyzePreproc(audio, length);</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :   if (clipped_ratio &gt; kClippedRatioThreshold) {</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :     LOG(LS_INFO) &lt;&lt; &quot;[agc] Clipping detected. clipped_ratio=&quot;</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :                  &lt;&lt; clipped_ratio;</span>
+<span class="lineNum">     219 </span>            :     // Always decrease the maximum level, even if the current level is below
+<span class="lineNum">     220 </span>            :     // threshold.
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :     SetMaxLevel(std::max(clipped_level_min_, max_level_ - kClippedLevelStep));</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :     RTC_HISTOGRAM_BOOLEAN(&quot;WebRTC.Audio.AgcClippingAdjustmentAllowed&quot;,</span>
+<span class="lineNum">     223 </span>            :                           level_ - kClippedLevelStep &gt;= clipped_level_min_);
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     if (level_ &gt; clipped_level_min_) {</span>
+<span class="lineNum">     225 </span>            :       // Don't try to adjust the level if we're already below the limit. As
+<span class="lineNum">     226 </span>            :       // a consequence, if the user has brought the level above the limit, we
+<span class="lineNum">     227 </span>            :       // will still not react until the postproc updates the level.
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :       SetLevel(std::max(clipped_level_min_, level_ - kClippedLevelStep));</span>
+<span class="lineNum">     229 </span>            :       // Reset the AGC since the level has changed.
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :       agc_-&gt;Reset();</span>
+<span class="lineNum">     231 </span>            :     }
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :     frames_since_clipped_ = 0;</span>
+<span class="lineNum">     233 </span>            :   }
+<a name="234"><span class="lineNum">     234 </span>            : }</a>
+<span class="lineNum">     235 </span>            : 
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 : void AgcManagerDirect::Process(const int16_t* audio,</span>
+<span class="lineNum">     237 </span>            :                                size_t length,
+<span class="lineNum">     238 </span>            :                                int sample_rate_hz) {
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :   if (capture_muted_) {</span>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     241 </span>            :   }
+<span class="lineNum">     242 </span>            : 
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   if (check_volume_on_next_process_) {</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :     check_volume_on_next_process_ = false;</span>
+<span class="lineNum">     245 </span>            :     // We have to wait until the first process call to check the volume,
+<span class="lineNum">     246 </span>            :     // because Chromium doesn't guarantee it to be valid any earlier.
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :     CheckVolumeAndReset();</span>
+<span class="lineNum">     248 </span>            :   }
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   if (agc_-&gt;Process(audio, length, sample_rate_hz) != 0) {</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;Agc::Process failed&quot;;</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     RTC_NOTREACHED();</span>
+<span class="lineNum">     253 </span>            :   }
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :   UpdateGain();</span>
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   UpdateCompressor();</span>
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :   file_postproc_-&gt;Write(audio, length);</span>
+<a name="259"><span class="lineNum">     259 </span>            : }</a>
+<span class="lineNum">     260 </span>            : 
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 : void AgcManagerDirect::SetLevel(int new_level) {</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   int voe_level = volume_callbacks_-&gt;GetMicVolume();</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :   if (voe_level &lt; 0) {</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     265 </span>            :   }
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :   if (voe_level == 0) {</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     LOG(LS_INFO) &lt;&lt; &quot;[agc] VolumeCallbacks returned level=0, taking no action.&quot;;</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     269 </span>            :   }
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :   if (voe_level &gt; kMaxMicLevel) {</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;VolumeCallbacks returned an invalid level=&quot; &lt;&lt; voe_level;</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     273 </span>            :   }
+<span class="lineNum">     274 </span>            : 
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :   if (voe_level &gt; level_ + kLevelQuantizationSlack ||</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :       voe_level &lt; level_ - kLevelQuantizationSlack) {</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :     LOG(LS_INFO) &lt;&lt; &quot;[agc] Mic volume was manually adjusted. Updating &quot;</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :                  &lt;&lt; &quot;stored level from &quot; &lt;&lt; level_ &lt;&lt; &quot; to &quot; &lt;&lt; voe_level;</span>
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :     level_ = voe_level;</span>
+<span class="lineNum">     280 </span>            :     // Always allow the user to increase the volume.
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     if (level_ &gt; max_level_) {</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :       SetMaxLevel(level_);</span>
+<span class="lineNum">     283 </span>            :     }
+<span class="lineNum">     284 </span>            :     // Take no action in this case, since we can't be sure when the volume
+<span class="lineNum">     285 </span>            :     // was manually adjusted. The compressor will still provide some of the
+<span class="lineNum">     286 </span>            :     // desired gain change.
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :     agc_-&gt;Reset();</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     289 </span>            :   }
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   new_level = std::min(new_level, max_level_);</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :   if (new_level == level_) {</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     294 </span>            :   }
+<span class="lineNum">     295 </span>            : 
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :   volume_callbacks_-&gt;SetMicVolume(new_level);</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :   LOG(LS_INFO) &lt;&lt; &quot;[agc] voe_level=&quot; &lt;&lt; voe_level &lt;&lt; &quot;, &quot;</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :                &lt;&lt; &quot;level_=&quot; &lt;&lt; level_ &lt;&lt; &quot;, &quot;</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :                &lt;&lt; &quot;new_level=&quot; &lt;&lt; new_level;</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :   level_ = new_level;</span>
+<a name="301"><span class="lineNum">     301 </span>            : }</a>
+<span class="lineNum">     302 </span>            : 
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 : void AgcManagerDirect::SetMaxLevel(int level) {</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GE(level, clipped_level_min_);</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :   max_level_ = level;</span>
+<span class="lineNum">     306 </span>            :   // Scale the |kSurplusCompressionGain| linearly across the restricted
+<span class="lineNum">     307 </span>            :   // level range.
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :   max_compression_gain_ =</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :       kMaxCompressionGain + std::floor((1.f * kMaxMicLevel - max_level_) /</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :                                            (kMaxMicLevel - clipped_level_min_) *</span>
+<span class="lineNum">     311 </span>            :                                            kSurplusCompressionGain +
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :                                        0.5f);</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :   LOG(LS_INFO) &lt;&lt; &quot;[agc] max_level_=&quot; &lt;&lt; max_level_</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :                &lt;&lt; &quot;, max_compression_gain_=&quot;  &lt;&lt; max_compression_gain_;</span>
+<a name="315"><span class="lineNum">     315 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 : void AgcManagerDirect::SetCaptureMuted(bool muted) {</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :   if (capture_muted_ == muted) {</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     320 </span>            :   }
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :   capture_muted_ = muted;</span>
+<span class="lineNum">     322 </span>            : 
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :   if (!muted) {</span>
+<span class="lineNum">     324 </span>            :     // When we unmute, we should reset things to be safe.
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :     check_volume_on_next_process_ = true;</span>
+<span class="lineNum">     326 </span>            :   }
+<a name="327"><span class="lineNum">     327 </span>            : }</a>
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 : float AgcManagerDirect::voice_probability() {</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :   return agc_-&gt;voice_probability();</span>
+<a name="331"><span class="lineNum">     331 </span>            : }</a>
+<span class="lineNum">     332 </span>            : 
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 : int AgcManagerDirect::CheckVolumeAndReset() {</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :   int level = volume_callbacks_-&gt;GetMicVolume();</span>
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :   if (level &lt; 0) {</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     337 </span>            :   }
+<span class="lineNum">     338 </span>            :   // Reasons for taking action at startup:
+<span class="lineNum">     339 </span>            :   // 1) A person starting a call is expected to be heard.
+<span class="lineNum">     340 </span>            :   // 2) Independent of interpretation of |level| == 0 we should raise it so the
+<span class="lineNum">     341 </span>            :   // AGC can do its job properly.
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :   if (level == 0 &amp;&amp; !startup_) {</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :     LOG(LS_INFO) &lt;&lt; &quot;[agc] VolumeCallbacks returned level=0, taking no action.&quot;;</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     345 </span>            :   }
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :   if (level &gt; kMaxMicLevel) {</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :     LOG(LS_ERROR) &lt;&lt; &quot;VolumeCallbacks returned an invalid level=&quot; &lt;&lt; level;</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     349 </span>            :   }
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :   LOG(LS_INFO) &lt;&lt; &quot;[agc] Initial GetMicVolume()=&quot; &lt;&lt; level;</span>
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :   int minLevel = startup_ ? startup_min_level_ : kMinMicLevel;</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :   if (level &lt; minLevel) {</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :     level = minLevel;</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :     LOG(LS_INFO) &lt;&lt; &quot;[agc] Initial volume too low, raising to &quot; &lt;&lt; level;</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :     volume_callbacks_-&gt;SetMicVolume(level);</span>
+<span class="lineNum">     357 </span>            :   }
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :   agc_-&gt;Reset();</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :   level_ = level;</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   startup_ = false;</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :   return 0;</span>
+<span class="lineNum">     362 </span>            : }
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span>            : // Requests the RMS error from AGC and distributes the required gain change
+<span class="lineNum">     365 </span>            : // between the digital compression stage and volume slider. We use the
+<span class="lineNum">     366 </span>            : // compressor first, providing a slack region around the current slider
+<span class="lineNum">     367 </span>            : // position to reduce movement.
+<span class="lineNum">     368 </span>            : //
+<a name="369"><span class="lineNum">     369 </span>            : // If the slider needs to be moved, we check first if the user has adjusted</a>
+<span class="lineNum">     370 </span>            : // it, in which case we take no action and cache the updated level.
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 : void AgcManagerDirect::UpdateGain() {</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :   int rms_error = 0;</span>
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :   if (!agc_-&gt;GetRmsErrorDb(&amp;rms_error)) {</span>
+<span class="lineNum">     374 </span>            :     // No error update ready.
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     376 </span>            :   }
+<span class="lineNum">     377 </span>            :   // The compressor will always add at least kMinCompressionGain. In effect,
+<span class="lineNum">     378 </span>            :   // this adjusts our target gain upward by the same amount and rms_error
+<span class="lineNum">     379 </span>            :   // needs to reflect that.
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :   rms_error += kMinCompressionGain;</span>
+<span class="lineNum">     381 </span>            : 
+<span class="lineNum">     382 </span>            :   // Handle as much error as possible with the compressor first.
+<span class="lineNum">     383 </span>            :   int raw_compression = std::max(std::min(rms_error, max_compression_gain_),
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :                                  kMinCompressionGain);</span>
+<span class="lineNum">     385 </span>            :   // Deemphasize the compression gain error. Move halfway between the current
+<span class="lineNum">     386 </span>            :   // target and the newly received target. This serves to soften perceptible
+<span class="lineNum">     387 </span>            :   // intra-talkspurt adjustments, at the cost of some adaptation speed.
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :   if ((raw_compression == max_compression_gain_ &amp;&amp;</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :       target_compression_ == max_compression_gain_ - 1) ||</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :       (raw_compression == kMinCompressionGain &amp;&amp;</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :       target_compression_ == kMinCompressionGain + 1)) {</span>
+<span class="lineNum">     392 </span>            :     // Special case to allow the target to reach the endpoints of the
+<span class="lineNum">     393 </span>            :     // compression range. The deemphasis would otherwise halt it at 1 dB shy.
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :     target_compression_ = raw_compression;</span>
+<span class="lineNum">     395 </span>            :   } else {
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :     target_compression_ = (raw_compression - target_compression_) / 2</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :         + target_compression_;</span>
+<span class="lineNum">     398 </span>            :   }
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span>            :   // Residual error will be handled by adjusting the volume slider. Use the
+<span class="lineNum">     401 </span>            :   // raw rather than deemphasized compression here as we would otherwise
+<span class="lineNum">     402 </span>            :   // shrink the amount of slack the compressor provides.
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :   int residual_gain = rms_error - raw_compression;</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :   residual_gain = std::min(std::max(residual_gain, -kMaxResidualGainChange),</span>
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :       kMaxResidualGainChange);</span>
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :   LOG(LS_INFO) &lt;&lt; &quot;[agc] rms_error=&quot; &lt;&lt; rms_error &lt;&lt; &quot;, &quot;</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :                &lt;&lt; &quot;target_compression=&quot; &lt;&lt; target_compression_ &lt;&lt; &quot;, &quot;</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :                &lt;&lt; &quot;residual_gain=&quot; &lt;&lt; residual_gain;</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :   if (residual_gain == 0)</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     411 </span>            : 
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :   int old_level = level_;</span>
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :   SetLevel(LevelFromGainError(residual_gain, level_));</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :   if (old_level != level_) {</span>
+<span class="lineNum">     415 </span>            :     // level_ was updated by SetLevel; log the new value.
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :     RTC_HISTOGRAM_COUNTS_LINEAR(&quot;WebRTC.Audio.AgcSetLevel&quot;, level_, 1,</span>
+<span class="lineNum">     417 </span>            :                                 kMaxMicLevel, 50);
+<span class="lineNum">     418 </span>            :   }
+<a name="419"><span class="lineNum">     419 </span>            : }</a>
+<span class="lineNum">     420 </span>            : 
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 : void AgcManagerDirect::UpdateCompressor() {</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :   if (compression_ == target_compression_) {</span>
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     424 </span>            :   }
+<span class="lineNum">     425 </span>            : 
+<span class="lineNum">     426 </span>            :   // Adapt the compression gain slowly towards the target, in order to avoid
+<span class="lineNum">     427 </span>            :   // highly perceptible changes.
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :   if (target_compression_ &gt; compression_) {</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :     compression_accumulator_ += kCompressionGainStep;</span>
+<span class="lineNum">     430 </span>            :   } else {
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :     compression_accumulator_ -= kCompressionGainStep;</span>
+<span class="lineNum">     432 </span>            :   }
+<span class="lineNum">     433 </span>            : 
+<span class="lineNum">     434 </span>            :   // The compressor accepts integer gains in dB. Adjust the gain when
+<span class="lineNum">     435 </span>            :   // we've come within half a stepsize of the nearest integer.  (We don't
+<span class="lineNum">     436 </span>            :   // check for equality due to potential floating point imprecision).
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :   int new_compression = compression_;</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :   int nearest_neighbor = std::floor(compression_accumulator_ + 0.5);</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :   if (std::fabs(compression_accumulator_ - nearest_neighbor) &lt;</span>
+<span class="lineNum">     440 </span>            :       kCompressionGainStep / 2) {
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :     new_compression = nearest_neighbor;</span>
+<span class="lineNum">     442 </span>            :   }
+<span class="lineNum">     443 </span>            : 
+<span class="lineNum">     444 </span>            :   // Set the new compression gain.
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :   if (new_compression != compression_) {</span>
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :     compression_ = new_compression;</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :     compression_accumulator_ = new_compression;</span>
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :     if (gctrl_-&gt;set_compression_gain_db(compression_) != 0) {</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :       LOG(LS_ERROR) &lt;&lt; &quot;set_compression_gain_db(&quot; &lt;&lt; compression_</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :                     &lt;&lt; &quot;) failed.&quot;;</span>
+<span class="lineNum">     451 </span>            :     }
+<span class="lineNum">     452 </span>            :   }
+<span class="lineNum">     453 </span>            : }
+<span class="lineNum">     454 </span>            : 
+<span class="lineNum">     455 </span>            : }  // namespace webrtc
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

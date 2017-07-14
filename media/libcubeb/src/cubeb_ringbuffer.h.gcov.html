@@ -1,0 +1,568 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/libcubeb/src/cubeb_ringbuffer.h</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">media/libcubeb/src</a> - cubeb_ringbuffer.h<span style="font-size: 80%;"> (source / <a href="cubeb_ringbuffer.h.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">65</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">12</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * Copyright © 2016 Mozilla Foundation
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * This program is made available under an ISC-style license.  See the
+<span class="lineNum">       5 </span>            :  * accompanying file LICENSE for details.
+<span class="lineNum">       6 </span>            :  */
+<span class="lineNum">       7 </span>            : 
+<span class="lineNum">       8 </span>            : #ifndef CUBEB_RING_BUFFER_H
+<span class="lineNum">       9 </span>            : #define CUBEB_RING_BUFFER_H
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;cubeb_utils.h&quot;
+<span class="lineNum">      12 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      13 </span>            : #include &lt;atomic&gt;
+<span class="lineNum">      14 </span>            : #include &lt;cstdint&gt;
+<span class="lineNum">      15 </span>            : #include &lt;memory&gt;
+<span class="lineNum">      16 </span>            : #include &lt;thread&gt;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : /**
+<span class="lineNum">      19 </span>            :  * Single producer single consumer lock-free and wait-free ring buffer.
+<span class="lineNum">      20 </span>            :  *
+<span class="lineNum">      21 </span>            :  * This data structure allows producing data from one thread, and consuming it on
+<span class="lineNum">      22 </span>            :  * another thread, safely and without explicit synchronization. If used on two
+<span class="lineNum">      23 </span>            :  * threads, this data structure uses atomics for thread safety. It is possible
+<span class="lineNum">      24 </span>            :  * to disable the use of atomics at compile time and only use this data
+<span class="lineNum">      25 </span>            :  * structure on one thread.
+<span class="lineNum">      26 </span>            :  *
+<span class="lineNum">      27 </span>            :  * The role for the producer and the consumer must be constant, i.e., the
+<span class="lineNum">      28 </span>            :  * producer should always be on one thread and the consumer should always be on
+<span class="lineNum">      29 </span>            :  * another thread.
+<span class="lineNum">      30 </span>            :  *
+<span class="lineNum">      31 </span>            :  * Some words about the inner workings of this class:
+<span class="lineNum">      32 </span>            :  * - Capacity is fixed. Only one allocation is performed, in the constructor.
+<span class="lineNum">      33 </span>            :  *   When reading and writing, the return value of the method allows checking if
+<span class="lineNum">      34 </span>            :  *   the ring buffer is empty or full.
+<span class="lineNum">      35 </span>            :  * - We always keep the read index at least one element ahead of the write
+<span class="lineNum">      36 </span>            :  *   index, so we can distinguish between an empty and a full ring buffer: an
+<span class="lineNum">      37 </span>            :  *   empty ring buffer is when the write index is at the same position as the
+<span class="lineNum">      38 </span>            :  *   read index. A full buffer is when the write index is exactly one position
+<span class="lineNum">      39 </span>            :  *   before the read index.
+<span class="lineNum">      40 </span>            :  * - We synchronize updates to the read index after having read the data, and
+<span class="lineNum">      41 </span>            :  *   the write index after having written the data. This means that the each
+<span class="lineNum">      42 </span>            :  *   thread can only touch a portion of the buffer that is not touched by the
+<span class="lineNum">      43 </span>            :  *   other thread.
+<span class="lineNum">      44 </span>            :  * - Callers are expected to provide buffers. When writing to the queue,
+<span class="lineNum">      45 </span>            :  *   elements are copied into the internal storage from the buffer passed in.
+<span class="lineNum">      46 </span>            :  *   When reading from the queue, the user is expected to provide a buffer.
+<span class="lineNum">      47 </span>            :  *   Because this is a ring buffer, data might not be contiguous in memory,
+<span class="lineNum">      48 </span>            :  *   providing an external buffer to copy into is an easy way to have linear
+<span class="lineNum">      49 </span>            :  *   data for further processing.
+<a name="50"><span class="lineNum">      50 </span>            :  */</a>
+<span class="lineNum">      51 </span>            : template &lt;typename T&gt;
+<span class="lineNum">      52 </span><span class="lineNoCov">          0 : class ring_buffer_base</span>
+<span class="lineNum">      53 </span>            : {
+<span class="lineNum">      54 </span>            : public:
+<span class="lineNum">      55 </span>            :   /**
+<span class="lineNum">      56 </span>            :    * Constructor for a ring buffer.
+<span class="lineNum">      57 </span>            :    *
+<span class="lineNum">      58 </span>            :    * This performs an allocation, but is the only allocation that will happen
+<span class="lineNum">      59 </span>            :    * for the life time of a `ring_buffer_base`.
+<span class="lineNum">      60 </span>            :    *
+<a name="61"><span class="lineNum">      61 </span>            :    * @param capacity The maximum number of element this ring buffer will hold.</a>
+<span class="lineNum">      62 </span>            :    */
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :   ring_buffer_base(int capacity)</span>
+<span class="lineNum">      64 </span>            :     /* One more element to distinguish from empty and full buffer. */
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :     : capacity_(capacity + 1)</span>
+<span class="lineNum">      66 </span>            :   {
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :     assert(storage_capacity() &lt;</span>
+<span class="lineNum">      68 </span>            :            std::numeric_limits&lt;int&gt;::max() / 2 &amp;&amp;
+<span class="lineNum">      69 </span>            :            &quot;buffer too large for the type of index used.&quot;);
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :     assert(capacity_ &gt; 0);</span>
+<span class="lineNum">      71 </span>            : 
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :     data_.reset(new T[storage_capacity()]);</span>
+<span class="lineNum">      73 </span>            :     /* If this queue is using atomics, initializing those members as the last
+<span class="lineNum">      74 </span>            :      * action in the constructor acts as a full barrier, and allow capacity() to
+<span class="lineNum">      75 </span>            :      * be thread-safe. */
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :     write_index_ = 0;</span>
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :     read_index_ = 0;</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">      79 </span>            :   /**
+<span class="lineNum">      80 </span>            :    * Push `count` zero or default constructed elements in the array.
+<span class="lineNum">      81 </span>            :    *
+<span class="lineNum">      82 </span>            :    * Only safely called on the producer thread.
+<span class="lineNum">      83 </span>            :    *
+<span class="lineNum">      84 </span>            :    * @param count The number of elements to enqueue.
+<span class="lineNum">      85 </span>            :    * @return The number of element enqueued.
+<span class="lineNum">      86 </span>            :    */
+<span class="lineNum">      87 </span>            :   int enqueue_default(int count)
+<span class="lineNum">      88 </span>            :   {
+<span class="lineNum">      89 </span>            :     return enqueue(nullptr, count);
+<span class="lineNum">      90 </span>            :   }
+<span class="lineNum">      91 </span>            :   /**
+<span class="lineNum">      92 </span>            :    * @brief Put an element in the queue
+<span class="lineNum">      93 </span>            :    *
+<span class="lineNum">      94 </span>            :    * Only safely called on the producer thread.
+<span class="lineNum">      95 </span>            :    *
+<span class="lineNum">      96 </span>            :    * @param element The element to put in the queue.
+<span class="lineNum">      97 </span>            :    *
+<a name="98"><span class="lineNum">      98 </span>            :    * @return 1 if the element was inserted, 0 otherwise.</a>
+<span class="lineNum">      99 </span>            :    */
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :   int enqueue(T&amp; element)</span>
+<span class="lineNum">     101 </span>            :   {
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :     return enqueue(&amp;element, 1);</span>
+<span class="lineNum">     103 </span>            :   }
+<span class="lineNum">     104 </span>            :   /**
+<span class="lineNum">     105 </span>            :    * Push `count` elements in the ring buffer.
+<span class="lineNum">     106 </span>            :    *
+<span class="lineNum">     107 </span>            :    * Only safely called on the producer thread.
+<span class="lineNum">     108 </span>            :    *
+<span class="lineNum">     109 </span>            :    * @param elements a pointer to a buffer containing at least `count` elements.
+<span class="lineNum">     110 </span>            :    * If `elements` is nullptr, zero or default constructed elements are enqueued.
+<span class="lineNum">     111 </span>            :    * @param count The number of elements to read from `elements`
+<span class="lineNum">     112 </span>            :    * @return The number of elements successfully coped from `elements` and inserted
+<a name="113"><span class="lineNum">     113 </span>            :    * into the ring buffer.</a>
+<span class="lineNum">     114 </span>            :    */
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :   int enqueue(T * elements, int count)</span>
+<span class="lineNum">     116 </span>            :   {
+<span class="lineNum">     117 </span>            : #ifndef NDEBUG
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :     assert_correct_thread(producer_id);</span>
+<span class="lineNum">     119 </span>            : #endif
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :     int rd_idx = read_index_.load(std::memory_order::memory_order_relaxed);</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :     int wr_idx = write_index_.load(std::memory_order::memory_order_relaxed);</span>
+<span class="lineNum">     123 </span>            : 
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :     if (full_internal(rd_idx, wr_idx)) {</span>
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :       return 0;</span>
+<span class="lineNum">     126 </span>            :     }
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span>            :     int to_write =
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :       std::min(available_write_internal(rd_idx, wr_idx), count);</span>
+<span class="lineNum">     130 </span>            : 
+<span class="lineNum">     131 </span>            :     /* First part, from the write index to the end of the array. */
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :     int first_part = std::min(storage_capacity() - wr_idx,</span>
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :                                           to_write);</span>
+<span class="lineNum">     134 </span>            :     /* Second part, from the beginning of the array */
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :     int second_part = to_write - first_part;</span>
+<span class="lineNum">     136 </span>            : 
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :     if (elements) {</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :       Copy(data_.get() + wr_idx, elements, first_part);</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :       Copy(data_.get(), elements + first_part, second_part);</span>
+<span class="lineNum">     140 </span>            :     } else {
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :       ConstructDefault(data_.get() + wr_idx, first_part);</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :       ConstructDefault(data_.get(), second_part);</span>
+<span class="lineNum">     143 </span>            :     }
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :     write_index_.store(increment_index(wr_idx, to_write), std::memory_order::memory_order_release);</span>
+<span class="lineNum">     146 </span>            : 
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :     return to_write;</span>
+<span class="lineNum">     148 </span>            :   }
+<span class="lineNum">     149 </span>            :   /**
+<span class="lineNum">     150 </span>            :    * Retrieve at most `count` elements from the ring buffer, and copy them to
+<span class="lineNum">     151 </span>            :    * `elements`, if non-null.
+<span class="lineNum">     152 </span>            :    *
+<span class="lineNum">     153 </span>            :    * Only safely called on the consumer side.
+<span class="lineNum">     154 </span>            :    *
+<span class="lineNum">     155 </span>            :    * @param elements A pointer to a buffer with space for at least `count`
+<span class="lineNum">     156 </span>            :    * elements. If `elements` is `nullptr`, `count` element will be discarded.
+<span class="lineNum">     157 </span>            :    * @param count The maximum number of elements to dequeue.
+<a name="158"><span class="lineNum">     158 </span>            :    * @return The number of elements written to `elements`.</a>
+<span class="lineNum">     159 </span>            :    */
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :   int dequeue(T * elements, int count)</span>
+<span class="lineNum">     161 </span>            :   {
+<span class="lineNum">     162 </span>            : #ifndef NDEBUG
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :     assert_correct_thread(consumer_id);</span>
+<span class="lineNum">     164 </span>            : #endif
+<span class="lineNum">     165 </span>            : 
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     int wr_idx = write_index_.load(std::memory_order::memory_order_acquire);</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :     int rd_idx = read_index_.load(std::memory_order::memory_order_relaxed);</span>
+<span class="lineNum">     168 </span>            : 
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :     if (empty_internal(rd_idx, wr_idx)) {</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :       return 0;</span>
+<span class="lineNum">     171 </span>            :     }
+<span class="lineNum">     172 </span>            : 
+<span class="lineNum">     173 </span>            :     int to_read =
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :       std::min(available_read_internal(rd_idx, wr_idx), count);</span>
+<span class="lineNum">     175 </span>            : 
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :     int first_part = std::min(storage_capacity() - rd_idx, to_read);</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :     int second_part = to_read - first_part;</span>
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :     if (elements) {</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :       Copy(elements, data_.get() + rd_idx, first_part);</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :       Copy(elements + first_part, data_.get(), second_part);</span>
+<span class="lineNum">     182 </span>            :     }
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :     read_index_.store(increment_index(rd_idx, to_read), std::memory_order::memory_order_relaxed);</span>
+<span class="lineNum">     185 </span>            : 
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :     return to_read;</span>
+<span class="lineNum">     187 </span>            :   }
+<span class="lineNum">     188 </span>            :   /**
+<span class="lineNum">     189 </span>            :    * Get the number of available element for consuming.
+<span class="lineNum">     190 </span>            :    *
+<span class="lineNum">     191 </span>            :    * Only safely called on the consumer thread.
+<span class="lineNum">     192 </span>            :    *
+<span class="lineNum">     193 </span>            :    * @return The number of available elements for reading.
+<span class="lineNum">     194 </span>            :    */
+<span class="lineNum">     195 </span>            :   int available_read() const
+<span class="lineNum">     196 </span>            :   {
+<span class="lineNum">     197 </span>            : #ifndef NDEBUG
+<span class="lineNum">     198 </span>            :     assert_correct_thread(consumer_id);
+<span class="lineNum">     199 </span>            : #endif
+<span class="lineNum">     200 </span>            :     return available_read_internal(read_index_.load(std::memory_order::memory_order_relaxed),
+<span class="lineNum">     201 </span>            :                                    write_index_.load(std::memory_order::memory_order_relaxed));
+<span class="lineNum">     202 </span>            :   }
+<span class="lineNum">     203 </span>            :   /**
+<span class="lineNum">     204 </span>            :    * Get the number of available elements for consuming.
+<span class="lineNum">     205 </span>            :    *
+<span class="lineNum">     206 </span>            :    * Only safely called on the producer thread.
+<span class="lineNum">     207 </span>            :    *
+<span class="lineNum">     208 </span>            :    * @return The number of empty slots in the buffer, available for writing.
+<span class="lineNum">     209 </span>            :    */
+<span class="lineNum">     210 </span>            :   int available_write() const
+<span class="lineNum">     211 </span>            :   {
+<span class="lineNum">     212 </span>            : #ifndef NDEBUG
+<span class="lineNum">     213 </span>            :     assert_correct_thread(producer_id);
+<span class="lineNum">     214 </span>            : #endif
+<span class="lineNum">     215 </span>            :     return available_write_internal(read_index_.load(std::memory_order::memory_order_relaxed),
+<span class="lineNum">     216 </span>            :                                     write_index_.load(std::memory_order::memory_order_relaxed));
+<span class="lineNum">     217 </span>            :   }
+<span class="lineNum">     218 </span>            :   /**
+<span class="lineNum">     219 </span>            :    * Get the total capacity, for this ring buffer.
+<span class="lineNum">     220 </span>            :    *
+<span class="lineNum">     221 </span>            :    * Can be called safely on any thread.
+<span class="lineNum">     222 </span>            :    *
+<span class="lineNum">     223 </span>            :    * @return The maximum capacity of this ring buffer.
+<span class="lineNum">     224 </span>            :    */
+<span class="lineNum">     225 </span>            :   int capacity() const
+<span class="lineNum">     226 </span>            :   {
+<span class="lineNum">     227 </span>            :     return storage_capacity() - 1;
+<span class="lineNum">     228 </span>            :   }
+<span class="lineNum">     229 </span>            : private:
+<span class="lineNum">     230 </span>            :   /** Return true if the ring buffer is empty.
+<span class="lineNum">     231 </span>            :    *
+<span class="lineNum">     232 </span>            :    * @param read_index the read index to consider
+<span class="lineNum">     233 </span>            :    * @param write_index the write index to consider
+<a name="234"><span class="lineNum">     234 </span>            :    * @return true if the ring buffer is empty, false otherwise.</a>
+<span class="lineNum">     235 </span>            :    **/
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :   bool empty_internal(int read_index,</span>
+<span class="lineNum">     237 </span>            :                       int write_index) const
+<span class="lineNum">     238 </span>            :   {
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :     return write_index == read_index;</span>
+<span class="lineNum">     240 </span>            :   }
+<span class="lineNum">     241 </span>            :   /** Return true if the ring buffer is full.
+<span class="lineNum">     242 </span>            :    *
+<span class="lineNum">     243 </span>            :    * This happens if the write index is exactly one element behind the read
+<span class="lineNum">     244 </span>            :    * index.
+<span class="lineNum">     245 </span>            :    *
+<span class="lineNum">     246 </span>            :    * @param read_index the read index to consider
+<span class="lineNum">     247 </span>            :    * @param write_index the write index to consider
+<a name="248"><span class="lineNum">     248 </span>            :    * @return true if the ring buffer is full, false otherwise.</a>
+<span class="lineNum">     249 </span>            :    **/
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   bool full_internal(int read_index,</span>
+<span class="lineNum">     251 </span>            :                      int write_index) const
+<span class="lineNum">     252 </span>            :   {
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :     return (write_index + 1) % storage_capacity() == read_index;</span>
+<span class="lineNum">     254 </span>            :   }
+<span class="lineNum">     255 </span>            :   /**
+<span class="lineNum">     256 </span>            :    * Return the size of the storage. It is one more than the number of elements
+<span class="lineNum">     257 </span>            :    * that can be stored in the buffer.
+<span class="lineNum">     258 </span>            :    *
+<a name="259"><span class="lineNum">     259 </span>            :    * @return the number of elements that can be stored in the buffer.</a>
+<span class="lineNum">     260 </span>            :    */
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :   int storage_capacity() const</span>
+<span class="lineNum">     262 </span>            :   {
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :     return capacity_;</span>
+<span class="lineNum">     264 </span>            :   }
+<span class="lineNum">     265 </span>            :   /**
+<span class="lineNum">     266 </span>            :    * Returns the number of elements available for reading.
+<span class="lineNum">     267 </span>            :    *
+<span class="lineNum">     268 </span>            :    * @return the number of available elements for reading.
+<a name="269"><span class="lineNum">     269 </span>            :    */</a>
+<span class="lineNum">     270 </span>            :   int
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :   available_read_internal(int read_index,</span>
+<span class="lineNum">     272 </span>            :                           int write_index) const
+<span class="lineNum">     273 </span>            :   {
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     if (write_index &gt;= read_index) {</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :       return write_index - read_index;</span>
+<span class="lineNum">     276 </span>            :     } else {
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :       return write_index + storage_capacity() - read_index;</span>
+<span class="lineNum">     278 </span>            :     }
+<span class="lineNum">     279 </span>            :   }
+<span class="lineNum">     280 </span>            :   /**
+<span class="lineNum">     281 </span>            :    * Returns the number of empty elements, available for writing.
+<span class="lineNum">     282 </span>            :    *
+<span class="lineNum">     283 </span>            :    * @return the number of elements that can be written into the array.
+<a name="284"><span class="lineNum">     284 </span>            :    */</a>
+<span class="lineNum">     285 </span>            :   int
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :   available_write_internal(int read_index,</span>
+<span class="lineNum">     287 </span>            :                            int write_index) const
+<span class="lineNum">     288 </span>            :   {
+<span class="lineNum">     289 </span>            :     /* We substract one element here to always keep at least one sample
+<span class="lineNum">     290 </span>            :      * free in the buffer, to distinguish between full and empty array. */
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :     int rv = read_index - write_index - 1;</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :     if (write_index &gt;= read_index) {</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :       rv += storage_capacity();</span>
+<span class="lineNum">     294 </span>            :     }
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     296 </span>            :   }
+<span class="lineNum">     297 </span>            :   /**
+<span class="lineNum">     298 </span>            :    * Increments an index, wrapping it around the storage.
+<span class="lineNum">     299 </span>            :    *
+<span class="lineNum">     300 </span>            :    * @param index a reference to the index to increment.
+<span class="lineNum">     301 </span>            :    * @param increment the number by which `index` is incremented.
+<span class="lineNum">     302 </span>            :    * @return the new index.
+<a name="303"><span class="lineNum">     303 </span>            :    */</a>
+<span class="lineNum">     304 </span>            :   int
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :   increment_index(int index, int increment) const</span>
+<span class="lineNum">     306 </span>            :   {
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :     assert(increment &gt;= 0);</span>
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :     return (index + increment) % storage_capacity();</span>
+<span class="lineNum">     309 </span>            :   }
+<span class="lineNum">     310 </span>            :   /**
+<span class="lineNum">     311 </span>            :    * @brief This allows checking that enqueue (resp. dequeue) are always called
+<span class="lineNum">     312 </span>            :    * by the right thread.
+<span class="lineNum">     313 </span>            :    *
+<span class="lineNum">     314 </span>            :    * @param id the id of the thread that has called the calling method first.
+<a name="315"><span class="lineNum">     315 </span>            :    */</a>
+<span class="lineNum">     316 </span>            : #ifndef NDEBUG
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :   static void assert_correct_thread(std::thread::id&amp; id)</span>
+<span class="lineNum">     318 </span>            :   {
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     if (id == std::thread::id()) {</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :       id = std::this_thread::get_id();</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">     322 </span>            :     }
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :     assert(id == std::this_thread::get_id());</span>
+<span class="lineNum">     324 </span>            :   }
+<span class="lineNum">     325 </span>            : #endif
+<span class="lineNum">     326 </span>            :   /** Index at which the oldest element is at, in samples. */
+<span class="lineNum">     327 </span>            :   std::atomic&lt;int&gt; read_index_;
+<span class="lineNum">     328 </span>            :   /** Index at which to write new elements. `write_index` is always at
+<span class="lineNum">     329 </span>            :    * least one element ahead of `read_index_`. */
+<span class="lineNum">     330 </span>            :   std::atomic&lt;int&gt; write_index_;
+<span class="lineNum">     331 </span>            :   /** Maximum number of elements that can be stored in the ring buffer. */
+<span class="lineNum">     332 </span>            :   const int capacity_;
+<span class="lineNum">     333 </span>            :   /** Data storage */
+<span class="lineNum">     334 </span>            :   std::unique_ptr&lt;T[]&gt; data_;
+<span class="lineNum">     335 </span>            : #ifndef NDEBUG
+<span class="lineNum">     336 </span>            :   /** The id of the only thread that is allowed to read from the queue. */
+<span class="lineNum">     337 </span>            :   mutable std::thread::id consumer_id;
+<span class="lineNum">     338 </span>            :   /** The id of the only thread that is allowed to write from the queue. */
+<span class="lineNum">     339 </span>            :   mutable std::thread::id producer_id;
+<span class="lineNum">     340 </span>            : #endif
+<span class="lineNum">     341 </span>            : };
+<span class="lineNum">     342 </span>            : 
+<span class="lineNum">     343 </span>            : /**
+<span class="lineNum">     344 </span>            :  * Adapter for `ring_buffer_base` that exposes an interface in frames.
+<span class="lineNum">     345 </span>            :  */
+<span class="lineNum">     346 </span>            : template &lt;typename T&gt;
+<span class="lineNum">     347 </span>            : class audio_ring_buffer_base
+<span class="lineNum">     348 </span>            : {
+<span class="lineNum">     349 </span>            : public:
+<span class="lineNum">     350 </span>            :   /**
+<span class="lineNum">     351 </span>            :    * @brief Constructor.
+<span class="lineNum">     352 </span>            :    *
+<span class="lineNum">     353 </span>            :    * @param channel_count       Number of channels.
+<span class="lineNum">     354 </span>            :    * @param capacity_in_frames  The capacity in frames.
+<span class="lineNum">     355 </span>            :    */
+<span class="lineNum">     356 </span>            :   audio_ring_buffer_base(int channel_count, int capacity_in_frames)
+<span class="lineNum">     357 </span>            :     : channel_count(channel_count)
+<span class="lineNum">     358 </span>            :     , ring_buffer(frames_to_samples(capacity_in_frames))
+<span class="lineNum">     359 </span>            :   {
+<span class="lineNum">     360 </span>            :     assert(channel_count &gt; 0);
+<span class="lineNum">     361 </span>            :   }
+<span class="lineNum">     362 </span>            :   /**
+<span class="lineNum">     363 </span>            :    * @brief Enqueue silence.
+<span class="lineNum">     364 </span>            :    *
+<span class="lineNum">     365 </span>            :    * Only safely called on the producer thread.
+<span class="lineNum">     366 </span>            :    *
+<span class="lineNum">     367 </span>            :    * @param frame_count The number of frames of silence to enqueue.
+<span class="lineNum">     368 </span>            :    * @return  The number of frames of silence actually written to the queue.
+<span class="lineNum">     369 </span>            :    */
+<span class="lineNum">     370 </span>            :   int enqueue_default(int frame_count)
+<span class="lineNum">     371 </span>            :   {
+<span class="lineNum">     372 </span>            :     return samples_to_frames(ring_buffer.enqueue(nullptr, frames_to_samples(frame_count)));
+<span class="lineNum">     373 </span>            :   }
+<span class="lineNum">     374 </span>            :   /**
+<span class="lineNum">     375 </span>            :    * @brief Enqueue `frames_count` frames of audio.
+<span class="lineNum">     376 </span>            :    *
+<span class="lineNum">     377 </span>            :    * Only safely called from the producer thread.
+<span class="lineNum">     378 </span>            :    *
+<span class="lineNum">     379 </span>            :    * @param [in] frames If non-null, the frames to enqueue.
+<span class="lineNum">     380 </span>            :    *                    Otherwise, silent frames are enqueued.
+<span class="lineNum">     381 </span>            :    * @param frame_count The number of frames to enqueue.
+<span class="lineNum">     382 </span>            :    *
+<span class="lineNum">     383 </span>            :    * @return The number of frames enqueued
+<span class="lineNum">     384 </span>            :    */
+<span class="lineNum">     385 </span>            : 
+<span class="lineNum">     386 </span>            :   int enqueue(T * frames, int frame_count)
+<span class="lineNum">     387 </span>            :   {
+<span class="lineNum">     388 </span>            :     return samples_to_frames(ring_buffer.enqueue(frames, frames_to_samples(frame_count)));
+<span class="lineNum">     389 </span>            :   }
+<span class="lineNum">     390 </span>            : 
+<span class="lineNum">     391 </span>            :   /**
+<span class="lineNum">     392 </span>            :    * @brief Removes `frame_count` frames from the buffer, and
+<span class="lineNum">     393 </span>            :    *        write them to `frames` if it is non-null.
+<span class="lineNum">     394 </span>            :    *
+<span class="lineNum">     395 </span>            :    * Only safely called on the consumer thread.
+<span class="lineNum">     396 </span>            :    *
+<span class="lineNum">     397 </span>            :    * @param frames      If non-null, the frames are copied to `frames`.
+<span class="lineNum">     398 </span>            :    *                    Otherwise, they are dropped.
+<span class="lineNum">     399 </span>            :    * @param frame_count The number of frames to remove.
+<span class="lineNum">     400 </span>            :    *
+<span class="lineNum">     401 </span>            :    * @return  The number of frames actually dequeud.
+<span class="lineNum">     402 </span>            :    */
+<span class="lineNum">     403 </span>            :   int dequeue(T * frames, int frame_count)
+<span class="lineNum">     404 </span>            :   {
+<span class="lineNum">     405 </span>            :     return samples_to_frames(ring_buffer.dequeue(frames, frames_to_samples(frame_count)));
+<span class="lineNum">     406 </span>            :   }
+<span class="lineNum">     407 </span>            :   /**
+<span class="lineNum">     408 </span>            :    * Get the number of available frames of audio for consuming.
+<span class="lineNum">     409 </span>            :    *
+<span class="lineNum">     410 </span>            :    * Only safely called on the consumer thread.
+<span class="lineNum">     411 </span>            :    *
+<span class="lineNum">     412 </span>            :    * @return The number of available frames of audio for reading.
+<span class="lineNum">     413 </span>            :    */
+<span class="lineNum">     414 </span>            :   int available_read() const
+<span class="lineNum">     415 </span>            :   {
+<span class="lineNum">     416 </span>            :     return samples_to_frames(ring_buffer.available_read());
+<span class="lineNum">     417 </span>            :   }
+<span class="lineNum">     418 </span>            :   /**
+<span class="lineNum">     419 </span>            :    * Get the number of available frames of audio for consuming.
+<span class="lineNum">     420 </span>            :    *
+<span class="lineNum">     421 </span>            :    * Only safely called on the producer thread.
+<span class="lineNum">     422 </span>            :    *
+<span class="lineNum">     423 </span>            :    * @return The number of empty slots in the buffer, available for writing.
+<span class="lineNum">     424 </span>            :    */
+<span class="lineNum">     425 </span>            :   int available_write() const
+<span class="lineNum">     426 </span>            :   {
+<span class="lineNum">     427 </span>            :     return samples_to_frames(ring_buffer.available_write());
+<span class="lineNum">     428 </span>            :   }
+<span class="lineNum">     429 </span>            :   /**
+<span class="lineNum">     430 </span>            :    * Get the total capacity, for this ring buffer.
+<span class="lineNum">     431 </span>            :    *
+<span class="lineNum">     432 </span>            :    * Can be called safely on any thread.
+<span class="lineNum">     433 </span>            :    *
+<span class="lineNum">     434 </span>            :    * @return The maximum capacity of this ring buffer.
+<span class="lineNum">     435 </span>            :    */
+<span class="lineNum">     436 </span>            :   int capacity() const
+<span class="lineNum">     437 </span>            :   {
+<span class="lineNum">     438 </span>            :     return samples_to_frames(ring_buffer.capacity());
+<span class="lineNum">     439 </span>            :   }
+<span class="lineNum">     440 </span>            : private:
+<span class="lineNum">     441 </span>            :   /**
+<span class="lineNum">     442 </span>            :    * @brief Frames to samples conversion.
+<span class="lineNum">     443 </span>            :    *
+<span class="lineNum">     444 </span>            :    * @param frames The number of frames.
+<span class="lineNum">     445 </span>            :    *
+<span class="lineNum">     446 </span>            :    * @return  A number of samples.
+<span class="lineNum">     447 </span>            :    */
+<span class="lineNum">     448 </span>            :   int frames_to_samples(int frames) const
+<span class="lineNum">     449 </span>            :   {
+<span class="lineNum">     450 </span>            :     return frames * channel_count;
+<span class="lineNum">     451 </span>            :   }
+<span class="lineNum">     452 </span>            :   /**
+<span class="lineNum">     453 </span>            :    * @brief Samples to frames conversion.
+<span class="lineNum">     454 </span>            :    *
+<span class="lineNum">     455 </span>            :    * @param samples The number of samples.
+<span class="lineNum">     456 </span>            :    *
+<span class="lineNum">     457 </span>            :    * @return  A number of frames.
+<span class="lineNum">     458 </span>            :    */
+<span class="lineNum">     459 </span>            :   int samples_to_frames(int samples) const
+<span class="lineNum">     460 </span>            :   {
+<span class="lineNum">     461 </span>            :     return samples / channel_count;
+<span class="lineNum">     462 </span>            :   }
+<span class="lineNum">     463 </span>            :   /** Number of channels of audio that will stream through this ring buffer. */
+<span class="lineNum">     464 </span>            :   int channel_count;
+<span class="lineNum">     465 </span>            :   /** The underlying ring buffer that is used to store the data. */
+<span class="lineNum">     466 </span>            :   ring_buffer_base&lt;T&gt; ring_buffer;
+<span class="lineNum">     467 </span>            : };
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span>            : /**
+<span class="lineNum">     470 </span>            :  * Lock-free instantiation of the `ring_buffer_base` type. This is safe to use
+<span class="lineNum">     471 </span>            :  * from two threads, one producer, one consumer (that never change role),
+<span class="lineNum">     472 </span>            :  * without explicit synchronization.
+<span class="lineNum">     473 </span>            :  */
+<span class="lineNum">     474 </span>            : template&lt;typename T&gt;
+<span class="lineNum">     475 </span>            : using lock_free_queue = ring_buffer_base&lt;T&gt;;
+<span class="lineNum">     476 </span>            : /**
+<span class="lineNum">     477 </span>            :  * Lock-free instantiation of the `audio_ring_buffer` type. This is safe to use
+<span class="lineNum">     478 </span>            :  * from two threads, one producer, one consumer (that never change role),
+<span class="lineNum">     479 </span>            :  * without explicit synchronization.
+<span class="lineNum">     480 </span>            :  */
+<span class="lineNum">     481 </span>            : template&lt;typename T&gt;
+<span class="lineNum">     482 </span>            : using lock_free_audio_ring_buffer = audio_ring_buffer_base&lt;T&gt;;
+<span class="lineNum">     483 </span>            : 
+<span class="lineNum">     484 </span>            : #endif // CUBEB_RING_BUFFER_H
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,628 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - netwerk/base/TCPFastOpenLayer.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">netwerk/base</a> - TCPFastOpenLayer.cpp<span style="font-size: 80%;"> (source / <a href="TCPFastOpenLayer.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">149</td>
+            <td class="headerCovTableEntry">247</td>
+            <td class="headerCovTableEntryLo">60.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">14</td>
+            <td class="headerCovTableEntry">15</td>
+            <td class="headerCovTableEntryHi">93.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim:set ts=2 sw=2 sts=2 et cindent: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;TCPFastOpenLayer.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;nsSocketTransportService2.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;prmem.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;prio.h&quot;
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : namespace mozilla {
+<span class="lineNum">      13 </span>            : namespace net {
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : static PRDescIdentity sTCPFastOpenLayerIdentity;
+<span class="lineNum">      16 </span>            : static PRIOMethods    sTCPFastOpenLayerMethods;
+<span class="lineNum">      17 </span>            : static PRIOMethods   *sTCPFastOpenLayerMethodsPtr = nullptr;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : #define TFO_MAX_PACKET_SIZE_IPV4 1460
+<span class="lineNum">      20 </span>            : #define TFO_MAX_PACKET_SIZE_IPV6 1440
+<span class="lineNum">      21 </span>            : #define TFO_TLS_RECORD_HEADER_SIZE 22
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : /**
+<span class="lineNum">      24 </span>            :  *  For the TCP Fast Open it is necessary to send all data that can fit into the
+<span class="lineNum">      25 </span>            :  *  first packet on a single sendto function call. Consecutive calls will not
+<span class="lineNum">      26 </span>            :  *  have an effect. Therefore  TCPFastOpenLayer will collect some data before
+<span class="lineNum">      27 </span>            :  *  calling sendto. Necko and nss will call PR_Write multiple times with small
+<span class="lineNum">      28 </span>            :  *  amount of  data.
+<span class="lineNum">      29 </span>            :  *  TCPFastOpenLayer has 4 states:
+<span class="lineNum">      30 </span>            :  *    WAITING_FOR_CONNECT:
+<span class="lineNum">      31 </span>            :  *      This is before connect is call. A call of recv, send or getpeername will
+<span class="lineNum">      32 </span>            :  *      return PR_NOT_CONNECTED_ERROR. After connect is call the state transfers
+<span class="lineNum">      33 </span>            :  *      into COLLECT_DATA_FOR_FIRST_PACKET.
+<span class="lineNum">      34 </span>            :  *
+<span class="lineNum">      35 </span>            :  *    COLLECT_DATA_FOR_FIRST_PACKET:
+<span class="lineNum">      36 </span>            :  *      In this state all data received by send function calls will be stored in
+<span class="lineNum">      37 </span>            :  *      a buffer. If transaction do not have any more data ready to be sent or
+<span class="lineNum">      38 </span>            :  *      the buffer is full, TCPFastOpenFinish is call. TCPFastOpenFinish sends
+<span class="lineNum">      39 </span>            :  *      the collected data using sendto function and the state transfers to
+<span class="lineNum">      40 </span>            :  *      WAITING_FOR_CONNECTCONTINUE. If an error occurs during sendto, the error
+<span class="lineNum">      41 </span>            :  *      is reported by the TCPFastOpenFinish return values. nsSocketTransfer is
+<span class="lineNum">      42 </span>            :  *      the only caller of TCPFastOpenFinish; it knows how to interpreter these
+<span class="lineNum">      43 </span>            :  *      errors.
+<span class="lineNum">      44 </span>            :  *    WAITING_FOR_CONNECTCONTINUE:
+<span class="lineNum">      45 </span>            :  *      connectcontinue transfers from this state to CONNECTED. Any other
+<span class="lineNum">      46 </span>            :  *      function (e.g. send, recv) returns PR_WOULD_BLOCK_ERROR.
+<span class="lineNum">      47 </span>            :  *    CONNECTED:
+<span class="lineNum">      48 </span>            :  *      The size of mFirstPacketBuf is 1440/1460 (RFC7413 recomends that packet
+<span class="lineNum">      49 </span>            :  *      does exceeds these sizes). SendTo does not have to consume all buffered
+<span class="lineNum">      50 </span>            :  *      data and some data can be still in mFirstPacketBuf. Before sending any
+<span class="lineNum">      51 </span>            :  *      new data we need to send the remaining buffered data.
+<span class="lineNum">      52 </span>            :  **/
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span>            : class TCPFastOpenSecret
+<a name="55"><span class="lineNum">      55 </span>            : {</a>
+<span class="lineNum">      56 </span>            : public:
+<span class="lineNum">      57 </span><span class="lineCov">          2 :   TCPFastOpenSecret()</span>
+<span class="lineNum">      58 </span><span class="lineCov">          2 :     : mState(WAITING_FOR_CONNECT)</span>
+<span class="lineNum">      59 </span>            :     , mFirstPacketBufLen(0)
+<span class="lineNum">      60 </span><span class="lineCov">          2 :     , mCondition(0)</span>
+<span class="lineNum">      61 </span><span class="lineCov">          2 :   {}</span>
+<span class="lineNum">      62 </span>            : 
+<span class="lineNum">      63 </span>            :   enum {
+<span class="lineNum">      64 </span>            :     CONNECTED,
+<span class="lineNum">      65 </span>            :     WAITING_FOR_CONNECTCONTINUE,
+<span class="lineNum">      66 </span>            :     COLLECT_DATA_FOR_FIRST_PACKET,
+<span class="lineNum">      67 </span>            :     WAITING_FOR_CONNECT,
+<span class="lineNum">      68 </span>            :     SOCKET_ERROR_STATE
+<span class="lineNum">      69 </span>            :   } mState;
+<span class="lineNum">      70 </span>            :   PRNetAddr mAddr;
+<span class="lineNum">      71 </span>            :   char mFirstPacketBuf[1460];
+<span class="lineNum">      72 </span>            :   uint16_t mFirstPacketBufLen;
+<span class="lineNum">      73 </span>            :   PRErrorCode mCondition;
+<span class="lineNum">      74 </span>            : };
+<a name="75"><span class="lineNum">      75 </span>            : </a>
+<span class="lineNum">      76 </span>            : static PRStatus
+<span class="lineNum">      77 </span><span class="lineCov">          2 : TCPFastOpenConnect(PRFileDesc *fd, const PRNetAddr *addr,</span>
+<span class="lineNum">      78 </span>            :                    PRIntervalTime timeout)
+<span class="lineNum">      79 </span>            : {
+<span class="lineNum">      80 </span><span class="lineCov">          2 :   MOZ_RELEASE_ASSERT(fd-&gt;identity == sTCPFastOpenLayerIdentity);</span>
+<span class="lineNum">      81 </span><span class="lineCov">          2 :   MOZ_ASSERT(OnSocketThread(), &quot;not on socket thread&quot;);</span>
+<span class="lineNum">      82 </span>            : 
+<span class="lineNum">      83 </span><span class="lineCov">          2 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(fd-&gt;secret);</span>
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span><span class="lineCov">          2 :   SOCKET_LOG((&quot;TCPFastOpenConnect state=%d.\n&quot;, secret-&gt;mState));</span>
+<span class="lineNum">      86 </span>            : 
+<span class="lineNum">      87 </span><span class="lineCov">          2 :   if (secret-&gt;mState != TCPFastOpenSecret::WAITING_FOR_CONNECT) {</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :     PR_SetError(PR_IS_CONNECTED_ERROR, 0);</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :     return PR_FAILURE;</span>
+<span class="lineNum">      90 </span>            :   }
+<span class="lineNum">      91 </span>            : 
+<span class="lineNum">      92 </span>            :   // Remember the address. It will be used for sendto or connect later.
+<span class="lineNum">      93 </span><span class="lineCov">          2 :   memcpy(&amp;secret-&gt;mAddr, addr, sizeof(secret-&gt;mAddr));</span>
+<span class="lineNum">      94 </span><span class="lineCov">          2 :   secret-&gt;mState = TCPFastOpenSecret::COLLECT_DATA_FOR_FIRST_PACKET;</span>
+<span class="lineNum">      95 </span>            : 
+<span class="lineNum">      96 </span><span class="lineCov">          2 :   return PR_SUCCESS;</span>
+<span class="lineNum">      97 </span>            : }
+<a name="98"><span class="lineNum">      98 </span>            : </a>
+<span class="lineNum">      99 </span>            : static PRInt32
+<span class="lineNum">     100 </span><span class="lineCov">          2 : TCPFastOpenSend(PRFileDesc *fd, const void *buf, PRInt32 amount,</span>
+<span class="lineNum">     101 </span>            :                 PRIntn flags, PRIntervalTime timeout)
+<span class="lineNum">     102 </span>            : {
+<span class="lineNum">     103 </span><span class="lineCov">          2 :   MOZ_RELEASE_ASSERT(fd-&gt;identity == sTCPFastOpenLayerIdentity);</span>
+<span class="lineNum">     104 </span><span class="lineCov">          2 :   MOZ_ASSERT(OnSocketThread(), &quot;not on socket thread&quot;);</span>
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span><span class="lineCov">          2 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(fd-&gt;secret);</span>
+<span class="lineNum">     107 </span>            : 
+<span class="lineNum">     108 </span><span class="lineCov">          2 :   SOCKET_LOG((&quot;TCPFastOpenSend state=%d.\n&quot;, secret-&gt;mState));</span>
+<span class="lineNum">     109 </span>            : 
+<span class="lineNum">     110 </span><span class="lineCov">          2 :   switch(secret-&gt;mState) {</span>
+<span class="lineNum">     111 </span>            :   case TCPFastOpenSecret::CONNECTED:
+<span class="lineNum">     112 </span>            :     // Before sending new data we need to drain the data collected during tfo.
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :     if (secret-&gt;mFirstPacketBufLen) {</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :       SOCKET_LOG((&quot;TCPFastOpenSend - %d bytes to drain from &quot;</span>
+<span class="lineNum">     115 </span>            :                   &quot;mFirstPacketBufLen.\n&quot;,
+<span class="lineNum">     116 </span>            :                   secret-&gt;mFirstPacketBufLen ));
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :       PRInt32 rv = (fd-&gt;lower-&gt;methods-&gt;send)(fd-&gt;lower,</span>
+<span class="lineNum">     118 </span>            :                                               secret-&gt;mFirstPacketBuf,
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :                                               secret-&gt;mFirstPacketBufLen,</span>
+<span class="lineNum">     120 </span>            :                                               0, // flags
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :                                               PR_INTERVAL_NO_WAIT);</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :       if (rv &lt;= 0) {</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     124 </span>            :       } else {
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :         secret-&gt;mFirstPacketBufLen -= rv;</span>
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :         if (secret-&gt;mFirstPacketBufLen) {</span>
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :           memmove(secret-&gt;mFirstPacketBuf,</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :                   secret-&gt;mFirstPacketBuf + rv,</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :                   secret-&gt;mFirstPacketBufLen);</span>
+<span class="lineNum">     130 </span>            : 
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :           PR_SetError(PR_WOULD_BLOCK_ERROR, 0);</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :           return PR_FAILURE;</span>
+<span class="lineNum">     133 </span>            :         } // if we drained the buffer we can fall through this checks and call
+<span class="lineNum">     134 </span>            :           // send for the new data
+<span class="lineNum">     135 </span>            :       }
+<span class="lineNum">     136 </span>            :     }
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :     SOCKET_LOG((&quot;TCPFastOpenSend sending new data.\n&quot;));</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :     return (fd-&gt;lower-&gt;methods-&gt;send)(fd-&gt;lower, buf, amount, flags, timeout);</span>
+<span class="lineNum">     139 </span>            :   case TCPFastOpenSecret::WAITING_FOR_CONNECTCONTINUE:
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     PR_SetError(PR_WOULD_BLOCK_ERROR, 0);</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     142 </span>            :   case TCPFastOpenSecret::COLLECT_DATA_FOR_FIRST_PACKET:
+<span class="lineNum">     143 </span>            :     {
+<span class="lineNum">     144 </span>            :       int32_t toSend =
+<span class="lineNum">     145 </span><span class="lineCov">          2 :         (secret-&gt;mAddr.raw.family == PR_AF_INET) ? TFO_MAX_PACKET_SIZE_IPV4</span>
+<span class="lineNum">     146 </span><span class="lineCov">          2 :                                               : TFO_MAX_PACKET_SIZE_IPV6;</span>
+<span class="lineNum">     147 </span><span class="lineCov">          2 :       MOZ_ASSERT(secret-&gt;mFirstPacketBufLen &lt;= toSend);</span>
+<span class="lineNum">     148 </span><span class="lineCov">          2 :       toSend -= secret-&gt;mFirstPacketBufLen;</span>
+<span class="lineNum">     149 </span>            : 
+<span class="lineNum">     150 </span><span class="lineCov">          2 :       SOCKET_LOG((&quot;TCPFastOpenSend: amount of data in the buffer=%d; the amount&quot;</span>
+<span class="lineNum">     151 </span>            :                   &quot; of additional data that can be stored=%d.\n&quot;,
+<span class="lineNum">     152 </span>            :                   secret-&gt;mFirstPacketBufLen, toSend));
+<span class="lineNum">     153 </span>            : 
+<span class="lineNum">     154 </span><span class="lineCov">          2 :       if (!toSend) {</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :         PR_SetError(PR_WOULD_BLOCK_ERROR, 0);</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :         return -1;</span>
+<span class="lineNum">     157 </span>            :       }
+<span class="lineNum">     158 </span>            : 
+<span class="lineNum">     159 </span><span class="lineCov">          2 :       toSend = (toSend &gt; amount) ? amount : toSend;</span>
+<span class="lineNum">     160 </span><span class="lineCov">          2 :       memcpy(secret-&gt;mFirstPacketBuf + secret-&gt;mFirstPacketBufLen, buf, toSend);</span>
+<span class="lineNum">     161 </span><span class="lineCov">          2 :       secret-&gt;mFirstPacketBufLen += toSend;</span>
+<span class="lineNum">     162 </span><span class="lineCov">          2 :       return toSend;</span>
+<span class="lineNum">     163 </span>            :     }
+<span class="lineNum">     164 </span>            :   case TCPFastOpenSecret::WAITING_FOR_CONNECT:
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :     PR_SetError(PR_NOT_CONNECTED_ERROR, 0);</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     167 </span>            :   case TCPFastOpenSecret::SOCKET_ERROR_STATE:
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :     PR_SetError(secret-&gt;mCondition, 0);</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     170 </span>            :   }
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :   PR_SetError(PR_WOULD_BLOCK_ERROR, 0);</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :   return PR_FAILURE;</span>
+<span class="lineNum">     173 </span>            : }
+<a name="174"><span class="lineNum">     174 </span>            : </a>
+<span class="lineNum">     175 </span>            : static PRInt32
+<span class="lineNum">     176 </span><span class="lineCov">          2 : TCPFastOpenWrite(PRFileDesc *fd, const void *buf, PRInt32 amount)</span>
+<span class="lineNum">     177 </span>            : {
+<span class="lineNum">     178 </span><span class="lineCov">          2 :   return TCPFastOpenSend(fd, buf, amount, 0, PR_INTERVAL_NO_WAIT);</span>
+<span class="lineNum">     179 </span>            : }
+<a name="180"><span class="lineNum">     180 </span>            : </a>
+<span class="lineNum">     181 </span>            : static PRInt32
+<span class="lineNum">     182 </span><span class="lineCov">         14 : TCPFastOpenRecv(PRFileDesc *fd, void *buf, PRInt32 amount,</span>
+<span class="lineNum">     183 </span>            :                 PRIntn flags, PRIntervalTime timeout)
+<span class="lineNum">     184 </span>            : {
+<span class="lineNum">     185 </span><span class="lineCov">         14 :   MOZ_RELEASE_ASSERT(fd-&gt;identity == sTCPFastOpenLayerIdentity);</span>
+<span class="lineNum">     186 </span>            : 
+<span class="lineNum">     187 </span><span class="lineCov">         14 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(fd-&gt;secret);</span>
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span><span class="lineCov">         14 :   PRInt32 rv = -1;</span>
+<span class="lineNum">     190 </span><span class="lineCov">         14 :   switch(secret-&gt;mState) {</span>
+<span class="lineNum">     191 </span>            :   case TCPFastOpenSecret::CONNECTED:
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span><span class="lineCov">         14 :     if (secret-&gt;mFirstPacketBufLen) {</span>
+<span class="lineNum">     194 </span>            :       // TLS will not call write before receiving data from a server, therefore
+<span class="lineNum">     195 </span>            :       // we need to force sending buffered data even during recv call. Otherwise
+<span class="lineNum">     196 </span>            :       // It can come to a deadlock (clients waits for response, but the request
+<span class="lineNum">     197 </span>            :       // is sitting in mFirstPacketBufLen).
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :       SOCKET_LOG((&quot;TCPFastOpenRevc - %d bytes to drain from mFirstPacketBuf.\n&quot;,</span>
+<span class="lineNum">     199 </span>            :                   secret-&gt;mFirstPacketBufLen ));
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :       PRInt32 rv = (fd-&gt;lower-&gt;methods-&gt;send)(fd-&gt;lower,</span>
+<span class="lineNum">     201 </span>            :                                               secret-&gt;mFirstPacketBuf,
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :                                               secret-&gt;mFirstPacketBufLen,</span>
+<span class="lineNum">     203 </span>            :                                               0, // flags
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :                                               PR_INTERVAL_NO_WAIT);</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :       if (rv &lt;= 0) {</span>
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     207 </span>            :       } else {
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :         secret-&gt;mFirstPacketBufLen -= rv;</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :         if (secret-&gt;mFirstPacketBufLen) {</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :           memmove(secret-&gt;mFirstPacketBuf,</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :                   secret-&gt;mFirstPacketBuf + rv,</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :                   secret-&gt;mFirstPacketBufLen);</span>
+<span class="lineNum">     213 </span>            :         }
+<span class="lineNum">     214 </span>            :       }
+<span class="lineNum">     215 </span>            :     }
+<span class="lineNum">     216 </span><span class="lineCov">         14 :     rv = (fd-&gt;lower-&gt;methods-&gt;recv)(fd-&gt;lower, buf, amount, flags, timeout);</span>
+<span class="lineNum">     217 </span><span class="lineCov">         14 :     break;</span>
+<span class="lineNum">     218 </span>            :   case TCPFastOpenSecret::WAITING_FOR_CONNECTCONTINUE:
+<span class="lineNum">     219 </span>            :   case TCPFastOpenSecret::COLLECT_DATA_FOR_FIRST_PACKET:
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :     PR_SetError(PR_WOULD_BLOCK_ERROR, 0);</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :     break;</span>
+<span class="lineNum">     222 </span>            :   case TCPFastOpenSecret::WAITING_FOR_CONNECT:
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :     PR_SetError(PR_NOT_CONNECTED_ERROR, 0);</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     break;</span>
+<span class="lineNum">     225 </span>            :   case TCPFastOpenSecret::SOCKET_ERROR_STATE:
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :     PR_SetError(secret-&gt;mCondition, 0);</span>
+<span class="lineNum">     227 </span>            :   }
+<span class="lineNum">     228 </span><span class="lineCov">         14 :   return rv;</span>
+<span class="lineNum">     229 </span>            : }
+<a name="230"><span class="lineNum">     230 </span>            : </a>
+<span class="lineNum">     231 </span>            : static PRInt32
+<span class="lineNum">     232 </span><span class="lineCov">         14 : TCPFastOpenRead(PRFileDesc *fd, void *buf, PRInt32 amount)</span>
+<span class="lineNum">     233 </span>            : {
+<span class="lineNum">     234 </span><span class="lineCov">         14 :   return TCPFastOpenRecv(fd, buf, amount , 0, PR_INTERVAL_NO_WAIT);</span>
+<span class="lineNum">     235 </span>            : }
+<a name="236"><span class="lineNum">     236 </span>            : </a>
+<span class="lineNum">     237 </span>            : static PRStatus
+<span class="lineNum">     238 </span><span class="lineCov">          2 : TCPFastOpenConnectContinue(PRFileDesc *fd, PRInt16 out_flags)</span>
+<span class="lineNum">     239 </span>            : {
+<span class="lineNum">     240 </span><span class="lineCov">          2 :   MOZ_RELEASE_ASSERT(fd-&gt;identity == sTCPFastOpenLayerIdentity);</span>
+<span class="lineNum">     241 </span>            : 
+<span class="lineNum">     242 </span><span class="lineCov">          2 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(fd-&gt;secret);</span>
+<span class="lineNum">     243 </span>            : 
+<span class="lineNum">     244 </span><span class="lineCov">          2 :   PRStatus rv = PR_FAILURE;</span>
+<span class="lineNum">     245 </span><span class="lineCov">          2 :   switch(secret-&gt;mState) {</span>
+<span class="lineNum">     246 </span>            :   case TCPFastOpenSecret::CONNECTED:
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :     rv = PR_SUCCESS;</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :     break;</span>
+<span class="lineNum">     249 </span>            :   case TCPFastOpenSecret::WAITING_FOR_CONNECT:
+<span class="lineNum">     250 </span>            :   case TCPFastOpenSecret::COLLECT_DATA_FOR_FIRST_PACKET:
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     PR_SetError(PR_NOT_CONNECTED_ERROR, 0);</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     rv = PR_FAILURE;</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :     break;</span>
+<span class="lineNum">     254 </span>            :   case TCPFastOpenSecret::WAITING_FOR_CONNECTCONTINUE:
+<span class="lineNum">     255 </span><span class="lineCov">          2 :     rv = (fd-&gt;lower-&gt;methods-&gt;connectcontinue)(fd-&gt;lower, out_flags);</span>
+<span class="lineNum">     256 </span>            : 
+<span class="lineNum">     257 </span><span class="lineCov">          2 :     SOCKET_LOG((&quot;TCPFastOpenConnectContinue result=%d.\n&quot;, rv));</span>
+<span class="lineNum">     258 </span><span class="lineCov">          2 :     secret-&gt;mState = TCPFastOpenSecret::CONNECTED;</span>
+<span class="lineNum">     259 </span><span class="lineCov">          2 :     break;</span>
+<span class="lineNum">     260 </span>            :   case TCPFastOpenSecret::SOCKET_ERROR_STATE:
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :     PR_SetError(secret-&gt;mCondition, 0);</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :     rv = PR_FAILURE;</span>
+<span class="lineNum">     263 </span>            :   }
+<span class="lineNum">     264 </span><span class="lineCov">          2 :   return rv;</span>
+<span class="lineNum">     265 </span>            : }
+<a name="266"><span class="lineNum">     266 </span>            : </a>
+<span class="lineNum">     267 </span>            : static PRStatus
+<span class="lineNum">     268 </span><span class="lineCov">          2 : TCPFastOpenClose(PRFileDesc *fd)</span>
+<span class="lineNum">     269 </span>            : {
+<span class="lineNum">     270 </span><span class="lineCov">          2 :   if (!fd) {</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :     return PR_FAILURE;</span>
+<span class="lineNum">     272 </span>            :   }
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span><span class="lineCov">          2 :   PRFileDesc* layer = PR_PopIOLayer(fd, PR_TOP_IO_LAYER);</span>
+<span class="lineNum">     275 </span>            : 
+<span class="lineNum">     276 </span><span class="lineCov">          2 :   MOZ_RELEASE_ASSERT(layer &amp;&amp;</span>
+<span class="lineNum">     277 </span>            :                      layer-&gt;identity == sTCPFastOpenLayerIdentity,
+<span class="lineNum">     278 </span>            :                      &quot;TCP Fast Open Layer not on top of stack&quot;);
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span><span class="lineCov">          2 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(layer-&gt;secret);</span>
+<span class="lineNum">     281 </span><span class="lineCov">          2 :   layer-&gt;secret = nullptr;</span>
+<span class="lineNum">     282 </span><span class="lineCov">          2 :   layer-&gt;dtor(layer);</span>
+<span class="lineNum">     283 </span>            :   delete secret;
+<span class="lineNum">     284 </span><span class="lineCov">          2 :   return fd-&gt;methods-&gt;close(fd);</span>
+<span class="lineNum">     285 </span>            : }
+<a name="286"><span class="lineNum">     286 </span>            : </a>
+<span class="lineNum">     287 </span>            : static PRStatus
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 : TCPFastOpenGetpeername (PRFileDesc *fd, PRNetAddr *addr)</span>
+<span class="lineNum">     289 </span>            : {
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   MOZ_RELEASE_ASSERT(fd);</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   MOZ_RELEASE_ASSERT(addr);</span>
+<span class="lineNum">     292 </span>            : 
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :   MOZ_RELEASE_ASSERT(fd-&gt;identity == sTCPFastOpenLayerIdentity);</span>
+<span class="lineNum">     294 </span>            : 
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(fd-&gt;secret);</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :   if (secret-&gt;mState == TCPFastOpenSecret::WAITING_FOR_CONNECT) {</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :     PR_SetError(PR_NOT_CONNECTED_ERROR, 0);</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :     return PR_FAILURE;</span>
+<span class="lineNum">     299 </span>            :   }
+<span class="lineNum">     300 </span>            : 
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :   memcpy(addr, &amp;secret-&gt;mAddr, sizeof(secret-&gt;mAddr));</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :   return PR_SUCCESS;</span>
+<span class="lineNum">     303 </span>            : }
+<a name="304"><span class="lineNum">     304 </span>            : </a>
+<span class="lineNum">     305 </span>            : static PRInt16
+<span class="lineNum">     306 </span><span class="lineCov">          8 : TCPFastOpenPoll(PRFileDesc *fd, PRInt16 how_flags, PRInt16 *p_out_flags)</span>
+<span class="lineNum">     307 </span>            : {
+<span class="lineNum">     308 </span><span class="lineCov">          8 :   MOZ_RELEASE_ASSERT(fd);</span>
+<span class="lineNum">     309 </span><span class="lineCov">          8 :   MOZ_RELEASE_ASSERT(fd-&gt;identity == sTCPFastOpenLayerIdentity);</span>
+<span class="lineNum">     310 </span>            : 
+<span class="lineNum">     311 </span><span class="lineCov">          8 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(fd-&gt;secret);</span>
+<span class="lineNum">     312 </span><span class="lineCov">          8 :   if (secret-&gt;mFirstPacketBufLen) {</span>
+<span class="lineNum">     313 </span><span class="lineCov">          6 :     how_flags |= PR_POLL_WRITE;</span>
+<span class="lineNum">     314 </span>            :   }
+<span class="lineNum">     315 </span>            : 
+<span class="lineNum">     316 </span><span class="lineCov">          8 :   return fd-&gt;lower-&gt;methods-&gt;poll(fd-&gt;lower, how_flags, p_out_flags);</span>
+<span class="lineNum">     317 </span>            : }
+<a name="318"><span class="lineNum">     318 </span>            : </a>
+<span class="lineNum">     319 </span>            : nsresult
+<span class="lineNum">     320 </span><span class="lineCov">          2 : AttachTCPFastOpenIOLayer(PRFileDesc *fd)</span>
+<span class="lineNum">     321 </span>            : {
+<span class="lineNum">     322 </span><span class="lineCov">          2 :   MOZ_ASSERT(OnSocketThread(), &quot;not on socket thread&quot;);</span>
+<span class="lineNum">     323 </span>            : 
+<span class="lineNum">     324 </span><span class="lineCov">          2 :   if (!sTCPFastOpenLayerMethodsPtr) {</span>
+<span class="lineNum">     325 </span><span class="lineCov">          1 :     sTCPFastOpenLayerIdentity = PR_GetUniqueIdentity(&quot;TCPFastOpen Layer&quot;);</span>
+<span class="lineNum">     326 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethods = *PR_GetDefaultIOMethods();</span>
+<span class="lineNum">     327 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethods.connect = TCPFastOpenConnect;</span>
+<span class="lineNum">     328 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethods.send = TCPFastOpenSend;</span>
+<span class="lineNum">     329 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethods.write = TCPFastOpenWrite;</span>
+<span class="lineNum">     330 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethods.recv = TCPFastOpenRecv;</span>
+<span class="lineNum">     331 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethods.read = TCPFastOpenRead;</span>
+<span class="lineNum">     332 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethods.connectcontinue = TCPFastOpenConnectContinue;</span>
+<span class="lineNum">     333 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethods.close = TCPFastOpenClose;</span>
+<span class="lineNum">     334 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethods.getpeername = TCPFastOpenGetpeername;</span>
+<span class="lineNum">     335 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethods.poll = TCPFastOpenPoll;</span>
+<span class="lineNum">     336 </span><span class="lineCov">          1 :     sTCPFastOpenLayerMethodsPtr = &amp;sTCPFastOpenLayerMethods;</span>
+<span class="lineNum">     337 </span>            :   }
+<span class="lineNum">     338 </span>            : 
+<span class="lineNum">     339 </span><span class="lineCov">          2 :   PRFileDesc *layer = PR_CreateIOLayerStub(sTCPFastOpenLayerIdentity,</span>
+<span class="lineNum">     340 </span><span class="lineCov">          2 :                                            sTCPFastOpenLayerMethodsPtr);</span>
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span><span class="lineCov">          2 :   if (!layer) {</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     344 </span>            :   }
+<span class="lineNum">     345 </span>            : 
+<span class="lineNum">     346 </span><span class="lineCov">          2 :   TCPFastOpenSecret *secret = new TCPFastOpenSecret();</span>
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span><span class="lineCov">          2 :   layer-&gt;secret = reinterpret_cast&lt;PRFilePrivate *&gt;(secret);</span>
+<span class="lineNum">     349 </span>            : 
+<span class="lineNum">     350 </span><span class="lineCov">          2 :   PRStatus status = PR_PushIOLayer(fd, PR_NSPR_IO_LAYER, layer);</span>
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span><span class="lineCov">          2 :   if (status == PR_FAILURE) {</span>
+<span class="lineNum">     353 </span>            :     delete secret;
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :     PR_Free(layer); // PR_CreateIOLayerStub() uses PR_Malloc().</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     356 </span>            :   }
+<span class="lineNum">     357 </span><span class="lineCov">          2 :   return NS_OK;</span>
+<span class="lineNum">     358 </span>            : }
+<a name="359"><span class="lineNum">     359 </span>            : </a>
+<span class="lineNum">     360 </span>            : void
+<span class="lineNum">     361 </span><span class="lineCov">          2 : TCPFastOpenFinish(PRFileDesc *fd, PRErrorCode &amp;err,</span>
+<span class="lineNum">     362 </span>            :                   bool &amp;fastOpenNotSupported, uint8_t &amp;tfoStatus)
+<span class="lineNum">     363 </span>            : {
+<span class="lineNum">     364 </span><span class="lineCov">          2 :   PRFileDesc *tfoFd = PR_GetIdentitiesLayer(fd, sTCPFastOpenLayerIdentity);</span>
+<span class="lineNum">     365 </span><span class="lineCov">          2 :   MOZ_RELEASE_ASSERT(tfoFd);</span>
+<span class="lineNum">     366 </span><span class="lineCov">          2 :   MOZ_ASSERT(OnSocketThread(), &quot;not on socket thread&quot;);</span>
+<span class="lineNum">     367 </span>            : 
+<span class="lineNum">     368 </span><span class="lineCov">          2 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(tfoFd-&gt;secret);</span>
+<span class="lineNum">     369 </span>            : 
+<span class="lineNum">     370 </span><span class="lineCov">          2 :   MOZ_ASSERT(secret-&gt;mState == TCPFastOpenSecret::COLLECT_DATA_FOR_FIRST_PACKET);</span>
+<span class="lineNum">     371 </span>            : 
+<span class="lineNum">     372 </span><span class="lineCov">          2 :   fastOpenNotSupported = false;</span>
+<span class="lineNum">     373 </span><span class="lineCov">          2 :   tfoStatus = TFO_NOT_TRIED;</span>
+<span class="lineNum">     374 </span><span class="lineCov">          2 :   PRErrorCode result = 0;</span>
+<span class="lineNum">     375 </span>            : 
+<span class="lineNum">     376 </span>            :   // If we do not have data to send with syn packet or nspr version does not
+<span class="lineNum">     377 </span>            :   // have sendto implemented we will call normal connect.
+<span class="lineNum">     378 </span>            :   // If sendto is not implemented it points to _PR_InvalidInt, therefore we
+<span class="lineNum">     379 </span>            :   // check if sendto != _PR_InvalidInt. _PR_InvalidInt is exposed so we use
+<span class="lineNum">     380 </span>            :   // reserved_fn_0 which also points to _PR_InvalidInt.
+<span class="lineNum">     381 </span><span class="lineCov">          4 :   if (!secret-&gt;mFirstPacketBufLen ||</span>
+<span class="lineNum">     382 </span><span class="lineCov">          2 :       (tfoFd-&gt;lower-&gt;methods-&gt;sendto == (PRSendtoFN)tfoFd-&gt;lower-&gt;methods-&gt;reserved_fn_0)) {</span>
+<span class="lineNum">     383 </span>            :     // Because of the way our nsHttpTransaction dispatch work, it can happened
+<span class="lineNum">     384 </span>            :     // that data has not been written into the socket.
+<span class="lineNum">     385 </span>            :     // In this case we can just call connect.
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :     PRInt32 rv = (tfoFd-&gt;lower-&gt;methods-&gt;connect)(tfoFd-&gt;lower, &amp;secret-&gt;mAddr,</span>
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :                                                   PR_INTERVAL_NO_WAIT);</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :     if (rv == PR_SUCCESS) {</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :       result = PR_IS_CONNECTED_ERROR;</span>
+<span class="lineNum">     390 </span>            :     } else {
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :       result = PR_GetError();</span>
+<span class="lineNum">     392 </span>            :     }
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :     if (tfoFd-&gt;lower-&gt;methods-&gt;sendto == (PRSendtoFN)tfoFd-&gt;lower-&gt;methods-&gt;reserved_fn_0) {</span>
+<span class="lineNum">     394 </span>            :         // sendto is not implemented, it is equal to _PR_InvalidInt!
+<span class="lineNum">     395 </span>            :         // We will disable Fast Open.
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :         SOCKET_LOG((&quot;TCPFastOpenFinish - sendto not implemented.\n&quot;));</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :         fastOpenNotSupported = true;</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     399 </span>            :   } else {
+<span class="lineNum">     400 </span>            :     // We have some data ready in the buffer we will send it with the syn
+<span class="lineNum">     401 </span>            :     // packet.
+<span class="lineNum">     402 </span><span class="lineCov">          4 :     PRInt32 rv = (tfoFd-&gt;lower-&gt;methods-&gt;sendto)(tfoFd-&gt;lower,</span>
+<span class="lineNum">     403 </span>            :                                                  secret-&gt;mFirstPacketBuf,
+<span class="lineNum">     404 </span><span class="lineCov">          2 :                                                  secret-&gt;mFirstPacketBufLen,</span>
+<span class="lineNum">     405 </span>            :                                                  0, //flags
+<span class="lineNum">     406 </span><span class="lineCov">          2 :                                                  &amp;secret-&gt;mAddr,</span>
+<span class="lineNum">     407 </span><span class="lineCov">          2 :                                                  PR_INTERVAL_NO_WAIT);</span>
+<span class="lineNum">     408 </span>            : 
+<span class="lineNum">     409 </span><span class="lineCov">          2 :     SOCKET_LOG((&quot;TCPFastOpenFinish - sendto result=%d.\n&quot;, rv));</span>
+<span class="lineNum">     410 </span><span class="lineCov">          2 :     if (rv &gt; 0) {</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :       result = PR_IN_PROGRESS_ERROR;</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :       secret-&gt;mFirstPacketBufLen -= rv;</span>
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :       if (secret-&gt;mFirstPacketBufLen) {</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :         memmove(secret-&gt;mFirstPacketBuf,</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :                 secret-&gt;mFirstPacketBuf + rv,</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :                 secret-&gt;mFirstPacketBufLen);</span>
+<span class="lineNum">     417 </span>            :       }
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :       tfoStatus = TFO_DATA_SENT;</span>
+<span class="lineNum">     419 </span>            :     } else {
+<span class="lineNum">     420 </span><span class="lineCov">          2 :       result = PR_GetError();</span>
+<span class="lineNum">     421 </span><span class="lineCov">          2 :       SOCKET_LOG((&quot;TCPFastOpenFinish - sendto error=%d.\n&quot;, result));</span>
+<span class="lineNum">     422 </span>            : 
+<span class="lineNum">     423 </span><span class="lineCov">          2 :       if (result == PR_NOT_IMPLEMENTED_ERROR || // When a windows version does not support Fast Open it will return this error.</span>
+<span class="lineNum">     424 </span>            :           result == PR_NOT_TCP_SOCKET_ERROR) { // SendTo will return PR_NOT_TCP_SOCKET_ERROR if TCP Fast Open is turned off on Linux.
+<span class="lineNum">     425 </span>            :         // We can call connect again.
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :         fastOpenNotSupported = true;</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :         rv = (tfoFd-&gt;lower-&gt;methods-&gt;connect)(tfoFd-&gt;lower, &amp;secret-&gt;mAddr,</span>
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :                                               PR_INTERVAL_NO_WAIT);</span>
+<span class="lineNum">     429 </span>            : 
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :         if (rv == PR_SUCCESS) {</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :           result = PR_IS_CONNECTED_ERROR;</span>
+<span class="lineNum">     432 </span>            :         } else {
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :           result = PR_GetError();</span>
+<span class="lineNum">     434 </span>            :         }
+<span class="lineNum">     435 </span>            :       } else {
+<span class="lineNum">     436 </span><span class="lineCov">          2 :         tfoStatus = TFO_TRIED;</span>
+<span class="lineNum">     437 </span>            :       }
+<span class="lineNum">     438 </span>            :     }
+<span class="lineNum">     439 </span>            :   }
+<span class="lineNum">     440 </span>            : 
+<span class="lineNum">     441 </span><span class="lineCov">          2 :   if (result == PR_IN_PROGRESS_ERROR) {</span>
+<span class="lineNum">     442 </span><span class="lineCov">          2 :     secret-&gt;mState = TCPFastOpenSecret::WAITING_FOR_CONNECTCONTINUE;</span>
+<span class="lineNum">     443 </span>            :   } else {
+<span class="lineNum">     444 </span>            :     // If the error is not PR_IN_PROGRESS_ERROR, change the state to CONNECT so
+<span class="lineNum">     445 </span>            :     // that recv/send can perform recv/send on the next lower layer and pick up
+<span class="lineNum">     446 </span>            :     // the real error. This is really important!
+<span class="lineNum">     447 </span>            :     // The result can also be PR_IS_CONNECTED_ERROR, that should change the
+<span class="lineNum">     448 </span>            :     // state to CONNECT anyway.
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :     secret-&gt;mState = TCPFastOpenSecret::CONNECTED;</span>
+<span class="lineNum">     450 </span>            :   }
+<span class="lineNum">     451 </span><span class="lineCov">          2 :   err = result;</span>
+<span class="lineNum">     452 </span><span class="lineCov">          2 : }</span>
+<span class="lineNum">     453 </span>            : 
+<span class="lineNum">     454 </span>            : /* This function returns the size of the remaining free space in the
+<span class="lineNum">     455 </span>            :  * first_packet_buffer. This will be used by transactions with a tls layer. For
+<span class="lineNum">     456 </span>            :  * other transactions it is not necessary. The tls transactions make a tls
+<span class="lineNum">     457 </span>            :  * record before writing to this layer and if the record is too big the part
+<span class="lineNum">     458 </span>            :  * that does not have place in the mFirstPacketBuf will be saved on the tls
+<span class="lineNum">     459 </span>            :  * layer. During TFO we cannot send more than TFO_MAX_PACKET_SIZE_IPV4/6 bytes,
+<span class="lineNum">     460 </span>            :  * so if we have a big tls record, this record is encrypted with 0RTT key,
+<span class="lineNum">     461 </span>            :  * tls-early-data can be rejected and than we still need to send the rest of the
+<span class="lineNum">     462 </span>            :  * record.
+<a name="463"><span class="lineNum">     463 </span>            :  */</a>
+<span class="lineNum">     464 </span>            : int32_t
+<span class="lineNum">     465 </span><span class="lineCov">          2 : TCPFastOpenGetBufferSizeLeft(PRFileDesc *fd)</span>
+<span class="lineNum">     466 </span>            : {
+<span class="lineNum">     467 </span><span class="lineCov">          2 :   PRFileDesc *tfoFd = PR_GetIdentitiesLayer(fd, sTCPFastOpenLayerIdentity);</span>
+<span class="lineNum">     468 </span><span class="lineCov">          2 :   MOZ_RELEASE_ASSERT(tfoFd);</span>
+<span class="lineNum">     469 </span><span class="lineCov">          2 :   MOZ_ASSERT(OnSocketThread(), &quot;not on socket thread&quot;);</span>
+<span class="lineNum">     470 </span>            : 
+<span class="lineNum">     471 </span><span class="lineCov">          2 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(tfoFd-&gt;secret);</span>
+<span class="lineNum">     472 </span>            : 
+<span class="lineNum">     473 </span><span class="lineCov">          2 :   if (secret-&gt;mState != TCPFastOpenSecret::COLLECT_DATA_FOR_FIRST_PACKET) {</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     475 </span>            :   }
+<span class="lineNum">     476 </span>            : 
+<span class="lineNum">     477 </span>            :   int32_t sizeLeft =
+<span class="lineNum">     478 </span><span class="lineCov">          2 :     (secret-&gt;mAddr.raw.family == PR_AF_INET) ? TFO_MAX_PACKET_SIZE_IPV4</span>
+<span class="lineNum">     479 </span><span class="lineCov">          2 :                                              : TFO_MAX_PACKET_SIZE_IPV6;</span>
+<span class="lineNum">     480 </span><span class="lineCov">          2 :   MOZ_ASSERT(secret-&gt;mFirstPacketBufLen &lt;= sizeLeft);</span>
+<span class="lineNum">     481 </span><span class="lineCov">          2 :   sizeLeft -= secret-&gt;mFirstPacketBufLen;</span>
+<span class="lineNum">     482 </span>            : 
+<span class="lineNum">     483 </span><span class="lineCov">          2 :   SOCKET_LOG((&quot;TCPFastOpenGetBufferSizeLeft=%d.\n&quot;, sizeLeft));</span>
+<span class="lineNum">     484 </span>            : 
+<span class="lineNum">     485 </span><span class="lineCov">          2 :   return (sizeLeft &gt; TFO_TLS_RECORD_HEADER_SIZE) ?</span>
+<span class="lineNum">     486 </span><span class="lineCov">          2 :     sizeLeft - TFO_TLS_RECORD_HEADER_SIZE : 0;</span>
+<span class="lineNum">     487 </span>            : }
+<a name="488"><span class="lineNum">     488 </span>            : </a>
+<span class="lineNum">     489 </span>            : bool
+<span class="lineNum">     490 </span><span class="lineCov">          2 : TCPFastOpenGetCurrentBufferSize(PRFileDesc *fd)</span>
+<span class="lineNum">     491 </span>            : {
+<span class="lineNum">     492 </span><span class="lineCov">          2 :   PRFileDesc *tfoFd = PR_GetIdentitiesLayer(fd, sTCPFastOpenLayerIdentity);</span>
+<span class="lineNum">     493 </span><span class="lineCov">          2 :   MOZ_RELEASE_ASSERT(tfoFd);</span>
+<span class="lineNum">     494 </span><span class="lineCov">          2 :   MOZ_ASSERT(OnSocketThread(), &quot;not on socket thread&quot;);</span>
+<span class="lineNum">     495 </span>            : 
+<span class="lineNum">     496 </span><span class="lineCov">          2 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(tfoFd-&gt;secret);</span>
+<span class="lineNum">     497 </span>            : 
+<span class="lineNum">     498 </span><span class="lineCov">          2 :   return secret-&gt;mFirstPacketBufLen;</span>
+<span class="lineNum">     499 </span>            : }
+<a name="500"><span class="lineNum">     500 </span>            : </a>
+<span class="lineNum">     501 </span>            : bool
+<span class="lineNum">     502 </span><span class="lineCov">          2 : TCPFastOpenFlushBuffer(PRFileDesc *fd)</span>
+<span class="lineNum">     503 </span>            : {
+<span class="lineNum">     504 </span><span class="lineCov">          2 :   PRFileDesc *tfoFd = PR_GetIdentitiesLayer(fd, sTCPFastOpenLayerIdentity);</span>
+<span class="lineNum">     505 </span><span class="lineCov">          2 :   MOZ_RELEASE_ASSERT(tfoFd);</span>
+<span class="lineNum">     506 </span><span class="lineCov">          2 :   MOZ_ASSERT(OnSocketThread(), &quot;not on socket thread&quot;);</span>
+<span class="lineNum">     507 </span>            : 
+<span class="lineNum">     508 </span><span class="lineCov">          2 :   TCPFastOpenSecret *secret = reinterpret_cast&lt;TCPFastOpenSecret *&gt;(tfoFd-&gt;secret);</span>
+<span class="lineNum">     509 </span><span class="lineCov">          2 :   MOZ_ASSERT(secret-&gt;mState == TCPFastOpenSecret::CONNECTED);</span>
+<span class="lineNum">     510 </span>            : 
+<span class="lineNum">     511 </span><span class="lineCov">          2 :   if (secret-&gt;mFirstPacketBufLen) {</span>
+<span class="lineNum">     512 </span><span class="lineCov">          2 :     SOCKET_LOG((&quot;TCPFastOpenFlushBuffer - %d bytes to drain from &quot;</span>
+<span class="lineNum">     513 </span>            :                 &quot;mFirstPacketBufLen.\n&quot;,
+<span class="lineNum">     514 </span>            :                 secret-&gt;mFirstPacketBufLen ));
+<span class="lineNum">     515 </span><span class="lineCov">          4 :     PRInt32 rv = (tfoFd-&gt;lower-&gt;methods-&gt;send)(tfoFd-&gt;lower,</span>
+<span class="lineNum">     516 </span>            :                                                secret-&gt;mFirstPacketBuf,
+<span class="lineNum">     517 </span><span class="lineCov">          2 :                                                secret-&gt;mFirstPacketBufLen,</span>
+<span class="lineNum">     518 </span>            :                                                0, // flags
+<span class="lineNum">     519 </span><span class="lineCov">          2 :                                                PR_INTERVAL_NO_WAIT);</span>
+<span class="lineNum">     520 </span><span class="lineCov">          2 :     if (rv &lt;= 0) {</span>
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :       PRErrorCode err = PR_GetError();</span>
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :       if (err == PR_WOULD_BLOCK_ERROR) {</span>
+<span class="lineNum">     523 </span>            :         // We still need to send this data.
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     525 </span>            :       } else {
+<span class="lineNum">     526 </span>            :         // There is an error, let nsSocketTransport pick it up properly.
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :         secret-&gt;mCondition = err;</span>
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :         secret-&gt;mState = TCPFastOpenSecret::SOCKET_ERROR_STATE;</span>
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     530 </span>            :       }
+<span class="lineNum">     531 </span>            :     }
+<span class="lineNum">     532 </span>            : 
+<span class="lineNum">     533 </span><span class="lineCov">          2 :     secret-&gt;mFirstPacketBufLen -= rv;</span>
+<span class="lineNum">     534 </span><span class="lineCov">          2 :     if (secret-&gt;mFirstPacketBufLen) {</span>
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :       memmove(secret-&gt;mFirstPacketBuf,</span>
+<span class="lineNum">     536 </span><span class="lineNoCov">          0 :               secret-&gt;mFirstPacketBuf + rv,</span>
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :               secret-&gt;mFirstPacketBufLen);</span>
+<span class="lineNum">     538 </span>            :     }
+<span class="lineNum">     539 </span>            :   }
+<span class="lineNum">     540 </span><span class="lineCov">          2 :   return secret-&gt;mFirstPacketBufLen;</span>
+<span class="lineNum">     541 </span>            : }
+<span class="lineNum">     542 </span>            : 
+<span class="lineNum">     543 </span>            : }
+<span class="lineNum">     544 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

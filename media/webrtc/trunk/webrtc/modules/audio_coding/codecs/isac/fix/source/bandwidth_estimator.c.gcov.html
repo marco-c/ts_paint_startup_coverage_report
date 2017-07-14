@@ -1,0 +1,1121 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/audio_coding/codecs/isac/fix/source/bandwidth_estimator.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/audio_coding/codecs/isac/fix/source</a> - bandwidth_estimator.c<span style="font-size: 80%;"> (source / <a href="bandwidth_estimator.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">397</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">16</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2011 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : /*
+<span class="lineNum">      12 </span>            :  * bandwidth_estimator.c
+<span class="lineNum">      13 </span>            :  *
+<span class="lineNum">      14 </span>            :  * This file contains the code for the Bandwidth Estimator designed
+<span class="lineNum">      15 </span>            :  * for iSAC.
+<span class="lineNum">      16 </span>            :  *
+<span class="lineNum">      17 </span>            :  * NOTE! Castings needed for C55, do not remove!
+<span class="lineNum">      18 </span>            :  *
+<span class="lineNum">      19 </span>            :  */
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : #include &quot;bandwidth_estimator.h&quot;
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : #include &quot;settings.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : /* array of quantization levels for bottle neck info; Matlab code: */
+<span class="lineNum">      27 </span>            : /* sprintf('%4.1ff, ', logspace(log10(5000), log10(40000), 12)) */
+<span class="lineNum">      28 </span>            : static const int16_t kQRateTable[12] = {
+<span class="lineNum">      29 </span>            :   10000, 11115, 12355, 13733, 15265, 16967,
+<span class="lineNum">      30 </span>            :   18860, 20963, 23301, 25900, 28789, 32000
+<span class="lineNum">      31 </span>            : };
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : /* 0.1 times the values in the table kQRateTable */
+<span class="lineNum">      34 </span>            : /* values are in Q16                                         */
+<span class="lineNum">      35 </span>            : static const int32_t KQRate01[12] = {
+<span class="lineNum">      36 </span>            :   65536000,  72843264,  80969728,  90000589,  100040704, 111194931,
+<span class="lineNum">      37 </span>            :   123600896, 137383117, 152705434, 169738240, 188671590, 209715200
+<span class="lineNum">      38 </span>            : };
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span>            : /* Bits per Bytes Seconds
+<span class="lineNum">      41 </span>            :  * 8 bits/byte * 1000 msec/sec * 1/framelength (in msec)-&gt;bits/byte*sec
+<span class="lineNum">      42 </span>            :  * frame length will either be 30 or 60 msec. 8738 is 1/60 in Q19 and 1/30 in Q18
+<span class="lineNum">      43 </span>            :  * The following number is either in Q15 or Q14 depending on the current frame length */
+<span class="lineNum">      44 </span>            : static const int32_t kBitsByteSec = 4369000;
+<span class="lineNum">      45 </span>            : 
+<span class="lineNum">      46 </span>            : /* Received header rate. First value is for 30 ms packets and second for 60 ms */
+<span class="lineNum">      47 </span>            : static const int16_t kRecHeaderRate[2] = {
+<span class="lineNum">      48 </span>            :   9333, 4666
+<span class="lineNum">      49 </span>            : };
+<span class="lineNum">      50 </span>            : 
+<span class="lineNum">      51 </span>            : /* Inverted minimum and maximum bandwidth in Q30.
+<span class="lineNum">      52 </span>            :    minBwInv 30 ms, maxBwInv 30 ms,
+<span class="lineNum">      53 </span>            :    minBwInv 60 ms, maxBwInv 69 ms
+<span class="lineNum">      54 </span>            : */
+<span class="lineNum">      55 </span>            : static const int32_t kInvBandwidth[4] = {
+<span class="lineNum">      56 </span>            :   55539, 25978,
+<span class="lineNum">      57 </span>            :   73213, 29284
+<span class="lineNum">      58 </span>            : };
+<span class="lineNum">      59 </span>            : 
+<span class="lineNum">      60 </span>            : /* Number of samples in 25 msec */
+<span class="lineNum">      61 </span>            : static const int32_t kSamplesIn25msec = 400;
+<span class="lineNum">      62 </span>            : 
+<span class="lineNum">      63 </span>            : 
+<span class="lineNum">      64 </span>            : /****************************************************************************
+<span class="lineNum">      65 </span>            :  * WebRtcIsacfix_InitBandwidthEstimator(...)
+<span class="lineNum">      66 </span>            :  *
+<span class="lineNum">      67 </span>            :  * This function initializes the struct for the bandwidth estimator
+<span class="lineNum">      68 </span>            :  *
+<span class="lineNum">      69 </span>            :  * Input/Output:
+<span class="lineNum">      70 </span>            :  *      - bweStr        : Struct containing bandwidth information.
+<span class="lineNum">      71 </span>            :  *
+<a name="72"><span class="lineNum">      72 </span>            :  * Return value            : 0</a>
+<span class="lineNum">      73 </span>            :  */
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 : int32_t WebRtcIsacfix_InitBandwidthEstimator(BwEstimatorstr *bweStr)</span>
+<span class="lineNum">      75 </span>            : {
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :   bweStr-&gt;prevFrameSizeMs       = INIT_FRAME_LEN;</span>
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :   bweStr-&gt;prevRtpNumber         = 0;</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :   bweStr-&gt;prevSendTime          = 0;</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :   bweStr-&gt;prevArrivalTime       = 0;</span>
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :   bweStr-&gt;prevRtpRate           = 1;</span>
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :   bweStr-&gt;lastUpdate            = 0;</span>
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :   bweStr-&gt;lastReduction         = 0;</span>
+<span class="lineNum">      83 </span><span class="lineNoCov">          0 :   bweStr-&gt;countUpdates          = -9;</span>
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span>            :   /* INIT_BN_EST = 20000
+<span class="lineNum">      86 </span>            :    * INIT_BN_EST_Q7 = 2560000
+<span class="lineNum">      87 </span>            :    * INIT_HDR_RATE = 4666
+<span class="lineNum">      88 </span>            :    * INIT_REC_BN_EST_Q5 = 789312
+<span class="lineNum">      89 </span>            :    *
+<span class="lineNum">      90 </span>            :    * recBwInv = 1/(INIT_BN_EST + INIT_HDR_RATE) in Q30
+<span class="lineNum">      91 </span>            :    * recBwAvg = INIT_BN_EST + INIT_HDR_RATE in Q5
+<span class="lineNum">      92 </span>            :    */
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :   bweStr-&gt;recBwInv              = 43531;</span>
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :   bweStr-&gt;recBw                 = INIT_BN_EST;</span>
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :   bweStr-&gt;recBwAvgQ             = INIT_BN_EST_Q7;</span>
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :   bweStr-&gt;recBwAvg              = INIT_REC_BN_EST_Q5;</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   bweStr-&gt;recJitter             = (int32_t) 327680;   /* 10 in Q15 */</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :   bweStr-&gt;recJitterShortTerm    = 0;</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :   bweStr-&gt;recJitterShortTermAbs = (int32_t) 40960;    /* 5 in Q13 */</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :   bweStr-&gt;recMaxDelay           = (int32_t) 10;</span>
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :   bweStr-&gt;recMaxDelayAvgQ       = (int32_t) 5120;     /* 10 in Q9 */</span>
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :   bweStr-&gt;recHeaderRate         = INIT_HDR_RATE;</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :   bweStr-&gt;countRecPkts          = 0;</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :   bweStr-&gt;sendBwAvg             = INIT_BN_EST_Q7;</span>
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :   bweStr-&gt;sendMaxDelayAvg       = (int32_t) 5120;     /* 10 in Q9 */</span>
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :   bweStr-&gt;countHighSpeedRec     = 0;</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :   bweStr-&gt;highSpeedRec          = 0;</span>
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :   bweStr-&gt;countHighSpeedSent    = 0;</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :   bweStr-&gt;highSpeedSend         = 0;</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :   bweStr-&gt;inWaitPeriod          = 0;</span>
+<span class="lineNum">     112 </span>            : 
+<span class="lineNum">     113 </span>            :   /* Find the inverse of the max bw and min bw in Q30
+<span class="lineNum">     114 </span>            :    *  (1 / (MAX_ISAC_BW + INIT_HDR_RATE) in Q30
+<span class="lineNum">     115 </span>            :    *  (1 / (MIN_ISAC_BW + INIT_HDR_RATE) in Q30
+<span class="lineNum">     116 </span>            :    */
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :   bweStr-&gt;maxBwInv              = kInvBandwidth[3];</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :   bweStr-&gt;minBwInv              = kInvBandwidth[2];</span>
+<span class="lineNum">     119 </span>            : 
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :   bweStr-&gt;external_bw_info.in_use = 0;</span>
+<span class="lineNum">     121 </span>            : 
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :   return 0;</span>
+<span class="lineNum">     123 </span>            : }
+<span class="lineNum">     124 </span>            : 
+<span class="lineNum">     125 </span>            : /****************************************************************************
+<span class="lineNum">     126 </span>            :  * WebRtcIsacfix_UpdateUplinkBwImpl(...)
+<span class="lineNum">     127 </span>            :  *
+<span class="lineNum">     128 </span>            :  * This function updates bottle neck rate received from other side in payload
+<span class="lineNum">     129 </span>            :  * and calculates a new bottle neck to send to the other side.
+<span class="lineNum">     130 </span>            :  *
+<span class="lineNum">     131 </span>            :  * Input/Output:
+<span class="lineNum">     132 </span>            :  *      - bweStr           : struct containing bandwidth information.
+<span class="lineNum">     133 </span>            :  *      - rtpNumber        : value from RTP packet, from NetEq
+<span class="lineNum">     134 </span>            :  *      - frameSize        : length of signal frame in ms, from iSAC decoder
+<span class="lineNum">     135 </span>            :  *      - sendTime         : value in RTP header giving send time in samples
+<span class="lineNum">     136 </span>            :  *      - arrivalTime      : value given by timeGetTime() time of arrival in
+<span class="lineNum">     137 </span>            :  *                           samples of packet from NetEq
+<span class="lineNum">     138 </span>            :  *      - pksize           : size of packet in bytes, from NetEq
+<span class="lineNum">     139 </span>            :  *      - Index            : integer (range 0...23) indicating bottle neck &amp;
+<span class="lineNum">     140 </span>            :  *                           jitter as estimated by other side
+<span class="lineNum">     141 </span>            :  *
+<span class="lineNum">     142 </span>            :  * Return value            : 0 if everything went fine,
+<a name="143"><span class="lineNum">     143 </span>            :  *                           -1 otherwise</a>
+<span class="lineNum">     144 </span>            :  */
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 : int32_t WebRtcIsacfix_UpdateUplinkBwImpl(BwEstimatorstr *bweStr,</span>
+<span class="lineNum">     146 </span>            :                                          const uint16_t rtpNumber,
+<span class="lineNum">     147 </span>            :                                          const int16_t  frameSize,
+<span class="lineNum">     148 </span>            :                                          const uint32_t sendTime,
+<span class="lineNum">     149 </span>            :                                          const uint32_t arrivalTime,
+<span class="lineNum">     150 </span>            :                                          const size_t   pksize,
+<span class="lineNum">     151 </span>            :                                          const uint16_t Index)
+<span class="lineNum">     152 </span>            : {
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :   uint16_t  weight = 0;</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :   uint32_t  currBwInv = 0;</span>
+<span class="lineNum">     155 </span>            :   uint16_t  recRtpRate;
+<span class="lineNum">     156 </span>            :   uint32_t  arrTimeProj;
+<span class="lineNum">     157 </span>            :   int32_t   arrTimeDiff;
+<span class="lineNum">     158 </span>            :   int32_t   arrTimeNoise;
+<span class="lineNum">     159 </span>            :   int32_t   arrTimeNoiseAbs;
+<span class="lineNum">     160 </span>            :   int32_t   sendTimeDiff;
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   int32_t delayCorrFactor = DELAY_CORRECTION_MED;</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :   int32_t lateDiff = 0;</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :   int16_t immediateSet = 0;</span>
+<span class="lineNum">     165 </span>            :   int32_t frameSizeSampl;
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span>            :   int32_t  temp;
+<span class="lineNum">     168 </span>            :   int32_t  msec;
+<span class="lineNum">     169 </span>            :   uint32_t exponent;
+<span class="lineNum">     170 </span>            :   uint32_t reductionFactor;
+<span class="lineNum">     171 </span>            :   uint32_t numBytesInv;
+<span class="lineNum">     172 </span>            :   int32_t  sign;
+<span class="lineNum">     173 </span>            : 
+<span class="lineNum">     174 </span>            :   uint32_t byteSecondsPerBit;
+<span class="lineNum">     175 </span>            :   uint32_t tempLower;
+<span class="lineNum">     176 </span>            :   uint32_t tempUpper;
+<span class="lineNum">     177 </span>            :   int32_t recBwAvgInv;
+<span class="lineNum">     178 </span>            :   int32_t numPktsExpected;
+<span class="lineNum">     179 </span>            : 
+<span class="lineNum">     180 </span>            :   int16_t errCode;
+<span class="lineNum">     181 </span>            : 
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!bweStr-&gt;external_bw_info.in_use);</span>
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span>            :   /* UPDATE ESTIMATES FROM OTHER SIDE */
+<span class="lineNum">     185 </span>            : 
+<span class="lineNum">     186 </span>            :   /* The function also checks if Index has a valid value */
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :   errCode = WebRtcIsacfix_UpdateUplinkBwRec(bweStr, Index);</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   if (errCode &lt;0) {</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :     return(errCode);</span>
+<span class="lineNum">     190 </span>            :   }
+<span class="lineNum">     191 </span>            : 
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span>            :   /* UPDATE ESTIMATES ON THIS SIDE */
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span>            :   /* Bits per second per byte * 1/30 or 1/60 */
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :   if (frameSize == 60) {</span>
+<span class="lineNum">     197 </span>            :     /* If frameSize changed since last call, from 30 to 60, recalculate some values */
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :     if ( (frameSize != bweStr-&gt;prevFrameSizeMs) &amp;&amp; (bweStr-&gt;countUpdates &gt; 0)) {</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :       bweStr-&gt;countUpdates = 10;</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :       bweStr-&gt;recHeaderRate = kRecHeaderRate[1];</span>
+<span class="lineNum">     201 </span>            : 
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :       bweStr-&gt;maxBwInv = kInvBandwidth[3];</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :       bweStr-&gt;minBwInv = kInvBandwidth[2];</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :       bweStr-&gt;recBwInv = 1073741824 / (bweStr-&gt;recBw + bweStr-&gt;recHeaderRate);</span>
+<span class="lineNum">     205 </span>            :     }
+<span class="lineNum">     206 </span>            : 
+<span class="lineNum">     207 </span>            :     /* kBitsByteSec is in Q15 */
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :     recRtpRate = (int16_t)((kBitsByteSec * pksize) &gt;&gt; 15) +</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :         bweStr-&gt;recHeaderRate;</span>
+<span class="lineNum">     210 </span>            : 
+<span class="lineNum">     211 </span>            :   } else {
+<span class="lineNum">     212 </span>            :     /* If frameSize changed since last call, from 60 to 30, recalculate some values */
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     if ( (frameSize != bweStr-&gt;prevFrameSizeMs) &amp;&amp; (bweStr-&gt;countUpdates &gt; 0)) {</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :       bweStr-&gt;countUpdates = 10;</span>
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :       bweStr-&gt;recHeaderRate = kRecHeaderRate[0];</span>
+<span class="lineNum">     216 </span>            : 
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :       bweStr-&gt;maxBwInv = kInvBandwidth[1];</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :       bweStr-&gt;minBwInv = kInvBandwidth[0];</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :       bweStr-&gt;recBwInv = 1073741824 / (bweStr-&gt;recBw + bweStr-&gt;recHeaderRate);</span>
+<span class="lineNum">     220 </span>            :     }
+<span class="lineNum">     221 </span>            : 
+<span class="lineNum">     222 </span>            :     /* kBitsByteSec is in Q14 */
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :     recRtpRate = (uint16_t)((kBitsByteSec * pksize) &gt;&gt; 14) +</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :         bweStr-&gt;recHeaderRate;</span>
+<span class="lineNum">     225 </span>            :   }
+<span class="lineNum">     226 </span>            : 
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span>            :   /* Check for timer wrap-around */
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :   if (arrivalTime &lt; bweStr-&gt;prevArrivalTime) {</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :     bweStr-&gt;prevArrivalTime = arrivalTime;</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     bweStr-&gt;lastUpdate      = arrivalTime;</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :     bweStr-&gt;lastReduction   = arrivalTime + FS3;</span>
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :     bweStr-&gt;countRecPkts      = 0;</span>
+<span class="lineNum">     235 </span>            : 
+<span class="lineNum">     236 </span>            :     /* store frame size */
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :     bweStr-&gt;prevFrameSizeMs = frameSize;</span>
+<span class="lineNum">     238 </span>            : 
+<span class="lineNum">     239 </span>            :     /* store far-side transmission rate */
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :     bweStr-&gt;prevRtpRate = recRtpRate;</span>
+<span class="lineNum">     241 </span>            : 
+<span class="lineNum">     242 </span>            :     /* store far-side RTP time stamp */
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :     bweStr-&gt;prevRtpNumber = rtpNumber;</span>
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     246 </span>            :   }
+<span class="lineNum">     247 </span>            : 
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   bweStr-&gt;countRecPkts++;</span>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span>            :   /* Calculate framesize in msec */
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :   frameSizeSampl = SAMPLES_PER_MSEC * frameSize;</span>
+<span class="lineNum">     252 </span>            : 
+<span class="lineNum">     253 </span>            :   /* Check that it's not one of the first 9 packets */
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :   if ( bweStr-&gt;countUpdates &gt; 0 ) {</span>
+<span class="lineNum">     255 </span>            : 
+<span class="lineNum">     256 </span>            :     /* Stay in Wait Period for 1.5 seconds (no updates in wait period) */
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :     if(bweStr-&gt;inWaitPeriod) {</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :       if ((arrivalTime - bweStr-&gt;startWaitPeriod)&gt; FS_1_HALF) {</span>
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :         bweStr-&gt;inWaitPeriod = 0;</span>
+<span class="lineNum">     260 </span>            :       }
+<span class="lineNum">     261 </span>            :     }
+<span class="lineNum">     262 </span>            : 
+<span class="lineNum">     263 </span>            :     /* If not been updated for a long time, reduce the BN estimate */
+<span class="lineNum">     264 </span>            : 
+<span class="lineNum">     265 </span>            :     /* Check send time difference between this packet and previous received      */
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :     sendTimeDiff = sendTime - bweStr-&gt;prevSendTime;</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     if (sendTimeDiff &lt;= frameSizeSampl * 2) {</span>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span>            :       /* Only update if 3 seconds has past since last update */
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :       if ((arrivalTime - bweStr-&gt;lastUpdate) &gt; FS3) {</span>
+<span class="lineNum">     271 </span>            : 
+<span class="lineNum">     272 </span>            :         /* Calculate expected number of received packets since last update */
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :         numPktsExpected = (arrivalTime - bweStr-&gt;lastUpdate) / frameSizeSampl;</span>
+<span class="lineNum">     274 </span>            : 
+<span class="lineNum">     275 </span>            :         /* If received number of packets is more than 90% of expected (922 = 0.9 in Q10): */
+<span class="lineNum">     276 </span>            :         /* do the update, else not                                                        */
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :         if ((int32_t)bweStr-&gt;countRecPkts &lt;&lt; 10 &gt; 922 * numPktsExpected) {</span>
+<span class="lineNum">     278 </span>            :           /* Q4 chosen to approx dividing by 16 */
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :           msec = (arrivalTime - bweStr-&gt;lastReduction);</span>
+<span class="lineNum">     280 </span>            : 
+<span class="lineNum">     281 </span>            :           /* the number below represents 13 seconds, highly unlikely
+<span class="lineNum">     282 </span>            :              but to insure no overflow when reduction factor is multiplied by recBw inverse */
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :           if (msec &gt; 208000) {</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :             msec = 208000;</span>
+<span class="lineNum">     285 </span>            :           }
+<span class="lineNum">     286 </span>            : 
+<span class="lineNum">     287 </span>            :           /* Q20 2^(negative number: - 76/1048576) = .99995
+<span class="lineNum">     288 </span>            :              product is Q24 */
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :           exponent = WEBRTC_SPL_UMUL(0x0000004C, msec);</span>
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span>            :           /* do the approx with positive exponent so that value is actually rf^-1
+<span class="lineNum">     292 </span>            :              and multiply by bw inverse */
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :           reductionFactor = WEBRTC_SPL_RSHIFT_U32(0x01000000 | (exponent &amp; 0x00FFFFFF),</span>
+<span class="lineNum">     294 </span>            :                                                   WEBRTC_SPL_RSHIFT_U32(exponent, 24));
+<span class="lineNum">     295 </span>            : 
+<span class="lineNum">     296 </span>            :           /* reductionFactor in Q13 */
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :           reductionFactor = WEBRTC_SPL_RSHIFT_U32(reductionFactor, 11);</span>
+<span class="lineNum">     298 </span>            : 
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :           if ( reductionFactor != 0 ) {</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :             bweStr-&gt;recBwInv = WEBRTC_SPL_MUL((int32_t)bweStr-&gt;recBwInv, (int32_t)reductionFactor);</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :             bweStr-&gt;recBwInv = (int32_t)bweStr-&gt;recBwInv &gt;&gt; 13;</span>
+<span class="lineNum">     302 </span>            : 
+<span class="lineNum">     303 </span>            :           } else {
+<span class="lineNum">     304 </span>            :             static const uint32_t kInitRate = INIT_BN_EST + INIT_HDR_RATE;
+<span class="lineNum">     305 </span>            :             /* recBwInv = 1 / kInitRate  in Q26 (Q30??)*/
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :             bweStr-&gt;recBwInv = (1073741824 + kInitRate / 2) / kInitRate;</span>
+<span class="lineNum">     307 </span>            :           }
+<span class="lineNum">     308 </span>            : 
+<span class="lineNum">     309 </span>            :           /* reset time-since-update counter */
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :           bweStr-&gt;lastReduction = arrivalTime;</span>
+<span class="lineNum">     311 </span>            :         } else {
+<span class="lineNum">     312 </span>            :           /* Delay last reduction with 3 seconds */
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :           bweStr-&gt;lastReduction = arrivalTime + FS3;</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :           bweStr-&gt;lastUpdate    = arrivalTime;</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :           bweStr-&gt;countRecPkts  = 0;</span>
+<span class="lineNum">     316 </span>            :         }
+<span class="lineNum">     317 </span>            :       }
+<span class="lineNum">     318 </span>            :     } else {
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :       bweStr-&gt;lastReduction = arrivalTime + FS3;</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :       bweStr-&gt;lastUpdate    = arrivalTime;</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :       bweStr-&gt;countRecPkts  = 0;</span>
+<span class="lineNum">     322 </span>            :     }
+<span class="lineNum">     323 </span>            : 
+<span class="lineNum">     324 </span>            : 
+<span class="lineNum">     325 </span>            :     /*   update only if previous packet was not lost */
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :     if ( rtpNumber == bweStr-&gt;prevRtpNumber + 1 ) {</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :       arrTimeDiff = arrivalTime - bweStr-&gt;prevArrivalTime;</span>
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :       if (!(bweStr-&gt;highSpeedSend &amp;&amp; bweStr-&gt;highSpeedRec)) {</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :         if (arrTimeDiff &gt; frameSizeSampl) {</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :           if (sendTimeDiff &gt; 0) {</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :             lateDiff = arrTimeDiff - sendTimeDiff - frameSizeSampl * 2;</span>
+<span class="lineNum">     333 </span>            :           } else {
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :             lateDiff = arrTimeDiff - frameSizeSampl;</span>
+<span class="lineNum">     335 </span>            :           }
+<span class="lineNum">     336 </span>            : 
+<span class="lineNum">     337 </span>            :           /* 8000 is 1/2 second (in samples at FS) */
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :           if (lateDiff &gt; 8000) {</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :             delayCorrFactor = (int32_t) DELAY_CORRECTION_MAX;</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :             bweStr-&gt;inWaitPeriod = 1;</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :             bweStr-&gt;startWaitPeriod = arrivalTime;</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :             immediateSet = 1;</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :           } else if (lateDiff &gt; 5120) {</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :             delayCorrFactor = (int32_t) DELAY_CORRECTION_MED;</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :             immediateSet = 1;</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :             bweStr-&gt;inWaitPeriod = 1;</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :             bweStr-&gt;startWaitPeriod = arrivalTime;</span>
+<span class="lineNum">     348 </span>            :           }
+<span class="lineNum">     349 </span>            :         }
+<span class="lineNum">     350 </span>            :       }
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :       if ((bweStr-&gt;prevRtpRate &gt; (int32_t)bweStr-&gt;recBwAvg &gt;&gt; 5) &amp;&amp;</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :           (recRtpRate &gt; (int32_t)bweStr-&gt;recBwAvg &gt;&gt; 5) &amp;&amp;</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :           !bweStr-&gt;inWaitPeriod) {</span>
+<span class="lineNum">     355 </span>            : 
+<span class="lineNum">     356 </span>            :         /* test if still in initiation period and increment counter */
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :         if (bweStr-&gt;countUpdates++ &gt; 99) {</span>
+<span class="lineNum">     358 </span>            :           /* constant weight after initiation part, 0.01 in Q13 */
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :           weight = (uint16_t) 82;</span>
+<span class="lineNum">     360 </span>            :         } else {
+<span class="lineNum">     361 </span>            :           /* weight decreases with number of updates, 1/countUpdates in Q13  */
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :           weight = (uint16_t) WebRtcSpl_DivW32W16(</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :               8192 + (bweStr-&gt;countUpdates &gt;&gt; 1),</span>
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :               (int16_t)bweStr-&gt;countUpdates);</span>
+<span class="lineNum">     365 </span>            :         }
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span>            :         /* Bottle Neck Estimation */
+<span class="lineNum">     368 </span>            : 
+<span class="lineNum">     369 </span>            :         /* limit outliers, if more than 25 ms too much */
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :         if (arrTimeDiff &gt; frameSizeSampl + kSamplesIn25msec) {</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :           arrTimeDiff = frameSizeSampl + kSamplesIn25msec;</span>
+<span class="lineNum">     372 </span>            :         }
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span>            :         /* don't allow it to be less than frame rate - 10 ms */
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :         if (arrTimeDiff &lt; frameSizeSampl - FRAMESAMPLES_10ms) {</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :           arrTimeDiff = frameSizeSampl - FRAMESAMPLES_10ms;</span>
+<span class="lineNum">     377 </span>            :         }
+<span class="lineNum">     378 </span>            : 
+<span class="lineNum">     379 </span>            :         /* compute inverse receiving rate for last packet, in Q19 */
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :         numBytesInv = (uint16_t) WebRtcSpl_DivW32W16(</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :             (int32_t)(524288 + ((pksize + HEADER_SIZE) &gt;&gt; 1)),</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :             (int16_t)(pksize + HEADER_SIZE));</span>
+<span class="lineNum">     383 </span>            : 
+<span class="lineNum">     384 </span>            :         /* 8389 is  ~ 1/128000 in Q30 */
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :         byteSecondsPerBit = (uint32_t)(arrTimeDiff * 8389);</span>
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span>            :         /* get upper N bits */
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :         tempUpper = WEBRTC_SPL_RSHIFT_U32(byteSecondsPerBit, 15);</span>
+<span class="lineNum">     389 </span>            : 
+<span class="lineNum">     390 </span>            :         /* get lower 15 bits */
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :         tempLower = byteSecondsPerBit &amp; 0x00007FFF;</span>
+<span class="lineNum">     392 </span>            : 
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :         tempUpper = WEBRTC_SPL_MUL(tempUpper, numBytesInv);</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :         tempLower = WEBRTC_SPL_MUL(tempLower, numBytesInv);</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :         tempLower = WEBRTC_SPL_RSHIFT_U32(tempLower, 15);</span>
+<span class="lineNum">     396 </span>            : 
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :         currBwInv = tempUpper + tempLower;</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :         currBwInv = WEBRTC_SPL_RSHIFT_U32(currBwInv, 4);</span>
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span>            :         /* Limit inv rate. Note that minBwInv &gt; maxBwInv! */
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :         if(currBwInv &lt; bweStr-&gt;maxBwInv) {</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :           currBwInv = bweStr-&gt;maxBwInv;</span>
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :         } else if(currBwInv &gt; bweStr-&gt;minBwInv) {</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :           currBwInv = bweStr-&gt;minBwInv;</span>
+<span class="lineNum">     405 </span>            :         }
+<span class="lineNum">     406 </span>            : 
+<span class="lineNum">     407 </span>            :         /* update bottle neck rate estimate */
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :         bweStr-&gt;recBwInv = WEBRTC_SPL_UMUL(weight, currBwInv) +</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :             WEBRTC_SPL_UMUL((uint32_t) 8192 - weight, bweStr-&gt;recBwInv);</span>
+<span class="lineNum">     410 </span>            : 
+<span class="lineNum">     411 </span>            :         /* Shift back to Q30 from Q40 (actual used bits shouldn't be more than 27 based on minBwInv)
+<span class="lineNum">     412 </span>            :            up to 30 bits used with Q13 weight */
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :         bweStr-&gt;recBwInv = WEBRTC_SPL_RSHIFT_U32(bweStr-&gt;recBwInv, 13);</span>
+<span class="lineNum">     414 </span>            : 
+<span class="lineNum">     415 </span>            :         /* reset time-since-update counter */
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :         bweStr-&gt;lastUpdate    = arrivalTime;</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :         bweStr-&gt;lastReduction = arrivalTime + FS3;</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :         bweStr-&gt;countRecPkts  = 0;</span>
+<span class="lineNum">     419 </span>            : 
+<span class="lineNum">     420 </span>            :         /* to save resolution compute the inverse of recBwAvg in Q26 by left shifting numerator to 2^31
+<span class="lineNum">     421 </span>            :            and NOT right shifting recBwAvg 5 bits to an integer
+<span class="lineNum">     422 </span>            :            At max 13 bits are used
+<span class="lineNum">     423 </span>            :            shift to Q5 */
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :         recBwAvgInv = (0x80000000 + bweStr-&gt;recBwAvg / 2) / bweStr-&gt;recBwAvg;</span>
+<span class="lineNum">     425 </span>            : 
+<span class="lineNum">     426 </span>            :         /* Calculate Projected arrival time difference */
+<span class="lineNum">     427 </span>            : 
+<span class="lineNum">     428 </span>            :         /* The numerator of the quotient can be 22 bits so right shift inv by 4 to avoid overflow
+<span class="lineNum">     429 </span>            :            result in Q22 */
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :         arrTimeProj = WEBRTC_SPL_MUL((int32_t)8000, recBwAvgInv);</span>
+<span class="lineNum">     431 </span>            :         /* shift to Q22 */
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :         arrTimeProj = WEBRTC_SPL_RSHIFT_U32(arrTimeProj, 4);</span>
+<span class="lineNum">     433 </span>            :         /* complete calulation */
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :         arrTimeProj = WEBRTC_SPL_MUL(((int32_t)pksize + HEADER_SIZE), arrTimeProj);</span>
+<span class="lineNum">     435 </span>            :         /* shift to Q10 */
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :         arrTimeProj = WEBRTC_SPL_RSHIFT_U32(arrTimeProj, 12);</span>
+<span class="lineNum">     437 </span>            : 
+<span class="lineNum">     438 </span>            :         /* difference between projected and actual arrival time differences */
+<span class="lineNum">     439 </span>            :         /* Q9 (only shift arrTimeDiff by 5 to simulate divide by 16 (need to revisit if change sampling rate) DH */
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :         if ((arrTimeDiff &lt;&lt; 6) &gt; (int32_t)arrTimeProj) {</span>
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :           arrTimeNoise = (arrTimeDiff &lt;&lt; 6) - arrTimeProj;</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :           sign = 1;</span>
+<span class="lineNum">     443 </span>            :         } else {
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :           arrTimeNoise = arrTimeProj - (arrTimeDiff &lt;&lt; 6);</span>
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :           sign = -1;</span>
+<span class="lineNum">     446 </span>            :         }
+<span class="lineNum">     447 </span>            : 
+<span class="lineNum">     448 </span>            :         /* Q9 */
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :         arrTimeNoiseAbs = arrTimeNoise;</span>
+<span class="lineNum">     450 </span>            : 
+<span class="lineNum">     451 </span>            :         /* long term averaged absolute jitter, Q15 */
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :         weight &gt;&gt;= 3;</span>
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :         bweStr-&gt;recJitter = weight * (arrTimeNoiseAbs &lt;&lt; 5) +</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :             (1024 - weight) * bweStr-&gt;recJitter;</span>
+<span class="lineNum">     455 </span>            : 
+<span class="lineNum">     456 </span>            :         /* remove the fractional portion */
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :         bweStr-&gt;recJitter &gt;&gt;= 10;</span>
+<span class="lineNum">     458 </span>            : 
+<span class="lineNum">     459 </span>            :         /* Maximum jitter is 10 msec in Q15 */
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :         if (bweStr-&gt;recJitter &gt; (int32_t)327680) {</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :           bweStr-&gt;recJitter = (int32_t)327680;</span>
+<span class="lineNum">     462 </span>            :         }
+<span class="lineNum">     463 </span>            : 
+<span class="lineNum">     464 </span>            :         /* short term averaged absolute jitter */
+<span class="lineNum">     465 </span>            :         /* Calculation in Q13 products in Q23 */
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :         bweStr-&gt;recJitterShortTermAbs = 51 * (arrTimeNoiseAbs &lt;&lt; 3) +</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :             WEBRTC_SPL_MUL(973, bweStr-&gt;recJitterShortTermAbs);</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :         bweStr-&gt;recJitterShortTermAbs &gt;&gt;= 10;</span>
+<span class="lineNum">     469 </span>            : 
+<span class="lineNum">     470 </span>            :         /* short term averaged jitter */
+<span class="lineNum">     471 </span>            :         /* Calculation in Q13 products in Q23 */
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :         bweStr-&gt;recJitterShortTerm = 205 * (arrTimeNoise &lt;&lt; 3) * sign +</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :             WEBRTC_SPL_MUL(3891, bweStr-&gt;recJitterShortTerm);</span>
+<span class="lineNum">     474 </span>            : 
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :         if (bweStr-&gt;recJitterShortTerm &lt; 0) {</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :           temp = -bweStr-&gt;recJitterShortTerm;</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :           temp &gt;&gt;= 12;</span>
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :           bweStr-&gt;recJitterShortTerm = -temp;</span>
+<span class="lineNum">     479 </span>            :         } else {
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :           bweStr-&gt;recJitterShortTerm &gt;&gt;= 12;</span>
+<span class="lineNum">     481 </span>            :         }
+<span class="lineNum">     482 </span>            :       }
+<span class="lineNum">     483 </span>            :     }
+<span class="lineNum">     484 </span>            :   } else {
+<span class="lineNum">     485 </span>            :     /* reset time-since-update counter when receiving the first 9 packets */
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :     bweStr-&gt;lastUpdate    = arrivalTime;</span>
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :     bweStr-&gt;lastReduction = arrivalTime + FS3;</span>
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :     bweStr-&gt;countRecPkts  = 0;</span>
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :     bweStr-&gt;countUpdates++;</span>
+<span class="lineNum">     490 </span>            :   }
+<span class="lineNum">     491 </span>            : 
+<span class="lineNum">     492 </span>            :   /* Limit to minimum or maximum bottle neck rate (in Q30) */
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :   if (bweStr-&gt;recBwInv &gt; bweStr-&gt;minBwInv) {</span>
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :     bweStr-&gt;recBwInv = bweStr-&gt;minBwInv;</span>
+<span class="lineNum">     495 </span><span class="lineNoCov">          0 :   } else if (bweStr-&gt;recBwInv &lt; bweStr-&gt;maxBwInv) {</span>
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :     bweStr-&gt;recBwInv = bweStr-&gt;maxBwInv;</span>
+<span class="lineNum">     497 </span>            :   }
+<span class="lineNum">     498 </span>            : 
+<span class="lineNum">     499 </span>            : 
+<span class="lineNum">     500 </span>            :   /* store frame length */
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :   bweStr-&gt;prevFrameSizeMs = frameSize;</span>
+<span class="lineNum">     502 </span>            : 
+<span class="lineNum">     503 </span>            :   /* store far-side transmission rate */
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :   bweStr-&gt;prevRtpRate = recRtpRate;</span>
+<span class="lineNum">     505 </span>            : 
+<span class="lineNum">     506 </span>            :   /* store far-side RTP time stamp */
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :   bweStr-&gt;prevRtpNumber = rtpNumber;</span>
+<span class="lineNum">     508 </span>            : 
+<span class="lineNum">     509 </span>            :   /* Replace bweStr-&gt;recMaxDelay by the new value (atomic operation) */
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :   if (bweStr-&gt;prevArrivalTime != 0xffffffff) {</span>
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :     bweStr-&gt;recMaxDelay = WEBRTC_SPL_MUL(3, bweStr-&gt;recJitter);</span>
+<span class="lineNum">     512 </span>            :   }
+<span class="lineNum">     513 </span>            : 
+<span class="lineNum">     514 </span>            :   /* store arrival time stamp */
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :   bweStr-&gt;prevArrivalTime = arrivalTime;</span>
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :   bweStr-&gt;prevSendTime = sendTime;</span>
+<span class="lineNum">     517 </span>            : 
+<span class="lineNum">     518 </span>            :   /* Replace bweStr-&gt;recBw by the new value */
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :   bweStr-&gt;recBw = 1073741824 / bweStr-&gt;recBwInv - bweStr-&gt;recHeaderRate;</span>
+<span class="lineNum">     520 </span>            : 
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :   if (immediateSet) {</span>
+<span class="lineNum">     522 </span>            :     /* delay correction factor is in Q10 */
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :     bweStr-&gt;recBw = WEBRTC_SPL_UMUL(delayCorrFactor, bweStr-&gt;recBw);</span>
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :     bweStr-&gt;recBw = WEBRTC_SPL_RSHIFT_U32(bweStr-&gt;recBw, 10);</span>
+<span class="lineNum">     525 </span>            : 
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :     if (bweStr-&gt;recBw &lt; (int32_t) MIN_ISAC_BW) {</span>
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :       bweStr-&gt;recBw = (int32_t) MIN_ISAC_BW;</span>
+<span class="lineNum">     528 </span>            :     }
+<span class="lineNum">     529 </span>            : 
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 :     bweStr-&gt;recBwAvg = (bweStr-&gt;recBw + bweStr-&gt;recHeaderRate) &lt;&lt; 5;</span>
+<span class="lineNum">     531 </span>            : 
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :     bweStr-&gt;recBwAvgQ = bweStr-&gt;recBw &lt;&lt; 7;</span>
+<span class="lineNum">     533 </span>            : 
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :     bweStr-&gt;recJitterShortTerm = 0;</span>
+<span class="lineNum">     535 </span>            : 
+<span class="lineNum">     536 </span><span class="lineNoCov">          0 :     bweStr-&gt;recBwInv = 1073741824 / (bweStr-&gt;recBw + bweStr-&gt;recHeaderRate);</span>
+<span class="lineNum">     537 </span>            : 
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :     immediateSet = 0;</span>
+<span class="lineNum">     539 </span>            :   }
+<span class="lineNum">     540 </span>            : 
+<span class="lineNum">     541 </span>            : 
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :   return 0;</span>
+<span class="lineNum">     543 </span>            : }
+<span class="lineNum">     544 </span>            : 
+<span class="lineNum">     545 </span>            : /* This function updates the send bottle neck rate                                                   */
+<a name="546"><span class="lineNum">     546 </span>            : /* Index         - integer (range 0...23) indicating bottle neck &amp; jitter as estimated by other side */</a>
+<span class="lineNum">     547 </span>            : /* returns 0 if everything went fine, -1 otherwise                                                   */
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 : int16_t WebRtcIsacfix_UpdateUplinkBwRec(BwEstimatorstr *bweStr,</span>
+<span class="lineNum">     549 </span>            :                                         const int16_t Index)
+<span class="lineNum">     550 </span>            : {
+<span class="lineNum">     551 </span>            :   uint16_t RateInd;
+<span class="lineNum">     552 </span>            : 
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!bweStr-&gt;external_bw_info.in_use);</span>
+<span class="lineNum">     554 </span>            : 
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :   if ( (Index &lt; 0) || (Index &gt; 23) ) {</span>
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :     return -ISAC_RANGE_ERROR_BW_ESTIMATOR;</span>
+<span class="lineNum">     557 </span>            :   }
+<span class="lineNum">     558 </span>            : 
+<span class="lineNum">     559 </span>            :   /* UPDATE ESTIMATES FROM OTHER SIDE */
+<span class="lineNum">     560 </span>            : 
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 :   if ( Index &gt; 11 ) {</span>
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :     RateInd = Index - 12;</span>
+<span class="lineNum">     563 </span>            :     /* compute the jitter estimate as decoded on the other side in Q9 */
+<span class="lineNum">     564 </span>            :     /* sendMaxDelayAvg = 0.9 * sendMaxDelayAvg + 0.1 * MAX_ISAC_MD */
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :     bweStr-&gt;sendMaxDelayAvg = WEBRTC_SPL_MUL(461, bweStr-&gt;sendMaxDelayAvg) +</span>
+<span class="lineNum">     566 </span>            :         51 * (MAX_ISAC_MD &lt;&lt; 9);
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :     bweStr-&gt;sendMaxDelayAvg &gt;&gt;= 9;</span>
+<span class="lineNum">     568 </span>            : 
+<span class="lineNum">     569 </span>            :   } else {
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :     RateInd = Index;</span>
+<span class="lineNum">     571 </span>            :     /* compute the jitter estimate as decoded on the other side in Q9 */
+<span class="lineNum">     572 </span>            :     /* sendMaxDelayAvg = 0.9 * sendMaxDelayAvg + 0.1 * MIN_ISAC_MD */
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :     bweStr-&gt;sendMaxDelayAvg = WEBRTC_SPL_MUL(461, bweStr-&gt;sendMaxDelayAvg) +</span>
+<span class="lineNum">     574 </span>            :         51 * (MIN_ISAC_MD &lt;&lt; 9);
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :     bweStr-&gt;sendMaxDelayAvg &gt;&gt;= 9;</span>
+<span class="lineNum">     576 </span>            : 
+<span class="lineNum">     577 </span>            :   }
+<span class="lineNum">     578 </span>            : 
+<span class="lineNum">     579 </span>            : 
+<span class="lineNum">     580 </span>            :   /* compute the BN estimate as decoded on the other side */
+<span class="lineNum">     581 </span>            :   /* sendBwAvg = 0.9 * sendBwAvg + 0.1 * kQRateTable[RateInd]; */
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :   bweStr-&gt;sendBwAvg = 461 * bweStr-&gt;sendBwAvg +</span>
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 :       51 * ((uint32_t)kQRateTable[RateInd] &lt;&lt; 7);</span>
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 :   bweStr-&gt;sendBwAvg = WEBRTC_SPL_RSHIFT_U32(bweStr-&gt;sendBwAvg, 9);</span>
+<span class="lineNum">     585 </span>            : 
+<span class="lineNum">     586 </span>            : 
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :   if (WEBRTC_SPL_RSHIFT_U32(bweStr-&gt;sendBwAvg, 7) &gt; 28000 &amp;&amp; !bweStr-&gt;highSpeedSend) {</span>
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :     bweStr-&gt;countHighSpeedSent++;</span>
+<span class="lineNum">     589 </span>            : 
+<span class="lineNum">     590 </span>            :     /* approx 2 seconds with 30ms frames */
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :     if (bweStr-&gt;countHighSpeedSent &gt;= 66) {</span>
+<span class="lineNum">     592 </span><span class="lineNoCov">          0 :       bweStr-&gt;highSpeedSend = 1;</span>
+<span class="lineNum">     593 </span>            :     }
+<span class="lineNum">     594 </span><span class="lineNoCov">          0 :   } else if (!bweStr-&gt;highSpeedSend) {</span>
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :     bweStr-&gt;countHighSpeedSent = 0;</span>
+<span class="lineNum">     596 </span>            :   }
+<span class="lineNum">     597 </span>            : 
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :   return 0;</span>
+<span class="lineNum">     599 </span>            : }
+<span class="lineNum">     600 </span>            : 
+<span class="lineNum">     601 </span>            : /****************************************************************************
+<span class="lineNum">     602 </span>            :  * WebRtcIsacfix_GetDownlinkBwIndexImpl(...)
+<span class="lineNum">     603 </span>            :  *
+<span class="lineNum">     604 </span>            :  * This function calculates and returns the bandwidth/jitter estimation code
+<span class="lineNum">     605 </span>            :  * (integer 0...23) to put in the sending iSAC payload.
+<span class="lineNum">     606 </span>            :  *
+<span class="lineNum">     607 </span>            :  * Input:
+<span class="lineNum">     608 </span>            :  *      - bweStr       : BWE struct
+<span class="lineNum">     609 </span>            :  *
+<span class="lineNum">     610 </span>            :  * Return:
+<a name="611"><span class="lineNum">     611 </span>            :  *      bandwith and jitter index (0..23)</a>
+<span class="lineNum">     612 </span>            :  */
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 : uint16_t WebRtcIsacfix_GetDownlinkBwIndexImpl(BwEstimatorstr *bweStr)</span>
+<span class="lineNum">     614 </span>            : {
+<span class="lineNum">     615 </span>            :   int32_t  rate;
+<span class="lineNum">     616 </span>            :   int32_t  maxDelay;
+<span class="lineNum">     617 </span>            :   uint16_t rateInd;
+<span class="lineNum">     618 </span>            :   uint16_t maxDelayBit;
+<span class="lineNum">     619 </span>            :   int32_t  tempTerm1;
+<span class="lineNum">     620 </span>            :   int32_t  tempTerm2;
+<span class="lineNum">     621 </span>            :   int32_t  tempTermX;
+<span class="lineNum">     622 </span>            :   int32_t  tempTermY;
+<span class="lineNum">     623 </span>            :   int32_t  tempMin;
+<span class="lineNum">     624 </span>            :   int32_t  tempMax;
+<span class="lineNum">     625 </span>            : 
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :   if (bweStr-&gt;external_bw_info.in_use)</span>
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :     return bweStr-&gt;external_bw_info.bottleneck_idx;</span>
+<span class="lineNum">     628 </span>            : 
+<span class="lineNum">     629 </span>            :   /* Get Rate Index */
+<span class="lineNum">     630 </span>            : 
+<span class="lineNum">     631 </span>            :   /* Get unquantized rate. Always returns 10000 &lt;= rate &lt;= 32000 */
+<span class="lineNum">     632 </span><span class="lineNoCov">          0 :   rate = WebRtcIsacfix_GetDownlinkBandwidth(bweStr);</span>
+<span class="lineNum">     633 </span>            : 
+<span class="lineNum">     634 </span>            :   /* Compute the averaged BN estimate on this side */
+<span class="lineNum">     635 </span>            : 
+<span class="lineNum">     636 </span>            :   /* recBwAvg = 0.9 * recBwAvg + 0.1 * (rate + bweStr-&gt;recHeaderRate), 0.9 and 0.1 in Q9 */
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :   bweStr-&gt;recBwAvg = 922 * bweStr-&gt;recBwAvg +</span>
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 :       102 * (((uint32_t)rate + bweStr-&gt;recHeaderRate) &lt;&lt; 5);</span>
+<span class="lineNum">     639 </span><span class="lineNoCov">          0 :   bweStr-&gt;recBwAvg = WEBRTC_SPL_RSHIFT_U32(bweStr-&gt;recBwAvg, 10);</span>
+<span class="lineNum">     640 </span>            : 
+<span class="lineNum">     641 </span>            :   /* Find quantization index that gives the closest rate after averaging.
+<span class="lineNum">     642 </span>            :    * Note that we don't need to check the last value, rate &lt;= kQRateTable[11],
+<span class="lineNum">     643 </span>            :    * because we will use rateInd = 11 even if rate &gt; kQRateTable[11]. */
+<span class="lineNum">     644 </span><span class="lineNoCov">          0 :   for (rateInd = 1; rateInd &lt; 11; rateInd++) {</span>
+<span class="lineNum">     645 </span><span class="lineNoCov">          0 :     if (rate &lt;= kQRateTable[rateInd]){</span>
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     647 </span>            :     }
+<span class="lineNum">     648 </span>            :   }
+<span class="lineNum">     649 </span>            : 
+<span class="lineNum">     650 </span>            :   /* find closest quantization index, and update quantized average by taking: */
+<span class="lineNum">     651 </span>            :   /* 0.9*recBwAvgQ + 0.1*kQRateTable[rateInd] */
+<span class="lineNum">     652 </span>            : 
+<span class="lineNum">     653 </span>            :   /* 0.9 times recBwAvgQ in Q16 */
+<span class="lineNum">     654 </span>            :   /* 461/512 - 25/65536 =0.900009 */
+<span class="lineNum">     655 </span><span class="lineNoCov">          0 :   tempTerm1 = WEBRTC_SPL_MUL(bweStr-&gt;recBwAvgQ, 25);</span>
+<span class="lineNum">     656 </span><span class="lineNoCov">          0 :   tempTerm1 &gt;&gt;= 7;</span>
+<span class="lineNum">     657 </span><span class="lineNoCov">          0 :   tempTermX = WEBRTC_SPL_UMUL(461, bweStr-&gt;recBwAvgQ) - tempTerm1;</span>
+<span class="lineNum">     658 </span>            : 
+<span class="lineNum">     659 </span>            :   /* rate in Q16 */
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :   tempTermY = rate &lt;&lt; 16;</span>
+<span class="lineNum">     661 </span>            : 
+<span class="lineNum">     662 </span>            :   /* 0.1 * kQRateTable[rateInd] = KQRate01[rateInd] */
+<span class="lineNum">     663 </span><span class="lineNoCov">          0 :   tempTerm1 = tempTermX + KQRate01[rateInd] - tempTermY;</span>
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :   tempTerm2 = tempTermY - tempTermX - KQRate01[rateInd-1];</span>
+<span class="lineNum">     665 </span>            : 
+<span class="lineNum">     666 </span>            :   /* Compare (0.9 * recBwAvgQ + 0.1 * kQRateTable[rateInd] - rate) &gt;
+<span class="lineNum">     667 </span>            :      (rate - 0.9 * recBwAvgQ - 0.1 * kQRateTable[rateInd-1]) */
+<span class="lineNum">     668 </span><span class="lineNoCov">          0 :   if (tempTerm1  &gt; tempTerm2) {</span>
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :     rateInd--;</span>
+<span class="lineNum">     670 </span>            :   }
+<span class="lineNum">     671 </span>            : 
+<span class="lineNum">     672 </span>            :   /* Update quantized average by taking:                  */
+<span class="lineNum">     673 </span>            :   /* 0.9*recBwAvgQ + 0.1*kQRateTable[rateInd] */
+<span class="lineNum">     674 </span>            : 
+<span class="lineNum">     675 </span>            :   /* Add 0.1 times kQRateTable[rateInd], in Q16 */
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :   tempTermX += KQRate01[rateInd];</span>
+<span class="lineNum">     677 </span>            : 
+<span class="lineNum">     678 </span>            :   /* Shift back to Q7 */
+<span class="lineNum">     679 </span><span class="lineNoCov">          0 :   bweStr-&gt;recBwAvgQ = tempTermX &gt;&gt; 9;</span>
+<span class="lineNum">     680 </span>            : 
+<span class="lineNum">     681 </span>            :   /* Count consecutive received bandwidth above 28000 kbps (28000 in Q7 = 3584000) */
+<span class="lineNum">     682 </span>            :   /* If 66 high estimates in a row, set highSpeedRec to one */
+<span class="lineNum">     683 </span>            :   /* 66 corresponds to ~2 seconds in 30 msec mode */
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :   if ((bweStr-&gt;recBwAvgQ &gt; 3584000) &amp;&amp; !bweStr-&gt;highSpeedRec) {</span>
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :     bweStr-&gt;countHighSpeedRec++;</span>
+<span class="lineNum">     686 </span><span class="lineNoCov">          0 :     if (bweStr-&gt;countHighSpeedRec &gt;= 66) {</span>
+<span class="lineNum">     687 </span><span class="lineNoCov">          0 :       bweStr-&gt;highSpeedRec = 1;</span>
+<span class="lineNum">     688 </span>            :     }
+<span class="lineNum">     689 </span><span class="lineNoCov">          0 :   } else if (!bweStr-&gt;highSpeedRec)    {</span>
+<span class="lineNum">     690 </span><span class="lineNoCov">          0 :     bweStr-&gt;countHighSpeedRec = 0;</span>
+<span class="lineNum">     691 </span>            :   }
+<span class="lineNum">     692 </span>            : 
+<span class="lineNum">     693 </span>            :   /* Get Max Delay Bit */
+<span class="lineNum">     694 </span>            : 
+<span class="lineNum">     695 </span>            :   /* get unquantized max delay */
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :   maxDelay = WebRtcIsacfix_GetDownlinkMaxDelay(bweStr);</span>
+<span class="lineNum">     697 </span>            : 
+<span class="lineNum">     698 </span>            :   /* Update quantized max delay average */
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :   tempMax = 652800; /* MAX_ISAC_MD * 0.1 in Q18 */</span>
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :   tempMin = 130560; /* MIN_ISAC_MD * 0.1 in Q18 */</span>
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :   tempTermX = WEBRTC_SPL_MUL((int32_t)bweStr-&gt;recMaxDelayAvgQ, (int32_t)461);</span>
+<span class="lineNum">     702 </span><span class="lineNoCov">          0 :   tempTermY = maxDelay &lt;&lt; 18;</span>
+<span class="lineNum">     703 </span>            : 
+<span class="lineNum">     704 </span><span class="lineNoCov">          0 :   tempTerm1 = tempTermX + tempMax - tempTermY;</span>
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :   tempTerm2 = tempTermY - tempTermX - tempMin;</span>
+<span class="lineNum">     706 </span>            : 
+<span class="lineNum">     707 </span><span class="lineNoCov">          0 :   if ( tempTerm1 &gt; tempTerm2) {</span>
+<span class="lineNum">     708 </span><span class="lineNoCov">          0 :     maxDelayBit = 0;</span>
+<span class="lineNum">     709 </span><span class="lineNoCov">          0 :     tempTerm1 = tempTermX + tempMin;</span>
+<span class="lineNum">     710 </span>            : 
+<span class="lineNum">     711 </span>            :     /* update quantized average, shift back to Q9 */
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :     bweStr-&gt;recMaxDelayAvgQ = tempTerm1 &gt;&gt; 9;</span>
+<span class="lineNum">     713 </span>            :   } else {
+<span class="lineNum">     714 </span><span class="lineNoCov">          0 :     maxDelayBit = 12;</span>
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :     tempTerm1 =  tempTermX + tempMax;</span>
+<span class="lineNum">     716 </span>            : 
+<span class="lineNum">     717 </span>            :     /* update quantized average, shift back to Q9 */
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 :     bweStr-&gt;recMaxDelayAvgQ = tempTerm1 &gt;&gt; 9;</span>
+<span class="lineNum">     719 </span>            :   }
+<span class="lineNum">     720 </span>            : 
+<span class="lineNum">     721 </span>            :   /* Return bandwitdh and jitter index (0..23) */
+<span class="lineNum">     722 </span><span class="lineNoCov">          0 :   return (uint16_t)(rateInd + maxDelayBit);</span>
+<span class="lineNum">     723 </span>            : }
+<a name="724"><span class="lineNum">     724 </span>            : </a>
+<span class="lineNum">     725 </span>            : /* get the bottle neck rate from far side to here, as estimated on this side */
+<span class="lineNum">     726 </span><span class="lineNoCov">          0 : uint16_t WebRtcIsacfix_GetDownlinkBandwidth(const BwEstimatorstr *bweStr)</span>
+<span class="lineNum">     727 </span>            : {
+<span class="lineNum">     728 </span>            :   uint32_t  recBw;
+<span class="lineNum">     729 </span>            :   int32_t   jitter_sign; /* Q8 */
+<span class="lineNum">     730 </span>            :   int32_t   bw_adjust;   /* Q16 */
+<span class="lineNum">     731 </span>            :   int32_t   rec_jitter_short_term_abs_inv; /* Q18 */
+<span class="lineNum">     732 </span>            :   int32_t   temp;
+<span class="lineNum">     733 </span>            : 
+<span class="lineNum">     734 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!bweStr-&gt;external_bw_info.in_use);</span>
+<span class="lineNum">     735 </span>            : 
+<span class="lineNum">     736 </span>            :   /* Q18  rec jitter short term abs is in Q13, multiply it by 2^13 to save precision
+<span class="lineNum">     737 </span>            :      2^18 then needs to be shifted 13 bits to 2^31 */
+<span class="lineNum">     738 </span><span class="lineNoCov">          0 :   rec_jitter_short_term_abs_inv = 0x80000000u / bweStr-&gt;recJitterShortTermAbs;</span>
+<span class="lineNum">     739 </span>            : 
+<span class="lineNum">     740 </span>            :   /* Q27 = 9 + 18 */
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 :   jitter_sign = (bweStr-&gt;recJitterShortTerm &gt;&gt; 4) *</span>
+<span class="lineNum">     742 </span>            :       rec_jitter_short_term_abs_inv;
+<span class="lineNum">     743 </span>            : 
+<span class="lineNum">     744 </span><span class="lineNoCov">          0 :   if (jitter_sign &lt; 0) {</span>
+<span class="lineNum">     745 </span><span class="lineNoCov">          0 :     temp = -jitter_sign;</span>
+<span class="lineNum">     746 </span><span class="lineNoCov">          0 :     temp &gt;&gt;= 19;</span>
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 :     jitter_sign = -temp;</span>
+<span class="lineNum">     748 </span>            :   } else {
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :     jitter_sign &gt;&gt;= 19;</span>
+<span class="lineNum">     750 </span>            :   }
+<span class="lineNum">     751 </span>            : 
+<span class="lineNum">     752 </span>            :   /* adjust bw proportionally to negative average jitter sign */
+<span class="lineNum">     753 </span>            :   //bw_adjust = 1.0f - jitter_sign * (0.15f + 0.15f * jitter_sign * jitter_sign);
+<span class="lineNum">     754 </span>            :   //Q8 -&gt; Q16 .15 +.15 * jitter^2 first term is .15 in Q16 latter term is Q8*Q8*Q8
+<span class="lineNum">     755 </span>            :   //38 in Q8 ~.15 9830 in Q16 ~.15
+<span class="lineNum">     756 </span><span class="lineNoCov">          0 :   temp = 9830 + ((38 * jitter_sign * jitter_sign) &gt;&gt; 8);</span>
+<span class="lineNum">     757 </span>            : 
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :   if (jitter_sign &lt; 0) {</span>
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 :     temp = WEBRTC_SPL_MUL(jitter_sign, temp);</span>
+<span class="lineNum">     760 </span><span class="lineNoCov">          0 :     temp = -temp;</span>
+<span class="lineNum">     761 </span><span class="lineNoCov">          0 :     temp &gt;&gt;= 8;</span>
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :     bw_adjust = (uint32_t)65536 + temp; /* (1 &lt;&lt; 16) + temp; */</span>
+<span class="lineNum">     763 </span>            :   } else {
+<span class="lineNum">     764 </span>            :     /* (1 &lt;&lt; 16) - ((jitter_sign * temp) &gt;&gt; 8); */
+<span class="lineNum">     765 </span><span class="lineNoCov">          0 :     bw_adjust = 65536 - ((jitter_sign * temp) &gt;&gt; 8);</span>
+<span class="lineNum">     766 </span>            :   }
+<span class="lineNum">     767 </span>            : 
+<span class="lineNum">     768 </span>            :   //make sure following multiplication won't overflow
+<span class="lineNum">     769 </span>            :   //bw adjust now Q14
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :   bw_adjust &gt;&gt;= 2;  // See if good resolution is maintained.</span>
+<span class="lineNum">     771 </span>            : 
+<span class="lineNum">     772 </span>            :   /* adjust Rate if jitter sign is mostly constant */
+<span class="lineNum">     773 </span><span class="lineNoCov">          0 :   recBw = WEBRTC_SPL_UMUL(bweStr-&gt;recBw, bw_adjust);</span>
+<span class="lineNum">     774 </span>            : 
+<span class="lineNum">     775 </span><span class="lineNoCov">          0 :   recBw &gt;&gt;= 14;</span>
+<span class="lineNum">     776 </span>            : 
+<span class="lineNum">     777 </span>            :   /* limit range of bottle neck rate */
+<span class="lineNum">     778 </span><span class="lineNoCov">          0 :   if (recBw &lt; MIN_ISAC_BW) {</span>
+<span class="lineNum">     779 </span><span class="lineNoCov">          0 :     recBw = MIN_ISAC_BW;</span>
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 :   } else if (recBw &gt; MAX_ISAC_BW) {</span>
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 :     recBw = MAX_ISAC_BW;</span>
+<span class="lineNum">     782 </span>            :   }
+<span class="lineNum">     783 </span>            : 
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :   return  (uint16_t) recBw;</span>
+<span class="lineNum">     785 </span>            : }
+<a name="786"><span class="lineNum">     786 </span>            : </a>
+<span class="lineNum">     787 </span>            : /* Returns the mmax delay (in ms) */
+<span class="lineNum">     788 </span><span class="lineNoCov">          0 : int16_t WebRtcIsacfix_GetDownlinkMaxDelay(const BwEstimatorstr *bweStr)</span>
+<span class="lineNum">     789 </span>            : {
+<span class="lineNum">     790 </span><span class="lineNoCov">          0 :   int16_t recMaxDelay = (int16_t)(bweStr-&gt;recMaxDelay &gt;&gt; 15);</span>
+<span class="lineNum">     791 </span>            : 
+<span class="lineNum">     792 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!bweStr-&gt;external_bw_info.in_use);</span>
+<span class="lineNum">     793 </span>            : 
+<span class="lineNum">     794 </span>            :   /* limit range of jitter estimate */
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :   if (recMaxDelay &lt; MIN_ISAC_MD) {</span>
+<span class="lineNum">     796 </span><span class="lineNoCov">          0 :     recMaxDelay = MIN_ISAC_MD;</span>
+<span class="lineNum">     797 </span><span class="lineNoCov">          0 :   } else if (recMaxDelay &gt; MAX_ISAC_MD) {</span>
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 :     recMaxDelay = MAX_ISAC_MD;</span>
+<span class="lineNum">     799 </span>            :   }
+<span class="lineNum">     800 </span>            : 
+<span class="lineNum">     801 </span><span class="lineNoCov">          0 :   return recMaxDelay;</span>
+<span class="lineNum">     802 </span>            : }
+<a name="803"><span class="lineNum">     803 </span>            : </a>
+<span class="lineNum">     804 </span>            : /* Clamp val to the closed interval [min,max]. */
+<span class="lineNum">     805 </span><span class="lineNoCov">          0 : static int16_t clamp(int16_t val, int16_t min, int16_t max) {</span>
+<span class="lineNum">     806 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(min, max);</span>
+<span class="lineNum">     807 </span><span class="lineNoCov">          0 :   return val &lt; min ? min : (val &gt; max ? max : val);</span>
+<a name="808"><span class="lineNum">     808 </span>            : }</a>
+<span class="lineNum">     809 </span>            : 
+<span class="lineNum">     810 </span><span class="lineNoCov">          0 : int16_t WebRtcIsacfix_GetUplinkBandwidth(const BwEstimatorstr* bweStr) {</span>
+<span class="lineNum">     811 </span><span class="lineNoCov">          0 :   return bweStr-&gt;external_bw_info.in_use</span>
+<span class="lineNum">     812 </span><span class="lineNoCov">          0 :              ? bweStr-&gt;external_bw_info.send_bw_avg</span>
+<span class="lineNum">     813 </span><span class="lineNoCov">          0 :              : clamp(bweStr-&gt;sendBwAvg &gt;&gt; 7, MIN_ISAC_BW, MAX_ISAC_BW);</span>
+<a name="814"><span class="lineNum">     814 </span>            : }</a>
+<span class="lineNum">     815 </span>            : 
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 : int16_t WebRtcIsacfix_GetUplinkMaxDelay(const BwEstimatorstr* bweStr) {</span>
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :   return bweStr-&gt;external_bw_info.in_use</span>
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 :              ? bweStr-&gt;external_bw_info.send_max_delay_avg</span>
+<span class="lineNum">     819 </span><span class="lineNoCov">          0 :              : clamp(bweStr-&gt;sendMaxDelayAvg &gt;&gt; 9, MIN_ISAC_MD, MAX_ISAC_MD);</span>
+<a name="820"><span class="lineNum">     820 </span>            : }</a>
+<span class="lineNum">     821 </span>            : 
+<span class="lineNum">     822 </span><span class="lineNoCov">          0 : void WebRtcIsacfixBw_GetBandwidthInfo(BwEstimatorstr* bweStr,</span>
+<span class="lineNum">     823 </span>            :                                    IsacBandwidthInfo* bwinfo) {
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!bweStr-&gt;external_bw_info.in_use);</span>
+<span class="lineNum">     825 </span><span class="lineNoCov">          0 :   bwinfo-&gt;in_use = 1;</span>
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 :   bwinfo-&gt;send_bw_avg = WebRtcIsacfix_GetUplinkBandwidth(bweStr);</span>
+<span class="lineNum">     827 </span><span class="lineNoCov">          0 :   bwinfo-&gt;send_max_delay_avg = WebRtcIsacfix_GetUplinkMaxDelay(bweStr);</span>
+<span class="lineNum">     828 </span><span class="lineNoCov">          0 :   bwinfo-&gt;bottleneck_idx = WebRtcIsacfix_GetDownlinkBwIndexImpl(bweStr);</span>
+<span class="lineNum">     829 </span><span class="lineNoCov">          0 :   bwinfo-&gt;jitter_info = 0;  // Not used.</span>
+<a name="830"><span class="lineNum">     830 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     831 </span>            : 
+<span class="lineNum">     832 </span><span class="lineNoCov">          0 : void WebRtcIsacfixBw_SetBandwidthInfo(BwEstimatorstr* bweStr,</span>
+<span class="lineNum">     833 </span>            :                                    const IsacBandwidthInfo* bwinfo) {
+<span class="lineNum">     834 </span><span class="lineNoCov">          0 :   memcpy(&amp;bweStr-&gt;external_bw_info, bwinfo,</span>
+<span class="lineNum">     835 </span>            :          sizeof bweStr-&gt;external_bw_info);
+<span class="lineNum">     836 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     837 </span>            : 
+<span class="lineNum">     838 </span>            : /*
+<span class="lineNum">     839 </span>            :  * update long-term average bitrate and amount of data in buffer
+<a name="840"><span class="lineNum">     840 </span>            :  * returns minimum payload size (bytes)</a>
+<span class="lineNum">     841 </span>            :  */
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 : uint16_t WebRtcIsacfix_GetMinBytes(RateModel *State,</span>
+<span class="lineNum">     843 </span>            :                                    int16_t StreamSize,                    /* bytes in bitstream */
+<span class="lineNum">     844 </span>            :                                    const int16_t FrameSamples,            /* samples per frame */
+<span class="lineNum">     845 </span>            :                                    const int16_t BottleNeck,        /* bottle neck rate; excl headers (bps) */
+<span class="lineNum">     846 </span>            :                                    const int16_t DelayBuildUp)      /* max delay from bottle neck buffering (ms) */
+<span class="lineNum">     847 </span>            : {
+<span class="lineNum">     848 </span><span class="lineNoCov">          0 :   int32_t MinRate = 0;</span>
+<span class="lineNum">     849 </span>            :   uint16_t    MinBytes;
+<span class="lineNum">     850 </span>            :   int16_t TransmissionTime;
+<span class="lineNum">     851 </span>            :   int32_t inv_Q12;
+<span class="lineNum">     852 </span>            :   int32_t den;
+<span class="lineNum">     853 </span>            : 
+<span class="lineNum">     854 </span>            : 
+<span class="lineNum">     855 </span>            :   /* first 10 packets @ low rate, then INIT_BURST_LEN packets @ fixed rate of INIT_RATE bps */
+<span class="lineNum">     856 </span><span class="lineNoCov">          0 :   if (State-&gt;InitCounter &gt; 0) {</span>
+<span class="lineNum">     857 </span><span class="lineNoCov">          0 :     if (State-&gt;InitCounter-- &lt;= INIT_BURST_LEN) {</span>
+<span class="lineNum">     858 </span><span class="lineNoCov">          0 :       MinRate = INIT_RATE;</span>
+<span class="lineNum">     859 </span>            :     } else {
+<span class="lineNum">     860 </span><span class="lineNoCov">          0 :       MinRate = 0;</span>
+<span class="lineNum">     861 </span>            :     }
+<span class="lineNum">     862 </span>            :   } else {
+<span class="lineNum">     863 </span>            :     /* handle burst */
+<span class="lineNum">     864 </span><span class="lineNoCov">          0 :     if (State-&gt;BurstCounter) {</span>
+<span class="lineNum">     865 </span><span class="lineNoCov">          0 :       if (State-&gt;StillBuffered &lt;</span>
+<span class="lineNum">     866 </span><span class="lineNoCov">          0 :           (((512 - 512 / BURST_LEN) * DelayBuildUp) &gt;&gt; 9)) {</span>
+<span class="lineNum">     867 </span>            :         /* max bps derived from BottleNeck and DelayBuildUp values */
+<span class="lineNum">     868 </span><span class="lineNoCov">          0 :         inv_Q12 = 4096 / (BURST_LEN * FrameSamples);</span>
+<span class="lineNum">     869 </span><span class="lineNoCov">          0 :         MinRate = (512 + SAMPLES_PER_MSEC * ((DelayBuildUp * inv_Q12) &gt;&gt; 3)) *</span>
+<span class="lineNum">     870 </span>            :             BottleNeck;
+<span class="lineNum">     871 </span>            :       } else {
+<span class="lineNum">     872 </span>            :         /* max bps derived from StillBuffered and DelayBuildUp values */
+<span class="lineNum">     873 </span><span class="lineNoCov">          0 :         inv_Q12 = 4096 / FrameSamples;</span>
+<span class="lineNum">     874 </span><span class="lineNoCov">          0 :         if (DelayBuildUp &gt; State-&gt;StillBuffered) {</span>
+<span class="lineNum">     875 </span><span class="lineNoCov">          0 :           MinRate = (512 + SAMPLES_PER_MSEC * (((DelayBuildUp -</span>
+<span class="lineNum">     876 </span><span class="lineNoCov">          0 :               State-&gt;StillBuffered) * inv_Q12) &gt;&gt; 3)) * BottleNeck;</span>
+<span class="lineNum">     877 </span><span class="lineNoCov">          0 :         } else if ((den = WEBRTC_SPL_MUL(SAMPLES_PER_MSEC, (State-&gt;StillBuffered - DelayBuildUp))) &gt;= FrameSamples) {</span>
+<span class="lineNum">     878 </span>            :           /* MinRate will be negative here */
+<span class="lineNum">     879 </span><span class="lineNoCov">          0 :           MinRate = 0;</span>
+<span class="lineNum">     880 </span>            :         } else {
+<span class="lineNum">     881 </span><span class="lineNoCov">          0 :           MinRate = (512 - ((den * inv_Q12) &gt;&gt; 3)) * BottleNeck;</span>
+<span class="lineNum">     882 </span>            :         }
+<span class="lineNum">     883 </span>            :         //if (MinRate &lt; 1.04 * BottleNeck)
+<span class="lineNum">     884 </span>            :         //    MinRate = 1.04 * BottleNeck;
+<span class="lineNum">     885 </span>            :         //Q9
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 :         if (MinRate &lt; WEBRTC_SPL_MUL(532, BottleNeck)) {</span>
+<span class="lineNum">     887 </span><span class="lineNoCov">          0 :           MinRate += WEBRTC_SPL_MUL(22, BottleNeck);</span>
+<span class="lineNum">     888 </span>            :         }
+<span class="lineNum">     889 </span>            :       }
+<span class="lineNum">     890 </span>            : 
+<span class="lineNum">     891 </span><span class="lineNoCov">          0 :       State-&gt;BurstCounter--;</span>
+<span class="lineNum">     892 </span>            :     }
+<span class="lineNum">     893 </span>            :   }
+<span class="lineNum">     894 </span>            : 
+<span class="lineNum">     895 </span>            : 
+<span class="lineNum">     896 </span>            :   /* convert rate from bits/second to bytes/packet */
+<span class="lineNum">     897 </span>            :   //round and shift before conversion
+<span class="lineNum">     898 </span><span class="lineNoCov">          0 :   MinRate += 256;</span>
+<span class="lineNum">     899 </span><span class="lineNoCov">          0 :   MinRate &gt;&gt;= 9;</span>
+<span class="lineNum">     900 </span><span class="lineNoCov">          0 :   MinBytes = MinRate * FrameSamples / FS8;</span>
+<span class="lineNum">     901 </span>            : 
+<span class="lineNum">     902 </span>            :   /* StreamSize will be adjusted if less than MinBytes */
+<span class="lineNum">     903 </span><span class="lineNoCov">          0 :   if (StreamSize &lt; MinBytes) {</span>
+<span class="lineNum">     904 </span><span class="lineNoCov">          0 :     StreamSize = MinBytes;</span>
+<span class="lineNum">     905 </span>            :   }
+<span class="lineNum">     906 </span>            : 
+<span class="lineNum">     907 </span>            :   /* keep track of when bottle neck was last exceeded by at least 1% */
+<span class="lineNum">     908 </span>            :   //517/512 ~ 1.01
+<span class="lineNum">     909 </span><span class="lineNoCov">          0 :   if ((StreamSize * (int32_t)FS8) / FrameSamples &gt; (517 * BottleNeck) &gt;&gt; 9) {</span>
+<span class="lineNum">     910 </span><span class="lineNoCov">          0 :     if (State-&gt;PrevExceed) {</span>
+<span class="lineNum">     911 </span>            :       /* bottle_neck exceded twice in a row, decrease ExceedAgo */
+<span class="lineNum">     912 </span><span class="lineNoCov">          0 :       State-&gt;ExceedAgo -= BURST_INTERVAL / (BURST_LEN - 1);</span>
+<span class="lineNum">     913 </span><span class="lineNoCov">          0 :       if (State-&gt;ExceedAgo &lt; 0) {</span>
+<span class="lineNum">     914 </span><span class="lineNoCov">          0 :         State-&gt;ExceedAgo = 0;</span>
+<span class="lineNum">     915 </span>            :       }
+<span class="lineNum">     916 </span>            :     } else {
+<span class="lineNum">     917 </span><span class="lineNoCov">          0 :       State-&gt;ExceedAgo += FrameSamples / SAMPLES_PER_MSEC;  /* ms */</span>
+<span class="lineNum">     918 </span><span class="lineNoCov">          0 :       State-&gt;PrevExceed = 1;</span>
+<span class="lineNum">     919 </span>            :     }
+<span class="lineNum">     920 </span>            :   } else {
+<span class="lineNum">     921 </span><span class="lineNoCov">          0 :     State-&gt;PrevExceed = 0;</span>
+<span class="lineNum">     922 </span><span class="lineNoCov">          0 :     State-&gt;ExceedAgo += FrameSamples / SAMPLES_PER_MSEC;  /* ms */</span>
+<span class="lineNum">     923 </span>            :   }
+<span class="lineNum">     924 </span>            : 
+<span class="lineNum">     925 </span>            :   /* set burst flag if bottle neck not exceeded for long time */
+<span class="lineNum">     926 </span><span class="lineNoCov">          0 :   if ((State-&gt;ExceedAgo &gt; BURST_INTERVAL) &amp;&amp; (State-&gt;BurstCounter == 0)) {</span>
+<span class="lineNum">     927 </span><span class="lineNoCov">          0 :     if (State-&gt;PrevExceed) {</span>
+<span class="lineNum">     928 </span><span class="lineNoCov">          0 :       State-&gt;BurstCounter = BURST_LEN - 1;</span>
+<span class="lineNum">     929 </span>            :     } else {
+<span class="lineNum">     930 </span><span class="lineNoCov">          0 :       State-&gt;BurstCounter = BURST_LEN;</span>
+<span class="lineNum">     931 </span>            :     }
+<span class="lineNum">     932 </span>            :   }
+<span class="lineNum">     933 </span>            : 
+<span class="lineNum">     934 </span>            : 
+<span class="lineNum">     935 </span>            :   /* Update buffer delay */
+<span class="lineNum">     936 </span><span class="lineNoCov">          0 :   TransmissionTime = (StreamSize * 8000) / BottleNeck;  /* ms */</span>
+<span class="lineNum">     937 </span><span class="lineNoCov">          0 :   State-&gt;StillBuffered += TransmissionTime;</span>
+<span class="lineNum">     938 </span><span class="lineNoCov">          0 :   State-&gt;StillBuffered -= FrameSamples / SAMPLES_PER_MSEC;   /* ms */</span>
+<span class="lineNum">     939 </span><span class="lineNoCov">          0 :   if (State-&gt;StillBuffered &lt; 0) {</span>
+<span class="lineNum">     940 </span><span class="lineNoCov">          0 :     State-&gt;StillBuffered = 0;</span>
+<span class="lineNum">     941 </span>            :   }
+<span class="lineNum">     942 </span>            : 
+<span class="lineNum">     943 </span><span class="lineNoCov">          0 :   if (State-&gt;StillBuffered &gt; 2000) {</span>
+<span class="lineNum">     944 </span><span class="lineNoCov">          0 :     State-&gt;StillBuffered = 2000;</span>
+<span class="lineNum">     945 </span>            :   }
+<span class="lineNum">     946 </span>            : 
+<span class="lineNum">     947 </span><span class="lineNoCov">          0 :   return MinBytes;</span>
+<span class="lineNum">     948 </span>            : }
+<span class="lineNum">     949 </span>            : 
+<span class="lineNum">     950 </span>            : 
+<span class="lineNum">     951 </span>            : /*
+<a name="952"><span class="lineNum">     952 </span>            :  * update long-term average bitrate and amount of data in buffer</a>
+<span class="lineNum">     953 </span>            :  */
+<span class="lineNum">     954 </span><span class="lineNoCov">          0 : void WebRtcIsacfix_UpdateRateModel(RateModel *State,</span>
+<span class="lineNum">     955 </span>            :                                    int16_t StreamSize,                    /* bytes in bitstream */
+<span class="lineNum">     956 </span>            :                                    const int16_t FrameSamples,            /* samples per frame */
+<span class="lineNum">     957 </span>            :                                    const int16_t BottleNeck)        /* bottle neck rate; excl headers (bps) */
+<span class="lineNum">     958 </span>            : {
+<span class="lineNum">     959 </span><span class="lineNoCov">          0 :   const int16_t TransmissionTime = (StreamSize * 8000) / BottleNeck;  /* ms */</span>
+<span class="lineNum">     960 </span>            : 
+<span class="lineNum">     961 </span>            :   /* avoid the initial &quot;high-rate&quot; burst */
+<span class="lineNum">     962 </span><span class="lineNoCov">          0 :   State-&gt;InitCounter = 0;</span>
+<span class="lineNum">     963 </span>            : 
+<span class="lineNum">     964 </span>            :   /* Update buffer delay */
+<span class="lineNum">     965 </span><span class="lineNoCov">          0 :   State-&gt;StillBuffered += TransmissionTime;</span>
+<span class="lineNum">     966 </span><span class="lineNoCov">          0 :   State-&gt;StillBuffered -= FrameSamples &gt;&gt; 4;  /* ms */</span>
+<span class="lineNum">     967 </span><span class="lineNoCov">          0 :   if (State-&gt;StillBuffered &lt; 0) {</span>
+<span class="lineNum">     968 </span><span class="lineNoCov">          0 :     State-&gt;StillBuffered = 0;</span>
+<span class="lineNum">     969 </span>            :   }
+<span class="lineNum">     970 </span>            : 
+<span class="lineNum">     971 </span><span class="lineNoCov">          0 : }</span>
+<a name="972"><span class="lineNum">     972 </span>            : </a>
+<span class="lineNum">     973 </span>            : 
+<span class="lineNum">     974 </span><span class="lineNoCov">          0 : void WebRtcIsacfix_InitRateModel(RateModel *State)</span>
+<span class="lineNum">     975 </span>            : {
+<span class="lineNum">     976 </span><span class="lineNoCov">          0 :   State-&gt;PrevExceed      = 0;                        /* boolean */</span>
+<span class="lineNum">     977 </span><span class="lineNoCov">          0 :   State-&gt;ExceedAgo       = 0;                        /* ms */</span>
+<span class="lineNum">     978 </span><span class="lineNoCov">          0 :   State-&gt;BurstCounter    = 0;                        /* packets */</span>
+<span class="lineNum">     979 </span><span class="lineNoCov">          0 :   State-&gt;InitCounter     = INIT_BURST_LEN + 10;    /* packets */</span>
+<span class="lineNum">     980 </span><span class="lineNoCov">          0 :   State-&gt;StillBuffered   = 1;                    /* ms */</span>
+<span class="lineNum">     981 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     982 </span>            : 
+<span class="lineNum">     983 </span>            : 
+<span class="lineNum">     984 </span>            : 
+<a name="985"><span class="lineNum">     985 </span>            : </a>
+<span class="lineNum">     986 </span>            : 
+<span class="lineNum">     987 </span><span class="lineNoCov">          0 : int16_t WebRtcIsacfix_GetNewFrameLength(int16_t bottle_neck, int16_t current_framesamples)</span>
+<span class="lineNum">     988 </span>            : {
+<span class="lineNum">     989 </span>            :   int16_t new_framesamples;
+<span class="lineNum">     990 </span>            : 
+<span class="lineNum">     991 </span><span class="lineNoCov">          0 :   new_framesamples = current_framesamples;</span>
+<span class="lineNum">     992 </span>            : 
+<span class="lineNum">     993 </span>            :   /* find new framelength */
+<span class="lineNum">     994 </span><span class="lineNoCov">          0 :   switch(current_framesamples) {</span>
+<span class="lineNum">     995 </span>            :     case 480:
+<span class="lineNum">     996 </span><span class="lineNoCov">          0 :       if (bottle_neck &lt; Thld_30_60) {</span>
+<span class="lineNum">     997 </span><span class="lineNoCov">          0 :         new_framesamples = 960;</span>
+<span class="lineNum">     998 </span>            :       }
+<span class="lineNum">     999 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">    1000 </span>            :     case 960:
+<span class="lineNum">    1001 </span><span class="lineNoCov">          0 :       if (bottle_neck &gt;= Thld_60_30) {</span>
+<span class="lineNum">    1002 </span><span class="lineNoCov">          0 :         new_framesamples = 480;</span>
+<span class="lineNum">    1003 </span>            :       }
+<span class="lineNum">    1004 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">    1005 </span>            :     default:
+<span class="lineNum">    1006 </span><span class="lineNoCov">          0 :       new_framesamples = -1; /* Error */</span>
+<span class="lineNum">    1007 </span>            :   }
+<span class="lineNum">    1008 </span>            : 
+<span class="lineNum">    1009 </span><span class="lineNoCov">          0 :   return new_framesamples;</span>
+<a name="1010"><span class="lineNum">    1010 </span>            : }</a>
+<span class="lineNum">    1011 </span>            : 
+<span class="lineNum">    1012 </span><span class="lineNoCov">          0 : int16_t WebRtcIsacfix_GetSnr(int16_t bottle_neck, int16_t framesamples)</span>
+<span class="lineNum">    1013 </span>            : {
+<span class="lineNum">    1014 </span><span class="lineNoCov">          0 :   int16_t s2nr = 0;</span>
+<span class="lineNum">    1015 </span>            : 
+<span class="lineNum">    1016 </span>            :   /* find new SNR value */
+<span class="lineNum">    1017 </span>            :   //consider BottleNeck to be in Q10 ( * 1 in Q10)
+<span class="lineNum">    1018 </span><span class="lineNoCov">          0 :   switch(framesamples) {</span>
+<span class="lineNum">    1019 </span>            :   // TODO(bjornv): The comments below confuses me. I don't know if there is a
+<span class="lineNum">    1020 </span>            :   // difference between frame lengths (in which case the implementation is
+<span class="lineNum">    1021 </span>            :   // wrong), or if it is frame length independent in which case we should
+<span class="lineNum">    1022 </span>            :   // correct the comment and simplify the implementation.
+<span class="lineNum">    1023 </span>            :     case 480:
+<span class="lineNum">    1024 </span>            :       /*s2nr = -1*(a_30 &lt;&lt; 10) + ((b_30 * bottle_neck) &gt;&gt; 10);*/
+<span class="lineNum">    1025 </span><span class="lineNoCov">          0 :       s2nr = -22500 + (int16_t)(500 * bottle_neck &gt;&gt; 10);</span>
+<span class="lineNum">    1026 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">    1027 </span>            :     case 960:
+<span class="lineNum">    1028 </span>            :       /*s2nr = -1*(a_60 &lt;&lt; 10) + ((b_60 * bottle_neck) &gt;&gt; 10);*/
+<span class="lineNum">    1029 </span><span class="lineNoCov">          0 :       s2nr = -22500 + (int16_t)(500 * bottle_neck &gt;&gt; 10);</span>
+<span class="lineNum">    1030 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">    1031 </span>            :     default:
+<span class="lineNum">    1032 </span><span class="lineNoCov">          0 :       s2nr = -1; /* Error */</span>
+<span class="lineNum">    1033 </span>            :   }
+<span class="lineNum">    1034 </span>            : 
+<span class="lineNum">    1035 </span><span class="lineNoCov">          0 :   return s2nr; //return in Q10</span>
+<span class="lineNum">    1036 </span>            : 
+<span class="lineNum">    1037 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

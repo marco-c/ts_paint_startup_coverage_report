@@ -1,0 +1,904 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/libvpx/libvpx/vp9/encoder/vp9_resize.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../index.html">top level</a> - <a href="index.html">media/libvpx/libvpx/vp9/encoder</a> - vp9_resize.c<span style="font-size: 80%;"> (source / <a href="vp9_resize.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">226</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">13</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2014 The WebM project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &lt;assert.h&gt;
+<span class="lineNum">      12 </span>            : #include &lt;limits.h&gt;
+<span class="lineNum">      13 </span>            : #include &lt;math.h&gt;
+<span class="lineNum">      14 </span>            : #include &lt;stdio.h&gt;
+<span class="lineNum">      15 </span>            : #include &lt;stdlib.h&gt;
+<span class="lineNum">      16 </span>            : #include &lt;string.h&gt;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : #include &quot;./vpx_config.h&quot;
+<span class="lineNum">      19 </span>            : #if CONFIG_VP9_HIGHBITDEPTH
+<span class="lineNum">      20 </span>            : #include &quot;vpx_dsp/vpx_dsp_common.h&quot;
+<span class="lineNum">      21 </span>            : #endif  // CONFIG_VP9_HIGHBITDEPTH
+<span class="lineNum">      22 </span>            : #include &quot;vpx_ports/mem.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;vp9/common/vp9_common.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;vp9/encoder/vp9_resize.h&quot;
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : #define FILTER_BITS 7
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : #define INTERP_TAPS 8
+<span class="lineNum">      29 </span>            : #define SUBPEL_BITS 5
+<span class="lineNum">      30 </span>            : #define SUBPEL_MASK ((1 &lt;&lt; SUBPEL_BITS) - 1)
+<span class="lineNum">      31 </span>            : #define INTERP_PRECISION_BITS 32
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : typedef int16_t interp_kernel[INTERP_TAPS];
+<span class="lineNum">      34 </span>            : 
+<span class="lineNum">      35 </span>            : // Filters for interpolation (0.5-band) - note this also filters integer pels.
+<span class="lineNum">      36 </span>            : static const interp_kernel filteredinterp_filters500[(1 &lt;&lt; SUBPEL_BITS)] = {
+<span class="lineNum">      37 </span>            :   { -3, 0, 35, 64, 35, 0, -3, 0 },    { -3, -1, 34, 64, 36, 1, -3, 0 },
+<span class="lineNum">      38 </span>            :   { -3, -1, 32, 64, 38, 1, -3, 0 },   { -2, -2, 31, 63, 39, 2, -3, 0 },
+<span class="lineNum">      39 </span>            :   { -2, -2, 29, 63, 41, 2, -3, 0 },   { -2, -2, 28, 63, 42, 3, -4, 0 },
+<span class="lineNum">      40 </span>            :   { -2, -3, 27, 63, 43, 4, -4, 0 },   { -2, -3, 25, 62, 45, 5, -4, 0 },
+<span class="lineNum">      41 </span>            :   { -2, -3, 24, 62, 46, 5, -4, 0 },   { -2, -3, 23, 61, 47, 6, -4, 0 },
+<span class="lineNum">      42 </span>            :   { -2, -3, 21, 60, 49, 7, -4, 0 },   { -1, -4, 20, 60, 50, 8, -4, -1 },
+<span class="lineNum">      43 </span>            :   { -1, -4, 19, 59, 51, 9, -4, -1 },  { -1, -4, 17, 58, 52, 10, -4, 0 },
+<span class="lineNum">      44 </span>            :   { -1, -4, 16, 57, 53, 12, -4, -1 }, { -1, -4, 15, 56, 54, 13, -4, -1 },
+<span class="lineNum">      45 </span>            :   { -1, -4, 14, 55, 55, 14, -4, -1 }, { -1, -4, 13, 54, 56, 15, -4, -1 },
+<span class="lineNum">      46 </span>            :   { -1, -4, 12, 53, 57, 16, -4, -1 }, { 0, -4, 10, 52, 58, 17, -4, -1 },
+<span class="lineNum">      47 </span>            :   { -1, -4, 9, 51, 59, 19, -4, -1 },  { -1, -4, 8, 50, 60, 20, -4, -1 },
+<span class="lineNum">      48 </span>            :   { 0, -4, 7, 49, 60, 21, -3, -2 },   { 0, -4, 6, 47, 61, 23, -3, -2 },
+<span class="lineNum">      49 </span>            :   { 0, -4, 5, 46, 62, 24, -3, -2 },   { 0, -4, 5, 45, 62, 25, -3, -2 },
+<span class="lineNum">      50 </span>            :   { 0, -4, 4, 43, 63, 27, -3, -2 },   { 0, -4, 3, 42, 63, 28, -2, -2 },
+<span class="lineNum">      51 </span>            :   { 0, -3, 2, 41, 63, 29, -2, -2 },   { 0, -3, 2, 39, 63, 31, -2, -2 },
+<span class="lineNum">      52 </span>            :   { 0, -3, 1, 38, 64, 32, -1, -3 },   { 0, -3, 1, 36, 64, 34, -1, -3 }
+<span class="lineNum">      53 </span>            : };
+<span class="lineNum">      54 </span>            : 
+<span class="lineNum">      55 </span>            : // Filters for interpolation (0.625-band) - note this also filters integer pels.
+<span class="lineNum">      56 </span>            : static const interp_kernel filteredinterp_filters625[(1 &lt;&lt; SUBPEL_BITS)] = {
+<span class="lineNum">      57 </span>            :   { -1, -8, 33, 80, 33, -8, -1, 0 }, { -1, -8, 30, 80, 35, -8, -1, 1 },
+<span class="lineNum">      58 </span>            :   { -1, -8, 28, 80, 37, -7, -2, 1 }, { 0, -8, 26, 79, 39, -7, -2, 1 },
+<span class="lineNum">      59 </span>            :   { 0, -8, 24, 79, 41, -7, -2, 1 },  { 0, -8, 22, 78, 43, -6, -2, 1 },
+<span class="lineNum">      60 </span>            :   { 0, -8, 20, 78, 45, -5, -3, 1 },  { 0, -8, 18, 77, 48, -5, -3, 1 },
+<span class="lineNum">      61 </span>            :   { 0, -8, 16, 76, 50, -4, -3, 1 },  { 0, -8, 15, 75, 52, -3, -4, 1 },
+<span class="lineNum">      62 </span>            :   { 0, -7, 13, 74, 54, -3, -4, 1 },  { 0, -7, 11, 73, 56, -2, -4, 1 },
+<span class="lineNum">      63 </span>            :   { 0, -7, 10, 71, 58, -1, -4, 1 },  { 1, -7, 8, 70, 60, 0, -5, 1 },
+<span class="lineNum">      64 </span>            :   { 1, -6, 6, 68, 62, 1, -5, 1 },    { 1, -6, 5, 67, 63, 2, -5, 1 },
+<span class="lineNum">      65 </span>            :   { 1, -6, 4, 65, 65, 4, -6, 1 },    { 1, -5, 2, 63, 67, 5, -6, 1 },
+<span class="lineNum">      66 </span>            :   { 1, -5, 1, 62, 68, 6, -6, 1 },    { 1, -5, 0, 60, 70, 8, -7, 1 },
+<span class="lineNum">      67 </span>            :   { 1, -4, -1, 58, 71, 10, -7, 0 },  { 1, -4, -2, 56, 73, 11, -7, 0 },
+<span class="lineNum">      68 </span>            :   { 1, -4, -3, 54, 74, 13, -7, 0 },  { 1, -4, -3, 52, 75, 15, -8, 0 },
+<span class="lineNum">      69 </span>            :   { 1, -3, -4, 50, 76, 16, -8, 0 },  { 1, -3, -5, 48, 77, 18, -8, 0 },
+<span class="lineNum">      70 </span>            :   { 1, -3, -5, 45, 78, 20, -8, 0 },  { 1, -2, -6, 43, 78, 22, -8, 0 },
+<span class="lineNum">      71 </span>            :   { 1, -2, -7, 41, 79, 24, -8, 0 },  { 1, -2, -7, 39, 79, 26, -8, 0 },
+<span class="lineNum">      72 </span>            :   { 1, -2, -7, 37, 80, 28, -8, -1 }, { 1, -1, -8, 35, 80, 30, -8, -1 },
+<span class="lineNum">      73 </span>            : };
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span>            : // Filters for interpolation (0.75-band) - note this also filters integer pels.
+<span class="lineNum">      76 </span>            : static const interp_kernel filteredinterp_filters750[(1 &lt;&lt; SUBPEL_BITS)] = {
+<span class="lineNum">      77 </span>            :   { 2, -11, 25, 96, 25, -11, 2, 0 }, { 2, -11, 22, 96, 28, -11, 2, 0 },
+<span class="lineNum">      78 </span>            :   { 2, -10, 19, 95, 31, -11, 2, 0 }, { 2, -10, 17, 95, 34, -12, 2, 0 },
+<span class="lineNum">      79 </span>            :   { 2, -9, 14, 94, 37, -12, 2, 0 },  { 2, -8, 12, 93, 40, -12, 1, 0 },
+<span class="lineNum">      80 </span>            :   { 2, -8, 9, 92, 43, -12, 1, 1 },   { 2, -7, 7, 91, 46, -12, 1, 0 },
+<span class="lineNum">      81 </span>            :   { 2, -7, 5, 90, 49, -12, 1, 0 },   { 2, -6, 3, 88, 52, -12, 0, 1 },
+<span class="lineNum">      82 </span>            :   { 2, -5, 1, 86, 55, -12, 0, 1 },   { 2, -5, -1, 84, 58, -11, 0, 1 },
+<span class="lineNum">      83 </span>            :   { 2, -4, -2, 82, 61, -11, -1, 1 }, { 2, -4, -4, 80, 64, -10, -1, 1 },
+<span class="lineNum">      84 </span>            :   { 1, -3, -5, 77, 67, -9, -1, 1 },  { 1, -3, -6, 75, 70, -8, -2, 1 },
+<span class="lineNum">      85 </span>            :   { 1, -2, -7, 72, 72, -7, -2, 1 },  { 1, -2, -8, 70, 75, -6, -3, 1 },
+<span class="lineNum">      86 </span>            :   { 1, -1, -9, 67, 77, -5, -3, 1 },  { 1, -1, -10, 64, 80, -4, -4, 2 },
+<span class="lineNum">      87 </span>            :   { 1, -1, -11, 61, 82, -2, -4, 2 }, { 1, 0, -11, 58, 84, -1, -5, 2 },
+<span class="lineNum">      88 </span>            :   { 1, 0, -12, 55, 86, 1, -5, 2 },   { 1, 0, -12, 52, 88, 3, -6, 2 },
+<span class="lineNum">      89 </span>            :   { 0, 1, -12, 49, 90, 5, -7, 2 },   { 0, 1, -12, 46, 91, 7, -7, 2 },
+<span class="lineNum">      90 </span>            :   { 1, 1, -12, 43, 92, 9, -8, 2 },   { 0, 1, -12, 40, 93, 12, -8, 2 },
+<span class="lineNum">      91 </span>            :   { 0, 2, -12, 37, 94, 14, -9, 2 },  { 0, 2, -12, 34, 95, 17, -10, 2 },
+<span class="lineNum">      92 </span>            :   { 0, 2, -11, 31, 95, 19, -10, 2 }, { 0, 2, -11, 28, 96, 22, -11, 2 }
+<span class="lineNum">      93 </span>            : };
+<span class="lineNum">      94 </span>            : 
+<span class="lineNum">      95 </span>            : // Filters for interpolation (0.875-band) - note this also filters integer pels.
+<span class="lineNum">      96 </span>            : static const interp_kernel filteredinterp_filters875[(1 &lt;&lt; SUBPEL_BITS)] = {
+<span class="lineNum">      97 </span>            :   { 3, -8, 13, 112, 13, -8, 3, 0 },   { 3, -7, 10, 112, 17, -9, 3, -1 },
+<span class="lineNum">      98 </span>            :   { 2, -6, 7, 111, 21, -9, 3, -1 },   { 2, -5, 4, 111, 24, -10, 3, -1 },
+<span class="lineNum">      99 </span>            :   { 2, -4, 1, 110, 28, -11, 3, -1 },  { 1, -3, -1, 108, 32, -12, 4, -1 },
+<span class="lineNum">     100 </span>            :   { 1, -2, -3, 106, 36, -13, 4, -1 }, { 1, -1, -6, 105, 40, -14, 4, -1 },
+<span class="lineNum">     101 </span>            :   { 1, -1, -7, 102, 44, -14, 4, -1 }, { 1, 0, -9, 100, 48, -15, 4, -1 },
+<span class="lineNum">     102 </span>            :   { 1, 1, -11, 97, 53, -16, 4, -1 },  { 0, 1, -12, 95, 57, -16, 4, -1 },
+<span class="lineNum">     103 </span>            :   { 0, 2, -13, 91, 61, -16, 4, -1 },  { 0, 2, -14, 88, 65, -16, 4, -1 },
+<span class="lineNum">     104 </span>            :   { 0, 3, -15, 84, 69, -17, 4, 0 },   { 0, 3, -16, 81, 73, -16, 3, 0 },
+<span class="lineNum">     105 </span>            :   { 0, 3, -16, 77, 77, -16, 3, 0 },   { 0, 3, -16, 73, 81, -16, 3, 0 },
+<span class="lineNum">     106 </span>            :   { 0, 4, -17, 69, 84, -15, 3, 0 },   { -1, 4, -16, 65, 88, -14, 2, 0 },
+<span class="lineNum">     107 </span>            :   { -1, 4, -16, 61, 91, -13, 2, 0 },  { -1, 4, -16, 57, 95, -12, 1, 0 },
+<span class="lineNum">     108 </span>            :   { -1, 4, -16, 53, 97, -11, 1, 1 },  { -1, 4, -15, 48, 100, -9, 0, 1 },
+<span class="lineNum">     109 </span>            :   { -1, 4, -14, 44, 102, -7, -1, 1 }, { -1, 4, -14, 40, 105, -6, -1, 1 },
+<span class="lineNum">     110 </span>            :   { -1, 4, -13, 36, 106, -3, -2, 1 }, { -1, 4, -12, 32, 108, -1, -3, 1 },
+<span class="lineNum">     111 </span>            :   { -1, 3, -11, 28, 110, 1, -4, 2 },  { -1, 3, -10, 24, 111, 4, -5, 2 },
+<span class="lineNum">     112 </span>            :   { -1, 3, -9, 21, 111, 7, -6, 2 },   { -1, 3, -9, 17, 112, 10, -7, 3 }
+<span class="lineNum">     113 </span>            : };
+<span class="lineNum">     114 </span>            : 
+<span class="lineNum">     115 </span>            : // Filters for interpolation (full-band) - no filtering for integer pixels
+<span class="lineNum">     116 </span>            : static const interp_kernel filteredinterp_filters1000[(1 &lt;&lt; SUBPEL_BITS)] = {
+<span class="lineNum">     117 </span>            :   { 0, 0, 0, 128, 0, 0, 0, 0 },        { 0, 1, -3, 128, 3, -1, 0, 0 },
+<span class="lineNum">     118 </span>            :   { -1, 2, -6, 127, 7, -2, 1, 0 },     { -1, 3, -9, 126, 12, -4, 1, 0 },
+<span class="lineNum">     119 </span>            :   { -1, 4, -12, 125, 16, -5, 1, 0 },   { -1, 4, -14, 123, 20, -6, 2, 0 },
+<span class="lineNum">     120 </span>            :   { -1, 5, -15, 120, 25, -8, 2, 0 },   { -1, 5, -17, 118, 30, -9, 3, -1 },
+<span class="lineNum">     121 </span>            :   { -1, 6, -18, 114, 35, -10, 3, -1 }, { -1, 6, -19, 111, 41, -12, 3, -1 },
+<span class="lineNum">     122 </span>            :   { -1, 6, -20, 107, 46, -13, 4, -1 }, { -1, 6, -21, 103, 52, -14, 4, -1 },
+<span class="lineNum">     123 </span>            :   { -1, 6, -21, 99, 57, -16, 5, -1 },  { -1, 6, -21, 94, 63, -17, 5, -1 },
+<span class="lineNum">     124 </span>            :   { -1, 6, -20, 89, 68, -18, 5, -1 },  { -1, 6, -20, 84, 73, -19, 6, -1 },
+<span class="lineNum">     125 </span>            :   { -1, 6, -20, 79, 79, -20, 6, -1 },  { -1, 6, -19, 73, 84, -20, 6, -1 },
+<span class="lineNum">     126 </span>            :   { -1, 5, -18, 68, 89, -20, 6, -1 },  { -1, 5, -17, 63, 94, -21, 6, -1 },
+<span class="lineNum">     127 </span>            :   { -1, 5, -16, 57, 99, -21, 6, -1 },  { -1, 4, -14, 52, 103, -21, 6, -1 },
+<span class="lineNum">     128 </span>            :   { -1, 4, -13, 46, 107, -20, 6, -1 }, { -1, 3, -12, 41, 111, -19, 6, -1 },
+<span class="lineNum">     129 </span>            :   { -1, 3, -10, 35, 114, -18, 6, -1 }, { -1, 3, -9, 30, 118, -17, 5, -1 },
+<span class="lineNum">     130 </span>            :   { 0, 2, -8, 25, 120, -15, 5, -1 },   { 0, 2, -6, 20, 123, -14, 4, -1 },
+<span class="lineNum">     131 </span>            :   { 0, 1, -5, 16, 125, -12, 4, -1 },   { 0, 1, -4, 12, 126, -9, 3, -1 },
+<span class="lineNum">     132 </span>            :   { 0, 1, -2, 7, 127, -6, 2, -1 },     { 0, 0, -1, 3, 128, -3, 1, 0 }
+<span class="lineNum">     133 </span>            : };
+<span class="lineNum">     134 </span>            : 
+<span class="lineNum">     135 </span>            : // Filters for factor of 2 downsampling.
+<span class="lineNum">     136 </span>            : static const int16_t vp9_down2_symeven_half_filter[] = { 56, 12, -3, -1 };
+<a name="137"><span class="lineNum">     137 </span>            : static const int16_t vp9_down2_symodd_half_filter[] = { 64, 35, 0, -3 };</a>
+<span class="lineNum">     138 </span>            : 
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 : static const interp_kernel *choose_interp_filter(int inlength, int outlength) {</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :   int outlength16 = outlength * 16;</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :   if (outlength16 &gt;= inlength * 16)</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :     return filteredinterp_filters1000;</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :   else if (outlength16 &gt;= inlength * 13)</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :     return filteredinterp_filters875;</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :   else if (outlength16 &gt;= inlength * 11)</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :     return filteredinterp_filters750;</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :   else if (outlength16 &gt;= inlength * 9)</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :     return filteredinterp_filters625;</span>
+<span class="lineNum">     149 </span>            :   else
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :     return filteredinterp_filters500;</span>
+<a name="151"><span class="lineNum">     151 </span>            : }</a>
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 : static void interpolate(const uint8_t *const input, int inlength,</span>
+<span class="lineNum">     154 </span>            :                         uint8_t *output, int outlength) {
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :   const int64_t delta =</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :       (((uint64_t)inlength &lt;&lt; 32) + outlength / 2) / outlength;</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :   const int64_t offset =</span>
+<span class="lineNum">     158 </span>            :       inlength &gt; outlength
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :           ? (((int64_t)(inlength - outlength) &lt;&lt; 31) + outlength / 2) /</span>
+<span class="lineNum">     160 </span>            :                 outlength
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :           : -(((int64_t)(outlength - inlength) &lt;&lt; 31) + outlength / 2) /</span>
+<span class="lineNum">     162 </span>            :                 outlength;
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :   uint8_t *optr = output;</span>
+<span class="lineNum">     164 </span>            :   int x, x1, x2, sum, k, int_pel, sub_pel;
+<span class="lineNum">     165 </span>            :   int64_t y;
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :   const interp_kernel *interp_filters =</span>
+<span class="lineNum">     168 </span>            :       choose_interp_filter(inlength, outlength);
+<span class="lineNum">     169 </span>            : 
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :   x = 0;</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :   y = offset;</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :   while ((y &gt;&gt; INTERP_PRECISION_BITS) &lt; (INTERP_TAPS / 2 - 1)) {</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :     x++;</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :     y += delta;</span>
+<span class="lineNum">     175 </span>            :   }
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :   x1 = x;</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :   x = outlength - 1;</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :   y = delta * x + offset;</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   while ((y &gt;&gt; INTERP_PRECISION_BITS) + (int64_t)(INTERP_TAPS / 2) &gt;=</span>
+<span class="lineNum">     180 </span>            :          inlength) {
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :     x--;</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :     y -= delta;</span>
+<span class="lineNum">     183 </span>            :   }
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :   x2 = x;</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :   if (x1 &gt; x2) {</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :     for (x = 0, y = offset; x &lt; outlength; ++x, y += delta) {</span>
+<span class="lineNum">     187 </span>            :       const int16_t *filter;
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :       int_pel = y &gt;&gt; INTERP_PRECISION_BITS;</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :       sub_pel = (y &gt;&gt; (INTERP_PRECISION_BITS - SUBPEL_BITS)) &amp; SUBPEL_MASK;</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :       filter = interp_filters[sub_pel];</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :       sum = 0;</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :       for (k = 0; k &lt; INTERP_TAPS; ++k) {</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :         const int pk = int_pel - INTERP_TAPS / 2 + 1 + k;</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :         sum += filter[k] *</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :                input[(pk &lt; 0 ? 0 : (pk &gt;= inlength ? inlength - 1 : pk))];</span>
+<span class="lineNum">     196 </span>            :       }
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(ROUND_POWER_OF_TWO(sum, FILTER_BITS));</span>
+<span class="lineNum">     198 </span>            :     }
+<span class="lineNum">     199 </span>            :   } else {
+<span class="lineNum">     200 </span>            :     // Initial part.
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :     for (x = 0, y = offset; x &lt; x1; ++x, y += delta) {</span>
+<span class="lineNum">     202 </span>            :       const int16_t *filter;
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :       int_pel = y &gt;&gt; INTERP_PRECISION_BITS;</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :       sub_pel = (y &gt;&gt; (INTERP_PRECISION_BITS - SUBPEL_BITS)) &amp; SUBPEL_MASK;</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :       filter = interp_filters[sub_pel];</span>
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :       sum = 0;</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :       for (k = 0; k &lt; INTERP_TAPS; ++k)</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :         sum += filter[k] * input[(int_pel - INTERP_TAPS / 2 + 1 + k &lt; 0</span>
+<span class="lineNum">     209 </span>            :                                       ? 0
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :                                       : int_pel - INTERP_TAPS / 2 + 1 + k)];</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(ROUND_POWER_OF_TWO(sum, FILTER_BITS));</span>
+<span class="lineNum">     212 </span>            :     }
+<span class="lineNum">     213 </span>            :     // Middle part.
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :     for (; x &lt;= x2; ++x, y += delta) {</span>
+<span class="lineNum">     215 </span>            :       const int16_t *filter;
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :       int_pel = y &gt;&gt; INTERP_PRECISION_BITS;</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :       sub_pel = (y &gt;&gt; (INTERP_PRECISION_BITS - SUBPEL_BITS)) &amp; SUBPEL_MASK;</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :       filter = interp_filters[sub_pel];</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :       sum = 0;</span>
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :       for (k = 0; k &lt; INTERP_TAPS; ++k)</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :         sum += filter[k] * input[int_pel - INTERP_TAPS / 2 + 1 + k];</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(ROUND_POWER_OF_TWO(sum, FILTER_BITS));</span>
+<span class="lineNum">     223 </span>            :     }
+<span class="lineNum">     224 </span>            :     // End part.
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :     for (; x &lt; outlength; ++x, y += delta) {</span>
+<span class="lineNum">     226 </span>            :       const int16_t *filter;
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :       int_pel = y &gt;&gt; INTERP_PRECISION_BITS;</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :       sub_pel = (y &gt;&gt; (INTERP_PRECISION_BITS - SUBPEL_BITS)) &amp; SUBPEL_MASK;</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :       filter = interp_filters[sub_pel];</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :       sum = 0;</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :       for (k = 0; k &lt; INTERP_TAPS; ++k)</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :         sum += filter[k] * input[(int_pel - INTERP_TAPS / 2 + 1 + k &gt;= inlength</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :                                       ? inlength - 1</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :                                       : int_pel - INTERP_TAPS / 2 + 1 + k)];</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(ROUND_POWER_OF_TWO(sum, FILTER_BITS));</span>
+<span class="lineNum">     236 </span>            :     }
+<span class="lineNum">     237 </span>            :   }
+<a name="238"><span class="lineNum">     238 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     239 </span>            : 
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 : static void down2_symeven(const uint8_t *const input, int length,</span>
+<span class="lineNum">     241 </span>            :                           uint8_t *output) {
+<span class="lineNum">     242 </span>            :   // Actual filter len = 2 * filter_len_half.
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   const int16_t *filter = vp9_down2_symeven_half_filter;</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   const int filter_len_half = sizeof(vp9_down2_symeven_half_filter) / 2;</span>
+<span class="lineNum">     245 </span>            :   int i, j;
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   uint8_t *optr = output;</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   int l1 = filter_len_half;</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   int l2 = (length - filter_len_half);</span>
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :   l1 += (l1 &amp; 1);</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   l2 += (l2 &amp; 1);</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :   if (l1 &gt; l2) {</span>
+<span class="lineNum">     252 </span>            :     // Short input length.
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; length; i += 2) {</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :       int sum = (1 &lt;&lt; (FILTER_BITS - 1));</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :       for (j = 0; j &lt; filter_len_half; ++j) {</span>
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :         sum += (input[(i - j &lt; 0 ? 0 : i - j)] +</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :                 input[(i + 1 + j &gt;= length ? length - 1 : i + 1 + j)]) *</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :                filter[j];</span>
+<span class="lineNum">     259 </span>            :       }
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :       sum &gt;&gt;= FILTER_BITS;</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(sum);</span>
+<span class="lineNum">     262 </span>            :     }
+<span class="lineNum">     263 </span>            :   } else {
+<span class="lineNum">     264 </span>            :     // Initial part.
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; l1; i += 2) {</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :       int sum = (1 &lt;&lt; (FILTER_BITS - 1));</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :       for (j = 0; j &lt; filter_len_half; ++j) {</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :         sum += (input[(i - j &lt; 0 ? 0 : i - j)] + input[i + 1 + j]) * filter[j];</span>
+<span class="lineNum">     269 </span>            :       }
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :       sum &gt;&gt;= FILTER_BITS;</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(sum);</span>
+<span class="lineNum">     272 </span>            :     }
+<span class="lineNum">     273 </span>            :     // Middle part.
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     for (; i &lt; l2; i += 2) {</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :       int sum = (1 &lt;&lt; (FILTER_BITS - 1));</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :       for (j = 0; j &lt; filter_len_half; ++j) {</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :         sum += (input[i - j] + input[i + 1 + j]) * filter[j];</span>
+<span class="lineNum">     278 </span>            :       }
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :       sum &gt;&gt;= FILTER_BITS;</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(sum);</span>
+<span class="lineNum">     281 </span>            :     }
+<span class="lineNum">     282 </span>            :     // End part.
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :     for (; i &lt; length; i += 2) {</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :       int sum = (1 &lt;&lt; (FILTER_BITS - 1));</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :       for (j = 0; j &lt; filter_len_half; ++j) {</span>
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :         sum += (input[i - j] +</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :                 input[(i + 1 + j &gt;= length ? length - 1 : i + 1 + j)]) *</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :                filter[j];</span>
+<span class="lineNum">     289 </span>            :       }
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :       sum &gt;&gt;= FILTER_BITS;</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(sum);</span>
+<span class="lineNum">     292 </span>            :     }
+<span class="lineNum">     293 </span>            :   }
+<a name="294"><span class="lineNum">     294 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     295 </span>            : 
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 : static void down2_symodd(const uint8_t *const input, int length,</span>
+<span class="lineNum">     297 </span>            :                          uint8_t *output) {
+<span class="lineNum">     298 </span>            :   // Actual filter len = 2 * filter_len_half - 1.
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :   const int16_t *filter = vp9_down2_symodd_half_filter;</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :   const int filter_len_half = sizeof(vp9_down2_symodd_half_filter) / 2;</span>
+<span class="lineNum">     301 </span>            :   int i, j;
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :   uint8_t *optr = output;</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :   int l1 = filter_len_half - 1;</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :   int l2 = (length - filter_len_half + 1);</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :   l1 += (l1 &amp; 1);</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   l2 += (l2 &amp; 1);</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :   if (l1 &gt; l2) {</span>
+<span class="lineNum">     308 </span>            :     // Short input length.
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; length; i += 2) {</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :       int sum = (1 &lt;&lt; (FILTER_BITS - 1)) + input[i] * filter[0];</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :       for (j = 1; j &lt; filter_len_half; ++j) {</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :         sum += (input[(i - j &lt; 0 ? 0 : i - j)] +</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :                 input[(i + j &gt;= length ? length - 1 : i + j)]) *</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :                filter[j];</span>
+<span class="lineNum">     315 </span>            :       }
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :       sum &gt;&gt;= FILTER_BITS;</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(sum);</span>
+<span class="lineNum">     318 </span>            :     }
+<span class="lineNum">     319 </span>            :   } else {
+<span class="lineNum">     320 </span>            :     // Initial part.
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; l1; i += 2) {</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :       int sum = (1 &lt;&lt; (FILTER_BITS - 1)) + input[i] * filter[0];</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :       for (j = 1; j &lt; filter_len_half; ++j) {</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :         sum += (input[(i - j &lt; 0 ? 0 : i - j)] + input[i + j]) * filter[j];</span>
+<span class="lineNum">     325 </span>            :       }
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :       sum &gt;&gt;= FILTER_BITS;</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(sum);</span>
+<span class="lineNum">     328 </span>            :     }
+<span class="lineNum">     329 </span>            :     // Middle part.
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :     for (; i &lt; l2; i += 2) {</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :       int sum = (1 &lt;&lt; (FILTER_BITS - 1)) + input[i] * filter[0];</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :       for (j = 1; j &lt; filter_len_half; ++j) {</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :         sum += (input[i - j] + input[i + j]) * filter[j];</span>
+<span class="lineNum">     334 </span>            :       }
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :       sum &gt;&gt;= FILTER_BITS;</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(sum);</span>
+<span class="lineNum">     337 </span>            :     }
+<span class="lineNum">     338 </span>            :     // End part.
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     for (; i &lt; length; i += 2) {</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :       int sum = (1 &lt;&lt; (FILTER_BITS - 1)) + input[i] * filter[0];</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :       for (j = 1; j &lt; filter_len_half; ++j) {</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :         sum += (input[i - j] + input[(i + j &gt;= length ? length - 1 : i + j)]) *</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :                filter[j];</span>
+<span class="lineNum">     344 </span>            :       }
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :       sum &gt;&gt;= FILTER_BITS;</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :       *optr++ = clip_pixel(sum);</span>
+<span class="lineNum">     347 </span>            :     }
+<span class="lineNum">     348 </span>            :   }
+<a name="349"><span class="lineNum">     349 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     350 </span>            : 
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 : static int get_down2_length(int length, int steps) {</span>
+<span class="lineNum">     352 </span>            :   int s;
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :   for (s = 0; s &lt; steps; ++s) length = (length + 1) &gt;&gt; 1;</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :   return length;</span>
+<a name="355"><span class="lineNum">     355 </span>            : }</a>
+<span class="lineNum">     356 </span>            : 
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 : static int get_down2_steps(int in_length, int out_length) {</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :   int steps = 0;</span>
+<span class="lineNum">     359 </span>            :   int proj_in_length;
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   while ((proj_in_length = get_down2_length(in_length, 1)) &gt;= out_length) {</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :     ++steps;</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :     in_length = proj_in_length;</span>
+<span class="lineNum">     363 </span>            :   }
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :   return steps;</span>
+<a name="365"><span class="lineNum">     365 </span>            : }</a>
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 : static void resize_multistep(const uint8_t *const input, int length,</span>
+<span class="lineNum">     368 </span>            :                              uint8_t *output, int olength, uint8_t *otmp) {
+<span class="lineNum">     369 </span>            :   int steps;
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :   if (length == olength) {</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :     memcpy(output, input, sizeof(output[0]) * length);</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     373 </span>            :   }
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :   steps = get_down2_steps(length, olength);</span>
+<span class="lineNum">     375 </span>            : 
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :   if (steps &gt; 0) {</span>
+<span class="lineNum">     377 </span>            :     int s;
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :     uint8_t *out = NULL;</span>
+<span class="lineNum">     379 </span>            :     uint8_t *otmp2;
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :     int filteredlength = length;</span>
+<span class="lineNum">     381 </span>            : 
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :     assert(otmp != NULL);</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :     otmp2 = otmp + get_down2_length(length, 1);</span>
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :     for (s = 0; s &lt; steps; ++s) {</span>
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :       const int proj_filteredlength = get_down2_length(filteredlength, 1);</span>
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :       const uint8_t *const in = (s == 0 ? input : out);</span>
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :       if (s == steps - 1 &amp;&amp; proj_filteredlength == olength)</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :         out = output;</span>
+<span class="lineNum">     389 </span>            :       else
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :         out = (s &amp; 1 ? otmp2 : otmp);</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :       if (filteredlength &amp; 1)</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :         down2_symodd(in, filteredlength, out);</span>
+<span class="lineNum">     393 </span>            :       else
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :         down2_symeven(in, filteredlength, out);</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :       filteredlength = proj_filteredlength;</span>
+<span class="lineNum">     396 </span>            :     }
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :     if (filteredlength != olength) {</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :       interpolate(out, filteredlength, output, olength);</span>
+<span class="lineNum">     399 </span>            :     }
+<span class="lineNum">     400 </span>            :   } else {
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :     interpolate(input, length, output, olength);</span>
+<span class="lineNum">     402 </span>            :   }
+<a name="403"><span class="lineNum">     403 </span>            : }</a>
+<span class="lineNum">     404 </span>            : 
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 : static void fill_col_to_arr(uint8_t *img, int stride, int len, uint8_t *arr) {</span>
+<span class="lineNum">     406 </span>            :   int i;
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :   uint8_t *iptr = img;</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :   uint8_t *aptr = arr;</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; len; ++i, iptr += stride) {</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :     *aptr++ = *iptr;</span>
+<span class="lineNum">     411 </span>            :   }
+<a name="412"><span class="lineNum">     412 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     413 </span>            : 
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 : static void fill_arr_to_col(uint8_t *img, int stride, int len, uint8_t *arr) {</span>
+<span class="lineNum">     415 </span>            :   int i;
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :   uint8_t *iptr = img;</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :   uint8_t *aptr = arr;</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; len; ++i, iptr += stride) {</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :     *iptr = *aptr++;</span>
+<span class="lineNum">     420 </span>            :   }
+<a name="421"><span class="lineNum">     421 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     422 </span>            : 
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 : void vp9_resize_plane(const uint8_t *const input, int height, int width,</span>
+<span class="lineNum">     424 </span>            :                       int in_stride, uint8_t *output, int height2, int width2,
+<span class="lineNum">     425 </span>            :                       int out_stride) {
+<span class="lineNum">     426 </span>            :   int i;
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :   uint8_t *intbuf = (uint8_t *)malloc(sizeof(uint8_t) * width2 * height);</span>
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :   uint8_t *tmpbuf =</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :       (uint8_t *)malloc(sizeof(uint8_t) * (width &lt; height ? height : width));</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :   uint8_t *arrbuf = (uint8_t *)malloc(sizeof(uint8_t) * height);</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :   uint8_t *arrbuf2 = (uint8_t *)malloc(sizeof(uint8_t) * height2);</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :   if (intbuf == NULL || tmpbuf == NULL || arrbuf == NULL || arrbuf2 == NULL)</span>
+<span class="lineNum">     433 </span>            :     goto Error;
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :   assert(width &gt; 0);</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :   assert(height &gt; 0);</span>
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :   assert(width2 &gt; 0);</span>
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :   assert(height2 &gt; 0);</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; height; ++i)</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :     resize_multistep(input + in_stride * i, width, intbuf + width2 * i, width2,</span>
+<span class="lineNum">     440 </span>            :                      tmpbuf);
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; width2; ++i) {</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :     fill_col_to_arr(intbuf + i, width2, height, arrbuf);</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :     resize_multistep(arrbuf, height, arrbuf2, height2, tmpbuf);</span>
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :     fill_arr_to_col(output + i, out_stride, height2, arrbuf2);</span>
+<span class="lineNum">     445 </span>            :   }
+<span class="lineNum">     446 </span>            : 
+<span class="lineNum">     447 </span>            : Error:
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :   free(intbuf);</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :   free(tmpbuf);</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :   free(arrbuf);</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :   free(arrbuf2);</span>
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     453 </span>            : 
+<span class="lineNum">     454 </span>            : #if CONFIG_VP9_HIGHBITDEPTH
+<span class="lineNum">     455 </span>            : static void highbd_interpolate(const uint16_t *const input, int inlength,
+<span class="lineNum">     456 </span>            :                                uint16_t *output, int outlength, int bd) {
+<span class="lineNum">     457 </span>            :   const int64_t delta =
+<span class="lineNum">     458 </span>            :       (((uint64_t)inlength &lt;&lt; 32) + outlength / 2) / outlength;
+<span class="lineNum">     459 </span>            :   const int64_t offset =
+<span class="lineNum">     460 </span>            :       inlength &gt; outlength
+<span class="lineNum">     461 </span>            :           ? (((int64_t)(inlength - outlength) &lt;&lt; 31) + outlength / 2) /
+<span class="lineNum">     462 </span>            :                 outlength
+<span class="lineNum">     463 </span>            :           : -(((int64_t)(outlength - inlength) &lt;&lt; 31) + outlength / 2) /
+<span class="lineNum">     464 </span>            :                 outlength;
+<span class="lineNum">     465 </span>            :   uint16_t *optr = output;
+<span class="lineNum">     466 </span>            :   int x, x1, x2, sum, k, int_pel, sub_pel;
+<span class="lineNum">     467 </span>            :   int64_t y;
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span>            :   const interp_kernel *interp_filters =
+<span class="lineNum">     470 </span>            :       choose_interp_filter(inlength, outlength);
+<span class="lineNum">     471 </span>            : 
+<span class="lineNum">     472 </span>            :   x = 0;
+<span class="lineNum">     473 </span>            :   y = offset;
+<span class="lineNum">     474 </span>            :   while ((y &gt;&gt; INTERP_PRECISION_BITS) &lt; (INTERP_TAPS / 2 - 1)) {
+<span class="lineNum">     475 </span>            :     x++;
+<span class="lineNum">     476 </span>            :     y += delta;
+<span class="lineNum">     477 </span>            :   }
+<span class="lineNum">     478 </span>            :   x1 = x;
+<span class="lineNum">     479 </span>            :   x = outlength - 1;
+<span class="lineNum">     480 </span>            :   y = delta * x + offset;
+<span class="lineNum">     481 </span>            :   while ((y &gt;&gt; INTERP_PRECISION_BITS) + (int64_t)(INTERP_TAPS / 2) &gt;=
+<span class="lineNum">     482 </span>            :          inlength) {
+<span class="lineNum">     483 </span>            :     x--;
+<span class="lineNum">     484 </span>            :     y -= delta;
+<span class="lineNum">     485 </span>            :   }
+<span class="lineNum">     486 </span>            :   x2 = x;
+<span class="lineNum">     487 </span>            :   if (x1 &gt; x2) {
+<span class="lineNum">     488 </span>            :     for (x = 0, y = offset; x &lt; outlength; ++x, y += delta) {
+<span class="lineNum">     489 </span>            :       const int16_t *filter;
+<span class="lineNum">     490 </span>            :       int_pel = y &gt;&gt; INTERP_PRECISION_BITS;
+<span class="lineNum">     491 </span>            :       sub_pel = (y &gt;&gt; (INTERP_PRECISION_BITS - SUBPEL_BITS)) &amp; SUBPEL_MASK;
+<span class="lineNum">     492 </span>            :       filter = interp_filters[sub_pel];
+<span class="lineNum">     493 </span>            :       sum = 0;
+<span class="lineNum">     494 </span>            :       for (k = 0; k &lt; INTERP_TAPS; ++k) {
+<span class="lineNum">     495 </span>            :         const int pk = int_pel - INTERP_TAPS / 2 + 1 + k;
+<span class="lineNum">     496 </span>            :         sum += filter[k] *
+<span class="lineNum">     497 </span>            :                input[(pk &lt; 0 ? 0 : (pk &gt;= inlength ? inlength - 1 : pk))];
+<span class="lineNum">     498 </span>            :       }
+<span class="lineNum">     499 </span>            :       *optr++ = clip_pixel_highbd(ROUND_POWER_OF_TWO(sum, FILTER_BITS), bd);
+<span class="lineNum">     500 </span>            :     }
+<span class="lineNum">     501 </span>            :   } else {
+<span class="lineNum">     502 </span>            :     // Initial part.
+<span class="lineNum">     503 </span>            :     for (x = 0, y = offset; x &lt; x1; ++x, y += delta) {
+<span class="lineNum">     504 </span>            :       const int16_t *filter;
+<span class="lineNum">     505 </span>            :       int_pel = y &gt;&gt; INTERP_PRECISION_BITS;
+<span class="lineNum">     506 </span>            :       sub_pel = (y &gt;&gt; (INTERP_PRECISION_BITS - SUBPEL_BITS)) &amp; SUBPEL_MASK;
+<span class="lineNum">     507 </span>            :       filter = interp_filters[sub_pel];
+<span class="lineNum">     508 </span>            :       sum = 0;
+<span class="lineNum">     509 </span>            :       for (k = 0; k &lt; INTERP_TAPS; ++k)
+<span class="lineNum">     510 </span>            :         sum += filter[k] * input[(int_pel - INTERP_TAPS / 2 + 1 + k &lt; 0
+<span class="lineNum">     511 </span>            :                                       ? 0
+<span class="lineNum">     512 </span>            :                                       : int_pel - INTERP_TAPS / 2 + 1 + k)];
+<span class="lineNum">     513 </span>            :       *optr++ = clip_pixel_highbd(ROUND_POWER_OF_TWO(sum, FILTER_BITS), bd);
+<span class="lineNum">     514 </span>            :     }
+<span class="lineNum">     515 </span>            :     // Middle part.
+<span class="lineNum">     516 </span>            :     for (; x &lt;= x2; ++x, y += delta) {
+<span class="lineNum">     517 </span>            :       const int16_t *filter;
+<span class="lineNum">     518 </span>            :       int_pel = y &gt;&gt; INTERP_PRECISION_BITS;
+<span class="lineNum">     519 </span>            :       sub_pel = (y &gt;&gt; (INTERP_PRECISION_BITS - SUBPEL_BITS)) &amp; SUBPEL_MASK;
+<span class="lineNum">     520 </span>            :       filter = interp_filters[sub_pel];
+<span class="lineNum">     521 </span>            :       sum = 0;
+<span class="lineNum">     522 </span>            :       for (k = 0; k &lt; INTERP_TAPS; ++k)
+<span class="lineNum">     523 </span>            :         sum += filter[k] * input[int_pel - INTERP_TAPS / 2 + 1 + k];
+<span class="lineNum">     524 </span>            :       *optr++ = clip_pixel_highbd(ROUND_POWER_OF_TWO(sum, FILTER_BITS), bd);
+<span class="lineNum">     525 </span>            :     }
+<span class="lineNum">     526 </span>            :     // End part.
+<span class="lineNum">     527 </span>            :     for (; x &lt; outlength; ++x, y += delta) {
+<span class="lineNum">     528 </span>            :       const int16_t *filter;
+<span class="lineNum">     529 </span>            :       int_pel = y &gt;&gt; INTERP_PRECISION_BITS;
+<span class="lineNum">     530 </span>            :       sub_pel = (y &gt;&gt; (INTERP_PRECISION_BITS - SUBPEL_BITS)) &amp; SUBPEL_MASK;
+<span class="lineNum">     531 </span>            :       filter = interp_filters[sub_pel];
+<span class="lineNum">     532 </span>            :       sum = 0;
+<span class="lineNum">     533 </span>            :       for (k = 0; k &lt; INTERP_TAPS; ++k)
+<span class="lineNum">     534 </span>            :         sum += filter[k] * input[(int_pel - INTERP_TAPS / 2 + 1 + k &gt;= inlength
+<span class="lineNum">     535 </span>            :                                       ? inlength - 1
+<span class="lineNum">     536 </span>            :                                       : int_pel - INTERP_TAPS / 2 + 1 + k)];
+<span class="lineNum">     537 </span>            :       *optr++ = clip_pixel_highbd(ROUND_POWER_OF_TWO(sum, FILTER_BITS), bd);
+<span class="lineNum">     538 </span>            :     }
+<span class="lineNum">     539 </span>            :   }
+<span class="lineNum">     540 </span>            : }
+<span class="lineNum">     541 </span>            : 
+<span class="lineNum">     542 </span>            : static void highbd_down2_symeven(const uint16_t *const input, int length,
+<span class="lineNum">     543 </span>            :                                  uint16_t *output, int bd) {
+<span class="lineNum">     544 </span>            :   // Actual filter len = 2 * filter_len_half.
+<span class="lineNum">     545 </span>            :   static const int16_t *filter = vp9_down2_symeven_half_filter;
+<span class="lineNum">     546 </span>            :   const int filter_len_half = sizeof(vp9_down2_symeven_half_filter) / 2;
+<span class="lineNum">     547 </span>            :   int i, j;
+<span class="lineNum">     548 </span>            :   uint16_t *optr = output;
+<span class="lineNum">     549 </span>            :   int l1 = filter_len_half;
+<span class="lineNum">     550 </span>            :   int l2 = (length - filter_len_half);
+<span class="lineNum">     551 </span>            :   l1 += (l1 &amp; 1);
+<span class="lineNum">     552 </span>            :   l2 += (l2 &amp; 1);
+<span class="lineNum">     553 </span>            :   if (l1 &gt; l2) {
+<span class="lineNum">     554 </span>            :     // Short input length.
+<span class="lineNum">     555 </span>            :     for (i = 0; i &lt; length; i += 2) {
+<span class="lineNum">     556 </span>            :       int sum = (1 &lt;&lt; (FILTER_BITS - 1));
+<span class="lineNum">     557 </span>            :       for (j = 0; j &lt; filter_len_half; ++j) {
+<span class="lineNum">     558 </span>            :         sum += (input[(i - j &lt; 0 ? 0 : i - j)] +
+<span class="lineNum">     559 </span>            :                 input[(i + 1 + j &gt;= length ? length - 1 : i + 1 + j)]) *
+<span class="lineNum">     560 </span>            :                filter[j];
+<span class="lineNum">     561 </span>            :       }
+<span class="lineNum">     562 </span>            :       sum &gt;&gt;= FILTER_BITS;
+<span class="lineNum">     563 </span>            :       *optr++ = clip_pixel_highbd(sum, bd);
+<span class="lineNum">     564 </span>            :     }
+<span class="lineNum">     565 </span>            :   } else {
+<span class="lineNum">     566 </span>            :     // Initial part.
+<span class="lineNum">     567 </span>            :     for (i = 0; i &lt; l1; i += 2) {
+<span class="lineNum">     568 </span>            :       int sum = (1 &lt;&lt; (FILTER_BITS - 1));
+<span class="lineNum">     569 </span>            :       for (j = 0; j &lt; filter_len_half; ++j) {
+<span class="lineNum">     570 </span>            :         sum += (input[(i - j &lt; 0 ? 0 : i - j)] + input[i + 1 + j]) * filter[j];
+<span class="lineNum">     571 </span>            :       }
+<span class="lineNum">     572 </span>            :       sum &gt;&gt;= FILTER_BITS;
+<span class="lineNum">     573 </span>            :       *optr++ = clip_pixel_highbd(sum, bd);
+<span class="lineNum">     574 </span>            :     }
+<span class="lineNum">     575 </span>            :     // Middle part.
+<span class="lineNum">     576 </span>            :     for (; i &lt; l2; i += 2) {
+<span class="lineNum">     577 </span>            :       int sum = (1 &lt;&lt; (FILTER_BITS - 1));
+<span class="lineNum">     578 </span>            :       for (j = 0; j &lt; filter_len_half; ++j) {
+<span class="lineNum">     579 </span>            :         sum += (input[i - j] + input[i + 1 + j]) * filter[j];
+<span class="lineNum">     580 </span>            :       }
+<span class="lineNum">     581 </span>            :       sum &gt;&gt;= FILTER_BITS;
+<span class="lineNum">     582 </span>            :       *optr++ = clip_pixel_highbd(sum, bd);
+<span class="lineNum">     583 </span>            :     }
+<span class="lineNum">     584 </span>            :     // End part.
+<span class="lineNum">     585 </span>            :     for (; i &lt; length; i += 2) {
+<span class="lineNum">     586 </span>            :       int sum = (1 &lt;&lt; (FILTER_BITS - 1));
+<span class="lineNum">     587 </span>            :       for (j = 0; j &lt; filter_len_half; ++j) {
+<span class="lineNum">     588 </span>            :         sum += (input[i - j] +
+<span class="lineNum">     589 </span>            :                 input[(i + 1 + j &gt;= length ? length - 1 : i + 1 + j)]) *
+<span class="lineNum">     590 </span>            :                filter[j];
+<span class="lineNum">     591 </span>            :       }
+<span class="lineNum">     592 </span>            :       sum &gt;&gt;= FILTER_BITS;
+<span class="lineNum">     593 </span>            :       *optr++ = clip_pixel_highbd(sum, bd);
+<span class="lineNum">     594 </span>            :     }
+<span class="lineNum">     595 </span>            :   }
+<span class="lineNum">     596 </span>            : }
+<span class="lineNum">     597 </span>            : 
+<span class="lineNum">     598 </span>            : static void highbd_down2_symodd(const uint16_t *const input, int length,
+<span class="lineNum">     599 </span>            :                                 uint16_t *output, int bd) {
+<span class="lineNum">     600 </span>            :   // Actual filter len = 2 * filter_len_half - 1.
+<span class="lineNum">     601 </span>            :   static const int16_t *filter = vp9_down2_symodd_half_filter;
+<span class="lineNum">     602 </span>            :   const int filter_len_half = sizeof(vp9_down2_symodd_half_filter) / 2;
+<span class="lineNum">     603 </span>            :   int i, j;
+<span class="lineNum">     604 </span>            :   uint16_t *optr = output;
+<span class="lineNum">     605 </span>            :   int l1 = filter_len_half - 1;
+<span class="lineNum">     606 </span>            :   int l2 = (length - filter_len_half + 1);
+<span class="lineNum">     607 </span>            :   l1 += (l1 &amp; 1);
+<span class="lineNum">     608 </span>            :   l2 += (l2 &amp; 1);
+<span class="lineNum">     609 </span>            :   if (l1 &gt; l2) {
+<span class="lineNum">     610 </span>            :     // Short input length.
+<span class="lineNum">     611 </span>            :     for (i = 0; i &lt; length; i += 2) {
+<span class="lineNum">     612 </span>            :       int sum = (1 &lt;&lt; (FILTER_BITS - 1)) + input[i] * filter[0];
+<span class="lineNum">     613 </span>            :       for (j = 1; j &lt; filter_len_half; ++j) {
+<span class="lineNum">     614 </span>            :         sum += (input[(i - j &lt; 0 ? 0 : i - j)] +
+<span class="lineNum">     615 </span>            :                 input[(i + j &gt;= length ? length - 1 : i + j)]) *
+<span class="lineNum">     616 </span>            :                filter[j];
+<span class="lineNum">     617 </span>            :       }
+<span class="lineNum">     618 </span>            :       sum &gt;&gt;= FILTER_BITS;
+<span class="lineNum">     619 </span>            :       *optr++ = clip_pixel_highbd(sum, bd);
+<span class="lineNum">     620 </span>            :     }
+<span class="lineNum">     621 </span>            :   } else {
+<span class="lineNum">     622 </span>            :     // Initial part.
+<span class="lineNum">     623 </span>            :     for (i = 0; i &lt; l1; i += 2) {
+<span class="lineNum">     624 </span>            :       int sum = (1 &lt;&lt; (FILTER_BITS - 1)) + input[i] * filter[0];
+<span class="lineNum">     625 </span>            :       for (j = 1; j &lt; filter_len_half; ++j) {
+<span class="lineNum">     626 </span>            :         sum += (input[(i - j &lt; 0 ? 0 : i - j)] + input[i + j]) * filter[j];
+<span class="lineNum">     627 </span>            :       }
+<span class="lineNum">     628 </span>            :       sum &gt;&gt;= FILTER_BITS;
+<span class="lineNum">     629 </span>            :       *optr++ = clip_pixel_highbd(sum, bd);
+<span class="lineNum">     630 </span>            :     }
+<span class="lineNum">     631 </span>            :     // Middle part.
+<span class="lineNum">     632 </span>            :     for (; i &lt; l2; i += 2) {
+<span class="lineNum">     633 </span>            :       int sum = (1 &lt;&lt; (FILTER_BITS - 1)) + input[i] * filter[0];
+<span class="lineNum">     634 </span>            :       for (j = 1; j &lt; filter_len_half; ++j) {
+<span class="lineNum">     635 </span>            :         sum += (input[i - j] + input[i + j]) * filter[j];
+<span class="lineNum">     636 </span>            :       }
+<span class="lineNum">     637 </span>            :       sum &gt;&gt;= FILTER_BITS;
+<span class="lineNum">     638 </span>            :       *optr++ = clip_pixel_highbd(sum, bd);
+<span class="lineNum">     639 </span>            :     }
+<span class="lineNum">     640 </span>            :     // End part.
+<span class="lineNum">     641 </span>            :     for (; i &lt; length; i += 2) {
+<span class="lineNum">     642 </span>            :       int sum = (1 &lt;&lt; (FILTER_BITS - 1)) + input[i] * filter[0];
+<span class="lineNum">     643 </span>            :       for (j = 1; j &lt; filter_len_half; ++j) {
+<span class="lineNum">     644 </span>            :         sum += (input[i - j] + input[(i + j &gt;= length ? length - 1 : i + j)]) *
+<span class="lineNum">     645 </span>            :                filter[j];
+<span class="lineNum">     646 </span>            :       }
+<span class="lineNum">     647 </span>            :       sum &gt;&gt;= FILTER_BITS;
+<span class="lineNum">     648 </span>            :       *optr++ = clip_pixel_highbd(sum, bd);
+<span class="lineNum">     649 </span>            :     }
+<span class="lineNum">     650 </span>            :   }
+<span class="lineNum">     651 </span>            : }
+<span class="lineNum">     652 </span>            : 
+<span class="lineNum">     653 </span>            : static void highbd_resize_multistep(const uint16_t *const input, int length,
+<span class="lineNum">     654 </span>            :                                     uint16_t *output, int olength,
+<span class="lineNum">     655 </span>            :                                     uint16_t *otmp, int bd) {
+<span class="lineNum">     656 </span>            :   int steps;
+<span class="lineNum">     657 </span>            :   if (length == olength) {
+<span class="lineNum">     658 </span>            :     memcpy(output, input, sizeof(output[0]) * length);
+<span class="lineNum">     659 </span>            :     return;
+<span class="lineNum">     660 </span>            :   }
+<span class="lineNum">     661 </span>            :   steps = get_down2_steps(length, olength);
+<span class="lineNum">     662 </span>            : 
+<span class="lineNum">     663 </span>            :   if (steps &gt; 0) {
+<span class="lineNum">     664 </span>            :     int s;
+<span class="lineNum">     665 </span>            :     uint16_t *out = NULL;
+<span class="lineNum">     666 </span>            :     uint16_t *otmp2;
+<span class="lineNum">     667 </span>            :     int filteredlength = length;
+<span class="lineNum">     668 </span>            : 
+<span class="lineNum">     669 </span>            :     assert(otmp != NULL);
+<span class="lineNum">     670 </span>            :     otmp2 = otmp + get_down2_length(length, 1);
+<span class="lineNum">     671 </span>            :     for (s = 0; s &lt; steps; ++s) {
+<span class="lineNum">     672 </span>            :       const int proj_filteredlength = get_down2_length(filteredlength, 1);
+<span class="lineNum">     673 </span>            :       const uint16_t *const in = (s == 0 ? input : out);
+<span class="lineNum">     674 </span>            :       if (s == steps - 1 &amp;&amp; proj_filteredlength == olength)
+<span class="lineNum">     675 </span>            :         out = output;
+<span class="lineNum">     676 </span>            :       else
+<span class="lineNum">     677 </span>            :         out = (s &amp; 1 ? otmp2 : otmp);
+<span class="lineNum">     678 </span>            :       if (filteredlength &amp; 1)
+<span class="lineNum">     679 </span>            :         highbd_down2_symodd(in, filteredlength, out, bd);
+<span class="lineNum">     680 </span>            :       else
+<span class="lineNum">     681 </span>            :         highbd_down2_symeven(in, filteredlength, out, bd);
+<span class="lineNum">     682 </span>            :       filteredlength = proj_filteredlength;
+<span class="lineNum">     683 </span>            :     }
+<span class="lineNum">     684 </span>            :     if (filteredlength != olength) {
+<span class="lineNum">     685 </span>            :       highbd_interpolate(out, filteredlength, output, olength, bd);
+<span class="lineNum">     686 </span>            :     }
+<span class="lineNum">     687 </span>            :   } else {
+<span class="lineNum">     688 </span>            :     highbd_interpolate(input, length, output, olength, bd);
+<span class="lineNum">     689 </span>            :   }
+<span class="lineNum">     690 </span>            : }
+<span class="lineNum">     691 </span>            : 
+<span class="lineNum">     692 </span>            : static void highbd_fill_col_to_arr(uint16_t *img, int stride, int len,
+<span class="lineNum">     693 </span>            :                                    uint16_t *arr) {
+<span class="lineNum">     694 </span>            :   int i;
+<span class="lineNum">     695 </span>            :   uint16_t *iptr = img;
+<span class="lineNum">     696 </span>            :   uint16_t *aptr = arr;
+<span class="lineNum">     697 </span>            :   for (i = 0; i &lt; len; ++i, iptr += stride) {
+<span class="lineNum">     698 </span>            :     *aptr++ = *iptr;
+<span class="lineNum">     699 </span>            :   }
+<span class="lineNum">     700 </span>            : }
+<span class="lineNum">     701 </span>            : 
+<span class="lineNum">     702 </span>            : static void highbd_fill_arr_to_col(uint16_t *img, int stride, int len,
+<span class="lineNum">     703 </span>            :                                    uint16_t *arr) {
+<span class="lineNum">     704 </span>            :   int i;
+<span class="lineNum">     705 </span>            :   uint16_t *iptr = img;
+<span class="lineNum">     706 </span>            :   uint16_t *aptr = arr;
+<span class="lineNum">     707 </span>            :   for (i = 0; i &lt; len; ++i, iptr += stride) {
+<span class="lineNum">     708 </span>            :     *iptr = *aptr++;
+<span class="lineNum">     709 </span>            :   }
+<span class="lineNum">     710 </span>            : }
+<span class="lineNum">     711 </span>            : 
+<span class="lineNum">     712 </span>            : void vp9_highbd_resize_plane(const uint8_t *const input, int height, int width,
+<span class="lineNum">     713 </span>            :                              int in_stride, uint8_t *output, int height2,
+<span class="lineNum">     714 </span>            :                              int width2, int out_stride, int bd) {
+<span class="lineNum">     715 </span>            :   int i;
+<span class="lineNum">     716 </span>            :   uint16_t *intbuf = (uint16_t *)malloc(sizeof(uint16_t) * width2 * height);
+<span class="lineNum">     717 </span>            :   uint16_t *tmpbuf =
+<span class="lineNum">     718 </span>            :       (uint16_t *)malloc(sizeof(uint16_t) * (width &lt; height ? height : width));
+<span class="lineNum">     719 </span>            :   uint16_t *arrbuf = (uint16_t *)malloc(sizeof(uint16_t) * height);
+<span class="lineNum">     720 </span>            :   uint16_t *arrbuf2 = (uint16_t *)malloc(sizeof(uint16_t) * height2);
+<span class="lineNum">     721 </span>            :   if (intbuf == NULL || tmpbuf == NULL || arrbuf == NULL || arrbuf2 == NULL)
+<span class="lineNum">     722 </span>            :     goto Error;
+<span class="lineNum">     723 </span>            :   for (i = 0; i &lt; height; ++i) {
+<span class="lineNum">     724 </span>            :     highbd_resize_multistep(CONVERT_TO_SHORTPTR(input + in_stride * i), width,
+<span class="lineNum">     725 </span>            :                             intbuf + width2 * i, width2, tmpbuf, bd);
+<span class="lineNum">     726 </span>            :   }
+<span class="lineNum">     727 </span>            :   for (i = 0; i &lt; width2; ++i) {
+<span class="lineNum">     728 </span>            :     highbd_fill_col_to_arr(intbuf + i, width2, height, arrbuf);
+<span class="lineNum">     729 </span>            :     highbd_resize_multistep(arrbuf, height, arrbuf2, height2, tmpbuf, bd);
+<span class="lineNum">     730 </span>            :     highbd_fill_arr_to_col(CONVERT_TO_SHORTPTR(output + i), out_stride, height2,
+<span class="lineNum">     731 </span>            :                            arrbuf2);
+<span class="lineNum">     732 </span>            :   }
+<span class="lineNum">     733 </span>            : 
+<span class="lineNum">     734 </span>            : Error:
+<span class="lineNum">     735 </span>            :   free(intbuf);
+<span class="lineNum">     736 </span>            :   free(tmpbuf);
+<span class="lineNum">     737 </span>            :   free(arrbuf);
+<span class="lineNum">     738 </span>            :   free(arrbuf2);
+<span class="lineNum">     739 </span>            : }
+<a name="740"><span class="lineNum">     740 </span>            : #endif  // CONFIG_VP9_HIGHBITDEPTH</a>
+<span class="lineNum">     741 </span>            : 
+<span class="lineNum">     742 </span><span class="lineNoCov">          0 : void vp9_resize_frame420(const uint8_t *const y, int y_stride,</span>
+<span class="lineNum">     743 </span>            :                          const uint8_t *const u, const uint8_t *const v,
+<span class="lineNum">     744 </span>            :                          int uv_stride, int height, int width, uint8_t *oy,
+<span class="lineNum">     745 </span>            :                          int oy_stride, uint8_t *ou, uint8_t *ov,
+<span class="lineNum">     746 </span>            :                          int ouv_stride, int oheight, int owidth) {
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 :   vp9_resize_plane(y, height, width, y_stride, oy, oheight, owidth, oy_stride);</span>
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :   vp9_resize_plane(u, height / 2, width / 2, uv_stride, ou, oheight / 2,</span>
+<span class="lineNum">     749 </span>            :                    owidth / 2, ouv_stride);
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :   vp9_resize_plane(v, height / 2, width / 2, uv_stride, ov, oheight / 2,</span>
+<span class="lineNum">     751 </span>            :                    owidth / 2, ouv_stride);
+<a name="752"><span class="lineNum">     752 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     753 </span>            : 
+<span class="lineNum">     754 </span><span class="lineNoCov">          0 : void vp9_resize_frame422(const uint8_t *const y, int y_stride,</span>
+<span class="lineNum">     755 </span>            :                          const uint8_t *const u, const uint8_t *const v,
+<span class="lineNum">     756 </span>            :                          int uv_stride, int height, int width, uint8_t *oy,
+<span class="lineNum">     757 </span>            :                          int oy_stride, uint8_t *ou, uint8_t *ov,
+<span class="lineNum">     758 </span>            :                          int ouv_stride, int oheight, int owidth) {
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 :   vp9_resize_plane(y, height, width, y_stride, oy, oheight, owidth, oy_stride);</span>
+<span class="lineNum">     760 </span><span class="lineNoCov">          0 :   vp9_resize_plane(u, height, width / 2, uv_stride, ou, oheight, owidth / 2,</span>
+<span class="lineNum">     761 </span>            :                    ouv_stride);
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :   vp9_resize_plane(v, height, width / 2, uv_stride, ov, oheight, owidth / 2,</span>
+<span class="lineNum">     763 </span>            :                    ouv_stride);
+<a name="764"><span class="lineNum">     764 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     765 </span>            : 
+<span class="lineNum">     766 </span><span class="lineNoCov">          0 : void vp9_resize_frame444(const uint8_t *const y, int y_stride,</span>
+<span class="lineNum">     767 </span>            :                          const uint8_t *const u, const uint8_t *const v,
+<span class="lineNum">     768 </span>            :                          int uv_stride, int height, int width, uint8_t *oy,
+<span class="lineNum">     769 </span>            :                          int oy_stride, uint8_t *ou, uint8_t *ov,
+<span class="lineNum">     770 </span>            :                          int ouv_stride, int oheight, int owidth) {
+<span class="lineNum">     771 </span><span class="lineNoCov">          0 :   vp9_resize_plane(y, height, width, y_stride, oy, oheight, owidth, oy_stride);</span>
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 :   vp9_resize_plane(u, height, width, uv_stride, ou, oheight, owidth,</span>
+<span class="lineNum">     773 </span>            :                    ouv_stride);
+<span class="lineNum">     774 </span><span class="lineNoCov">          0 :   vp9_resize_plane(v, height, width, uv_stride, ov, oheight, owidth,</span>
+<span class="lineNum">     775 </span>            :                    ouv_stride);
+<span class="lineNum">     776 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     777 </span>            : 
+<span class="lineNum">     778 </span>            : #if CONFIG_VP9_HIGHBITDEPTH
+<span class="lineNum">     779 </span>            : void vp9_highbd_resize_frame420(const uint8_t *const y, int y_stride,
+<span class="lineNum">     780 </span>            :                                 const uint8_t *const u, const uint8_t *const v,
+<span class="lineNum">     781 </span>            :                                 int uv_stride, int height, int width,
+<span class="lineNum">     782 </span>            :                                 uint8_t *oy, int oy_stride, uint8_t *ou,
+<span class="lineNum">     783 </span>            :                                 uint8_t *ov, int ouv_stride, int oheight,
+<span class="lineNum">     784 </span>            :                                 int owidth, int bd) {
+<span class="lineNum">     785 </span>            :   vp9_highbd_resize_plane(y, height, width, y_stride, oy, oheight, owidth,
+<span class="lineNum">     786 </span>            :                           oy_stride, bd);
+<span class="lineNum">     787 </span>            :   vp9_highbd_resize_plane(u, height / 2, width / 2, uv_stride, ou, oheight / 2,
+<span class="lineNum">     788 </span>            :                           owidth / 2, ouv_stride, bd);
+<span class="lineNum">     789 </span>            :   vp9_highbd_resize_plane(v, height / 2, width / 2, uv_stride, ov, oheight / 2,
+<span class="lineNum">     790 </span>            :                           owidth / 2, ouv_stride, bd);
+<span class="lineNum">     791 </span>            : }
+<span class="lineNum">     792 </span>            : 
+<span class="lineNum">     793 </span>            : void vp9_highbd_resize_frame422(const uint8_t *const y, int y_stride,
+<span class="lineNum">     794 </span>            :                                 const uint8_t *const u, const uint8_t *const v,
+<span class="lineNum">     795 </span>            :                                 int uv_stride, int height, int width,
+<span class="lineNum">     796 </span>            :                                 uint8_t *oy, int oy_stride, uint8_t *ou,
+<span class="lineNum">     797 </span>            :                                 uint8_t *ov, int ouv_stride, int oheight,
+<span class="lineNum">     798 </span>            :                                 int owidth, int bd) {
+<span class="lineNum">     799 </span>            :   vp9_highbd_resize_plane(y, height, width, y_stride, oy, oheight, owidth,
+<span class="lineNum">     800 </span>            :                           oy_stride, bd);
+<span class="lineNum">     801 </span>            :   vp9_highbd_resize_plane(u, height, width / 2, uv_stride, ou, oheight,
+<span class="lineNum">     802 </span>            :                           owidth / 2, ouv_stride, bd);
+<span class="lineNum">     803 </span>            :   vp9_highbd_resize_plane(v, height, width / 2, uv_stride, ov, oheight,
+<span class="lineNum">     804 </span>            :                           owidth / 2, ouv_stride, bd);
+<span class="lineNum">     805 </span>            : }
+<span class="lineNum">     806 </span>            : 
+<span class="lineNum">     807 </span>            : void vp9_highbd_resize_frame444(const uint8_t *const y, int y_stride,
+<span class="lineNum">     808 </span>            :                                 const uint8_t *const u, const uint8_t *const v,
+<span class="lineNum">     809 </span>            :                                 int uv_stride, int height, int width,
+<span class="lineNum">     810 </span>            :                                 uint8_t *oy, int oy_stride, uint8_t *ou,
+<span class="lineNum">     811 </span>            :                                 uint8_t *ov, int ouv_stride, int oheight,
+<span class="lineNum">     812 </span>            :                                 int owidth, int bd) {
+<span class="lineNum">     813 </span>            :   vp9_highbd_resize_plane(y, height, width, y_stride, oy, oheight, owidth,
+<span class="lineNum">     814 </span>            :                           oy_stride, bd);
+<span class="lineNum">     815 </span>            :   vp9_highbd_resize_plane(u, height, width, uv_stride, ou, oheight, owidth,
+<span class="lineNum">     816 </span>            :                           ouv_stride, bd);
+<span class="lineNum">     817 </span>            :   vp9_highbd_resize_plane(v, height, width, uv_stride, ov, oheight, owidth,
+<span class="lineNum">     818 </span>            :                           ouv_stride, bd);
+<span class="lineNum">     819 </span>            : }
+<span class="lineNum">     820 </span>            : #endif  // CONFIG_VP9_HIGHBITDEPTH
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

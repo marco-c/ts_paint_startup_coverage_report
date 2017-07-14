@@ -1,0 +1,406 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/audio_coding/codecs/isac/fix/source/lattice.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/audio_coding/codecs/isac/fix/source</a> - lattice.c<span style="font-size: 80%;"> (source / <a href="lattice.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">95</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">4</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2011 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : /*
+<span class="lineNum">      12 </span>            :  * lattice.c
+<span class="lineNum">      13 </span>            :  *
+<span class="lineNum">      14 </span>            :  * Contains the normalized lattice filter routines (MA and AR) for iSAC codec
+<span class="lineNum">      15 </span>            :  *
+<span class="lineNum">      16 </span>            :  */
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : #include &quot;codec.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;settings.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;webrtc/base/sanitizer.h&quot;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : #define LATTICE_MUL_32_32_RSFT16(a32a, a32b, b32)                  \
+<span class="lineNum">      23 </span>            :   ((int32_t)(WEBRTC_SPL_MUL(a32a, b32) + (WEBRTC_SPL_MUL_16_32_RSFT16(a32b, b32))))
+<span class="lineNum">      24 </span>            : /* This macro is FORBIDDEN to use elsewhere than in a function in this file and
+<span class="lineNum">      25 </span>            :    its corresponding neon version. It might give unpredictable results, since a
+<span class="lineNum">      26 </span>            :    general int32_t*int32_t multiplication results in a 64 bit value.
+<span class="lineNum">      27 </span>            :    The result is then shifted just 16 steps to the right, giving need for 48
+<span class="lineNum">      28 </span>            :    bits, i.e. in the generel case, it will NOT fit in a int32_t. In the
+<span class="lineNum">      29 </span>            :    cases used in here, the int32_t will be enough, since (for a good
+<span class="lineNum">      30 </span>            :    reason) the involved multiplicands aren't big enough to overflow a
+<span class="lineNum">      31 </span>            :    int32_t after shifting right 16 bits. I have compared the result of a
+<span class="lineNum">      32 </span>            :    multiplication between t32 and tmp32, done in two ways:
+<span class="lineNum">      33 </span>            :    1) Using (int32_t) (((float)(tmp32))*((float)(tmp32b))/65536.0);
+<span class="lineNum">      34 </span>            :    2) Using LATTICE_MUL_32_32_RSFT16(t16a, t16b, tmp32b);
+<span class="lineNum">      35 </span>            :    By running 25 files, I haven't found any bigger diff than 64 - this was in the
+<span class="lineNum">      36 </span>            :    case when  method 1) gave 650235648 and 2) gave 650235712.
+<span class="lineNum">      37 </span>            : */
+<span class="lineNum">      38 </span>            : 
+<span class="lineNum">      39 </span>            : /* Function prototype: filtering ar_g_Q0[] and ar_f_Q0[] through an AR filter
+<span class="lineNum">      40 </span>            :    with coefficients cth_Q15[] and sth_Q15[].
+<span class="lineNum">      41 </span>            :    Implemented for both generic and ARMv7 platforms.
+<span class="lineNum">      42 </span>            :  */
+<span class="lineNum">      43 </span>            : void WebRtcIsacfix_FilterArLoop(int16_t* ar_g_Q0,
+<span class="lineNum">      44 </span>            :                                 int16_t* ar_f_Q0,
+<span class="lineNum">      45 </span>            :                                 int16_t* cth_Q15,
+<span class="lineNum">      46 </span>            :                                 int16_t* sth_Q15,
+<span class="lineNum">      47 </span>            :                                 size_t order_coef);
+<span class="lineNum">      48 </span>            : 
+<span class="lineNum">      49 </span>            : /* Inner loop used for function WebRtcIsacfix_NormLatticeFilterMa(). It does:
+<span class="lineNum">      50 </span>            :    for 0 &lt;= n &lt; HALF_SUBFRAMELEN - 1:
+<span class="lineNum">      51 </span>            :      *ptr2 = input2 * (*ptr2) + input0 * (*ptr0));
+<span class="lineNum">      52 </span>            :      *ptr1 = input1 * (*ptr0) + input0 * (*ptr2);
+<span class="lineNum">      53 </span>            :    Note, function WebRtcIsacfix_FilterMaLoopNeon and WebRtcIsacfix_FilterMaLoopC
+<a name="54"><span class="lineNum">      54 </span>            :    are not bit-exact. The accuracy by the ARM Neon function is same or better.</a>
+<span class="lineNum">      55 </span>            : */
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 : void WebRtcIsacfix_FilterMaLoopC(int16_t input0,  // Filter coefficient</span>
+<span class="lineNum">      57 </span>            :                                  int16_t input1,  // Filter coefficient
+<span class="lineNum">      58 </span>            :                                  int32_t input2,  // Inverse coeff. (1/input1)
+<span class="lineNum">      59 </span>            :                                  int32_t* ptr0,   // Sample buffer
+<span class="lineNum">      60 </span>            :                                  int32_t* ptr1,   // Sample buffer
+<span class="lineNum">      61 </span>            :                                  int32_t* ptr2) { // Sample buffer
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :   int n = 0;</span>
+<span class="lineNum">      63 </span>            : 
+<span class="lineNum">      64 </span>            :   // Separate the 32-bit variable input2 into two 16-bit integers (high 16 and
+<span class="lineNum">      65 </span>            :   // low 16 bits), for using LATTICE_MUL_32_32_RSFT16 in the loop.
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 :   int16_t t16a = (int16_t)(input2 &gt;&gt; 16);</span>
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :   int16_t t16b = (int16_t)input2;</span>
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :   if (t16b &lt; 0) t16a++;</span>
+<span class="lineNum">      69 </span>            : 
+<span class="lineNum">      70 </span>            :   // The loop filtering the samples *ptr0, *ptr1, *ptr2 with filter coefficients
+<span class="lineNum">      71 </span>            :   // input0, input1, and input2.
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :   for(n = 0; n &lt; HALF_SUBFRAMELEN - 1; n++, ptr0++, ptr1++, ptr2++) {</span>
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :     int32_t tmp32a = 0;</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :     int32_t tmp32b = 0;</span>
+<span class="lineNum">      75 </span>            : 
+<span class="lineNum">      76 </span>            :     // Calculate *ptr2 = input2 * (*ptr2 + input0 * (*ptr0));
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :     tmp32a = WEBRTC_SPL_MUL_16_32_RSFT15(input0, *ptr0); // Q15 * Q15 &gt;&gt; 15 = Q15</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :     tmp32b = *ptr2 + tmp32a; // Q15 + Q15 = Q15</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :     *ptr2 = LATTICE_MUL_32_32_RSFT16(t16a, t16b, tmp32b);</span>
+<span class="lineNum">      80 </span>            : 
+<span class="lineNum">      81 </span>            :     // Calculate *ptr1 = input1 * (*ptr0) + input0 * (*ptr2);
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :     tmp32a = WEBRTC_SPL_MUL_16_32_RSFT15(input1, *ptr0); // Q15*Q15&gt;&gt;15 = Q15</span>
+<span class="lineNum">      83 </span><span class="lineNoCov">          0 :     tmp32b = WEBRTC_SPL_MUL_16_32_RSFT15(input0, *ptr2); // Q15*Q15&gt;&gt;15 = Q15</span>
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :     *ptr1 = tmp32a + tmp32b; // Q15 + Q15 = Q15</span>
+<span class="lineNum">      85 </span>            :   }
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">      87 </span>            : 
+<a name="88"><span class="lineNum">      88 </span>            : /* filter the signal using normalized lattice filter */</a>
+<span class="lineNum">      89 </span>            : /* MA filter */
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 : void WebRtcIsacfix_NormLatticeFilterMa(size_t orderCoef,</span>
+<span class="lineNum">      91 </span>            :                                        int32_t *stateGQ15,
+<span class="lineNum">      92 </span>            :                                        int16_t *lat_inQ0,
+<span class="lineNum">      93 </span>            :                                        int16_t *filt_coefQ15,
+<span class="lineNum">      94 </span>            :                                        int32_t *gain_lo_hiQ17,
+<span class="lineNum">      95 </span>            :                                        int16_t lo_hi,
+<span class="lineNum">      96 </span>            :                                        int16_t *lat_outQ9)
+<span class="lineNum">      97 </span>            : {
+<span class="lineNum">      98 </span>            :   int16_t sthQ15[MAX_AR_MODEL_ORDER];
+<span class="lineNum">      99 </span>            :   int16_t cthQ15[MAX_AR_MODEL_ORDER];
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span>            :   int u, n;
+<span class="lineNum">     102 </span>            :   size_t i, k;
+<span class="lineNum">     103 </span>            :   int16_t temp2,temp3;
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :   size_t ord_1 = orderCoef+1;</span>
+<span class="lineNum">     105 </span>            :   int32_t inv_cthQ16[MAX_AR_MODEL_ORDER];
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span>            :   int32_t gain32, fQtmp;
+<span class="lineNum">     108 </span>            :   int16_t gain16;
+<span class="lineNum">     109 </span>            :   int16_t gain_sh;
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span>            :   int32_t tmp32, tmp32b;
+<span class="lineNum">     112 </span>            :   int32_t fQ15vec[HALF_SUBFRAMELEN];
+<span class="lineNum">     113 </span>            :   int32_t gQ15[MAX_AR_MODEL_ORDER+1][HALF_SUBFRAMELEN];
+<span class="lineNum">     114 </span>            :   int16_t sh;
+<span class="lineNum">     115 </span>            :   int16_t t16a;
+<span class="lineNum">     116 </span>            :   int16_t t16b;
+<span class="lineNum">     117 </span>            : 
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :   for (u=0;u&lt;SUBFRAMES;u++)</span>
+<span class="lineNum">     119 </span>            :   {
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :     int32_t temp1 = u * HALF_SUBFRAMELEN;</span>
+<span class="lineNum">     121 </span>            : 
+<span class="lineNum">     122 </span>            :     /* set the Direct Form coefficients */
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :     temp2 = (int16_t)(u * orderCoef);</span>
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :     temp3 = (int16_t)(2 * u + lo_hi);</span>
+<span class="lineNum">     125 </span>            : 
+<span class="lineNum">     126 </span>            :     /* compute lattice filter coefficients */
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :     memcpy(sthQ15, &amp;filt_coefQ15[temp2], orderCoef * sizeof(int16_t));</span>
+<span class="lineNum">     128 </span>            : 
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :     WebRtcSpl_SqrtOfOneMinusXSquared(sthQ15, orderCoef, cthQ15);</span>
+<span class="lineNum">     130 </span>            : 
+<span class="lineNum">     131 </span>            :     /* compute the gain */
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :     gain32 = gain_lo_hiQ17[temp3];</span>
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :     gain_sh = WebRtcSpl_NormW32(gain32);</span>
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :     gain32 &lt;&lt;= gain_sh;  // Q(17+gain_sh)</span>
+<span class="lineNum">     135 </span>            : 
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :     for (k=0;k&lt;orderCoef;k++)</span>
+<span class="lineNum">     137 </span>            :     {
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :       gain32 = WEBRTC_SPL_MUL_16_32_RSFT15(cthQ15[k], gain32); //Q15*Q(17+gain_sh)&gt;&gt;15 = Q(17+gain_sh)</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :       inv_cthQ16[k] = WebRtcSpl_DivW32W16((int32_t)2147483647, cthQ15[k]); // 1/cth[k] in Q31/Q15 = Q16</span>
+<span class="lineNum">     140 </span>            :     }
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :     gain16 = (int16_t)(gain32 &gt;&gt; 16);  // Q(1+gain_sh).</span>
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span>            :     /* normalized lattice filter */
+<span class="lineNum">     144 </span>            :     /*****************************/
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span>            :     /* initial conditions */
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :     for (i=0;i&lt;HALF_SUBFRAMELEN;i++)</span>
+<span class="lineNum">     148 </span>            :     {
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :       fQ15vec[i] = lat_inQ0[i + temp1] &lt;&lt; 15;  // Q15</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :       gQ15[0][i] = lat_inQ0[i + temp1] &lt;&lt; 15;  // Q15</span>
+<span class="lineNum">     151 </span>            :     }
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span>            : 
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :     fQtmp = fQ15vec[0];</span>
+<span class="lineNum">     155 </span>            : 
+<span class="lineNum">     156 </span>            :     /* get the state of f&amp;g for the first input, for all orders */
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :     for (i=1;i&lt;ord_1;i++)</span>
+<span class="lineNum">     158 </span>            :     {
+<span class="lineNum">     159 </span>            :       // Calculate f[i][0] = inv_cth[i-1]*(f[i-1][0] + sth[i-1]*stateG[i-1]);
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :       tmp32 = WEBRTC_SPL_MUL_16_32_RSFT15(sthQ15[i-1], stateGQ15[i-1]);//Q15*Q15&gt;&gt;15 = Q15</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :       tmp32b= fQtmp + tmp32; //Q15+Q15=Q15</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :       tmp32 = inv_cthQ16[i-1]; //Q16</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :       t16a = (int16_t)(tmp32 &gt;&gt; 16);</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :       t16b = (int16_t)(tmp32 - (t16a &lt;&lt; 16));</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :       if (t16b&lt;0) t16a++;</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :       tmp32 = LATTICE_MUL_32_32_RSFT16(t16a, t16b, tmp32b);</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :       fQtmp = tmp32; // Q15</span>
+<span class="lineNum">     168 </span>            : 
+<span class="lineNum">     169 </span>            :       // Calculate g[i][0] = cth[i-1]*stateG[i-1] + sth[i-1]* f[i][0];
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :       tmp32  = WEBRTC_SPL_MUL_16_32_RSFT15(cthQ15[i-1], stateGQ15[i-1]); //Q15*Q15&gt;&gt;15 = Q15</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :       tmp32b = WEBRTC_SPL_MUL_16_32_RSFT15(sthQ15[i-1], fQtmp); //Q15*Q15&gt;&gt;15 = Q15</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :       tmp32  = tmp32 + tmp32b;//Q15+Q15 = Q15</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :       gQ15[i][0] = tmp32; // Q15</span>
+<span class="lineNum">     174 </span>            :     }
+<span class="lineNum">     175 </span>            : 
+<span class="lineNum">     176 </span>            :     /* filtering */
+<span class="lineNum">     177 </span>            :     /* save the states */
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :     for(k=0;k&lt;orderCoef;k++)</span>
+<span class="lineNum">     179 </span>            :     {
+<span class="lineNum">     180 </span>            :       // for 0 &lt;= n &lt; HALF_SUBFRAMELEN - 1:
+<span class="lineNum">     181 </span>            :       //   f[k+1][n+1] = inv_cth[k]*(f[k][n+1] + sth[k]*g[k][n]);
+<span class="lineNum">     182 </span>            :       //   g[k+1][n+1] = cth[k]*g[k][n] + sth[k]* f[k+1][n+1];
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :       WebRtcIsacfix_FilterMaLoopFix(sthQ15[k], cthQ15[k], inv_cthQ16[k],</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :                                     &amp;gQ15[k][0], &amp;gQ15[k+1][1], &amp;fQ15vec[1]);</span>
+<span class="lineNum">     185 </span>            :     }
+<span class="lineNum">     186 </span>            : 
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :     fQ15vec[0] = fQtmp;</span>
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :     for(n=0;n&lt;HALF_SUBFRAMELEN;n++)</span>
+<span class="lineNum">     190 </span>            :     {
+<span class="lineNum">     191 </span>            :       //gain32 &gt;&gt;= gain_sh; // Q(17+gain_sh) -&gt; Q17
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :       tmp32 = WEBRTC_SPL_MUL_16_32_RSFT16(gain16, fQ15vec[n]); //Q(1+gain_sh)*Q15&gt;&gt;16 = Q(gain_sh)</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :       sh = 9-gain_sh; //number of needed shifts to reach Q9</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :       t16a = (int16_t) WEBRTC_SPL_SHIFT_W32(tmp32, sh);</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :       lat_outQ9[n + temp1] = t16a;</span>
+<span class="lineNum">     196 </span>            :     }
+<span class="lineNum">     197 </span>            : 
+<span class="lineNum">     198 </span>            :     /* save the states */
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :     for (i=0;i&lt;ord_1;i++)</span>
+<span class="lineNum">     200 </span>            :     {
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :       stateGQ15[i] = gQ15[i][HALF_SUBFRAMELEN-1];</span>
+<span class="lineNum">     202 </span>            :     }
+<span class="lineNum">     203 </span>            :     //process next frame
+<span class="lineNum">     204 </span>            :   }
+<span class="lineNum">     205 </span>            : 
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :   return;</span>
+<span class="lineNum">     207 </span>            : }
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span>            : // Left shift of an int32_t that's allowed to overflow. (It's still undefined
+<a name="210"><span class="lineNum">     210 </span>            : // behavior, so not a good idea; this just makes UBSan ignore the violation, so</a>
+<span class="lineNum">     211 </span>            : // that our old code can continue to do what it's always been doing.)
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 : static inline int32_t OverflowingLShiftS32(int32_t x, int shift)</span>
+<span class="lineNum">     213 </span>            :     RTC_NO_SANITIZE(&quot;shift&quot;) {
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :   return x &lt;&lt; shift;</span>
+<span class="lineNum">     215 </span>            : }
+<span class="lineNum">     216 </span>            : 
+<a name="217"><span class="lineNum">     217 </span>            : /* ----------------AR filter-------------------------*/</a>
+<span class="lineNum">     218 </span>            : /* filter the signal using normalized lattice filter */
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 : void WebRtcIsacfix_NormLatticeFilterAr(size_t orderCoef,</span>
+<span class="lineNum">     220 </span>            :                                        int16_t *stateGQ0,
+<span class="lineNum">     221 </span>            :                                        int32_t *lat_inQ25,
+<span class="lineNum">     222 </span>            :                                        int16_t *filt_coefQ15,
+<span class="lineNum">     223 </span>            :                                        int32_t *gain_lo_hiQ17,
+<span class="lineNum">     224 </span>            :                                        int16_t lo_hi,
+<span class="lineNum">     225 </span>            :                                        int16_t *lat_outQ0)
+<span class="lineNum">     226 </span>            : {
+<span class="lineNum">     227 </span>            :   size_t ii, k, i;
+<span class="lineNum">     228 </span>            :   int n, u;
+<span class="lineNum">     229 </span>            :   int16_t sthQ15[MAX_AR_MODEL_ORDER];
+<span class="lineNum">     230 </span>            :   int16_t cthQ15[MAX_AR_MODEL_ORDER];
+<span class="lineNum">     231 </span>            :   int32_t tmp32;
+<span class="lineNum">     232 </span>            : 
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span>            :   int16_t tmpAR;
+<span class="lineNum">     235 </span>            :   int16_t ARfQ0vec[HALF_SUBFRAMELEN];
+<span class="lineNum">     236 </span>            :   int16_t ARgQ0vec[MAX_AR_MODEL_ORDER+1];
+<span class="lineNum">     237 </span>            : 
+<span class="lineNum">     238 </span>            :   int32_t inv_gain32;
+<span class="lineNum">     239 </span>            :   int16_t inv_gain16;
+<span class="lineNum">     240 </span>            :   int16_t den16;
+<span class="lineNum">     241 </span>            :   int16_t sh;
+<span class="lineNum">     242 </span>            : 
+<span class="lineNum">     243 </span>            :   int16_t temp2,temp3;
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   size_t ord_1 = orderCoef+1;</span>
+<span class="lineNum">     245 </span>            : 
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   for (u=0;u&lt;SUBFRAMES;u++)</span>
+<span class="lineNum">     247 </span>            :   {
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :     int32_t temp1 = u * HALF_SUBFRAMELEN;</span>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span>            :     //set the denominator and numerator of the Direct Form
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     temp2 = (int16_t)(u * orderCoef);</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     temp3 = (int16_t)(2 * u + lo_hi);</span>
+<span class="lineNum">     253 </span>            : 
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :     for (ii=0; ii&lt;orderCoef; ii++) {</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :       sthQ15[ii] = filt_coefQ15[temp2+ii];</span>
+<span class="lineNum">     256 </span>            :     }
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :     WebRtcSpl_SqrtOfOneMinusXSquared(sthQ15, orderCoef, cthQ15);</span>
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span>            :     // Originally, this line was assumed to never overflow, since &quot;[s]imulation
+<span class="lineNum">     261 </span>            :     // of the 25 files shows that maximum value in the vector gain_lo_hiQ17[]
+<span class="lineNum">     262 </span>            :     // is 441344, which means that it is log2((2^31)/441344) = 12.2 shifting
+<span class="lineNum">     263 </span>            :     // bits from saturation. Therefore, it should be safe to use Q27 instead of
+<span class="lineNum">     264 </span>            :     // Q17.&quot; However, a fuzzer test succeeded in provoking an overflow here,
+<span class="lineNum">     265 </span>            :     // which we ignore on the theory that only &quot;abnormal&quot; inputs cause
+<span class="lineNum">     266 </span>            :     // overflow.
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     tmp32 = OverflowingLShiftS32(gain_lo_hiQ17[temp3], 10);  // Q27</span>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :     for (k=0;k&lt;orderCoef;k++) {</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :       tmp32 = WEBRTC_SPL_MUL_16_32_RSFT15(cthQ15[k], tmp32); // Q15*Q27&gt;&gt;15 = Q27</span>
+<span class="lineNum">     271 </span>            :     }
+<span class="lineNum">     272 </span>            : 
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     sh = WebRtcSpl_NormW32(tmp32); // tmp32 is the gain</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     den16 = (int16_t) WEBRTC_SPL_SHIFT_W32(tmp32, sh-16); //Q(27+sh-16) = Q(sh+11) (all 16 bits are value bits)</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :     inv_gain32 = WebRtcSpl_DivW32W16((int32_t)2147483647, den16); // 1/gain in Q31/Q(sh+11) = Q(20-sh)</span>
+<span class="lineNum">     276 </span>            : 
+<span class="lineNum">     277 </span>            :     //initial conditions
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :     inv_gain16 = (int16_t)(inv_gain32 &gt;&gt; 2);  // 1/gain in Q(20-sh-2) = Q(18-sh)</span>
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :     for (i=0;i&lt;HALF_SUBFRAMELEN;i++)</span>
+<span class="lineNum">     281 </span>            :     {
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :       tmp32 = lat_inQ25[i + temp1] * (1 &lt;&lt; 1);  // Q25-&gt;Q26</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :       tmp32 = WEBRTC_SPL_MUL_16_32_RSFT16(inv_gain16, tmp32); //lat_in[]*inv_gain in (Q(18-sh)*Q26)&gt;&gt;16 = Q(28-sh)</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :       tmp32 = WEBRTC_SPL_SHIFT_W32(tmp32, -(28-sh)); // lat_in[]*inv_gain in Q0</span>
+<span class="lineNum">     286 </span>            : 
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :       ARfQ0vec[i] = (int16_t)WebRtcSpl_SatW32ToW16(tmp32); // Q0</span>
+<span class="lineNum">     288 </span>            :     }
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span>            :     // Get the state of f &amp; g for the first input, for all orders.
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :     for (i = orderCoef; i &gt; 0; i--)</span>
+<span class="lineNum">     292 </span>            :     {
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :       tmp32 = (cthQ15[i - 1] * ARfQ0vec[0] - sthQ15[i - 1] * stateGQ0[i - 1] +</span>
+<span class="lineNum">     294 </span>            :                16384) &gt;&gt; 15;
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :       tmpAR = (int16_t)WebRtcSpl_SatW32ToW16(tmp32); // Q0</span>
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :       tmp32 = (sthQ15[i - 1] * ARfQ0vec[0] + cthQ15[i - 1] * stateGQ0[i - 1] +</span>
+<span class="lineNum">     298 </span>            :                16384) &gt;&gt; 15;
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :       ARgQ0vec[i] = (int16_t)WebRtcSpl_SatW32ToW16(tmp32); // Q0</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :       ARfQ0vec[0] = tmpAR;</span>
+<span class="lineNum">     301 </span>            :     }
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :     ARgQ0vec[0] = ARfQ0vec[0];</span>
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span>            :     // Filter ARgQ0vec[] and ARfQ0vec[] through coefficients cthQ15[] and sthQ15[].
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :     WebRtcIsacfix_FilterArLoop(ARgQ0vec, ARfQ0vec, cthQ15, sthQ15, orderCoef);</span>
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :     for(n=0;n&lt;HALF_SUBFRAMELEN;n++)</span>
+<span class="lineNum">     308 </span>            :     {
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :       lat_outQ0[n + temp1] = ARfQ0vec[n];</span>
+<span class="lineNum">     310 </span>            :     }
+<span class="lineNum">     311 </span>            : 
+<span class="lineNum">     312 </span>            : 
+<span class="lineNum">     313 </span>            :     /* cannot use memcpy in the following */
+<span class="lineNum">     314 </span>            : 
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :     for (i=0;i&lt;ord_1;i++)</span>
+<span class="lineNum">     316 </span>            :     {
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :       stateGQ0[i] = ARgQ0vec[i];</span>
+<span class="lineNum">     318 </span>            :     }
+<span class="lineNum">     319 </span>            :   }
+<span class="lineNum">     320 </span>            : 
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :   return;</span>
+<span class="lineNum">     322 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

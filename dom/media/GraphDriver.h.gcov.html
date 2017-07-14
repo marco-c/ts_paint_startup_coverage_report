@@ -1,0 +1,659 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - dom/media/GraphDriver.h</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">dom/media</a> - GraphDriver.h<span style="font-size: 80%;"> (source / <a href="GraphDriver.h.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">42</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">25</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       3 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+<span class="lineNum">       4 </span>            :  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       5 </span>            : 
+<span class="lineNum">       6 </span>            : #ifndef GRAPHDRIVER_H_
+<span class="lineNum">       7 </span>            : #define GRAPHDRIVER_H_
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;nsAutoRef.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;AudioBufferUtils.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;AudioMixer.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;AudioSegment.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;SelfRef.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/Atomics.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;mozilla/SharedThreadPool.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;mozilla/StaticPtr.h&quot;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : struct cubeb_stream;
+<a name="19"><span class="lineNum">      19 </span>            : </a>
+<span class="lineNum">      20 </span>            : template &lt;&gt;
+<span class="lineNum">      21 </span><span class="lineNoCov">          0 : class nsAutoRefTraits&lt;cubeb_stream&gt; : public nsPointerRefTraits&lt;cubeb_stream&gt;</span>
+<a name="22"><span class="lineNum">      22 </span>            : {</a>
+<span class="lineNum">      23 </span>            : public:
+<span class="lineNum">      24 </span><span class="lineNoCov">          0 :   static void Release(cubeb_stream* aStream) { cubeb_stream_destroy(aStream); }</span>
+<span class="lineNum">      25 </span>            : };
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : namespace mozilla {
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : /**
+<span class="lineNum">      30 </span>            :  * Assume we can run an iteration of the MediaStreamGraph loop in this much time
+<span class="lineNum">      31 </span>            :  * or less.
+<span class="lineNum">      32 </span>            :  * We try to run the control loop at this rate.
+<span class="lineNum">      33 </span>            :  */
+<span class="lineNum">      34 </span>            : static const int MEDIA_GRAPH_TARGET_PERIOD_MS = 10;
+<span class="lineNum">      35 </span>            : 
+<span class="lineNum">      36 </span>            : /**
+<span class="lineNum">      37 </span>            :  * Assume that we might miss our scheduled wakeup of the MediaStreamGraph by
+<span class="lineNum">      38 </span>            :  * this much.
+<span class="lineNum">      39 </span>            :  */
+<span class="lineNum">      40 </span>            : static const int SCHEDULE_SAFETY_MARGIN_MS = 10;
+<span class="lineNum">      41 </span>            : 
+<span class="lineNum">      42 </span>            : /**
+<span class="lineNum">      43 </span>            :  * Try have this much audio buffered in streams and queued to the hardware.
+<span class="lineNum">      44 </span>            :  * The maximum delay to the end of the next control loop
+<span class="lineNum">      45 </span>            :  * is 2*MEDIA_GRAPH_TARGET_PERIOD_MS + SCHEDULE_SAFETY_MARGIN_MS.
+<span class="lineNum">      46 </span>            :  * There is no point in buffering more audio than this in a stream at any
+<span class="lineNum">      47 </span>            :  * given time (until we add processing).
+<span class="lineNum">      48 </span>            :  * This is not optimal yet.
+<span class="lineNum">      49 </span>            :  */
+<span class="lineNum">      50 </span>            : static const int AUDIO_TARGET_MS = 2*MEDIA_GRAPH_TARGET_PERIOD_MS +
+<span class="lineNum">      51 </span>            :     SCHEDULE_SAFETY_MARGIN_MS;
+<span class="lineNum">      52 </span>            : 
+<span class="lineNum">      53 </span>            : class MediaStreamGraphImpl;
+<span class="lineNum">      54 </span>            : 
+<span class="lineNum">      55 </span>            : class AudioCallbackDriver;
+<span class="lineNum">      56 </span>            : class OfflineClockDriver;
+<span class="lineNum">      57 </span>            : class SystemClockDriver;
+<span class="lineNum">      58 </span>            : 
+<span class="lineNum">      59 </span>            : /**
+<span class="lineNum">      60 </span>            :  * A driver is responsible for the scheduling of the processing, the thread
+<span class="lineNum">      61 </span>            :  * management, and give the different clocks to a MediaStreamGraph. This is an
+<span class="lineNum">      62 </span>            :  * abstract base class. A MediaStreamGraph can be driven by an
+<span class="lineNum">      63 </span>            :  * OfflineClockDriver, if the graph is offline, or a SystemClockDriver, if the
+<span class="lineNum">      64 </span>            :  * graph is real time.
+<span class="lineNum">      65 </span>            :  * A MediaStreamGraph holds an owning reference to its driver.
+<span class="lineNum">      66 </span>            :  *
+<span class="lineNum">      67 </span>            :  * The lifetime of drivers is a complicated affair. Here are the different
+<span class="lineNum">      68 </span>            :  * scenarii that can happen:
+<span class="lineNum">      69 </span>            :  *
+<span class="lineNum">      70 </span>            :  * Starting a MediaStreamGraph with an AudioCallbackDriver
+<span class="lineNum">      71 </span>            :  * - A new thread T is created, from the main thread.
+<span class="lineNum">      72 </span>            :  * - On this thread T, cubeb is initialized if needed, and a cubeb_stream is
+<span class="lineNum">      73 </span>            :  *   created and started
+<span class="lineNum">      74 </span>            :  * - The thread T posts a message to the main thread to terminate itself.
+<span class="lineNum">      75 </span>            :  * - The graph runs off the audio thread
+<span class="lineNum">      76 </span>            :  *
+<span class="lineNum">      77 </span>            :  * Starting a MediaStreamGraph with a SystemClockDriver:
+<span class="lineNum">      78 </span>            :  * - A new thread T is created from the main thread.
+<span class="lineNum">      79 </span>            :  * - The graph runs off this thread.
+<span class="lineNum">      80 </span>            :  *
+<span class="lineNum">      81 </span>            :  * Switching from a SystemClockDriver to an AudioCallbackDriver:
+<span class="lineNum">      82 </span>            :  * - A new AudioCallabackDriver is created and initialized on the graph thread
+<span class="lineNum">      83 </span>            :  * - At the end of the MSG iteration, the SystemClockDriver transfers its timing
+<span class="lineNum">      84 </span>            :  *   info and a reference to itself to the AudioCallbackDriver. It then starts
+<span class="lineNum">      85 </span>            :  *   the AudioCallbackDriver.
+<span class="lineNum">      86 </span>            :  * - When the AudioCallbackDriver starts, it checks if it has been switched from
+<span class="lineNum">      87 </span>            :  *   a SystemClockDriver, and if that is the case, sends a message to the main
+<span class="lineNum">      88 </span>            :  *   thread to shut the SystemClockDriver thread down.
+<span class="lineNum">      89 </span>            :  * - The graph now runs off an audio callback
+<span class="lineNum">      90 </span>            :  *
+<span class="lineNum">      91 </span>            :  * Switching from an AudioCallbackDriver to a SystemClockDriver:
+<span class="lineNum">      92 </span>            :  * - A new SystemClockDriver is created, and set as mNextDriver.
+<span class="lineNum">      93 </span>            :  * - At the end of the MSG iteration, the AudioCallbackDriver transfers its
+<span class="lineNum">      94 </span>            :  *   timing info and a reference to itself to the SystemClockDriver. A new
+<span class="lineNum">      95 </span>            :  *   SystemClockDriver is started from the current audio thread.
+<span class="lineNum">      96 </span>            :  * - When starting, the SystemClockDriver checks if it has been switched from an
+<span class="lineNum">      97 </span>            :  *   AudioCallbackDriver. If yes, it creates a new temporary thread to release
+<span class="lineNum">      98 </span>            :  *   the cubeb_streams. This temporary thread closes the cubeb_stream, and
+<span class="lineNum">      99 </span>            :  *   then dispatches a message to the main thread to be terminated.
+<span class="lineNum">     100 </span>            :  * - The graph now runs off a normal thread.
+<span class="lineNum">     101 </span>            :  *
+<span class="lineNum">     102 </span>            :  * Two drivers cannot run at the same time for the same graph. The thread safety
+<span class="lineNum">     103 </span>            :  * of the different attributes of drivers, and they access pattern is documented
+<span class="lineNum">     104 </span>            :  * next to the members themselves.
+<span class="lineNum">     105 </span>            :  *
+<span class="lineNum">     106 </span>            :  */
+<span class="lineNum">     107 </span>            : class GraphDriver
+<span class="lineNum">     108 </span>            : {
+<span class="lineNum">     109 </span>            : public:
+<a name="110"><span class="lineNum">     110 </span>            :   explicit GraphDriver(MediaStreamGraphImpl* aGraphImpl);</a>
+<span class="lineNum">     111 </span>            : 
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GraphDriver);</span>
+<span class="lineNum">     113 </span>            :   /* For real-time graphs, this waits until it's time to process more data. For
+<span class="lineNum">     114 </span>            :    * offline graphs, this is a no-op. */
+<span class="lineNum">     115 </span>            :   virtual void WaitForNextIteration() = 0;
+<a name="116"><span class="lineNum">     116 </span>            :   /* Wakes up the graph if it is waiting. */</a>
+<span class="lineNum">     117 </span>            :   virtual void WakeUp() = 0;
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :   virtual void Destroy() {}</span>
+<span class="lineNum">     119 </span>            :   /* Start the graph, init the driver, start the thread. */
+<span class="lineNum">     120 </span>            :   virtual void Start() = 0;
+<span class="lineNum">     121 </span>            :   /* Stop the graph, shutting down the thread. */
+<span class="lineNum">     122 </span>            :   virtual void Stop() = 0;
+<span class="lineNum">     123 </span>            :   /* Resume after a stop */
+<span class="lineNum">     124 </span>            :   virtual void Resume() = 0;
+<span class="lineNum">     125 </span>            :   /* Revive this driver, as more messages just arrived. */
+<span class="lineNum">     126 </span>            :   virtual void Revive() = 0;
+<span class="lineNum">     127 </span>            :   /* Remove Mixer callbacks when switching */
+<span class="lineNum">     128 </span>            :   virtual void RemoveCallback() = 0;
+<span class="lineNum">     129 </span>            :   /* Shutdown GraphDriver (synchronously) */
+<span class="lineNum">     130 </span>            :   void Shutdown();
+<span class="lineNum">     131 </span>            :   /* Rate at which the GraphDriver runs, in ms. This can either be user
+<span class="lineNum">     132 </span>            :    * controlled (because we are using a {System,Offline}ClockDriver, and decide
+<span class="lineNum">     133 </span>            :    * how often we want to wakeup/how much we want to process per iteration), or
+<span class="lineNum">     134 </span>            :    * it can be indirectly set by the latency of the audio backend, and the
+<span class="lineNum">     135 </span>            :    * number of buffers of this audio backend: say we have four buffers, and 40ms
+<span class="lineNum">     136 </span>            :    * latency, we will get a callback approximately every 10ms. */
+<span class="lineNum">     137 </span>            :   virtual uint32_t IterationDuration() = 0;
+<span class="lineNum">     138 </span>            : 
+<span class="lineNum">     139 </span>            :   /* Return whether we are switching or not. */
+<span class="lineNum">     140 </span>            :   bool Switching();
+<span class="lineNum">     141 </span>            : 
+<span class="lineNum">     142 </span>            :   // Those are simply or setting the associated pointer, but assert that the
+<span class="lineNum">     143 </span>            :   // lock is held.
+<span class="lineNum">     144 </span>            :   GraphDriver* NextDriver();
+<span class="lineNum">     145 </span>            :   GraphDriver* PreviousDriver();
+<span class="lineNum">     146 </span>            :   void SetNextDriver(GraphDriver* aNextDriver);
+<span class="lineNum">     147 </span>            :   void SetPreviousDriver(GraphDriver* aPreviousDriver);
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span>            :   /**
+<span class="lineNum">     150 </span>            :    * If we are running a real time graph, get the current time stamp to schedule
+<a name="151"><span class="lineNum">     151 </span>            :    * video frames. This has to be reimplemented by real time drivers.</a>
+<span class="lineNum">     152 </span>            :    */
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :   virtual TimeStamp GetCurrentTimeStamp() {</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :     return mCurrentTimeStamp;</span>
+<a name="155"><span class="lineNum">     155 </span>            :   }</a>
+<span class="lineNum">     156 </span>            : 
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :   GraphTime IterationEnd() {</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     return mIterationEnd;</span>
+<a name="159"><span class="lineNum">     159 </span>            :   }</a>
+<span class="lineNum">     160 </span>            : 
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :   virtual AudioCallbackDriver* AsAudioCallbackDriver() {</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<a name="163"><span class="lineNum">     163 </span>            :   }</a>
+<span class="lineNum">     164 </span>            : 
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :   virtual OfflineClockDriver* AsOfflineClockDriver() {</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<a name="167"><span class="lineNum">     167 </span>            :   }</a>
+<span class="lineNum">     168 </span>            : 
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :   virtual SystemClockDriver* AsSystemClockDriver() {</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     171 </span>            :   }
+<span class="lineNum">     172 </span>            : 
+<span class="lineNum">     173 </span>            :   /**
+<span class="lineNum">     174 </span>            :    * Tell the driver it has to stop and return the current time of the graph, so
+<span class="lineNum">     175 </span>            :    * another driver can start from the right point in time.
+<span class="lineNum">     176 </span>            :    */
+<span class="lineNum">     177 </span>            :   virtual void SwitchAtNextIteration(GraphDriver* aDriver);
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span>            :   /**
+<span class="lineNum">     180 </span>            :    * Set the time for a graph, on a driver. This is used so a new driver just
+<span class="lineNum">     181 </span>            :    * created can start at the right point in time.
+<span class="lineNum">     182 </span>            :    */
+<span class="lineNum">     183 </span>            :   void SetGraphTime(GraphDriver* aPreviousDriver,
+<span class="lineNum">     184 </span>            :                     GraphTime aLastSwitchNextIterationStart,
+<span class="lineNum">     185 </span>            :                     GraphTime aLastSwitchNextIterationEnd);
+<span class="lineNum">     186 </span>            :   /**
+<span class="lineNum">     187 </span>            :    * Call this to indicate that another iteration of the control loop is
+<span class="lineNum">     188 </span>            :    * required on its regular schedule. The monitor must not be held.
+<span class="lineNum">     189 </span>            :    * This function has to be idempotent.
+<span class="lineNum">     190 </span>            :    */
+<span class="lineNum">     191 </span>            :   void EnsureNextIteration();
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span>            :   /**
+<span class="lineNum">     194 </span>            :    * Same thing, but not locked.
+<span class="lineNum">     195 </span>            :    */
+<a name="196"><span class="lineNum">     196 </span>            :   void EnsureNextIterationLocked();</a>
+<span class="lineNum">     197 </span>            : 
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :   MediaStreamGraphImpl* GraphImpl() {</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :     return mGraphImpl;</span>
+<span class="lineNum">     200 </span>            :   }
+<span class="lineNum">     201 </span>            : 
+<span class="lineNum">     202 </span>            :   virtual bool OnThread() = 0;
+<span class="lineNum">     203 </span>            : 
+<span class="lineNum">     204 </span>            : protected:
+<span class="lineNum">     205 </span>            :   GraphTime StateComputedTime() const;
+<span class="lineNum">     206 </span>            : 
+<span class="lineNum">     207 </span>            :   // Time of the start of this graph iteration. This must be accessed while
+<span class="lineNum">     208 </span>            :   // having the monitor.
+<span class="lineNum">     209 </span>            :   GraphTime mIterationStart;
+<span class="lineNum">     210 </span>            :   // Time of the end of this graph iteration. This must be accessed while having
+<span class="lineNum">     211 </span>            :   // the monitor.
+<span class="lineNum">     212 </span>            :   GraphTime mIterationEnd;
+<span class="lineNum">     213 </span>            :   // The MediaStreamGraphImpl that owns this driver. This has a lifetime longer
+<span class="lineNum">     214 </span>            :   // than the driver, and will never be null. Hence, it can be accesed without
+<span class="lineNum">     215 </span>            :   // monitor.
+<span class="lineNum">     216 </span>            :   MediaStreamGraphImpl* mGraphImpl;
+<span class="lineNum">     217 </span>            : 
+<span class="lineNum">     218 </span>            :   // This enum specifies the wait state of the driver.
+<span class="lineNum">     219 </span>            :   enum WaitState {
+<span class="lineNum">     220 </span>            :     // RunThread() is running normally
+<span class="lineNum">     221 </span>            :     WAITSTATE_RUNNING,
+<span class="lineNum">     222 </span>            :     // RunThread() is paused waiting for its next iteration, which will
+<span class="lineNum">     223 </span>            :     // happen soon
+<span class="lineNum">     224 </span>            :     WAITSTATE_WAITING_FOR_NEXT_ITERATION,
+<span class="lineNum">     225 </span>            :     // RunThread() is paused indefinitely waiting for something to change
+<span class="lineNum">     226 </span>            :     WAITSTATE_WAITING_INDEFINITELY,
+<span class="lineNum">     227 </span>            :     // Something has signaled RunThread() to wake up immediately,
+<span class="lineNum">     228 </span>            :     // but it hasn't done so yet
+<span class="lineNum">     229 </span>            :     WAITSTATE_WAKING_UP
+<span class="lineNum">     230 </span>            :   };
+<span class="lineNum">     231 </span>            :   // This must be access with the monitor.
+<span class="lineNum">     232 </span>            :   WaitState mWaitState;
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span>            :   // This is used on the main thread (during initialization), and the graph
+<span class="lineNum">     235 </span>            :   // thread. No monitor needed because we know the graph thread does not run
+<span class="lineNum">     236 </span>            :   // during the initialization.
+<span class="lineNum">     237 </span>            :   TimeStamp mCurrentTimeStamp;
+<span class="lineNum">     238 </span>            :   // This is non-null only when this driver has recently switched from an other
+<span class="lineNum">     239 </span>            :   // driver, and has not cleaned it up yet (for example because the audio stream
+<span class="lineNum">     240 </span>            :   // is currently calling the callback during initialization).
+<span class="lineNum">     241 </span>            :   //
+<span class="lineNum">     242 </span>            :   // This is written to when changing driver, from the previous driver's thread,
+<span class="lineNum">     243 </span>            :   // or a thread created for the occasion. This is read each time we need to
+<span class="lineNum">     244 </span>            :   // check whether we're changing driver (in Switching()), from the graph
+<span class="lineNum">     245 </span>            :   // thread.
+<span class="lineNum">     246 </span>            :   // This must be accessed using the {Set,Get}PreviousDriver methods.
+<span class="lineNum">     247 </span>            :   RefPtr&lt;GraphDriver&gt; mPreviousDriver;
+<span class="lineNum">     248 </span>            :   // This is non-null only when this driver is going to switch to an other
+<span class="lineNum">     249 </span>            :   // driver at the end of this iteration.
+<a name="250"><span class="lineNum">     250 </span>            :   // This must be accessed using the {Set,Get}NextDriver methods.</a>
+<span class="lineNum">     251 </span>            :   RefPtr&lt;GraphDriver&gt; mNextDriver;
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :   virtual ~GraphDriver()</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :   { }</span>
+<span class="lineNum">     254 </span>            : };
+<span class="lineNum">     255 </span>            : 
+<span class="lineNum">     256 </span>            : class MediaStreamGraphInitThreadRunnable;
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span>            : /**
+<span class="lineNum">     259 </span>            :  * This class is a driver that manages its own thread.
+<span class="lineNum">     260 </span>            :  */
+<span class="lineNum">     261 </span>            : class ThreadedDriver : public GraphDriver
+<span class="lineNum">     262 </span>            : {
+<span class="lineNum">     263 </span>            : public:
+<span class="lineNum">     264 </span>            :   explicit ThreadedDriver(MediaStreamGraphImpl* aGraphImpl);
+<span class="lineNum">     265 </span>            :   virtual ~ThreadedDriver();
+<span class="lineNum">     266 </span>            :   void Start() override;
+<span class="lineNum">     267 </span>            :   void Stop() override;
+<span class="lineNum">     268 </span>            :   void Resume() override;
+<span class="lineNum">     269 </span>            :   void Revive() override;
+<span class="lineNum">     270 </span>            :   void RemoveCallback() override;
+<span class="lineNum">     271 </span>            :   /**
+<span class="lineNum">     272 </span>            :    * Runs main control loop on the graph thread. Normally a single invocation
+<span class="lineNum">     273 </span>            :    * of this runs for the entire lifetime of the graph thread.
+<span class="lineNum">     274 </span>            :    */
+<a name="275"><span class="lineNum">     275 </span>            :   void RunThread();</a>
+<span class="lineNum">     276 </span>            :   friend class MediaStreamGraphInitThreadRunnable;
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   uint32_t IterationDuration() override {</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :     return MEDIA_GRAPH_TARGET_PERIOD_MS;</span>
+<a name="279"><span class="lineNum">     279 </span>            :   }</a>
+<span class="lineNum">     280 </span>            : 
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :   bool OnThread() override { return !mThread || mThread-&gt;EventTarget()-&gt;IsOnCurrentThread(); }</span>
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span>            :   /* When the graph wakes up to do an iteration, implementations return the
+<span class="lineNum">     284 </span>            :    * range of time that will be processed.  This is called only once per
+<span class="lineNum">     285 </span>            :    * iteration; it may determine the interval from state in a previous
+<span class="lineNum">     286 </span>            :    * call. */
+<span class="lineNum">     287 </span>            :   virtual MediaTime GetIntervalForIteration() = 0;
+<span class="lineNum">     288 </span>            : protected:
+<span class="lineNum">     289 </span>            :   nsCOMPtr&lt;nsIThread&gt; mThread;
+<span class="lineNum">     290 </span>            : };
+<span class="lineNum">     291 </span>            : 
+<span class="lineNum">     292 </span>            : /**
+<span class="lineNum">     293 </span>            :  * A SystemClockDriver drives a MediaStreamGraph using a system clock, and waits
+<span class="lineNum">     294 </span>            :  * using a monitor, between each iteration.
+<span class="lineNum">     295 </span>            :  */
+<span class="lineNum">     296 </span>            : class SystemClockDriver : public ThreadedDriver
+<span class="lineNum">     297 </span>            : {
+<span class="lineNum">     298 </span>            : public:
+<span class="lineNum">     299 </span>            :   explicit SystemClockDriver(MediaStreamGraphImpl* aGraphImpl);
+<span class="lineNum">     300 </span>            :   virtual ~SystemClockDriver();
+<span class="lineNum">     301 </span>            :   MediaTime GetIntervalForIteration() override;
+<span class="lineNum">     302 </span>            :   void WaitForNextIteration() override;
+<span class="lineNum">     303 </span>            :   void WakeUp() override;
+<a name="304"><span class="lineNum">     304 </span>            :   void MarkAsFallback();</a>
+<span class="lineNum">     305 </span>            :   bool IsFallback();
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   SystemClockDriver* AsSystemClockDriver() override {</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :     return this;</span>
+<span class="lineNum">     308 </span>            :   }
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span>            : private:
+<span class="lineNum">     311 </span>            :   // Those are only modified (after initialization) on the graph thread. The
+<span class="lineNum">     312 </span>            :   // graph thread does not run during the initialization.
+<span class="lineNum">     313 </span>            :   TimeStamp mInitialTimeStamp;
+<span class="lineNum">     314 </span>            :   TimeStamp mLastTimeStamp;
+<span class="lineNum">     315 </span>            :   // This is true if this SystemClockDriver runs the graph because we could not
+<span class="lineNum">     316 </span>            :   // open an audio stream.
+<span class="lineNum">     317 </span>            :   bool mIsFallback;
+<span class="lineNum">     318 </span>            : };
+<span class="lineNum">     319 </span>            : 
+<span class="lineNum">     320 </span>            : /**
+<span class="lineNum">     321 </span>            :  * An OfflineClockDriver runs the graph as fast as possible, without waiting
+<span class="lineNum">     322 </span>            :  * between iteration.
+<span class="lineNum">     323 </span>            :  */
+<span class="lineNum">     324 </span>            : class OfflineClockDriver : public ThreadedDriver
+<span class="lineNum">     325 </span>            : {
+<span class="lineNum">     326 </span>            : public:
+<span class="lineNum">     327 </span>            :   OfflineClockDriver(MediaStreamGraphImpl* aGraphImpl, GraphTime aSlice);
+<span class="lineNum">     328 </span>            :   virtual ~OfflineClockDriver();
+<span class="lineNum">     329 </span>            :   MediaTime GetIntervalForIteration() override;
+<span class="lineNum">     330 </span>            :   void WaitForNextIteration() override;
+<a name="331"><span class="lineNum">     331 </span>            :   void WakeUp() override;</a>
+<span class="lineNum">     332 </span>            :   TimeStamp GetCurrentTimeStamp() override;
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :   OfflineClockDriver* AsOfflineClockDriver() override {</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :     return this;</span>
+<span class="lineNum">     335 </span>            :   }
+<span class="lineNum">     336 </span>            : 
+<span class="lineNum">     337 </span>            : private:
+<span class="lineNum">     338 </span>            :   // Time, in GraphTime, for each iteration
+<span class="lineNum">     339 </span>            :   GraphTime mSlice;
+<a name="340"><span class="lineNum">     340 </span>            : };</a>
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 : struct StreamAndPromiseForOperation</span>
+<span class="lineNum">     343 </span>            : {
+<span class="lineNum">     344 </span>            :   StreamAndPromiseForOperation(MediaStream* aStream,
+<span class="lineNum">     345 </span>            :                                void* aPromise,
+<span class="lineNum">     346 </span>            :                                dom::AudioContextOperation aOperation);
+<span class="lineNum">     347 </span>            :   RefPtr&lt;MediaStream&gt; mStream;
+<span class="lineNum">     348 </span>            :   void* mPromise;
+<span class="lineNum">     349 </span>            :   dom::AudioContextOperation mOperation;
+<span class="lineNum">     350 </span>            : };
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span>            : enum AsyncCubebOperation {
+<span class="lineNum">     353 </span>            :   INIT,
+<span class="lineNum">     354 </span>            :   SHUTDOWN
+<span class="lineNum">     355 </span>            : };
+<span class="lineNum">     356 </span>            : 
+<span class="lineNum">     357 </span>            : /**
+<span class="lineNum">     358 </span>            :  * This is a graph driver that is based on callback functions called by the
+<span class="lineNum">     359 </span>            :  * audio api. This ensures minimal audio latency, because it means there is no
+<span class="lineNum">     360 </span>            :  * buffering happening: the audio is generated inside the callback.
+<span class="lineNum">     361 </span>            :  *
+<span class="lineNum">     362 </span>            :  * This design is less flexible than running our own thread:
+<span class="lineNum">     363 </span>            :  * - We have no control over the thread:
+<span class="lineNum">     364 </span>            :  * - It cannot block, and it has to run for a shorter amount of time than the
+<span class="lineNum">     365 </span>            :  *   buffer it is going to fill, or an under-run is going to occur (short burst
+<span class="lineNum">     366 </span>            :  *   of silence in the final audio output).
+<span class="lineNum">     367 </span>            :  * - We can't know for sure when the callback function is going to be called
+<span class="lineNum">     368 </span>            :  *   (although we compute an estimation so we can schedule video frames)
+<span class="lineNum">     369 </span>            :  * - Creating and shutting the thread down is a blocking operation, that can
+<span class="lineNum">     370 </span>            :  *   take _seconds_ in some cases (because IPC has to be set up, and
+<span class="lineNum">     371 </span>            :  *   sometimes hardware components are involved and need to be warmed up)
+<span class="lineNum">     372 </span>            :  * - We have no control on how much audio we generate, we have to return exactly
+<span class="lineNum">     373 </span>            :  *   the number of frames asked for by the callback. Since for the Web Audio
+<span class="lineNum">     374 </span>            :  *   API, we have to do block processing at 128 frames per block, we need to
+<span class="lineNum">     375 </span>            :  *   keep a little spill buffer to store the extra frames.
+<span class="lineNum">     376 </span>            :  */
+<span class="lineNum">     377 </span>            : class AudioCallbackDriver : public GraphDriver,
+<span class="lineNum">     378 </span>            :                             public MixerCallbackReceiver
+<span class="lineNum">     379 </span>            : {
+<span class="lineNum">     380 </span>            : public:
+<span class="lineNum">     381 </span>            :   explicit AudioCallbackDriver(MediaStreamGraphImpl* aGraphImpl);
+<span class="lineNum">     382 </span>            :   virtual ~AudioCallbackDriver();
+<span class="lineNum">     383 </span>            : 
+<span class="lineNum">     384 </span>            :   void Destroy() override;
+<span class="lineNum">     385 </span>            :   void Start() override;
+<span class="lineNum">     386 </span>            :   void Stop() override;
+<span class="lineNum">     387 </span>            :   void Resume() override;
+<span class="lineNum">     388 </span>            :   void Revive() override;
+<span class="lineNum">     389 </span>            :   void RemoveCallback() override;
+<span class="lineNum">     390 </span>            :   void WaitForNextIteration() override;
+<span class="lineNum">     391 </span>            :   void WakeUp() override;
+<span class="lineNum">     392 </span>            : 
+<span class="lineNum">     393 </span>            :   /* Static wrapper function cubeb calls back. */
+<span class="lineNum">     394 </span>            :   static long DataCallback_s(cubeb_stream * aStream,
+<span class="lineNum">     395 </span>            :                              void * aUser,
+<span class="lineNum">     396 </span>            :                              const void * aInputBuffer,
+<span class="lineNum">     397 </span>            :                              void * aOutputBuffer,
+<span class="lineNum">     398 </span>            :                              long aFrames);
+<span class="lineNum">     399 </span>            :   static void StateCallback_s(cubeb_stream* aStream, void * aUser,
+<span class="lineNum">     400 </span>            :                               cubeb_state aState);
+<span class="lineNum">     401 </span>            :   static void DeviceChangedCallback_s(void * aUser);
+<span class="lineNum">     402 </span>            :   /* This function is called by the underlying audio backend when a refill is
+<span class="lineNum">     403 </span>            :    * needed. This is what drives the whole graph when it is used to output
+<span class="lineNum">     404 </span>            :    * audio. If the return value is exactly aFrames, this function will get
+<span class="lineNum">     405 </span>            :    * called again. If it is less than aFrames, the stream will go in draining
+<span class="lineNum">     406 </span>            :    * mode, and this function will not be called again. */
+<span class="lineNum">     407 </span>            :   long DataCallback(const AudioDataValue* aInputBuffer, AudioDataValue* aOutputBuffer, long aFrames);
+<span class="lineNum">     408 </span>            :   /* This function is called by the underlying audio backend, but is only used
+<span class="lineNum">     409 </span>            :    * for informational purposes at the moment. */
+<span class="lineNum">     410 </span>            :   void StateCallback(cubeb_state aState);
+<span class="lineNum">     411 </span>            :   /* This is an approximation of the number of millisecond there are between two
+<span class="lineNum">     412 </span>            :    * iterations of the graph. */
+<span class="lineNum">     413 </span>            :   uint32_t IterationDuration() override;
+<span class="lineNum">     414 </span>            : 
+<span class="lineNum">     415 </span>            :   /* This function gets called when the graph has produced the audio frames for
+<span class="lineNum">     416 </span>            :    * this iteration. */
+<span class="lineNum">     417 </span>            :   void MixerCallback(AudioDataValue* aMixedBuffer,
+<span class="lineNum">     418 </span>            :                      AudioSampleFormat aFormat,
+<span class="lineNum">     419 </span>            :                      uint32_t aChannels,
+<span class="lineNum">     420 </span>            :                      uint32_t aFrames,
+<span class="lineNum">     421 </span>            :                      uint32_t aSampleRate) override;
+<a name="422"><span class="lineNum">     422 </span>            : </a>
+<span class="lineNum">     423 </span>            :   // These are invoked on the MSG thread (we don't call this if not LIFECYCLE_RUNNING)
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :   virtual void SetInputListener(AudioDataListener *aListener) {</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(OnThread());</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :     mAudioInput = aListener;</span>
+<a name="427"><span class="lineNum">     427 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     428 </span>            :   // XXX do we need the param?  probably no
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :   virtual void RemoveInputListener(AudioDataListener *aListener) {</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(OnThread());</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :     mAudioInput = nullptr;</span>
+<a name="432"><span class="lineNum">     432 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     433 </span>            : 
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :   AudioCallbackDriver* AsAudioCallbackDriver() override {</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :     return this;</span>
+<span class="lineNum">     436 </span>            :   }
+<span class="lineNum">     437 </span>            : 
+<span class="lineNum">     438 </span>            :   /* Enqueue a promise that is going to be resolved when a specific operation
+<span class="lineNum">     439 </span>            :    * occurs on the cubeb stream. */
+<span class="lineNum">     440 </span>            :   void EnqueueStreamAndPromiseForOperation(MediaStream* aStream,
+<span class="lineNum">     441 </span>            :                                          void* aPromise,
+<span class="lineNum">     442 </span>            :                                          dom::AudioContextOperation aOperation);
+<span class="lineNum">     443 </span>            : 
+<span class="lineNum">     444 </span>            :   /**
+<span class="lineNum">     445 </span>            :    * Whether the audio callback is processing. This is for asserting only.
+<span class="lineNum">     446 </span>            :    */
+<a name="447"><span class="lineNum">     447 </span>            :   bool InCallback();</a>
+<span class="lineNum">     448 </span>            : 
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :   bool OnThread() override { return !mStarted || InCallback(); }</span>
+<span class="lineNum">     450 </span>            : 
+<span class="lineNum">     451 </span>            :   /* Whether the underlying cubeb stream has been started. See comment for
+<span class="lineNum">     452 </span>            :    * mStarted for details. */
+<span class="lineNum">     453 </span>            :   bool IsStarted();
+<span class="lineNum">     454 </span>            : 
+<span class="lineNum">     455 </span>            :   /* Tell the driver whether this process is using a microphone or not. This is
+<span class="lineNum">     456 </span>            :    * thread safe. */
+<span class="lineNum">     457 </span>            :   void SetMicrophoneActive(bool aActive);
+<span class="lineNum">     458 </span>            : 
+<span class="lineNum">     459 </span>            :   void CompleteAudioContextOperations(AsyncCubebOperation aOperation);
+<span class="lineNum">     460 </span>            : private:
+<span class="lineNum">     461 </span>            :   /**
+<span class="lineNum">     462 </span>            :    * On certain MacBookPro, the microphone is located near the left speaker.
+<span class="lineNum">     463 </span>            :    * We need to pan the sound output to the right speaker if we are using the
+<span class="lineNum">     464 </span>            :    * mic and the built-in speaker, or we will have terrible echo.  */
+<span class="lineNum">     465 </span>            :   void PanOutputIfNeeded(bool aMicrophoneActive);
+<span class="lineNum">     466 </span>            :   /**
+<span class="lineNum">     467 </span>            :    * This is called when the output device used by the cubeb stream changes. */
+<span class="lineNum">     468 </span>            :   void DeviceChangedCallback();
+<span class="lineNum">     469 </span>            :   /* Start the cubeb stream */
+<span class="lineNum">     470 </span>            :   bool StartStream();
+<span class="lineNum">     471 </span>            :   friend class AsyncCubebTask;
+<span class="lineNum">     472 </span>            :   bool Init();
+<span class="lineNum">     473 </span>            :   /* MediaStreamGraphs are always down/up mixed to stereo for now. */
+<span class="lineNum">     474 </span>            :   static const uint32_t ChannelCount = 2;
+<span class="lineNum">     475 </span>            :   /* The size of this buffer comes from the fact that some audio backends can
+<span class="lineNum">     476 </span>            :    * call back with a number of frames lower than one block (128 frames), so we
+<span class="lineNum">     477 </span>            :    * need to keep at most two block in the SpillBuffer, because we always round
+<span class="lineNum">     478 </span>            :    * up to block boundaries during an iteration.
+<span class="lineNum">     479 </span>            :    * This is only ever accessed on the audio callback thread. */
+<span class="lineNum">     480 </span>            :   SpillBuffer&lt;AudioDataValue, WEBAUDIO_BLOCK_SIZE * 2, ChannelCount&gt; mScratchBuffer;
+<span class="lineNum">     481 </span>            :   /* Wrapper to ensure we write exactly the number of frames we need in the
+<span class="lineNum">     482 </span>            :    * audio buffer cubeb passes us. This is only ever accessed on the audio
+<span class="lineNum">     483 </span>            :    * callback thread. */
+<span class="lineNum">     484 </span>            :   AudioCallbackBufferWrapper&lt;AudioDataValue, ChannelCount&gt; mBuffer;
+<span class="lineNum">     485 </span>            :   /* cubeb stream for this graph. This is guaranteed to be non-null after Init()
+<span class="lineNum">     486 </span>            :    * has been called, and is synchronized internaly. */
+<span class="lineNum">     487 </span>            :   nsAutoRef&lt;cubeb_stream&gt; mAudioStream;
+<span class="lineNum">     488 </span>            :   /* The sample rate for the aforementionned cubeb stream. This is set on
+<span class="lineNum">     489 </span>            :    * initialization and can be read safely afterwards. */
+<span class="lineNum">     490 </span>            :   uint32_t mSampleRate;
+<span class="lineNum">     491 </span>            :   /* The number of input channels from cubeb.  Should be set before opening cubeb
+<span class="lineNum">     492 </span>            :    * and then be static. */
+<span class="lineNum">     493 </span>            :   uint32_t mInputChannels;
+<span class="lineNum">     494 </span>            :   /* Approximation of the time between two callbacks. This is used to schedule
+<span class="lineNum">     495 </span>            :    * video frames. This is in milliseconds. Only even used (after
+<span class="lineNum">     496 </span>            :    * inizatialization) on the audio callback thread. */
+<span class="lineNum">     497 </span>            :   uint32_t mIterationDurationMS;
+<span class="lineNum">     498 </span>            :   /* cubeb_stream_init calls the audio callback to prefill the buffers. The
+<span class="lineNum">     499 </span>            :    * previous driver has to be kept alive until the audio stream has been
+<span class="lineNum">     500 </span>            :    * started, because it is responsible to call cubeb_stream_start, so we delay
+<span class="lineNum">     501 </span>            :    * the cleanup of the previous driver until it has started the audio stream.
+<span class="lineNum">     502 </span>            :    * Otherwise, there is a race where we kill the previous driver thread
+<span class="lineNum">     503 </span>            :    * between cubeb_stream_init and cubeb_stream_start,
+<span class="lineNum">     504 </span>            :    * and callbacks after the prefill never get called.
+<span class="lineNum">     505 </span>            :    * This is written on the previous driver's thread (if switching) or main
+<span class="lineNum">     506 </span>            :    * thread (if this driver is the first one).
+<span class="lineNum">     507 </span>            :    * This is read on previous driver's thread (during callbacks from
+<span class="lineNum">     508 </span>            :    * cubeb_stream_init) and the audio thread (when switching away from this
+<span class="lineNum">     509 </span>            :    * driver back to a SystemClockDriver).
+<span class="lineNum">     510 </span>            :    * This is synchronized by the Graph's monitor.
+<span class="lineNum">     511 </span>            :    * */
+<span class="lineNum">     512 </span>            :   bool mStarted;
+<span class="lineNum">     513 </span>            :   /* Listener for mic input, if any. */
+<span class="lineNum">     514 </span>            :   RefPtr&lt;AudioDataListener&gt; mAudioInput;
+<span class="lineNum">     515 </span>            : 
+<span class="lineNum">     516 </span>            :   struct AutoInCallback
+<span class="lineNum">     517 </span>            :   {
+<span class="lineNum">     518 </span>            :     explicit AutoInCallback(AudioCallbackDriver* aDriver);
+<span class="lineNum">     519 </span>            :     ~AutoInCallback();
+<span class="lineNum">     520 </span>            :     AudioCallbackDriver* mDriver;
+<span class="lineNum">     521 </span>            :   };
+<span class="lineNum">     522 </span>            : 
+<span class="lineNum">     523 </span>            :   /* Thread for off-main-thread initialization and
+<span class="lineNum">     524 </span>            :    * shutdown of the audio stream. */
+<span class="lineNum">     525 </span>            :   nsCOMPtr&lt;nsIThread&gt; mInitShutdownThread;
+<span class="lineNum">     526 </span>            :   /* This must be accessed with the graph monitor held. */
+<span class="lineNum">     527 </span>            :   AutoTArray&lt;StreamAndPromiseForOperation, 1&gt; mPromisesForOperation;
+<span class="lineNum">     528 </span>            :   /* This is set during initialization, and can be read safely afterwards. */
+<span class="lineNum">     529 </span>            :   dom::AudioChannel mAudioChannel;
+<span class="lineNum">     530 </span>            :   /* Used to queue us to add the mixer callback on first run. */
+<span class="lineNum">     531 </span>            :   bool mAddedMixer;
+<span class="lineNum">     532 </span>            : 
+<span class="lineNum">     533 </span>            :   /* This is atomic and is set by the audio callback thread. It can be read by
+<span class="lineNum">     534 </span>            :    * any thread safely. */
+<span class="lineNum">     535 </span>            :   Atomic&lt;bool&gt; mInCallback;
+<span class="lineNum">     536 </span>            :   /**
+<span class="lineNum">     537 </span>            :    * True if microphone is being used by this process. This is synchronized by
+<span class="lineNum">     538 </span>            :    * the graph's monitor. */
+<span class="lineNum">     539 </span>            :   Atomic&lt;bool&gt; mMicrophoneActive;
+<span class="lineNum">     540 </span>            :   /* True if this driver was created from a driver created because of a previous
+<span class="lineNum">     541 </span>            :    * AudioCallbackDriver failure. */
+<span class="lineNum">     542 </span>            :   bool mFromFallback;
+<span class="lineNum">     543 </span>            : };
+<span class="lineNum">     544 </span>            : 
+<span class="lineNum">     545 </span>            : class AsyncCubebTask : public Runnable
+<span class="lineNum">     546 </span>            : {
+<span class="lineNum">     547 </span>            : public:
+<span class="lineNum">     548 </span>            : 
+<a name="549"><span class="lineNum">     549 </span>            :   AsyncCubebTask(AudioCallbackDriver* aDriver, AsyncCubebOperation aOperation);</a>
+<span class="lineNum">     550 </span>            : 
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :   nsresult Dispatch(uint32_t aFlags = NS_DISPATCH_NORMAL)</span>
+<span class="lineNum">     552 </span>            :   {
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :     nsresult rv = EnsureThread();</span>
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :     if (!NS_FAILED(rv)) {</span>
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :       rv = sThreadPool-&gt;Dispatch(this, aFlags);</span>
+<span class="lineNum">     556 </span>            :     }
+<span class="lineNum">     557 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     558 </span>            :   }
+<span class="lineNum">     559 </span>            : 
+<span class="lineNum">     560 </span>            : protected:
+<span class="lineNum">     561 </span>            :   virtual ~AsyncCubebTask();
+<span class="lineNum">     562 </span>            : 
+<span class="lineNum">     563 </span>            : private:
+<span class="lineNum">     564 </span>            :   static nsresult EnsureThread();
+<span class="lineNum">     565 </span>            : 
+<span class="lineNum">     566 </span>            :   NS_IMETHOD Run() override final;
+<span class="lineNum">     567 </span>            :   static StaticRefPtr&lt;nsIThreadPool&gt; sThreadPool;
+<span class="lineNum">     568 </span>            :   RefPtr&lt;AudioCallbackDriver&gt; mDriver;
+<span class="lineNum">     569 </span>            :   AsyncCubebOperation mOperation;
+<span class="lineNum">     570 </span>            :   RefPtr&lt;MediaStreamGraphImpl&gt; mShutdownGrip;
+<span class="lineNum">     571 </span>            : };
+<span class="lineNum">     572 </span>            : 
+<span class="lineNum">     573 </span>            : } // namespace mozilla
+<span class="lineNum">     574 </span>            : 
+<span class="lineNum">     575 </span>            : #endif // GRAPHDRIVER_H_
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

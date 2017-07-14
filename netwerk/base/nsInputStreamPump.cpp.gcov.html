@@ -1,0 +1,890 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - netwerk/base/nsInputStreamPump.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">netwerk/base</a> - nsInputStreamPump.cpp<span style="font-size: 80%;"> (source / <a href="nsInputStreamPump.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">257</td>
+            <td class="headerCovTableEntry">334</td>
+            <td class="headerCovTableEntryMed">76.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">22</td>
+            <td class="headerCovTableEntry">29</td>
+            <td class="headerCovTableEntryMed">75.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 4 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim:set ts=4 sts=4 sw=4 et cin: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;nsIOService.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;nsInputStreamPump.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;nsIStreamTransportService.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;nsISeekableStream.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;nsITransport.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;nsIThreadRetargetableStreamListener.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nsCOMPtr.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;mozilla/Logging.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;GeckoProfiler.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;nsIStreamListener.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;nsILoadGroup.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;nsNetCID.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;nsStreamUtils.h&quot;
+<span class="lineNum">      21 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : static NS_DEFINE_CID(kStreamTransportServiceCID, NS_STREAMTRANSPORTSERVICE_CID);
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : //
+<span class="lineNum">      26 </span>            : // MOZ_LOG=nsStreamPump:5
+<span class="lineNum">      27 </span>            : //
+<span class="lineNum">      28 </span>            : static mozilla::LazyLogModule gStreamPumpLog(&quot;nsStreamPump&quot;);
+<span class="lineNum">      29 </span>            : #undef LOG
+<span class="lineNum">      30 </span>            : #define LOG(args) MOZ_LOG(gStreamPumpLog, mozilla::LogLevel::Debug, args)
+<span class="lineNum">      31 </span>            : 
+<span class="lineNum">      32 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">      33 </span>            : // nsInputStreamPump methods
+<a name="34"><span class="lineNum">      34 </span>            : //-----------------------------------------------------------------------------</a>
+<span class="lineNum">      35 </span>            : 
+<span class="lineNum">      36 </span><span class="lineCov">         73 : nsInputStreamPump::nsInputStreamPump()</span>
+<span class="lineNum">      37 </span>            :     : mState(STATE_IDLE)
+<span class="lineNum">      38 </span>            :     , mStreamOffset(0)
+<span class="lineNum">      39 </span>            :     , mStreamLength(UINT64_MAX)
+<span class="lineNum">      40 </span>            :     , mStatus(NS_OK)
+<span class="lineNum">      41 </span>            :     , mSuspendCount(0)
+<span class="lineNum">      42 </span>            :     , mLoadFlags(LOAD_NORMAL)
+<span class="lineNum">      43 </span>            :     , mProcessingCallbacks(false)
+<span class="lineNum">      44 </span>            :     , mWaitingForInputStreamReady(false)
+<span class="lineNum">      45 </span>            :     , mCloseWhenDone(false)
+<span class="lineNum">      46 </span>            :     , mRetargeting(false)
+<span class="lineNum">      47 </span><span class="lineCov">         73 :     , mMonitor(&quot;nsInputStreamPump&quot;)</span>
+<span class="lineNum">      48 </span>            : {
+<a name="49"><span class="lineNum">      49 </span><span class="lineCov">         73 : }</span></a>
+<span class="lineNum">      50 </span>            : 
+<span class="lineNum">      51 </span><span class="lineCov">         73 : nsInputStreamPump::~nsInputStreamPump()</span>
+<span class="lineNum">      52 </span>            : {
+<span class="lineNum">      53 </span><span class="lineCov">         73 : }</span>
+<a name="54"><span class="lineNum">      54 </span>            : </a>
+<span class="lineNum">      55 </span>            : nsresult
+<span class="lineNum">      56 </span><span class="lineCov">         72 : nsInputStreamPump::Create(nsInputStreamPump  **result,</span>
+<span class="lineNum">      57 </span>            :                           nsIInputStream      *stream,
+<span class="lineNum">      58 </span>            :                           int64_t              streamPos,
+<span class="lineNum">      59 </span>            :                           int64_t              streamLen,
+<span class="lineNum">      60 </span>            :                           uint32_t             segsize,
+<span class="lineNum">      61 </span>            :                           uint32_t             segcount,
+<span class="lineNum">      62 </span>            :                           bool                 closeWhenDone,
+<span class="lineNum">      63 </span>            :                           nsIEventTarget      *mainThreadTarget)
+<span class="lineNum">      64 </span>            : {
+<span class="lineNum">      65 </span><span class="lineCov">         72 :     nsresult rv = NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">      66 </span><span class="lineCov">        144 :     RefPtr&lt;nsInputStreamPump&gt; pump = new nsInputStreamPump();</span>
+<span class="lineNum">      67 </span><span class="lineCov">         72 :     if (pump) {</span>
+<span class="lineNum">      68 </span><span class="lineCov">         72 :         rv = pump-&gt;Init(stream, streamPos, streamLen,</span>
+<span class="lineNum">      69 </span><span class="lineCov">         72 :                         segsize, segcount, closeWhenDone, mainThreadTarget);</span>
+<span class="lineNum">      70 </span><span class="lineCov">         72 :         if (NS_SUCCEEDED(rv)) {</span>
+<span class="lineNum">      71 </span><span class="lineCov">         72 :             pump.forget(result);</span>
+<span class="lineNum">      72 </span>            :         }
+<span class="lineNum">      73 </span>            :     }
+<span class="lineNum">      74 </span><span class="lineCov">        144 :     return rv;</span>
+<span class="lineNum">      75 </span>            : }
+<a name="76"><span class="lineNum">      76 </span>            : </a>
+<span class="lineNum">      77 </span>            : struct PeekData {
+<span class="lineNum">      78 </span><span class="lineCov">          3 :   PeekData(nsInputStreamPump::PeekSegmentFun fun, void* closure)</span>
+<span class="lineNum">      79 </span><span class="lineCov">          3 :     : mFunc(fun), mClosure(closure) {}</span>
+<span class="lineNum">      80 </span>            : 
+<span class="lineNum">      81 </span>            :   nsInputStreamPump::PeekSegmentFun mFunc;
+<span class="lineNum">      82 </span>            :   void* mClosure;
+<span class="lineNum">      83 </span>            : };
+<a name="84"><span class="lineNum">      84 </span>            : </a>
+<span class="lineNum">      85 </span>            : static nsresult
+<span class="lineNum">      86 </span><span class="lineCov">          3 : CallPeekFunc(nsIInputStream *aInStream, void *aClosure,</span>
+<span class="lineNum">      87 </span>            :              const char *aFromSegment, uint32_t aToOffset, uint32_t aCount,
+<span class="lineNum">      88 </span>            :              uint32_t *aWriteCount)
+<span class="lineNum">      89 </span>            : {
+<span class="lineNum">      90 </span><span class="lineCov">          3 :   NS_ASSERTION(aToOffset == 0, &quot;Called more than once?&quot;);</span>
+<span class="lineNum">      91 </span><span class="lineCov">          3 :   NS_ASSERTION(aCount &gt; 0, &quot;Called without data?&quot;);</span>
+<span class="lineNum">      92 </span>            : 
+<span class="lineNum">      93 </span><span class="lineCov">          3 :   PeekData* data = static_cast&lt;PeekData*&gt;(aClosure);</span>
+<span class="lineNum">      94 </span><span class="lineCov">          3 :   data-&gt;mFunc(data-&gt;mClosure,</span>
+<span class="lineNum">      95 </span><span class="lineCov">          3 :               reinterpret_cast&lt;const uint8_t*&gt;(aFromSegment), aCount);</span>
+<span class="lineNum">      96 </span><span class="lineCov">          3 :   return NS_BINDING_ABORTED;</span>
+<span class="lineNum">      97 </span>            : }
+<a name="98"><span class="lineNum">      98 </span>            : </a>
+<span class="lineNum">      99 </span>            : nsresult
+<span class="lineNum">     100 </span><span class="lineCov">          6 : nsInputStreamPump::PeekStream(PeekSegmentFun callback, void* closure)</span>
+<span class="lineNum">     101 </span>            : {
+<span class="lineNum">     102 </span><span class="lineCov">         12 :   ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     103 </span>            : 
+<span class="lineNum">     104 </span><span class="lineCov">          6 :   NS_ASSERTION(mAsyncStream, &quot;PeekStream called without stream&quot;);</span>
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span><span class="lineCov">          6 :   nsresult rv = CreateBufferedStreamIfNeeded();</span>
+<span class="lineNum">     107 </span><span class="lineCov">          6 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span>            :   // See if the pipe is closed by checking the return of Available.
+<span class="lineNum">     110 </span>            :   uint64_t dummy64;
+<span class="lineNum">     111 </span><span class="lineCov">          6 :   rv = mBufferedStream-&gt;Available(&amp;dummy64);</span>
+<span class="lineNum">     112 </span><span class="lineCov">          6 :   if (NS_FAILED(rv))</span>
+<span class="lineNum">     113 </span><span class="lineCov">          3 :     return rv;</span>
+<span class="lineNum">     114 </span><span class="lineCov">          3 :   uint32_t dummy = (uint32_t)std::min(dummy64, (uint64_t)UINT32_MAX);</span>
+<span class="lineNum">     115 </span>            : 
+<span class="lineNum">     116 </span><span class="lineCov">          3 :   PeekData data(callback, closure);</span>
+<span class="lineNum">     117 </span><span class="lineCov">          6 :   return mBufferedStream-&gt;ReadSegments(CallPeekFunc,</span>
+<span class="lineNum">     118 </span>            :                                        &amp;data,
+<span class="lineNum">     119 </span>            :                                        nsIOService::gDefaultSegmentSize,
+<span class="lineNum">     120 </span><span class="lineCov">          6 :                                        &amp;dummy);</span>
+<span class="lineNum">     121 </span>            : }
+<a name="122"><span class="lineNum">     122 </span>            : </a>
+<span class="lineNum">     123 </span>            : nsresult
+<span class="lineNum">     124 </span><span class="lineCov">        279 : nsInputStreamPump::EnsureWaiting()</span>
+<span class="lineNum">     125 </span>            : {
+<span class="lineNum">     126 </span><span class="lineCov">        279 :     mMonitor.AssertCurrentThreadIn();</span>
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span>            :     // no need to worry about multiple threads... an input stream pump lives
+<span class="lineNum">     129 </span>            :     // on only one thread at a time.
+<span class="lineNum">     130 </span><span class="lineCov">        279 :     MOZ_ASSERT(mAsyncStream);</span>
+<span class="lineNum">     131 </span><span class="lineCov">        279 :     if (!mWaitingForInputStreamReady &amp;&amp; !mProcessingCallbacks) {</span>
+<span class="lineNum">     132 </span>            :         // Ensure OnStateStop is called on the main thread.
+<span class="lineNum">     133 </span><span class="lineCov">         81 :         if (mState == STATE_STOP) {</span>
+<span class="lineNum">     134 </span>            :             nsCOMPtr&lt;nsIEventTarget&gt; mainThread = mLabeledMainThreadTarget
+<span class="lineNum">     135 </span>            :                 ? mLabeledMainThreadTarget
+<span class="lineNum">     136 </span><span class="lineCov">          8 :                 : do_AddRef(GetMainThreadEventTarget());</span>
+<span class="lineNum">     137 </span><span class="lineCov">          4 :             if (mTargetThread != mainThread) {</span>
+<span class="lineNum">     138 </span><span class="lineCov">          4 :                 mTargetThread = do_QueryInterface(mainThread);</span>
+<span class="lineNum">     139 </span>            :             }
+<span class="lineNum">     140 </span>            :         }
+<span class="lineNum">     141 </span><span class="lineCov">         81 :         MOZ_ASSERT(mTargetThread);</span>
+<span class="lineNum">     142 </span><span class="lineCov">         81 :         nsresult rv = mAsyncStream-&gt;AsyncWait(this, 0, 0, mTargetThread);</span>
+<span class="lineNum">     143 </span><span class="lineCov">         81 :         if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :             NS_ERROR(&quot;AsyncWait failed&quot;);</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :             return rv;</span>
+<span class="lineNum">     146 </span>            :         }
+<span class="lineNum">     147 </span>            :         // Any retargeting during STATE_START or START_TRANSFER is complete
+<span class="lineNum">     148 </span>            :         // after the call to AsyncWait; next callback wil be on mTargetThread.
+<span class="lineNum">     149 </span><span class="lineCov">         81 :         mRetargeting = false;</span>
+<span class="lineNum">     150 </span><span class="lineCov">         81 :         mWaitingForInputStreamReady = true;</span>
+<span class="lineNum">     151 </span>            :     }
+<span class="lineNum">     152 </span><span class="lineCov">        279 :     return NS_OK;</span>
+<span class="lineNum">     153 </span>            : }
+<span class="lineNum">     154 </span>            : 
+<span class="lineNum">     155 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">     156 </span>            : // nsInputStreamPump::nsISupports
+<span class="lineNum">     157 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">     158 </span>            : 
+<span class="lineNum">     159 </span>            : // although this class can only be accessed from one thread at a time, we do
+<a name="160"><span class="lineNum">     160 </span>            : // allow its ownership to move from thread to thread, assuming the consumer</a>
+<span class="lineNum">     161 </span>            : // understands the limitations of this.
+<span class="lineNum">     162 </span><span class="lineCov">        813 : NS_IMPL_ISUPPORTS(nsInputStreamPump,</span>
+<span class="lineNum">     163 </span>            :                   nsIRequest,
+<span class="lineNum">     164 </span>            :                   nsIThreadRetargetableRequest,
+<span class="lineNum">     165 </span>            :                   nsIInputStreamCallback,
+<span class="lineNum">     166 </span>            :                   nsIInputStreamPump)
+<span class="lineNum">     167 </span>            : 
+<span class="lineNum">     168 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">     169 </span>            : // nsInputStreamPump::nsIRequest
+<span class="lineNum">     170 </span>            : //-----------------------------------------------------------------------------
+<a name="171"><span class="lineNum">     171 </span>            : </a>
+<span class="lineNum">     172 </span>            : NS_IMETHODIMP
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 : nsInputStreamPump::GetName(nsACString &amp;result)</span>
+<span class="lineNum">     174 </span>            : {
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     176 </span>            : 
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :     result.Truncate();</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     179 </span>            : }
+<a name="180"><span class="lineNum">     180 </span>            : </a>
+<span class="lineNum">     181 </span>            : NS_IMETHODIMP
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 : nsInputStreamPump::IsPending(bool *result)</span>
+<span class="lineNum">     183 </span>            : {
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     185 </span>            : 
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :     *result = (mState != STATE_IDLE);</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     188 </span>            : }
+<a name="189"><span class="lineNum">     189 </span>            : </a>
+<span class="lineNum">     190 </span>            : NS_IMETHODIMP
+<span class="lineNum">     191 </span><span class="lineCov">         76 : nsInputStreamPump::GetStatus(nsresult *status)</span>
+<span class="lineNum">     192 </span>            : {
+<span class="lineNum">     193 </span><span class="lineCov">        152 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span><span class="lineCov">         76 :     *status = mStatus;</span>
+<span class="lineNum">     196 </span><span class="lineCov">        152 :     return NS_OK;</span>
+<span class="lineNum">     197 </span>            : }
+<a name="198"><span class="lineNum">     198 </span>            : </a>
+<span class="lineNum">     199 </span>            : NS_IMETHODIMP
+<span class="lineNum">     200 </span><span class="lineCov">          3 : nsInputStreamPump::Cancel(nsresult status)</span>
+<span class="lineNum">     201 </span>            : {
+<span class="lineNum">     202 </span><span class="lineCov">          3 :     MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     203 </span>            : 
+<span class="lineNum">     204 </span><span class="lineCov">          6 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     205 </span>            : 
+<span class="lineNum">     206 </span><span class="lineCov">          3 :     LOG((&quot;nsInputStreamPump::Cancel [this=%p status=%&quot; PRIx32 &quot;]\n&quot;,</span>
+<span class="lineNum">     207 </span>            :         this, static_cast&lt;uint32_t&gt;(status)));
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span><span class="lineCov">          3 :     if (NS_FAILED(mStatus)) {</span>
+<span class="lineNum">     210 </span><span class="lineCov">          1 :         LOG((&quot;  already canceled\n&quot;));</span>
+<span class="lineNum">     211 </span><span class="lineCov">          1 :         return NS_OK;</span>
+<span class="lineNum">     212 </span>            :     }
+<span class="lineNum">     213 </span>            : 
+<span class="lineNum">     214 </span><span class="lineCov">          2 :     NS_ASSERTION(NS_FAILED(status), &quot;cancel with non-failure status code&quot;);</span>
+<span class="lineNum">     215 </span><span class="lineCov">          2 :     mStatus = status;</span>
+<span class="lineNum">     216 </span>            : 
+<span class="lineNum">     217 </span>            :     // close input stream
+<span class="lineNum">     218 </span><span class="lineCov">          2 :     if (mAsyncStream) {</span>
+<span class="lineNum">     219 </span><span class="lineCov">          2 :         mAsyncStream-&gt;CloseWithStatus(status);</span>
+<span class="lineNum">     220 </span><span class="lineCov">          2 :         if (mSuspendCount == 0)</span>
+<span class="lineNum">     221 </span><span class="lineCov">          2 :             EnsureWaiting();</span>
+<span class="lineNum">     222 </span>            :         // Otherwise, EnsureWaiting will be called by Resume().
+<span class="lineNum">     223 </span>            :         // Note that while suspended, OnInputStreamReady will
+<span class="lineNum">     224 </span>            :         // not do anything, and also note that calling asyncWait
+<span class="lineNum">     225 </span>            :         // on a closed stream works and will dispatch an event immediately.
+<span class="lineNum">     226 </span>            :     }
+<span class="lineNum">     227 </span><span class="lineCov">          2 :     return NS_OK;</span>
+<span class="lineNum">     228 </span>            : }
+<a name="229"><span class="lineNum">     229 </span>            : </a>
+<span class="lineNum">     230 </span>            : NS_IMETHODIMP
+<span class="lineNum">     231 </span><span class="lineCov">        256 : nsInputStreamPump::Suspend()</span>
+<span class="lineNum">     232 </span>            : {
+<span class="lineNum">     233 </span><span class="lineCov">        512 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     234 </span>            : 
+<span class="lineNum">     235 </span><span class="lineCov">        256 :     LOG((&quot;nsInputStreamPump::Suspend [this=%p]\n&quot;, this));</span>
+<span class="lineNum">     236 </span><span class="lineCov">        256 :     NS_ENSURE_TRUE(mState != STATE_IDLE, NS_ERROR_UNEXPECTED);</span>
+<span class="lineNum">     237 </span><span class="lineCov">        256 :     ++mSuspendCount;</span>
+<span class="lineNum">     238 </span><span class="lineCov">        256 :     return NS_OK;</span>
+<span class="lineNum">     239 </span>            : }
+<a name="240"><span class="lineNum">     240 </span>            : </a>
+<span class="lineNum">     241 </span>            : NS_IMETHODIMP
+<span class="lineNum">     242 </span><span class="lineCov">        256 : nsInputStreamPump::Resume()</span>
+<span class="lineNum">     243 </span>            : {
+<span class="lineNum">     244 </span><span class="lineCov">        512 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     245 </span>            : 
+<span class="lineNum">     246 </span><span class="lineCov">        256 :     LOG((&quot;nsInputStreamPump::Resume [this=%p]\n&quot;, this));</span>
+<span class="lineNum">     247 </span><span class="lineCov">        256 :     NS_ENSURE_TRUE(mSuspendCount &gt; 0, NS_ERROR_UNEXPECTED);</span>
+<span class="lineNum">     248 </span><span class="lineCov">        256 :     NS_ENSURE_TRUE(mState != STATE_IDLE, NS_ERROR_UNEXPECTED);</span>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span>            :     // There is a brief in-between state when we null out mAsyncStream in
+<span class="lineNum">     251 </span>            :     // OnStateStop() before calling OnStopRequest, and only afterwards set
+<span class="lineNum">     252 </span>            :     // STATE_IDLE, which we need to handle gracefully.
+<span class="lineNum">     253 </span><span class="lineCov">        256 :     if (--mSuspendCount == 0 &amp;&amp; mAsyncStream)</span>
+<span class="lineNum">     254 </span><span class="lineCov">        196 :         EnsureWaiting();</span>
+<span class="lineNum">     255 </span><span class="lineCov">        256 :     return NS_OK;</span>
+<span class="lineNum">     256 </span>            : }
+<a name="257"><span class="lineNum">     257 </span>            : </a>
+<span class="lineNum">     258 </span>            : NS_IMETHODIMP
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 : nsInputStreamPump::GetLoadFlags(nsLoadFlags *aLoadFlags)</span>
+<span class="lineNum">     260 </span>            : {
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     262 </span>            : 
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :     *aLoadFlags = mLoadFlags;</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     265 </span>            : }
+<a name="266"><span class="lineNum">     266 </span>            : </a>
+<span class="lineNum">     267 </span>            : NS_IMETHODIMP
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 : nsInputStreamPump::SetLoadFlags(nsLoadFlags aLoadFlags)</span>
+<span class="lineNum">     269 </span>            : {
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     271 </span>            : 
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :     mLoadFlags = aLoadFlags;</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     274 </span>            : }
+<a name="275"><span class="lineNum">     275 </span>            : </a>
+<span class="lineNum">     276 </span>            : NS_IMETHODIMP
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 : nsInputStreamPump::GetLoadGroup(nsILoadGroup **aLoadGroup)</span>
+<span class="lineNum">     278 </span>            : {
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     280 </span>            : 
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     NS_IF_ADDREF(*aLoadGroup = mLoadGroup);</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     283 </span>            : }
+<a name="284"><span class="lineNum">     284 </span>            : </a>
+<span class="lineNum">     285 </span>            : NS_IMETHODIMP
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 : nsInputStreamPump::SetLoadGroup(nsILoadGroup *aLoadGroup)</span>
+<span class="lineNum">     287 </span>            : {
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :     mLoadGroup = aLoadGroup;</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     292 </span>            : }
+<span class="lineNum">     293 </span>            : 
+<span class="lineNum">     294 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">     295 </span>            : // nsInputStreamPump::nsIInputStreamPump implementation
+<span class="lineNum">     296 </span>            : //-----------------------------------------------------------------------------
+<a name="297"><span class="lineNum">     297 </span>            : </a>
+<span class="lineNum">     298 </span>            : NS_IMETHODIMP
+<span class="lineNum">     299 </span><span class="lineCov">         73 : nsInputStreamPump::Init(nsIInputStream *stream,</span>
+<span class="lineNum">     300 </span>            :                         int64_t streamPos, int64_t streamLen,
+<span class="lineNum">     301 </span>            :                         uint32_t segsize, uint32_t segcount,
+<span class="lineNum">     302 </span>            :                         bool closeWhenDone, nsIEventTarget *mainThreadTarget)
+<span class="lineNum">     303 </span>            : {
+<span class="lineNum">     304 </span><span class="lineCov">         73 :     NS_ENSURE_TRUE(mState == STATE_IDLE, NS_ERROR_IN_PROGRESS);</span>
+<span class="lineNum">     305 </span>            : 
+<span class="lineNum">     306 </span><span class="lineCov">         73 :     mStreamOffset = uint64_t(streamPos);</span>
+<span class="lineNum">     307 </span><span class="lineCov">         73 :     if (int64_t(streamLen) &gt;= int64_t(0))</span>
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :         mStreamLength = uint64_t(streamLen);</span>
+<span class="lineNum">     309 </span><span class="lineCov">         73 :     mStream = stream;</span>
+<span class="lineNum">     310 </span><span class="lineCov">         73 :     mSegSize = segsize;</span>
+<span class="lineNum">     311 </span><span class="lineCov">         73 :     mSegCount = segcount;</span>
+<span class="lineNum">     312 </span><span class="lineCov">         73 :     mCloseWhenDone = closeWhenDone;</span>
+<span class="lineNum">     313 </span><span class="lineCov">         73 :     mLabeledMainThreadTarget = mainThreadTarget;</span>
+<span class="lineNum">     314 </span>            : 
+<span class="lineNum">     315 </span><span class="lineCov">         73 :     return NS_OK;</span>
+<span class="lineNum">     316 </span>            : }
+<a name="317"><span class="lineNum">     317 </span>            : </a>
+<span class="lineNum">     318 </span>            : NS_IMETHODIMP
+<span class="lineNum">     319 </span><span class="lineCov">         73 : nsInputStreamPump::AsyncRead(nsIStreamListener *listener, nsISupports *ctxt)</span>
+<span class="lineNum">     320 </span>            : {
+<span class="lineNum">     321 </span><span class="lineCov">        146 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     322 </span>            : 
+<span class="lineNum">     323 </span><span class="lineCov">         73 :     NS_ENSURE_TRUE(mState == STATE_IDLE, NS_ERROR_IN_PROGRESS);</span>
+<span class="lineNum">     324 </span><span class="lineCov">         73 :     NS_ENSURE_ARG_POINTER(listener);</span>
+<span class="lineNum">     325 </span><span class="lineCov">         73 :     MOZ_ASSERT(NS_IsMainThread(), &quot;nsInputStreamPump should be read from the &quot;</span>
+<span class="lineNum">     326 </span>            :                                   &quot;main thread only.&quot;);
+<span class="lineNum">     327 </span>            : 
+<span class="lineNum">     328 </span>            :     //
+<span class="lineNum">     329 </span>            :     // OK, we need to use the stream transport service if
+<span class="lineNum">     330 </span>            :     //
+<span class="lineNum">     331 </span>            :     // (1) the stream is blocking
+<span class="lineNum">     332 </span>            :     // (2) the stream does not support nsIAsyncInputStream
+<span class="lineNum">     333 </span>            :     //
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span>            :     bool nonBlocking;
+<span class="lineNum">     336 </span><span class="lineCov">         73 :     nsresult rv = mStream-&gt;IsNonBlocking(&amp;nonBlocking);</span>
+<span class="lineNum">     337 </span><span class="lineCov">         73 :     if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     338 </span>            : 
+<span class="lineNum">     339 </span><span class="lineCov">         73 :     if (nonBlocking) {</span>
+<span class="lineNum">     340 </span><span class="lineCov">         10 :         mAsyncStream = do_QueryInterface(mStream);</span>
+<span class="lineNum">     341 </span>            :         //
+<span class="lineNum">     342 </span>            :         // if the stream supports nsIAsyncInputStream, and if we need to seek
+<span class="lineNum">     343 </span>            :         // to a starting offset, then we must do so here.  in the non-async
+<span class="lineNum">     344 </span>            :         // stream case, the stream transport service will take care of seeking
+<span class="lineNum">     345 </span>            :         // for us.
+<span class="lineNum">     346 </span>            :         //
+<span class="lineNum">     347 </span><span class="lineCov">         10 :         if (mAsyncStream &amp;&amp; (mStreamOffset != UINT64_MAX)) {</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :             nsCOMPtr&lt;nsISeekableStream&gt; seekable = do_QueryInterface(mStream);</span>
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :             if (seekable)</span>
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :                 seekable-&gt;Seek(nsISeekableStream::NS_SEEK_SET, mStreamOffset);</span>
+<span class="lineNum">     351 </span>            :         }
+<span class="lineNum">     352 </span>            :     }
+<span class="lineNum">     353 </span>            : 
+<span class="lineNum">     354 </span><span class="lineCov">         73 :     if (!mAsyncStream) {</span>
+<span class="lineNum">     355 </span>            :         // ok, let's use the stream transport service to read this stream.
+<span class="lineNum">     356 </span>            :         nsCOMPtr&lt;nsIStreamTransportService&gt; sts =
+<span class="lineNum">     357 </span><span class="lineCov">        132 :             do_GetService(kStreamTransportServiceCID, &amp;rv);</span>
+<span class="lineNum">     358 </span><span class="lineCov">         66 :         if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     359 </span>            : 
+<span class="lineNum">     360 </span><span class="lineCov">        132 :         nsCOMPtr&lt;nsITransport&gt; transport;</span>
+<span class="lineNum">     361 </span><span class="lineCov">        198 :         rv = sts-&gt;CreateInputTransport(mStream, mStreamOffset, mStreamLength,</span>
+<span class="lineNum">     362 </span><span class="lineCov">        198 :                                        mCloseWhenDone, getter_AddRefs(transport));</span>
+<span class="lineNum">     363 </span><span class="lineCov">         66 :         if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     364 </span>            : 
+<span class="lineNum">     365 </span><span class="lineCov">        132 :         nsCOMPtr&lt;nsIInputStream&gt; wrapper;</span>
+<span class="lineNum">     366 </span><span class="lineCov">         66 :         rv = transport-&gt;OpenInputStream(0, mSegSize, mSegCount, getter_AddRefs(wrapper));</span>
+<span class="lineNum">     367 </span><span class="lineCov">         66 :         if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     368 </span>            : 
+<span class="lineNum">     369 </span><span class="lineCov">         66 :         mAsyncStream = do_QueryInterface(wrapper, &amp;rv);</span>
+<span class="lineNum">     370 </span><span class="lineCov">         66 :         if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     371 </span>            :     }
+<span class="lineNum">     372 </span>            : 
+<span class="lineNum">     373 </span>            :     // release our reference to the original stream.  from this point forward,
+<span class="lineNum">     374 </span>            :     // we only reference the &quot;stream&quot; via mAsyncStream.
+<span class="lineNum">     375 </span><span class="lineCov">         73 :     mStream = nullptr;</span>
+<span class="lineNum">     376 </span>            : 
+<span class="lineNum">     377 </span>            :     // mStreamOffset now holds the number of bytes currently read.  we use this
+<span class="lineNum">     378 </span>            :     // to enforce the mStreamLength restriction.
+<span class="lineNum">     379 </span><span class="lineCov">         73 :     mStreamOffset = 0;</span>
+<span class="lineNum">     380 </span>            : 
+<span class="lineNum">     381 </span>            :     // grab event queue (we must do this here by contract, since all notifications
+<span class="lineNum">     382 </span>            :     // must go to the thread which called AsyncRead)
+<span class="lineNum">     383 </span><span class="lineCov">         73 :     if (NS_IsMainThread() &amp;&amp; mLabeledMainThreadTarget) {</span>
+<span class="lineNum">     384 </span><span class="lineCov">         67 :         mTargetThread = mLabeledMainThreadTarget;</span>
+<span class="lineNum">     385 </span>            :     } else {
+<span class="lineNum">     386 </span><span class="lineCov">          6 :         mTargetThread = GetCurrentThreadEventTarget();</span>
+<span class="lineNum">     387 </span>            :     }
+<span class="lineNum">     388 </span><span class="lineCov">         73 :     NS_ENSURE_STATE(mTargetThread);</span>
+<span class="lineNum">     389 </span>            : 
+<span class="lineNum">     390 </span><span class="lineCov">         73 :     rv = EnsureWaiting();</span>
+<span class="lineNum">     391 </span><span class="lineCov">         73 :     if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     392 </span>            : 
+<span class="lineNum">     393 </span><span class="lineCov">         73 :     if (mLoadGroup)</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :         mLoadGroup-&gt;AddRequest(this, nullptr);</span>
+<span class="lineNum">     395 </span>            : 
+<span class="lineNum">     396 </span><span class="lineCov">         73 :     mState = STATE_START;</span>
+<span class="lineNum">     397 </span><span class="lineCov">         73 :     mListener = listener;</span>
+<span class="lineNum">     398 </span><span class="lineCov">         73 :     mListenerContext = ctxt;</span>
+<span class="lineNum">     399 </span><span class="lineCov">         73 :     return NS_OK;</span>
+<span class="lineNum">     400 </span>            : }
+<span class="lineNum">     401 </span>            : 
+<span class="lineNum">     402 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">     403 </span>            : // nsInputStreamPump::nsIInputStreamCallback implementation
+<span class="lineNum">     404 </span>            : //-----------------------------------------------------------------------------
+<a name="405"><span class="lineNum">     405 </span>            : </a>
+<span class="lineNum">     406 </span>            : NS_IMETHODIMP
+<span class="lineNum">     407 </span><span class="lineCov">         81 : nsInputStreamPump::OnInputStreamReady(nsIAsyncInputStream *stream)</span>
+<span class="lineNum">     408 </span>            : {
+<span class="lineNum">     409 </span><span class="lineCov">         81 :     LOG((&quot;nsInputStreamPump::OnInputStreamReady [this=%p]\n&quot;, this));</span>
+<span class="lineNum">     410 </span>            : 
+<span class="lineNum">     411 </span><span class="lineCov">        162 :     AUTO_PROFILER_LABEL(&quot;nsInputStreamPump::OnInputStreamReady&quot;, NETWORK);</span>
+<span class="lineNum">     412 </span>            : 
+<span class="lineNum">     413 </span>            :     // this function has been called from a PLEvent, so we can safely call
+<span class="lineNum">     414 </span>            :     // any listener or progress sink methods directly from here.
+<span class="lineNum">     415 </span>            : 
+<span class="lineNum">     416 </span>            :     for (;;) {
+<span class="lineNum">     417 </span>            :         // There should only be one iteration of this loop happening at a time.
+<span class="lineNum">     418 </span>            :         // To prevent AsyncWait() (called during callbacks or on other threads)
+<span class="lineNum">     419 </span>            :         // from creating a parallel OnInputStreamReady(), we use:
+<span class="lineNum">     420 </span>            :         // -- a monitor; and
+<span class="lineNum">     421 </span>            :         // -- a boolean mProcessingCallbacks to detect parallel loops
+<span class="lineNum">     422 </span>            :         //    when exiting the monitor for callbacks.
+<span class="lineNum">     423 </span><span class="lineCov">        495 :         ReentrantMonitorAutoEnter lock(mMonitor);</span>
+<span class="lineNum">     424 </span>            : 
+<span class="lineNum">     425 </span>            :         // Prevent parallel execution during callbacks, while out of monitor.
+<span class="lineNum">     426 </span><span class="lineCov">        288 :         if (mProcessingCallbacks) {</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :             MOZ_ASSERT(!mProcessingCallbacks);</span>
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     429 </span>            :         }
+<span class="lineNum">     430 </span><span class="lineCov">        288 :         mProcessingCallbacks = true;</span>
+<span class="lineNum">     431 </span><span class="lineCov">        288 :         if (mSuspendCount || mState == STATE_IDLE) {</span>
+<span class="lineNum">     432 </span><span class="lineCov">         73 :             mWaitingForInputStreamReady = false;</span>
+<span class="lineNum">     433 </span><span class="lineCov">         73 :             mProcessingCallbacks = false;</span>
+<span class="lineNum">     434 </span><span class="lineCov">         73 :             break;</span>
+<span class="lineNum">     435 </span>            :         }
+<span class="lineNum">     436 </span>            : 
+<span class="lineNum">     437 </span>            :         uint32_t nextState;
+<span class="lineNum">     438 </span><span class="lineCov">        215 :         switch (mState) {</span>
+<span class="lineNum">     439 </span>            :         case STATE_START:
+<span class="lineNum">     440 </span><span class="lineCov">         73 :             nextState = OnStateStart();</span>
+<span class="lineNum">     441 </span><span class="lineCov">         73 :             break;</span>
+<span class="lineNum">     442 </span>            :         case STATE_TRANSFER:
+<span class="lineNum">     443 </span><span class="lineCov">         69 :             nextState = OnStateTransfer();</span>
+<span class="lineNum">     444 </span><span class="lineCov">         69 :             break;</span>
+<span class="lineNum">     445 </span>            :         case STATE_STOP:
+<span class="lineNum">     446 </span><span class="lineCov">         73 :             mRetargeting = false;</span>
+<span class="lineNum">     447 </span><span class="lineCov">         73 :             nextState = OnStateStop();</span>
+<span class="lineNum">     448 </span><span class="lineCov">         73 :             break;</span>
+<span class="lineNum">     449 </span>            :         default:
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :             nextState = 0;</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :             NS_NOTREACHED(&quot;Unknown enum value.&quot;);</span>
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :             return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     453 </span>            :         }
+<span class="lineNum">     454 </span>            : 
+<span class="lineNum">     455 </span><span class="lineCov">        215 :         bool stillTransferring = (mState == STATE_TRANSFER &amp;&amp;</span>
+<span class="lineNum">     456 </span><span class="lineCov">        215 :                                   nextState == STATE_TRANSFER);</span>
+<span class="lineNum">     457 </span><span class="lineCov">        215 :         if (stillTransferring) {</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :             NS_ASSERTION(NS_SUCCEEDED(mStatus),</span>
+<span class="lineNum">     459 </span>            :                          &quot;Should not have failed status for ongoing transfer&quot;);
+<span class="lineNum">     460 </span>            :         } else {
+<span class="lineNum">     461 </span><span class="lineCov">        215 :             NS_ASSERTION(mState != nextState,</span>
+<span class="lineNum">     462 </span>            :                          &quot;Only OnStateTransfer can be called more than once.&quot;);
+<span class="lineNum">     463 </span>            :         }
+<span class="lineNum">     464 </span><span class="lineCov">        215 :         if (mRetargeting) {</span>
+<span class="lineNum">     465 </span><span class="lineCov">          4 :             NS_ASSERTION(mState != STATE_STOP,</span>
+<span class="lineNum">     466 </span>            :                          &quot;Retargeting should not happen during OnStateStop.&quot;);
+<span class="lineNum">     467 </span>            :         }
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span>            :         // Set mRetargeting so EnsureWaiting will be called. It ensures that
+<span class="lineNum">     470 </span>            :         // OnStateStop is called on the main thread.
+<span class="lineNum">     471 </span><span class="lineCov">        215 :         if (nextState == STATE_STOP &amp;&amp; !NS_IsMainThread()) {</span>
+<span class="lineNum">     472 </span><span class="lineCov">          4 :             mRetargeting = true;</span>
+<span class="lineNum">     473 </span>            :         }
+<span class="lineNum">     474 </span>            : 
+<span class="lineNum">     475 </span>            :         // Unset mProcessingCallbacks here (while we have lock) so our own call to
+<span class="lineNum">     476 </span>            :         // EnsureWaiting isn't blocked by it.
+<span class="lineNum">     477 </span><span class="lineCov">        215 :         mProcessingCallbacks = false;</span>
+<span class="lineNum">     478 </span>            : 
+<span class="lineNum">     479 </span>            :         // We must break the loop when we're switching event delivery to another
+<span class="lineNum">     480 </span>            :         // thread and the input stream pump is suspended, otherwise
+<span class="lineNum">     481 </span>            :         // OnStateStop() might be called off the main thread. See bug 1026951
+<span class="lineNum">     482 </span>            :         // comment #107 for the exact scenario.
+<span class="lineNum">     483 </span><span class="lineCov">        215 :         if (mSuspendCount &amp;&amp; mRetargeting) {</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :             mState = nextState;</span>
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :             mWaitingForInputStreamReady = false;</span>
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     487 </span>            :         }
+<span class="lineNum">     488 </span>            : 
+<span class="lineNum">     489 </span>            :         // Wait asynchronously if there is still data to transfer, or we're
+<span class="lineNum">     490 </span>            :         // switching event delivery to another thread.
+<span class="lineNum">     491 </span><span class="lineCov">        215 :         if (!mSuspendCount &amp;&amp; (stillTransferring || mRetargeting)) {</span>
+<span class="lineNum">     492 </span><span class="lineCov">          8 :             mState = nextState;</span>
+<span class="lineNum">     493 </span><span class="lineCov">          8 :             mWaitingForInputStreamReady = false;</span>
+<span class="lineNum">     494 </span><span class="lineCov">          8 :             nsresult rv = EnsureWaiting();</span>
+<span class="lineNum">     495 </span><span class="lineCov">          8 :             if (NS_SUCCEEDED(rv))</span>
+<span class="lineNum">     496 </span><span class="lineCov">          8 :                 break;</span>
+<span class="lineNum">     497 </span>            : 
+<span class="lineNum">     498 </span>            :             // Failure to start asynchronous wait: stop transfer.
+<span class="lineNum">     499 </span>            :             // Do not set mStatus if it was previously set to report a failure.
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :             if (NS_SUCCEEDED(mStatus)) {</span>
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :                 mStatus = rv;</span>
+<span class="lineNum">     502 </span>            :             }
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :             nextState = STATE_STOP;</span>
+<span class="lineNum">     504 </span>            :         }
+<span class="lineNum">     505 </span>            : 
+<span class="lineNum">     506 </span><span class="lineCov">        207 :         mState = nextState;</span>
+<span class="lineNum">     507 </span><span class="lineCov">        207 :     }</span>
+<span class="lineNum">     508 </span><span class="lineCov">         81 :     return NS_OK;</span>
+<span class="lineNum">     509 </span>            : }
+<a name="510"><span class="lineNum">     510 </span>            : </a>
+<span class="lineNum">     511 </span>            : uint32_t
+<span class="lineNum">     512 </span><span class="lineCov">         73 : nsInputStreamPump::OnStateStart()</span>
+<span class="lineNum">     513 </span>            : {
+<span class="lineNum">     514 </span><span class="lineCov">         73 :     mMonitor.AssertCurrentThreadIn();</span>
+<span class="lineNum">     515 </span>            : 
+<span class="lineNum">     516 </span><span class="lineCov">        146 :     AUTO_PROFILER_LABEL(&quot;nsInputStreamPump::OnStateStart&quot;, NETWORK);</span>
+<span class="lineNum">     517 </span>            : 
+<span class="lineNum">     518 </span><span class="lineCov">         73 :     LOG((&quot;  OnStateStart [this=%p]\n&quot;, this));</span>
+<span class="lineNum">     519 </span>            : 
+<span class="lineNum">     520 </span>            :     nsresult rv;
+<span class="lineNum">     521 </span>            : 
+<span class="lineNum">     522 </span>            :     // need to check the reason why the stream is ready.  this is required
+<span class="lineNum">     523 </span>            :     // so our listener can check our status from OnStartRequest.
+<span class="lineNum">     524 </span>            :     // XXX async streams should have a GetStatus method!
+<span class="lineNum">     525 </span><span class="lineCov">         73 :     if (NS_SUCCEEDED(mStatus)) {</span>
+<span class="lineNum">     526 </span>            :         uint64_t avail;
+<span class="lineNum">     527 </span><span class="lineCov">         71 :         rv = mAsyncStream-&gt;Available(&amp;avail);</span>
+<span class="lineNum">     528 </span><span class="lineCov">         71 :         if (NS_FAILED(rv) &amp;&amp; rv != NS_BASE_STREAM_CLOSED)</span>
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :             mStatus = rv;</span>
+<span class="lineNum">     530 </span>            :     }
+<span class="lineNum">     531 </span>            : 
+<span class="lineNum">     532 </span>            :     {
+<span class="lineNum">     533 </span>            :         // Note: Must exit monitor for call to OnStartRequest to avoid
+<span class="lineNum">     534 </span>            :         // deadlocks when calls to RetargetDeliveryTo for multiple
+<span class="lineNum">     535 </span>            :         // nsInputStreamPumps are needed (e.g. nsHttpChannel).
+<span class="lineNum">     536 </span><span class="lineCov">         73 :         mMonitor.Exit();</span>
+<span class="lineNum">     537 </span><span class="lineCov">         73 :         rv = mListener-&gt;OnStartRequest(this, mListenerContext);</span>
+<span class="lineNum">     538 </span><span class="lineCov">         73 :         mMonitor.Enter();</span>
+<span class="lineNum">     539 </span>            :     }
+<span class="lineNum">     540 </span>            : 
+<span class="lineNum">     541 </span>            :     // an error returned from OnStartRequest should cause us to abort; however,
+<span class="lineNum">     542 </span>            :     // we must not stomp on mStatus if already canceled.
+<span class="lineNum">     543 </span><span class="lineCov">         73 :     if (NS_FAILED(rv) &amp;&amp; NS_SUCCEEDED(mStatus))</span>
+<span class="lineNum">     544 </span><span class="lineCov">          2 :         mStatus = rv;</span>
+<span class="lineNum">     545 </span>            : 
+<span class="lineNum">     546 </span><span class="lineCov">        146 :     return NS_SUCCEEDED(mStatus) ? STATE_TRANSFER : STATE_STOP;</span>
+<span class="lineNum">     547 </span>            : }
+<a name="548"><span class="lineNum">     548 </span>            : </a>
+<span class="lineNum">     549 </span>            : uint32_t
+<span class="lineNum">     550 </span><span class="lineCov">         69 : nsInputStreamPump::OnStateTransfer()</span>
+<span class="lineNum">     551 </span>            : {
+<span class="lineNum">     552 </span><span class="lineCov">         69 :     mMonitor.AssertCurrentThreadIn();</span>
+<span class="lineNum">     553 </span>            : 
+<span class="lineNum">     554 </span><span class="lineCov">        138 :     AUTO_PROFILER_LABEL(&quot;nsInputStreamPump::OnStateTransfer&quot;, NETWORK);</span>
+<span class="lineNum">     555 </span>            : 
+<span class="lineNum">     556 </span><span class="lineCov">         69 :     LOG((&quot;  OnStateTransfer [this=%p]\n&quot;, this));</span>
+<span class="lineNum">     557 </span>            : 
+<span class="lineNum">     558 </span>            :     // if canceled, go directly to STATE_STOP...
+<span class="lineNum">     559 </span><span class="lineCov">         69 :     if (NS_FAILED(mStatus))</span>
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 :         return STATE_STOP;</span>
+<span class="lineNum">     561 </span>            : 
+<span class="lineNum">     562 </span><span class="lineCov">         69 :     nsresult rv = CreateBufferedStreamIfNeeded();</span>
+<span class="lineNum">     563 </span><span class="lineCov">         69 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :       return STATE_STOP;</span>
+<span class="lineNum">     565 </span>            :     }
+<span class="lineNum">     566 </span>            : 
+<span class="lineNum">     567 </span>            :     uint64_t avail;
+<span class="lineNum">     568 </span><span class="lineCov">         69 :     rv = mBufferedStream-&gt;Available(&amp;avail);</span>
+<span class="lineNum">     569 </span><span class="lineCov">         69 :     LOG((&quot;  Available returned [stream=%p rv=%&quot; PRIx32 &quot; avail=%&quot; PRIu64 &quot;]\n&quot;, mAsyncStream.get(),</span>
+<span class="lineNum">     570 </span>            :          static_cast&lt;uint32_t&gt;(rv), avail));
+<span class="lineNum">     571 </span>            : 
+<span class="lineNum">     572 </span><span class="lineCov">         69 :     if (rv == NS_BASE_STREAM_CLOSED) {</span>
+<span class="lineNum">     573 </span><span class="lineCov">          1 :         rv = NS_OK;</span>
+<span class="lineNum">     574 </span><span class="lineCov">          1 :         avail = 0;</span>
+<span class="lineNum">     575 </span>            :     }
+<span class="lineNum">     576 </span><span class="lineCov">         68 :     else if (NS_SUCCEEDED(rv) &amp;&amp; avail) {</span>
+<span class="lineNum">     577 </span>            :         // figure out how much data to report (XXX detect overflow??)
+<span class="lineNum">     578 </span><span class="lineCov">         68 :         if (avail &gt; mStreamLength - mStreamOffset)</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :             avail = mStreamLength - mStreamOffset;</span>
+<span class="lineNum">     580 </span>            : 
+<span class="lineNum">     581 </span><span class="lineCov">         68 :         if (avail) {</span>
+<span class="lineNum">     582 </span>            :             // we used to limit avail to 16K - we were afraid some ODA handlers
+<span class="lineNum">     583 </span>            :             // might assume they wouldn't get more than 16K at once
+<span class="lineNum">     584 </span>            :             // we're removing that limit since it speeds up local file access.
+<span class="lineNum">     585 </span>            :             // Now there's an implicit 64K limit of 4 16K segments
+<span class="lineNum">     586 </span>            :             // NOTE: ok, so the story is as follows.  OnDataAvailable impls
+<span class="lineNum">     587 </span>            :             //       are by contract supposed to consume exactly |avail| bytes.
+<span class="lineNum">     588 </span>            :             //       however, many do not... mailnews... stream converters...
+<span class="lineNum">     589 </span>            :             //       cough, cough.  the input stream pump is fairly tolerant
+<span class="lineNum">     590 </span>            :             //       in this regard; however, if an ODA does not consume any
+<span class="lineNum">     591 </span>            :             //       data from the stream, then we could potentially end up in
+<span class="lineNum">     592 </span>            :             //       an infinite loop.  we do our best here to try to catch
+<span class="lineNum">     593 </span>            :             //       such an error.  (see bug 189672)
+<span class="lineNum">     594 </span>            : 
+<span class="lineNum">     595 </span>            :             // in most cases this QI will succeed (mAsyncStream is almost always
+<span class="lineNum">     596 </span>            :             // a nsPipeInputStream, which implements nsISeekableStream::Tell).
+<span class="lineNum">     597 </span>            :             int64_t offsetBefore;
+<span class="lineNum">     598 </span><span class="lineCov">        136 :             nsCOMPtr&lt;nsISeekableStream&gt; seekable = do_QueryInterface(mBufferedStream);</span>
+<span class="lineNum">     599 </span><span class="lineCov">         68 :             if (seekable &amp;&amp; NS_FAILED(seekable-&gt;Tell(&amp;offsetBefore))) {</span>
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :                 NS_NOTREACHED(&quot;Tell failed on readable stream&quot;);</span>
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :                 offsetBefore = 0;</span>
+<span class="lineNum">     602 </span>            :             }
+<span class="lineNum">     603 </span>            : 
+<span class="lineNum">     604 </span>            :             uint32_t odaAvail =
+<span class="lineNum">     605 </span><span class="lineCov">         68 :                 avail &gt; UINT32_MAX ?</span>
+<span class="lineNum">     606 </span><span class="lineCov">         68 :                 UINT32_MAX : uint32_t(avail);</span>
+<span class="lineNum">     607 </span>            : 
+<span class="lineNum">     608 </span><span class="lineCov">         68 :             LOG((&quot;  calling OnDataAvailable [offset=%&quot; PRIu64 &quot; count=%&quot; PRIu64 &quot;(%u)]\n&quot;,</span>
+<span class="lineNum">     609 </span>            :                 mStreamOffset, avail, odaAvail));
+<span class="lineNum">     610 </span>            : 
+<span class="lineNum">     611 </span>            :             {
+<span class="lineNum">     612 </span>            :                 // Note: Must exit monitor for call to OnStartRequest to avoid
+<span class="lineNum">     613 </span>            :                 // deadlocks when calls to RetargetDeliveryTo for multiple
+<span class="lineNum">     614 </span>            :                 // nsInputStreamPumps are needed (e.g. nsHttpChannel).
+<span class="lineNum">     615 </span><span class="lineCov">         68 :                 mMonitor.Exit();</span>
+<span class="lineNum">     616 </span><span class="lineCov">        136 :                 rv = mListener-&gt;OnDataAvailable(this, mListenerContext,</span>
+<span class="lineNum">     617 </span>            :                                                 mBufferedStream, mStreamOffset,
+<span class="lineNum">     618 </span><span class="lineCov">        136 :                                                 odaAvail);</span>
+<span class="lineNum">     619 </span><span class="lineCov">         68 :                 mMonitor.Enter();</span>
+<span class="lineNum">     620 </span>            :             }
+<span class="lineNum">     621 </span>            : 
+<span class="lineNum">     622 </span>            :             // don't enter this code if ODA failed or called Cancel
+<span class="lineNum">     623 </span><span class="lineCov">         68 :             if (NS_SUCCEEDED(rv) &amp;&amp; NS_SUCCEEDED(mStatus)) {</span>
+<span class="lineNum">     624 </span>            :                 // test to see if this ODA failed to consume data
+<span class="lineNum">     625 </span><span class="lineCov">         67 :                 if (seekable) {</span>
+<span class="lineNum">     626 </span>            :                     // NOTE: if Tell fails, which can happen if the stream is
+<span class="lineNum">     627 </span>            :                     // now closed, then we assume that everything was read.
+<span class="lineNum">     628 </span>            :                     int64_t offsetAfter;
+<span class="lineNum">     629 </span><span class="lineCov">         67 :                     if (NS_FAILED(seekable-&gt;Tell(&amp;offsetAfter)))</span>
+<span class="lineNum">     630 </span><span class="lineCov">         65 :                         offsetAfter = offsetBefore + odaAvail;</span>
+<span class="lineNum">     631 </span><span class="lineCov">         67 :                     if (offsetAfter &gt; offsetBefore)</span>
+<span class="lineNum">     632 </span><span class="lineCov">         67 :                         mStreamOffset += (offsetAfter - offsetBefore);</span>
+<span class="lineNum">     633 </span><span class="lineNoCov">          0 :                     else if (mSuspendCount == 0) {</span>
+<span class="lineNum">     634 </span>            :                         //
+<span class="lineNum">     635 </span>            :                         // possible infinite loop if we continue pumping data!
+<span class="lineNum">     636 </span>            :                         //
+<span class="lineNum">     637 </span>            :                         // NOTE: although not allowed by nsIStreamListener, we
+<span class="lineNum">     638 </span>            :                         // will allow the ODA impl to Suspend the pump.  IMAP
+<span class="lineNum">     639 </span>            :                         // does this :-(
+<span class="lineNum">     640 </span>            :                         //
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :                         NS_ERROR(&quot;OnDataAvailable implementation consumed no data&quot;);</span>
+<span class="lineNum">     642 </span><span class="lineNoCov">          0 :                         mStatus = NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     643 </span>            :                     }
+<span class="lineNum">     644 </span>            :                 }
+<span class="lineNum">     645 </span>            :                 else
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 :                     mStreamOffset += odaAvail; // assume ODA behaved well</span>
+<span class="lineNum">     647 </span>            :             }
+<span class="lineNum">     648 </span>            :         }
+<span class="lineNum">     649 </span>            :     }
+<span class="lineNum">     650 </span>            : 
+<span class="lineNum">     651 </span>            :     // an error returned from Available or OnDataAvailable should cause us to
+<span class="lineNum">     652 </span>            :     // abort; however, we must not stomp on mStatus if already canceled.
+<span class="lineNum">     653 </span>            : 
+<span class="lineNum">     654 </span><span class="lineCov">         69 :     if (NS_SUCCEEDED(mStatus)) {</span>
+<span class="lineNum">     655 </span><span class="lineCov">         69 :         if (NS_FAILED(rv))</span>
+<span class="lineNum">     656 </span><span class="lineCov">          1 :             mStatus = rv;</span>
+<span class="lineNum">     657 </span><span class="lineCov">         68 :         else if (avail) {</span>
+<span class="lineNum">     658 </span>            :             // if stream is now closed, advance to STATE_STOP right away.
+<span class="lineNum">     659 </span>            :             // Available may return 0 bytes available at the moment; that
+<span class="lineNum">     660 </span>            :             // would not mean that we are done.
+<span class="lineNum">     661 </span>            :             // XXX async streams should have a GetStatus method!
+<span class="lineNum">     662 </span><span class="lineCov">         67 :             rv = mBufferedStream-&gt;Available(&amp;avail);</span>
+<span class="lineNum">     663 </span><span class="lineCov">         67 :             if (NS_SUCCEEDED(rv))</span>
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :                 return STATE_TRANSFER;</span>
+<span class="lineNum">     665 </span><span class="lineCov">         67 :             if (rv != NS_BASE_STREAM_CLOSED)</span>
+<span class="lineNum">     666 </span><span class="lineNoCov">          0 :                 mStatus = rv;</span>
+<span class="lineNum">     667 </span>            :         }
+<span class="lineNum">     668 </span>            :     }
+<span class="lineNum">     669 </span><span class="lineCov">         69 :     return STATE_STOP;</span>
+<span class="lineNum">     670 </span>            : }
+<a name="671"><span class="lineNum">     671 </span>            : </a>
+<span class="lineNum">     672 </span>            : nsresult
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 : nsInputStreamPump::CallOnStateStop()</span>
+<span class="lineNum">     674 </span>            : {
+<span class="lineNum">     675 </span><span class="lineNoCov">          0 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     676 </span>            : 
+<span class="lineNum">     677 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(NS_IsMainThread(),</span>
+<span class="lineNum">     678 </span>            :                &quot;CallOnStateStop should only be called on the main thread.&quot;);
+<span class="lineNum">     679 </span>            : 
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 :     mState = OnStateStop();</span>
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     682 </span>            : }
+<a name="683"><span class="lineNum">     683 </span>            : </a>
+<span class="lineNum">     684 </span>            : uint32_t
+<span class="lineNum">     685 </span><span class="lineCov">         73 : nsInputStreamPump::OnStateStop()</span>
+<span class="lineNum">     686 </span>            : {
+<span class="lineNum">     687 </span><span class="lineCov">         73 :     mMonitor.AssertCurrentThreadIn();</span>
+<span class="lineNum">     688 </span>            : 
+<span class="lineNum">     689 </span><span class="lineCov">         73 :     if (!NS_IsMainThread()) {</span>
+<span class="lineNum">     690 </span>            :         // Hopefully temporary hack: OnStateStop should only run on the main
+<span class="lineNum">     691 </span>            :         // thread, but we're seeing some rare off-main-thread calls. For now
+<span class="lineNum">     692 </span>            :         // just redispatch to the main thread in release builds, and crash in
+<span class="lineNum">     693 </span>            :         // debug builds.
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(NS_IsMainThread(),</span>
+<span class="lineNum">     695 </span>            :                    &quot;OnStateStop should only be called on the main thread.&quot;);
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :         nsresult rv = NS_DispatchToMainThread(</span>
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :           NewRunnableMethod(&quot;nsInputStreamPump::CallOnStateStop&quot;,</span>
+<span class="lineNum">     698 </span>            :                             this,
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :                             &amp;nsInputStreamPump::CallOnStateStop));</span>
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :         NS_ENSURE_SUCCESS(rv, STATE_IDLE);</span>
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :         return STATE_IDLE;</span>
+<span class="lineNum">     702 </span>            :     }
+<span class="lineNum">     703 </span>            : 
+<span class="lineNum">     704 </span><span class="lineCov">        146 :     AUTO_PROFILER_LABEL(&quot;nsInputStreamPump::OnStateStop&quot;, NETWORK);</span>
+<span class="lineNum">     705 </span>            : 
+<span class="lineNum">     706 </span><span class="lineCov">         73 :     LOG((&quot;  OnStateStop [this=%p status=%&quot; PRIx32 &quot;]\n&quot;, this, static_cast&lt;uint32_t&gt;(mStatus)));</span>
+<span class="lineNum">     707 </span>            : 
+<span class="lineNum">     708 </span>            :     // if an error occurred, we must be sure to pass the error onto the async
+<span class="lineNum">     709 </span>            :     // stream.  in some cases, this is redundant, but since close is idempotent,
+<span class="lineNum">     710 </span>            :     // this is OK.  otherwise, be sure to honor the &quot;close-when-done&quot; option.
+<span class="lineNum">     711 </span>            : 
+<span class="lineNum">     712 </span><span class="lineCov">         73 :     if (!mAsyncStream || !mListener) {</span>
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(mAsyncStream, &quot;null mAsyncStream: OnStateStop called twice?&quot;);</span>
+<span class="lineNum">     714 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(mListener, &quot;null mListener: OnStateStop called twice?&quot;);</span>
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :         return STATE_IDLE;</span>
+<span class="lineNum">     716 </span>            :     }
+<span class="lineNum">     717 </span>            : 
+<span class="lineNum">     718 </span><span class="lineCov">         73 :     if (NS_FAILED(mStatus))</span>
+<span class="lineNum">     719 </span><span class="lineCov">          5 :         mAsyncStream-&gt;CloseWithStatus(mStatus);</span>
+<span class="lineNum">     720 </span><span class="lineCov">         68 :     else if (mCloseWhenDone)</span>
+<span class="lineNum">     721 </span><span class="lineCov">         65 :         mAsyncStream-&gt;Close();</span>
+<span class="lineNum">     722 </span>            : 
+<span class="lineNum">     723 </span><span class="lineCov">         73 :     mAsyncStream = nullptr;</span>
+<span class="lineNum">     724 </span><span class="lineCov">         73 :     mBufferedStream = nullptr;</span>
+<span class="lineNum">     725 </span><span class="lineCov">         73 :     mTargetThread = nullptr;</span>
+<span class="lineNum">     726 </span><span class="lineCov">         73 :     mIsPending = false;</span>
+<span class="lineNum">     727 </span>            :     {
+<span class="lineNum">     728 </span>            :         // Note: Must exit monitor for call to OnStartRequest to avoid
+<span class="lineNum">     729 </span>            :         // deadlocks when calls to RetargetDeliveryTo for multiple
+<span class="lineNum">     730 </span>            :         // nsInputStreamPumps are needed (e.g. nsHttpChannel).
+<span class="lineNum">     731 </span><span class="lineCov">         73 :         mMonitor.Exit();</span>
+<span class="lineNum">     732 </span><span class="lineCov">         73 :         mListener-&gt;OnStopRequest(this, mListenerContext, mStatus);</span>
+<span class="lineNum">     733 </span><span class="lineCov">         73 :         mMonitor.Enter();</span>
+<span class="lineNum">     734 </span>            :     }
+<span class="lineNum">     735 </span><span class="lineCov">         73 :     mListener = nullptr;</span>
+<span class="lineNum">     736 </span><span class="lineCov">         73 :     mListenerContext = nullptr;</span>
+<span class="lineNum">     737 </span>            : 
+<span class="lineNum">     738 </span><span class="lineCov">         73 :     if (mLoadGroup)</span>
+<span class="lineNum">     739 </span><span class="lineNoCov">          0 :         mLoadGroup-&gt;RemoveRequest(this, nullptr, mStatus);</span>
+<span class="lineNum">     740 </span>            : 
+<span class="lineNum">     741 </span><span class="lineCov">         73 :     return STATE_IDLE;</span>
+<span class="lineNum">     742 </span>            : }
+<a name="743"><span class="lineNum">     743 </span>            : </a>
+<span class="lineNum">     744 </span>            : nsresult
+<span class="lineNum">     745 </span><span class="lineCov">         75 : nsInputStreamPump::CreateBufferedStreamIfNeeded()</span>
+<span class="lineNum">     746 </span>            : {
+<span class="lineNum">     747 </span><span class="lineCov">         75 :   if (mBufferedStream) {</span>
+<span class="lineNum">     748 </span><span class="lineCov">          3 :     return NS_OK;</span>
+<span class="lineNum">     749 </span>            :   }
+<span class="lineNum">     750 </span>            : 
+<span class="lineNum">     751 </span>            :   // ReadSegments is not available for any nsIAsyncInputStream. In order to use
+<span class="lineNum">     752 </span>            :   // it, we wrap a nsIBufferedInputStream around it, if needed.
+<span class="lineNum">     753 </span>            : 
+<span class="lineNum">     754 </span><span class="lineCov">         72 :   if (NS_InputStreamIsBuffered(mAsyncStream)) {</span>
+<span class="lineNum">     755 </span><span class="lineCov">         72 :     mBufferedStream = mAsyncStream;</span>
+<span class="lineNum">     756 </span><span class="lineCov">         72 :     return NS_OK;</span>
+<span class="lineNum">     757 </span>            :   }
+<span class="lineNum">     758 </span>            : 
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 :   nsresult rv = NS_NewBufferedInputStream(getter_AddRefs(mBufferedStream),</span>
+<span class="lineNum">     760 </span><span class="lineNoCov">          0 :                                           mAsyncStream, 4096);</span>
+<span class="lineNum">     761 </span><span class="lineNoCov">          0 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     762 </span>            : 
+<span class="lineNum">     763 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     764 </span>            : }
+<span class="lineNum">     765 </span>            : 
+<span class="lineNum">     766 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">     767 </span>            : // nsIThreadRetargetableRequest
+<span class="lineNum">     768 </span>            : //-----------------------------------------------------------------------------
+<a name="769"><span class="lineNum">     769 </span>            : </a>
+<span class="lineNum">     770 </span>            : NS_IMETHODIMP
+<span class="lineNum">     771 </span><span class="lineCov">          4 : nsInputStreamPump::RetargetDeliveryTo(nsIEventTarget* aNewTarget)</span>
+<span class="lineNum">     772 </span>            : {
+<span class="lineNum">     773 </span><span class="lineCov">          8 :     ReentrantMonitorAutoEnter mon(mMonitor);</span>
+<span class="lineNum">     774 </span>            : 
+<span class="lineNum">     775 </span><span class="lineCov">          4 :     NS_ENSURE_ARG(aNewTarget);</span>
+<span class="lineNum">     776 </span><span class="lineCov">          4 :     NS_ENSURE_TRUE(mState == STATE_START || mState == STATE_TRANSFER,</span>
+<span class="lineNum">     777 </span>            :                    NS_ERROR_UNEXPECTED);
+<span class="lineNum">     778 </span>            : 
+<span class="lineNum">     779 </span>            :     // If canceled, do not retarget. Return with canceled status.
+<span class="lineNum">     780 </span><span class="lineCov">          4 :     if (NS_FAILED(mStatus)) {</span>
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 :         return mStatus;</span>
+<span class="lineNum">     782 </span>            :     }
+<span class="lineNum">     783 </span>            : 
+<span class="lineNum">     784 </span><span class="lineCov">          4 :     if (aNewTarget == mTargetThread) {</span>
+<span class="lineNum">     785 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;Retargeting delivery to same thread&quot;);</span>
+<span class="lineNum">     786 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     787 </span>            :     }
+<span class="lineNum">     788 </span>            : 
+<span class="lineNum">     789 </span>            :     // Ensure that |mListener| and any subsequent listeners can be retargeted
+<span class="lineNum">     790 </span>            :     // to another thread.
+<span class="lineNum">     791 </span><span class="lineCov">          4 :     nsresult rv = NS_OK;</span>
+<span class="lineNum">     792 </span>            :     nsCOMPtr&lt;nsIThreadRetargetableStreamListener&gt; retargetableListener =
+<span class="lineNum">     793 </span><span class="lineCov">          8 :         do_QueryInterface(mListener, &amp;rv);</span>
+<span class="lineNum">     794 </span><span class="lineCov">          4 :     if (NS_SUCCEEDED(rv) &amp;&amp; retargetableListener) {</span>
+<span class="lineNum">     795 </span><span class="lineCov">          4 :         rv = retargetableListener-&gt;CheckListenerChain();</span>
+<span class="lineNum">     796 </span><span class="lineCov">          4 :         if (NS_SUCCEEDED(rv)) {</span>
+<span class="lineNum">     797 </span><span class="lineCov">          4 :             mTargetThread = aNewTarget;</span>
+<span class="lineNum">     798 </span><span class="lineCov">          4 :             mRetargeting = true;</span>
+<span class="lineNum">     799 </span>            :         }
+<span class="lineNum">     800 </span>            :     }
+<span class="lineNum">     801 </span><span class="lineCov">          4 :     LOG((&quot;nsInputStreamPump::RetargetDeliveryTo [this=%p aNewTarget=%p] &quot;</span>
+<span class="lineNum">     802 </span>            :          &quot;%s listener [%p] rv[%&quot; PRIx32 &quot;]&quot;,
+<span class="lineNum">     803 </span>            :          this, aNewTarget, (mTargetThread == aNewTarget ? &quot;success&quot; : &quot;failure&quot;),
+<span class="lineNum">     804 </span>            :          (nsIStreamListener*)mListener, static_cast&lt;uint32_t&gt;(rv)));
+<span class="lineNum">     805 </span><span class="lineCov">          4 :     return rv;</span>
+<span class="lineNum">     806 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

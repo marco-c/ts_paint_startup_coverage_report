@@ -1,0 +1,722 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - netwerk/base/nsStreamTransportService.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">netwerk/base</a> - nsStreamTransportService.cpp<span style="font-size: 80%;"> (source / <a href="nsStreamTransportService.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">68</td>
+            <td class="headerCovTableEntry">239</td>
+            <td class="headerCovTableEntryLo">28.5 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">15</td>
+            <td class="headerCovTableEntry">49</td>
+            <td class="headerCovTableEntryLo">30.6 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public</a>
+<span class="lineNum">       2 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       3 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       4 </span>            : 
+<span class="lineNum">       5 </span>            : #include &quot;nsStreamTransportService.h&quot;
+<span class="lineNum">       6 </span>            : #include &quot;nsXPCOMCIDInternal.h&quot;
+<span class="lineNum">       7 </span>            : #include &quot;nsNetSegmentUtils.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;nsTransportUtils.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;nsStreamUtils.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;nsError.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;nsNetCID.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &quot;nsIAsyncInputStream.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nsIAsyncOutputStream.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsISeekableStream.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;nsIPipe.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;nsITransport.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;nsIObserverService.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;nsIThreadPool.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;mozilla/Services.h&quot;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : namespace mozilla {
+<span class="lineNum">      23 </span>            : namespace net {
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">      26 </span>            : // nsInputStreamTransport
+<span class="lineNum">      27 </span>            : //
+<span class="lineNum">      28 </span>            : // Implements nsIInputStream as a wrapper around the real input stream.  This
+<span class="lineNum">      29 </span>            : // allows the transport to support seeking, range-limiting, progress reporting,
+<span class="lineNum">      30 </span>            : // and close-when-done semantics while utilizing NS_AsyncCopy.
+<span class="lineNum">      31 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : class nsInputStreamTransport : public nsITransport
+<span class="lineNum">      34 </span>            :                              , public nsIInputStream
+<span class="lineNum">      35 </span>            : {
+<span class="lineNum">      36 </span>            : public:
+<span class="lineNum">      37 </span>            :     NS_DECL_THREADSAFE_ISUPPORTS
+<span class="lineNum">      38 </span>            :     NS_DECL_NSITRANSPORT
+<a name="39"><span class="lineNum">      39 </span>            :     NS_DECL_NSIINPUTSTREAM</a>
+<span class="lineNum">      40 </span>            : 
+<span class="lineNum">      41 </span><span class="lineCov">         66 :     nsInputStreamTransport(nsIInputStream *source,</span>
+<span class="lineNum">      42 </span>            :                            uint64_t offset,
+<span class="lineNum">      43 </span>            :                            uint64_t limit,
+<span class="lineNum">      44 </span>            :                            bool closeWhenDone)
+<span class="lineNum">      45 </span><span class="lineCov">         66 :         : mSource(source)</span>
+<span class="lineNum">      46 </span>            :         , mOffset(offset)
+<span class="lineNum">      47 </span>            :         , mLimit(limit)
+<span class="lineNum">      48 </span>            :         , mCloseWhenDone(closeWhenDone)
+<span class="lineNum">      49 </span>            :         , mFirstTime(true)
+<span class="lineNum">      50 </span><span class="lineCov">         66 :         , mInProgress(false)</span>
+<span class="lineNum">      51 </span>            :     {
+<span class="lineNum">      52 </span><span class="lineCov">         66 :     }</span>
+<a name="53"><span class="lineNum">      53 </span>            : </a>
+<span class="lineNum">      54 </span>            : private:
+<span class="lineNum">      55 </span><span class="lineCov">        132 :     virtual ~nsInputStreamTransport()</span>
+<span class="lineNum">      56 </span><span class="lineCov">         66 :     {</span>
+<span class="lineNum">      57 </span><span class="lineCov">        198 :     }</span>
+<span class="lineNum">      58 </span>            : 
+<span class="lineNum">      59 </span>            :     nsCOMPtr&lt;nsIAsyncInputStream&gt;   mPipeIn;
+<span class="lineNum">      60 </span>            : 
+<span class="lineNum">      61 </span>            :     // while the copy is active, these members may only be accessed from the
+<span class="lineNum">      62 </span>            :     // nsIInputStream implementation.
+<span class="lineNum">      63 </span>            :     nsCOMPtr&lt;nsITransportEventSink&gt; mEventSink;
+<span class="lineNum">      64 </span>            :     nsCOMPtr&lt;nsIInputStream&gt;        mSource;
+<span class="lineNum">      65 </span>            :     int64_t                         mOffset;
+<span class="lineNum">      66 </span>            :     int64_t                         mLimit;
+<span class="lineNum">      67 </span>            :     bool                            mCloseWhenDone;
+<span class="lineNum">      68 </span>            :     bool                            mFirstTime;
+<span class="lineNum">      69 </span>            : 
+<span class="lineNum">      70 </span>            :     // this variable serves as a lock to prevent the state of the transport
+<span class="lineNum">      71 </span>            :     // from being modified once the copy is in progress.
+<span class="lineNum">      72 </span>            :     bool                            mInProgress;
+<a name="73"><span class="lineNum">      73 </span>            : };</a>
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span><span class="lineCov">        726 : NS_IMPL_ISUPPORTS(nsInputStreamTransport,</span>
+<span class="lineNum">      76 </span>            :                   nsITransport,
+<span class="lineNum">      77 </span>            :                   nsIInputStream)
+<span class="lineNum">      78 </span>            : 
+<span class="lineNum">      79 </span>            : /** nsITransport **/
+<a name="80"><span class="lineNum">      80 </span>            : </a>
+<span class="lineNum">      81 </span>            : NS_IMETHODIMP
+<span class="lineNum">      82 </span><span class="lineCov">         66 : nsInputStreamTransport::OpenInputStream(uint32_t flags,</span>
+<span class="lineNum">      83 </span>            :                                         uint32_t segsize,
+<span class="lineNum">      84 </span>            :                                         uint32_t segcount,
+<span class="lineNum">      85 </span>            :                                         nsIInputStream **result)
+<span class="lineNum">      86 </span>            : {
+<span class="lineNum">      87 </span><span class="lineCov">         66 :     NS_ENSURE_TRUE(!mInProgress, NS_ERROR_IN_PROGRESS);</span>
+<span class="lineNum">      88 </span>            : 
+<span class="lineNum">      89 </span>            :     nsresult rv;
+<span class="lineNum">      90 </span>            :     nsCOMPtr&lt;nsIEventTarget&gt; target =
+<span class="lineNum">      91 </span><span class="lineCov">        132 :             do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID, &amp;rv);</span>
+<span class="lineNum">      92 </span><span class="lineCov">         66 :     if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span>            :     // XXX if the caller requests an unbuffered stream, then perhaps
+<span class="lineNum">      95 </span>            :     //     we'd want to simply return mSource; however, then we would
+<span class="lineNum">      96 </span>            :     //     not be reading mSource on a background thread.  is this ok?
+<span class="lineNum">      97 </span>            : 
+<span class="lineNum">      98 </span><span class="lineCov">         66 :     bool nonblocking = !(flags &amp; OPEN_BLOCKING);</span>
+<span class="lineNum">      99 </span>            : 
+<span class="lineNum">     100 </span><span class="lineCov">         66 :     net_ResolveSegmentParams(segsize, segcount);</span>
+<span class="lineNum">     101 </span>            : 
+<span class="lineNum">     102 </span><span class="lineCov">        132 :     nsCOMPtr&lt;nsIAsyncOutputStream&gt; pipeOut;</span>
+<span class="lineNum">     103 </span><span class="lineCov">        132 :     rv = NS_NewPipe2(getter_AddRefs(mPipeIn),</span>
+<span class="lineNum">     104 </span><span class="lineCov">        132 :                      getter_AddRefs(pipeOut),</span>
+<span class="lineNum">     105 </span>            :                      nonblocking, true,
+<span class="lineNum">     106 </span>            :                      segsize, segcount);
+<span class="lineNum">     107 </span><span class="lineCov">         66 :     if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span><span class="lineCov">         66 :     mInProgress = true;</span>
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span>            :     // startup async copy process...
+<span class="lineNum">     112 </span><span class="lineCov">        132 :     rv = NS_AsyncCopy(this, pipeOut, target,</span>
+<span class="lineNum">     113 </span><span class="lineCov">         66 :                       NS_ASYNCCOPY_VIA_WRITESEGMENTS, segsize);</span>
+<span class="lineNum">     114 </span><span class="lineCov">         66 :     if (NS_SUCCEEDED(rv))</span>
+<span class="lineNum">     115 </span><span class="lineCov">         66 :         NS_ADDREF(*result = mPipeIn);</span>
+<span class="lineNum">     116 </span>            : 
+<span class="lineNum">     117 </span><span class="lineCov">         66 :     return rv;</span>
+<span class="lineNum">     118 </span>            : }
+<a name="119"><span class="lineNum">     119 </span>            : </a>
+<span class="lineNum">     120 </span>            : NS_IMETHODIMP
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 : nsInputStreamTransport::OpenOutputStream(uint32_t flags,</span>
+<span class="lineNum">     122 </span>            :                                          uint32_t segsize,
+<span class="lineNum">     123 </span>            :                                          uint32_t segcount,
+<span class="lineNum">     124 </span>            :                                          nsIOutputStream **result)
+<span class="lineNum">     125 </span>            : {
+<span class="lineNum">     126 </span>            :     // this transport only supports reading!
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :     NS_NOTREACHED(&quot;nsInputStreamTransport::OpenOutputStream&quot;);</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :     return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     129 </span>            : }
+<a name="130"><span class="lineNum">     130 </span>            : </a>
+<span class="lineNum">     131 </span>            : NS_IMETHODIMP
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 : nsInputStreamTransport::Close(nsresult reason)</span>
+<span class="lineNum">     133 </span>            : {
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :     if (NS_SUCCEEDED(reason))</span>
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :         reason = NS_BASE_STREAM_CLOSED;</span>
+<span class="lineNum">     136 </span>            : 
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :     return mPipeIn-&gt;CloseWithStatus(reason);</span>
+<span class="lineNum">     138 </span>            : }
+<a name="139"><span class="lineNum">     139 </span>            : </a>
+<span class="lineNum">     140 </span>            : NS_IMETHODIMP
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 : nsInputStreamTransport::SetEventSink(nsITransportEventSink *sink,</span>
+<span class="lineNum">     142 </span>            :                                      nsIEventTarget *target)
+<span class="lineNum">     143 </span>            : {
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :     NS_ENSURE_TRUE(!mInProgress, NS_ERROR_IN_PROGRESS);</span>
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :     if (target)</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :         return net_NewTransportEventSinkProxy(getter_AddRefs(mEventSink),</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :                                               sink, target);</span>
+<span class="lineNum">     149 </span>            : 
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :     mEventSink = sink;</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     152 </span>            : }
+<span class="lineNum">     153 </span>            : 
+<span class="lineNum">     154 </span>            : /** nsIInputStream **/
+<a name="155"><span class="lineNum">     155 </span>            : </a>
+<span class="lineNum">     156 </span>            : NS_IMETHODIMP
+<span class="lineNum">     157 </span><span class="lineCov">         66 : nsInputStreamTransport::Close()</span>
+<span class="lineNum">     158 </span>            : {
+<span class="lineNum">     159 </span><span class="lineCov">         66 :     if (mCloseWhenDone)</span>
+<span class="lineNum">     160 </span><span class="lineCov">         66 :         mSource-&gt;Close();</span>
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span>            :     // make additional reads return early...
+<span class="lineNum">     163 </span><span class="lineCov">         66 :     mOffset = mLimit = 0;</span>
+<span class="lineNum">     164 </span><span class="lineCov">         66 :     return NS_OK;</span>
+<span class="lineNum">     165 </span>            : }
+<a name="166"><span class="lineNum">     166 </span>            : </a>
+<span class="lineNum">     167 </span>            : NS_IMETHODIMP
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 : nsInputStreamTransport::Available(uint64_t *result)</span>
+<span class="lineNum">     169 </span>            : {
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_IMPLEMENTED;</span>
+<span class="lineNum">     171 </span>            : }
+<a name="172"><span class="lineNum">     172 </span>            : </a>
+<span class="lineNum">     173 </span>            : NS_IMETHODIMP
+<span class="lineNum">     174 </span><span class="lineCov">        144 : nsInputStreamTransport::Read(char *buf, uint32_t count, uint32_t *result)</span>
+<span class="lineNum">     175 </span>            : {
+<span class="lineNum">     176 </span><span class="lineCov">        144 :     if (mFirstTime) {</span>
+<span class="lineNum">     177 </span><span class="lineCov">         66 :         mFirstTime = false;</span>
+<span class="lineNum">     178 </span><span class="lineCov">         66 :         if (mOffset != 0) {</span>
+<span class="lineNum">     179 </span>            :             // read from current position if offset equal to max
+<span class="lineNum">     180 </span><span class="lineCov">         66 :             if (mOffset != -1) {</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :                 nsCOMPtr&lt;nsISeekableStream&gt; seekable = do_QueryInterface(mSource);</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :                 if (seekable)</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :                     seekable-&gt;Seek(nsISeekableStream::NS_SEEK_SET, mOffset);</span>
+<span class="lineNum">     184 </span>            :             }
+<span class="lineNum">     185 </span>            :             // reset offset to zero so we can use it to enforce limit
+<span class="lineNum">     186 </span><span class="lineCov">         66 :             mOffset = 0;</span>
+<span class="lineNum">     187 </span>            :         }
+<span class="lineNum">     188 </span>            :     }
+<span class="lineNum">     189 </span>            : 
+<span class="lineNum">     190 </span>            :     // limit amount read
+<span class="lineNum">     191 </span><span class="lineCov">        144 :     uint64_t max = count;</span>
+<span class="lineNum">     192 </span><span class="lineCov">        144 :     if (mLimit != -1) {</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :         max = mLimit - mOffset;</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :         if (max == 0) {</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :             *result = 0;</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :             return NS_OK;</span>
+<span class="lineNum">     197 </span>            :         }
+<span class="lineNum">     198 </span>            :     }
+<span class="lineNum">     199 </span>            : 
+<span class="lineNum">     200 </span><span class="lineCov">        144 :     if (count &gt; max)</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :         count = static_cast&lt;uint32_t&gt;(max);</span>
+<span class="lineNum">     202 </span>            : 
+<span class="lineNum">     203 </span><span class="lineCov">        144 :     nsresult rv = mSource-&gt;Read(buf, count, result);</span>
+<span class="lineNum">     204 </span>            : 
+<span class="lineNum">     205 </span><span class="lineCov">        144 :     if (NS_SUCCEEDED(rv)) {</span>
+<span class="lineNum">     206 </span><span class="lineCov">        144 :         mOffset += *result;</span>
+<span class="lineNum">     207 </span><span class="lineCov">        144 :         if (mEventSink)</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :             mEventSink-&gt;OnTransportStatus(this, NS_NET_STATUS_READING, mOffset,</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :                                           mLimit);</span>
+<span class="lineNum">     210 </span>            :     }
+<span class="lineNum">     211 </span><span class="lineCov">        144 :     return rv;</span>
+<span class="lineNum">     212 </span>            : }
+<a name="213"><span class="lineNum">     213 </span>            : </a>
+<span class="lineNum">     214 </span>            : NS_IMETHODIMP
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 : nsInputStreamTransport::ReadSegments(nsWriteSegmentFun writer, void *closure,</span>
+<span class="lineNum">     216 </span>            :                                      uint32_t count, uint32_t *result)
+<span class="lineNum">     217 </span>            : {
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_IMPLEMENTED;</span>
+<span class="lineNum">     219 </span>            : }
+<a name="220"><span class="lineNum">     220 </span>            : </a>
+<span class="lineNum">     221 </span>            : NS_IMETHODIMP
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 : nsInputStreamTransport::IsNonBlocking(bool *result)</span>
+<span class="lineNum">     223 </span>            : {
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     *result = false;</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     226 </span>            : }
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">     229 </span>            : // nsOutputStreamTransport
+<span class="lineNum">     230 </span>            : //
+<span class="lineNum">     231 </span>            : // Implements nsIOutputStream as a wrapper around the real input stream.  This
+<span class="lineNum">     232 </span>            : // allows the transport to support seeking, range-limiting, progress reporting,
+<span class="lineNum">     233 </span>            : // and close-when-done semantics while utilizing NS_AsyncCopy.
+<span class="lineNum">     234 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">     235 </span>            : 
+<span class="lineNum">     236 </span>            : class nsOutputStreamTransport : public nsITransport
+<span class="lineNum">     237 </span>            :                               , public nsIOutputStream
+<span class="lineNum">     238 </span>            : {
+<span class="lineNum">     239 </span>            : public:
+<span class="lineNum">     240 </span>            :     NS_DECL_THREADSAFE_ISUPPORTS
+<span class="lineNum">     241 </span>            :     NS_DECL_NSITRANSPORT
+<a name="242"><span class="lineNum">     242 </span>            :     NS_DECL_NSIOUTPUTSTREAM</a>
+<span class="lineNum">     243 </span>            : 
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :     nsOutputStreamTransport(nsIOutputStream *sink,</span>
+<span class="lineNum">     245 </span>            :                             int64_t offset,
+<span class="lineNum">     246 </span>            :                             int64_t limit,
+<span class="lineNum">     247 </span>            :                             bool closeWhenDone)
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :         : mSink(sink)</span>
+<span class="lineNum">     249 </span>            :         , mOffset(offset)
+<span class="lineNum">     250 </span>            :         , mLimit(limit)
+<span class="lineNum">     251 </span>            :         , mCloseWhenDone(closeWhenDone)
+<span class="lineNum">     252 </span>            :         , mFirstTime(true)
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :         , mInProgress(false)</span>
+<span class="lineNum">     254 </span>            :     {
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :     }</span>
+<a name="256"><span class="lineNum">     256 </span>            : </a>
+<span class="lineNum">     257 </span>            : private:
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :     virtual ~nsOutputStreamTransport()</span>
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :     {</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     261 </span>            : 
+<span class="lineNum">     262 </span>            :     nsCOMPtr&lt;nsIAsyncOutputStream&gt;  mPipeOut;
+<span class="lineNum">     263 </span>            : 
+<span class="lineNum">     264 </span>            :     // while the copy is active, these members may only be accessed from the
+<span class="lineNum">     265 </span>            :     // nsIOutputStream implementation.
+<span class="lineNum">     266 </span>            :     nsCOMPtr&lt;nsITransportEventSink&gt; mEventSink;
+<span class="lineNum">     267 </span>            :     nsCOMPtr&lt;nsIOutputStream&gt;       mSink;
+<span class="lineNum">     268 </span>            :     int64_t                         mOffset;
+<span class="lineNum">     269 </span>            :     int64_t                         mLimit;
+<span class="lineNum">     270 </span>            :     bool                            mCloseWhenDone;
+<span class="lineNum">     271 </span>            :     bool                            mFirstTime;
+<span class="lineNum">     272 </span>            : 
+<span class="lineNum">     273 </span>            :     // this variable serves as a lock to prevent the state of the transport
+<span class="lineNum">     274 </span>            :     // from being modified once the copy is in progress.
+<span class="lineNum">     275 </span>            :     bool                            mInProgress;
+<a name="276"><span class="lineNum">     276 </span>            : };</a>
+<span class="lineNum">     277 </span>            : 
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 : NS_IMPL_ISUPPORTS(nsOutputStreamTransport,</span>
+<span class="lineNum">     279 </span>            :                   nsITransport,
+<span class="lineNum">     280 </span>            :                   nsIOutputStream)
+<span class="lineNum">     281 </span>            : 
+<span class="lineNum">     282 </span>            : /** nsITransport **/
+<a name="283"><span class="lineNum">     283 </span>            : </a>
+<span class="lineNum">     284 </span>            : NS_IMETHODIMP
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 : nsOutputStreamTransport::OpenInputStream(uint32_t flags,</span>
+<span class="lineNum">     286 </span>            :                                          uint32_t segsize,
+<span class="lineNum">     287 </span>            :                                          uint32_t segcount,
+<span class="lineNum">     288 </span>            :                                          nsIInputStream **result)
+<span class="lineNum">     289 </span>            : {
+<span class="lineNum">     290 </span>            :     // this transport only supports writing!
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :     NS_NOTREACHED(&quot;nsOutputStreamTransport::OpenInputStream&quot;);</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :     return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     293 </span>            : }
+<a name="294"><span class="lineNum">     294 </span>            : </a>
+<span class="lineNum">     295 </span>            : NS_IMETHODIMP
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 : nsOutputStreamTransport::OpenOutputStream(uint32_t flags,</span>
+<span class="lineNum">     297 </span>            :                                           uint32_t segsize,
+<span class="lineNum">     298 </span>            :                                           uint32_t segcount,
+<span class="lineNum">     299 </span>            :                                           nsIOutputStream **result)
+<span class="lineNum">     300 </span>            : {
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :     NS_ENSURE_TRUE(!mInProgress, NS_ERROR_IN_PROGRESS);</span>
+<span class="lineNum">     302 </span>            : 
+<span class="lineNum">     303 </span>            :     nsresult rv;
+<span class="lineNum">     304 </span>            :     nsCOMPtr&lt;nsIEventTarget&gt; target =
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :             do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID, &amp;rv);</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     307 </span>            : 
+<span class="lineNum">     308 </span>            :     // XXX if the caller requests an unbuffered stream, then perhaps
+<span class="lineNum">     309 </span>            :     //     we'd want to simply return mSink; however, then we would
+<span class="lineNum">     310 </span>            :     //     not be writing to mSink on a background thread.  is this ok?
+<span class="lineNum">     311 </span>            : 
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :     bool nonblocking = !(flags &amp; OPEN_BLOCKING);</span>
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :     net_ResolveSegmentParams(segsize, segcount);</span>
+<span class="lineNum">     315 </span>            : 
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIAsyncInputStream&gt; pipeIn;</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :     rv = NS_NewPipe2(getter_AddRefs(pipeIn),</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :                      getter_AddRefs(mPipeOut),</span>
+<span class="lineNum">     319 </span>            :                      true, nonblocking,
+<span class="lineNum">     320 </span>            :                      segsize, segcount);
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     322 </span>            : 
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :     mInProgress = true;</span>
+<span class="lineNum">     324 </span>            : 
+<span class="lineNum">     325 </span>            :     // startup async copy process...
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :     rv = NS_AsyncCopy(pipeIn, this, target,</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :                       NS_ASYNCCOPY_VIA_READSEGMENTS, segsize);</span>
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :     if (NS_SUCCEEDED(rv))</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :         NS_ADDREF(*result = mPipeOut);</span>
+<span class="lineNum">     330 </span>            : 
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     332 </span>            : }
+<a name="333"><span class="lineNum">     333 </span>            : </a>
+<span class="lineNum">     334 </span>            : NS_IMETHODIMP
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 : nsOutputStreamTransport::Close(nsresult reason)</span>
+<span class="lineNum">     336 </span>            : {
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :     if (NS_SUCCEEDED(reason))</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :         reason = NS_BASE_STREAM_CLOSED;</span>
+<span class="lineNum">     339 </span>            : 
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :     return mPipeOut-&gt;CloseWithStatus(reason);</span>
+<span class="lineNum">     341 </span>            : }
+<a name="342"><span class="lineNum">     342 </span>            : </a>
+<span class="lineNum">     343 </span>            : NS_IMETHODIMP
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 : nsOutputStreamTransport::SetEventSink(nsITransportEventSink *sink,</span>
+<span class="lineNum">     345 </span>            :                                       nsIEventTarget *target)
+<span class="lineNum">     346 </span>            : {
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :     NS_ENSURE_TRUE(!mInProgress, NS_ERROR_IN_PROGRESS);</span>
+<span class="lineNum">     348 </span>            : 
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :     if (target)</span>
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :         return net_NewTransportEventSinkProxy(getter_AddRefs(mEventSink),</span>
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :                                               sink, target);</span>
+<span class="lineNum">     352 </span>            : 
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     mEventSink = sink;</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     355 </span>            : }
+<span class="lineNum">     356 </span>            : 
+<span class="lineNum">     357 </span>            : /** nsIOutputStream **/
+<a name="358"><span class="lineNum">     358 </span>            : </a>
+<span class="lineNum">     359 </span>            : NS_IMETHODIMP
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 : nsOutputStreamTransport::Close()</span>
+<span class="lineNum">     361 </span>            : {
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :     if (mCloseWhenDone)</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :         mSink-&gt;Close();</span>
+<span class="lineNum">     364 </span>            : 
+<span class="lineNum">     365 </span>            :     // make additional writes return early...
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :     mOffset = mLimit = 0;</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     368 </span>            : }
+<a name="369"><span class="lineNum">     369 </span>            : </a>
+<span class="lineNum">     370 </span>            : NS_IMETHODIMP
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 : nsOutputStreamTransport::Flush()</span>
+<span class="lineNum">     372 </span>            : {
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     374 </span>            : }
+<a name="375"><span class="lineNum">     375 </span>            : </a>
+<span class="lineNum">     376 </span>            : NS_IMETHODIMP
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 : nsOutputStreamTransport::Write(const char *buf, uint32_t count, uint32_t *result)</span>
+<span class="lineNum">     378 </span>            : {
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :     if (mFirstTime) {</span>
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :         mFirstTime = false;</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :         if (mOffset != 0) {</span>
+<span class="lineNum">     382 </span>            :             // write to current position if offset equal to max
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :             if (mOffset != -1) {</span>
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :                 nsCOMPtr&lt;nsISeekableStream&gt; seekable = do_QueryInterface(mSink);</span>
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :                 if (seekable)</span>
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :                     seekable-&gt;Seek(nsISeekableStream::NS_SEEK_SET, mOffset);</span>
+<span class="lineNum">     387 </span>            :             }
+<span class="lineNum">     388 </span>            :             // reset offset to zero so we can use it to enforce limit
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :             mOffset = 0;</span>
+<span class="lineNum">     390 </span>            :         }
+<span class="lineNum">     391 </span>            :     }
+<span class="lineNum">     392 </span>            : 
+<span class="lineNum">     393 </span>            :     // limit amount written
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :     uint64_t max = count;</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :     if (mLimit != -1) {</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :         max = mLimit - mOffset;</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :         if (max == 0) {</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :             *result = 0;</span>
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :             return NS_OK;</span>
+<span class="lineNum">     400 </span>            :         }
+<span class="lineNum">     401 </span>            :     }
+<span class="lineNum">     402 </span>            : 
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :     if (count &gt; max)</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :         count = static_cast&lt;uint32_t&gt;(max);</span>
+<span class="lineNum">     405 </span>            : 
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :     nsresult rv = mSink-&gt;Write(buf, count, result);</span>
+<span class="lineNum">     407 </span>            : 
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :     if (NS_SUCCEEDED(rv)) {</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :         mOffset += *result;</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :         if (mEventSink)</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :             mEventSink-&gt;OnTransportStatus(this, NS_NET_STATUS_WRITING, mOffset,</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :                                           mLimit);</span>
+<span class="lineNum">     413 </span>            :     }
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     415 </span>            : }
+<a name="416"><span class="lineNum">     416 </span>            : </a>
+<span class="lineNum">     417 </span>            : NS_IMETHODIMP
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 : nsOutputStreamTransport::WriteSegments(nsReadSegmentFun reader, void *closure,</span>
+<span class="lineNum">     419 </span>            :                                        uint32_t count, uint32_t *result)
+<span class="lineNum">     420 </span>            : {
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_IMPLEMENTED;</span>
+<span class="lineNum">     422 </span>            : }
+<a name="423"><span class="lineNum">     423 </span>            : </a>
+<span class="lineNum">     424 </span>            : NS_IMETHODIMP
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 : nsOutputStreamTransport::WriteFrom(nsIInputStream *in, uint32_t count, uint32_t *result)</span>
+<span class="lineNum">     426 </span>            : {
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_IMPLEMENTED;</span>
+<span class="lineNum">     428 </span>            : }
+<a name="429"><span class="lineNum">     429 </span>            : </a>
+<span class="lineNum">     430 </span>            : NS_IMETHODIMP
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 : nsOutputStreamTransport::IsNonBlocking(bool *result)</span>
+<span class="lineNum">     432 </span>            : {
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :     *result = false;</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     435 </span>            : }
+<span class="lineNum">     436 </span>            : 
+<span class="lineNum">     437 </span>            : //-----------------------------------------------------------------------------
+<span class="lineNum">     438 </span>            : // nsStreamTransportService
+<a name="439"><span class="lineNum">     439 </span>            : //-----------------------------------------------------------------------------</a>
+<span class="lineNum">     440 </span>            : 
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 : nsStreamTransportService::~nsStreamTransportService()</span>
+<span class="lineNum">     442 </span>            : {
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :     NS_ASSERTION(!mPool, &quot;thread pool wasn't shutdown&quot;);</span>
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 : }</span>
+<a name="445"><span class="lineNum">     445 </span>            : </a>
+<span class="lineNum">     446 </span>            : nsresult
+<span class="lineNum">     447 </span><span class="lineCov">          3 : nsStreamTransportService::Init()</span>
+<span class="lineNum">     448 </span>            : {
+<span class="lineNum">     449 </span><span class="lineCov">          3 :     mPool = do_CreateInstance(NS_THREADPOOL_CONTRACTID);</span>
+<span class="lineNum">     450 </span><span class="lineCov">          3 :     NS_ENSURE_STATE(mPool);</span>
+<span class="lineNum">     451 </span>            : 
+<span class="lineNum">     452 </span>            :     // Configure the pool
+<span class="lineNum">     453 </span><span class="lineCov">          3 :     mPool-&gt;SetName(NS_LITERAL_CSTRING(&quot;StreamTrans&quot;));</span>
+<span class="lineNum">     454 </span><span class="lineCov">          3 :     mPool-&gt;SetThreadLimit(25);</span>
+<span class="lineNum">     455 </span><span class="lineCov">          3 :     mPool-&gt;SetIdleThreadLimit(1);</span>
+<span class="lineNum">     456 </span><span class="lineCov">          3 :     mPool-&gt;SetIdleThreadTimeout(PR_SecondsToInterval(30));</span>
+<span class="lineNum">     457 </span>            : 
+<span class="lineNum">     458 </span>            :     nsCOMPtr&lt;nsIObserverService&gt; obsSvc =
+<span class="lineNum">     459 </span><span class="lineCov">          6 :         mozilla::services::GetObserverService();</span>
+<span class="lineNum">     460 </span><span class="lineCov">          3 :     if (obsSvc)</span>
+<span class="lineNum">     461 </span><span class="lineCov">          3 :         obsSvc-&gt;AddObserver(this, &quot;xpcom-shutdown-threads&quot;, false);</span>
+<span class="lineNum">     462 </span><span class="lineCov">          3 :     return NS_OK;</span>
+<a name="463"><span class="lineNum">     463 </span>            : }</a>
+<span class="lineNum">     464 </span>            : 
+<span class="lineNum">     465 </span><span class="lineCov">        847 : NS_IMPL_ISUPPORTS(nsStreamTransportService,</span>
+<span class="lineNum">     466 </span>            :                   nsIStreamTransportService,
+<span class="lineNum">     467 </span>            :                   nsIEventTarget,
+<span class="lineNum">     468 </span>            :                   nsIObserver)
+<a name="469"><span class="lineNum">     469 </span>            : </a>
+<span class="lineNum">     470 </span>            : NS_IMETHODIMP
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 : nsStreamTransportService::DispatchFromScript(nsIRunnable *task, uint32_t flags)</span>
+<span class="lineNum">     472 </span>            : {
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;nsIRunnable&gt; event(task);</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :   return Dispatch(event.forget(), flags);</span>
+<span class="lineNum">     475 </span>            : }
+<a name="476"><span class="lineNum">     476 </span>            : </a>
+<span class="lineNum">     477 </span>            : NS_IMETHODIMP
+<span class="lineNum">     478 </span><span class="lineCov">         73 : nsStreamTransportService::Dispatch(already_AddRefed&lt;nsIRunnable&gt; task, uint32_t flags)</span>
+<span class="lineNum">     479 </span>            : {
+<span class="lineNum">     480 </span><span class="lineCov">        146 :     nsCOMPtr&lt;nsIRunnable&gt; event(task); // so it gets released on failure paths</span>
+<span class="lineNum">     481 </span><span class="lineCov">        146 :     nsCOMPtr&lt;nsIThreadPool&gt; pool;</span>
+<span class="lineNum">     482 </span>            :     {
+<span class="lineNum">     483 </span><span class="lineCov">        146 :         mozilla::MutexAutoLock lock(mShutdownLock);</span>
+<span class="lineNum">     484 </span><span class="lineCov">         73 :         if (mIsShutdown) {</span>
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :             return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">     486 </span>            :         }
+<span class="lineNum">     487 </span><span class="lineCov">         73 :         pool = mPool;</span>
+<span class="lineNum">     488 </span>            :     }
+<span class="lineNum">     489 </span><span class="lineCov">         73 :     NS_ENSURE_TRUE(pool, NS_ERROR_NOT_INITIALIZED);</span>
+<span class="lineNum">     490 </span><span class="lineCov">         73 :     return pool-&gt;Dispatch(event.forget(), flags);</span>
+<span class="lineNum">     491 </span>            : }
+<a name="492"><span class="lineNum">     492 </span>            : </a>
+<span class="lineNum">     493 </span>            : NS_IMETHODIMP
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 : nsStreamTransportService::DelayedDispatch(already_AddRefed&lt;nsIRunnable&gt;, uint32_t)</span>
+<span class="lineNum">     495 </span>            : {
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_IMPLEMENTED;</span>
+<span class="lineNum">     497 </span>            : }
+<a name="498"><span class="lineNum">     498 </span>            : </a>
+<span class="lineNum">     499 </span>            : NS_IMETHODIMP_(bool)
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 : nsStreamTransportService::IsOnCurrentThreadInfallible()</span>
+<span class="lineNum">     501 </span>            : {
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIThreadPool&gt; pool;</span>
+<span class="lineNum">     503 </span>            :     {
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :         mozilla::MutexAutoLock lock(mShutdownLock);</span>
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :         pool = mPool;</span>
+<span class="lineNum">     506 </span>            :     }
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :     if (!pool) {</span>
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     509 </span>            :     }
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :     return pool-&gt;IsOnCurrentThread();</span>
+<span class="lineNum">     511 </span>            : }
+<a name="512"><span class="lineNum">     512 </span>            : </a>
+<span class="lineNum">     513 </span>            : NS_IMETHODIMP
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 : nsStreamTransportService::IsOnCurrentThread(bool *result)</span>
+<span class="lineNum">     515 </span>            : {
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIThreadPool&gt; pool;</span>
+<span class="lineNum">     517 </span>            :     {
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :         mozilla::MutexAutoLock lock(mShutdownLock);</span>
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :         if (mIsShutdown) {</span>
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :             return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">     521 </span>            :         }
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :         pool = mPool;</span>
+<span class="lineNum">     523 </span>            :     }
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :     NS_ENSURE_TRUE(pool, NS_ERROR_NOT_INITIALIZED);</span>
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :     return pool-&gt;IsOnCurrentThread(result);</span>
+<span class="lineNum">     526 </span>            : }
+<a name="527"><span class="lineNum">     527 </span>            : </a>
+<span class="lineNum">     528 </span>            : NS_IMETHODIMP
+<span class="lineNum">     529 </span><span class="lineCov">         66 : nsStreamTransportService::CreateInputTransport(nsIInputStream *stream,</span>
+<span class="lineNum">     530 </span>            :                                                int64_t offset,
+<span class="lineNum">     531 </span>            :                                                int64_t limit,
+<span class="lineNum">     532 </span>            :                                                bool closeWhenDone,
+<span class="lineNum">     533 </span>            :                                                nsITransport **result)
+<span class="lineNum">     534 </span>            : {
+<span class="lineNum">     535 </span>            :     nsInputStreamTransport *trans =
+<span class="lineNum">     536 </span><span class="lineCov">         66 :         new nsInputStreamTransport(stream, offset, limit, closeWhenDone);</span>
+<span class="lineNum">     537 </span><span class="lineCov">         66 :     if (!trans)</span>
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :         return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     539 </span><span class="lineCov">         66 :     NS_ADDREF(*result = trans);</span>
+<span class="lineNum">     540 </span><span class="lineCov">         66 :     return NS_OK;</span>
+<span class="lineNum">     541 </span>            : }
+<a name="542"><span class="lineNum">     542 </span>            : </a>
+<span class="lineNum">     543 </span>            : NS_IMETHODIMP
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 : nsStreamTransportService::CreateOutputTransport(nsIOutputStream *stream,</span>
+<span class="lineNum">     545 </span>            :                                                 int64_t offset,
+<span class="lineNum">     546 </span>            :                                                 int64_t limit,
+<span class="lineNum">     547 </span>            :                                                 bool closeWhenDone,
+<span class="lineNum">     548 </span>            :                                                 nsITransport **result)
+<span class="lineNum">     549 </span>            : {
+<span class="lineNum">     550 </span>            :     nsOutputStreamTransport *trans =
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :         new nsOutputStreamTransport(stream, offset, limit, closeWhenDone);</span>
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     if (!trans)</span>
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :         return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :     NS_ADDREF(*result = trans);</span>
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     556 </span>            : }
+<a name="557"><span class="lineNum">     557 </span>            : </a>
+<span class="lineNum">     558 </span>            : NS_IMETHODIMP
+<span class="lineNum">     559 </span><span class="lineNoCov">          0 : nsStreamTransportService::Observe(nsISupports *subject, const char *topic,</span>
+<span class="lineNum">     560 </span>            :                                   const char16_t *data)
+<span class="lineNum">     561 </span>            : {
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :   NS_ASSERTION(strcmp(topic, &quot;xpcom-shutdown-threads&quot;) == 0, &quot;oops&quot;);</span>
+<span class="lineNum">     563 </span>            : 
+<span class="lineNum">     564 </span>            :   {
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :     mozilla::MutexAutoLock lock(mShutdownLock);</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :     mIsShutdown = true;</span>
+<span class="lineNum">     567 </span>            :   }
+<span class="lineNum">     568 </span>            : 
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :   if (mPool) {</span>
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :     mPool-&gt;Shutdown();</span>
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :     mPool = nullptr;</span>
+<span class="lineNum">     572 </span>            :   }
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     574 </span>            : }
+<span class="lineNum">     575 </span>            : 
+<span class="lineNum">     576 </span>            : class AvailableEvent final : public Runnable
+<a name="577"><span class="lineNum">     577 </span>            : {</a>
+<span class="lineNum">     578 </span>            : public:
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :   AvailableEvent(nsIInputStream* stream,</span>
+<span class="lineNum">     580 </span>            :                  nsIInputAvailableCallback* callback)
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :     : Runnable(&quot;net::AvailableEvent&quot;)</span>
+<span class="lineNum">     582 </span>            :     , mStream(stream)
+<span class="lineNum">     583 </span>            :     , mCallback(callback)
+<span class="lineNum">     584 </span>            :     , mDoingCallback(false)
+<span class="lineNum">     585 </span>            :     , mSize(0)
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :     , mResultForCallback(NS_OK)</span>
+<span class="lineNum">     587 </span>            :   {
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :     mCallbackTarget = GetCurrentThreadEventTarget();</span>
+<a name="589"><span class="lineNum">     589 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     590 </span>            : 
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :     NS_IMETHOD Run() override</span>
+<span class="lineNum">     592 </span>            :     {
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :         if (mDoingCallback) {</span>
+<span class="lineNum">     594 </span>            :             // pong
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :             mCallback-&gt;OnInputAvailableComplete(mSize, mResultForCallback);</span>
+<span class="lineNum">     596 </span><span class="lineNoCov">          0 :             mCallback = nullptr;</span>
+<span class="lineNum">     597 </span>            :         } else {
+<span class="lineNum">     598 </span>            :             // ping
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :             mResultForCallback = mStream-&gt;Available(&amp;mSize);</span>
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :             mStream = nullptr;</span>
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :             mDoingCallback = true;</span>
+<span class="lineNum">     602 </span>            : 
+<span class="lineNum">     603 </span><span class="lineNoCov">          0 :             nsCOMPtr&lt;nsIRunnable&gt; event(this); // overly cute</span>
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :             mCallbackTarget-&gt;Dispatch(event.forget(), NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :             mCallbackTarget = nullptr;</span>
+<span class="lineNum">     606 </span>            :         }
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     608 </span>            :     }
+<a name="609"><span class="lineNum">     609 </span>            : </a>
+<span class="lineNum">     610 </span>            : private:
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :     virtual ~AvailableEvent() { }</span>
+<span class="lineNum">     612 </span>            : 
+<span class="lineNum">     613 </span>            :     nsCOMPtr&lt;nsIInputStream&gt; mStream;
+<span class="lineNum">     614 </span>            :     nsCOMPtr&lt;nsIInputAvailableCallback&gt; mCallback;
+<span class="lineNum">     615 </span>            :     nsCOMPtr&lt;nsIEventTarget&gt; mCallbackTarget;
+<span class="lineNum">     616 </span>            :     bool mDoingCallback;
+<span class="lineNum">     617 </span>            :     uint64_t mSize;
+<span class="lineNum">     618 </span>            :     nsresult mResultForCallback;
+<span class="lineNum">     619 </span>            : };
+<a name="620"><span class="lineNum">     620 </span>            : </a>
+<span class="lineNum">     621 </span>            : NS_IMETHODIMP
+<span class="lineNum">     622 </span><span class="lineNoCov">          0 : nsStreamTransportService::InputAvailable(nsIInputStream *stream,</span>
+<span class="lineNum">     623 </span>            :                                          nsIInputAvailableCallback *callback)
+<span class="lineNum">     624 </span>            : {
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIThreadPool&gt; pool;</span>
+<span class="lineNum">     626 </span>            :     {
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :         mozilla::MutexAutoLock lock(mShutdownLock);</span>
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :         if (mIsShutdown) {</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :             return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">     630 </span>            :         }
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :         pool = mPool;</span>
+<span class="lineNum">     632 </span>            :     }
+<span class="lineNum">     633 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIRunnable&gt; event = new AvailableEvent(stream, callback);</span>
+<span class="lineNum">     634 </span><span class="lineNoCov">          0 :     return pool-&gt;Dispatch(event.forget(), NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     635 </span>            : }
+<span class="lineNum">     636 </span>            : 
+<span class="lineNum">     637 </span>            : } // namespace net
+<span class="lineNum">     638 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

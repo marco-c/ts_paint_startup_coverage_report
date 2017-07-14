@@ -1,0 +1,702 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - ipc/chromium/src/base/pickle.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">ipc/chromium/src/base</a> - pickle.cc<span style="font-size: 80%;"> (source / <a href="pickle.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">176</td>
+            <td class="headerCovTableEntry">287</td>
+            <td class="headerCovTableEntryLo">61.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">41</td>
+            <td class="headerCovTableEntry">56</td>
+            <td class="headerCovTableEntryLo">73.2 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : // Copyright (c) 2006-2008 The Chromium Authors. All rights reserved.
+<span class="lineNum">       4 </span>            : // Use of this source code is governed by a BSD-style license that can be
+<span class="lineNum">       5 </span>            : // found in the LICENSE file.
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;base/pickle.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/Alignment.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/CheckedInt.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/EndianUtils.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/TypeTraits.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/Telemetry.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/ipc/ProtocolUtils.h&quot;
+<span class="lineNum">      15 </span>            : 
+<span class="lineNum">      16 </span>            : #include &lt;stdlib.h&gt;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : #include &lt;limits&gt;
+<span class="lineNum">      19 </span>            : #include &lt;string&gt;
+<span class="lineNum">      20 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : #include &quot;nsDebug.h&quot;
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : //------------------------------------------------------------------------------
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : static_assert(MOZ_ALIGNOF(Pickle::memberAlignmentType) &gt;= MOZ_ALIGNOF(uint32_t),
+<span class="lineNum">      27 </span>            :               &quot;Insufficient alignment&quot;);
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : #ifndef MOZ_TASK_TRACER
+<span class="lineNum">      30 </span>            : static const uint32_t kHeaderSegmentCapacity = 64;
+<span class="lineNum">      31 </span>            : #else
+<span class="lineNum">      32 </span>            : // TaskTracer would add extra fields to the header to carry task ID and
+<span class="lineNum">      33 </span>            : // other information.
+<span class="lineNum">      34 </span>            : // \see class Message::HeaderTaskTracer
+<span class="lineNum">      35 </span>            : static const uint32_t kHeaderSegmentCapacity = 128;
+<span class="lineNum">      36 </span>            : #endif
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            : static const uint32_t kDefaultSegmentCapacity = 4096;
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span>            : static const char kBytePaddingMarker = char(0xbf);
+<span class="lineNum">      41 </span>            : 
+<span class="lineNum">      42 </span>            : // Note: we round the time to the nearest millisecond. So a min value of 1 ms
+<span class="lineNum">      43 </span>            : // actually captures from 500us and above.
+<span class="lineNum">      44 </span>            : static const uint32_t kMinTelemetryIPCReadLatencyMs = 1;
+<span class="lineNum">      45 </span>            : 
+<span class="lineNum">      46 </span>            : namespace {
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span>            : // We want to copy data to our payload as efficiently as possible.
+<span class="lineNum">      49 </span>            : // memcpy fits the bill for copying, but not all compilers or
+<span class="lineNum">      50 </span>            : // architectures support inlining memcpy from void*, which has unknown
+<span class="lineNum">      51 </span>            : // static alignment.  However, we know that all the members of our
+<span class="lineNum">      52 </span>            : // payload will be aligned on memberAlignmentType boundaries.  We
+<span class="lineNum">      53 </span>            : // therefore use that knowledge to construct a copier that will copy
+<span class="lineNum">      54 </span>            : // efficiently (via standard C++ assignment mechanisms) if the datatype
+<span class="lineNum">      55 </span>            : // needs that alignment or less, and memcpy otherwise.  (The compiler
+<span class="lineNum">      56 </span>            : // may still inline memcpy, of course.)
+<span class="lineNum">      57 </span>            : 
+<span class="lineNum">      58 </span>            : template&lt;typename T, size_t size, bool hasSufficientAlignment&gt;
+<a name="59"><span class="lineNum">      59 </span>            : struct Copier</a>
+<span class="lineNum">      60 </span>            : {
+<span class="lineNum">      61 </span><span class="lineCov">       1657 :   static void Copy(T* dest, const char* iter) {</span>
+<span class="lineNum">      62 </span><span class="lineCov">       1657 :     memcpy(dest, iter, sizeof(T));</span>
+<span class="lineNum">      63 </span><span class="lineCov">       1657 :   }</span>
+<span class="lineNum">      64 </span>            : };
+<span class="lineNum">      65 </span>            : 
+<span class="lineNum">      66 </span>            : // Copying 64-bit quantities happens often enough and can easily be made
+<span class="lineNum">      67 </span>            : // worthwhile on 32-bit platforms, so handle it specially.  Only do it
+<span class="lineNum">      68 </span>            : // if 64-bit types aren't sufficiently aligned; the alignment
+<span class="lineNum">      69 </span>            : // requirements for them vary between 32-bit platforms.
+<span class="lineNum">      70 </span>            : #ifndef HAVE_64BIT_BUILD
+<span class="lineNum">      71 </span>            : template&lt;typename T&gt;
+<span class="lineNum">      72 </span>            : struct Copier&lt;T, sizeof(uint64_t), false&gt;
+<span class="lineNum">      73 </span>            : {
+<span class="lineNum">      74 </span>            :   static void Copy(T* dest, const char* iter) {
+<span class="lineNum">      75 </span>            : #if MOZ_LITTLE_ENDIAN
+<span class="lineNum">      76 </span>            :     static const int loIndex = 0, hiIndex = 1;
+<span class="lineNum">      77 </span>            : #else
+<span class="lineNum">      78 </span>            :     static const int loIndex = 1, hiIndex = 0;
+<span class="lineNum">      79 </span>            : #endif
+<span class="lineNum">      80 </span>            :     static_assert(MOZ_ALIGNOF(uint32_t*) == MOZ_ALIGNOF(void*),
+<span class="lineNum">      81 </span>            :                   &quot;Pointers have different alignments&quot;);
+<span class="lineNum">      82 </span>            :     const uint32_t* src = reinterpret_cast&lt;const uint32_t*&gt;(iter);
+<span class="lineNum">      83 </span>            :     uint32_t* uint32dest = reinterpret_cast&lt;uint32_t*&gt;(dest);
+<span class="lineNum">      84 </span>            :     uint32dest[loIndex] = src[loIndex];
+<span class="lineNum">      85 </span>            :     uint32dest[hiIndex] = src[hiIndex];
+<span class="lineNum">      86 </span>            :   }
+<span class="lineNum">      87 </span>            : };
+<span class="lineNum">      88 </span>            : #endif
+<span class="lineNum">      89 </span>            : 
+<span class="lineNum">      90 </span>            : template&lt;typename T, size_t size&gt;
+<a name="91"><span class="lineNum">      91 </span>            : struct Copier&lt;T, size, true&gt;</a>
+<span class="lineNum">      92 </span>            : {
+<span class="lineNum">      93 </span><span class="lineCov">     124728 :   static void Copy(T* dest, const char* iter) {</span>
+<span class="lineNum">      94 </span><span class="lineCov">     124728 :     *dest = *reinterpret_cast&lt;const T*&gt;(iter);</span>
+<span class="lineNum">      95 </span><span class="lineCov">     124728 :   }</span>
+<span class="lineNum">      96 </span>            : };
+<span class="lineNum">      97 </span>            : 
+<a name="98"><span class="lineNum">      98 </span>            : } // anonymous namespace</a>
+<span class="lineNum">      99 </span>            : 
+<span class="lineNum">     100 </span><span class="lineCov">        550 : PickleIterator::PickleIterator(const Pickle&amp; pickle)</span>
+<span class="lineNum">     101 </span><span class="lineCov">        550 :    : iter_(pickle.buffers_.Iter())</span>
+<span class="lineNum">     102 </span><span class="lineCov">        550 :    , start_(mozilla::TimeStamp::Now()) {</span>
+<span class="lineNum">     103 </span><span class="lineCov">        550 :   iter_.Advance(pickle.buffers_, pickle.header_size_);</span>
+<span class="lineNum">     104 </span><span class="lineCov">        550 : }</span>
+<span class="lineNum">     105 </span>            : 
+<a name="106"><span class="lineNum">     106 </span>            : template&lt;typename T&gt;</a>
+<span class="lineNum">     107 </span>            : void
+<span class="lineNum">     108 </span><span class="lineCov">     126384 : PickleIterator::CopyInto(T* dest) {</span>
+<span class="lineNum">     109 </span>            :   static_assert(mozilla::IsPod&lt;T&gt;::value, &quot;Copied type must be a POD type&quot;);
+<span class="lineNum">     110 </span><span class="lineCov">     126384 :   Copier&lt;T, sizeof(T), (MOZ_ALIGNOF(T) &lt;= sizeof(Pickle::memberAlignmentType))&gt;::Copy(dest, iter_.Data());</span>
+<a name="111"><span class="lineNum">     111 </span><span class="lineCov">     126385 : }</span></a>
+<span class="lineNum">     112 </span>            : 
+<span class="lineNum">     113 </span><span class="lineCov">     126384 : bool Pickle::IteratorHasRoomFor(const PickleIterator&amp; iter, uint32_t len) const {</span>
+<span class="lineNum">     114 </span>            :   // Make sure we don't get into trouble where AlignInt(len) == 0.
+<span class="lineNum">     115 </span><span class="lineCov">     126384 :   MOZ_RELEASE_ASSERT(len &lt; 64);</span>
+<span class="lineNum">     116 </span>            : 
+<span class="lineNum">     117 </span><span class="lineCov">     126384 :   return iter.iter_.HasRoomFor(AlignInt(len));</span>
+<a name="118"><span class="lineNum">     118 </span>            : }</a>
+<span class="lineNum">     119 </span>            : 
+<span class="lineNum">     120 </span><span class="lineCov">     126385 : void Pickle::UpdateIter(PickleIterator* iter, uint32_t bytes) const {</span>
+<span class="lineNum">     121 </span>            :   // Make sure we don't get into trouble where AlignInt(bytes) == 0.
+<span class="lineNum">     122 </span><span class="lineCov">     126385 :   MOZ_RELEASE_ASSERT(bytes &lt; 64);</span>
+<span class="lineNum">     123 </span>            : 
+<span class="lineNum">     124 </span><span class="lineCov">     126385 :   iter-&gt;iter_.Advance(buffers_, AlignInt(bytes));</span>
+<span class="lineNum">     125 </span><span class="lineCov">     126385 : }</span>
+<span class="lineNum">     126 </span>            : 
+<a name="127"><span class="lineNum">     127 </span>            : // Payload is sizeof(Pickle::memberAlignmentType) aligned.</a>
+<span class="lineNum">     128 </span>            : 
+<span class="lineNum">     129 </span><span class="lineCov">        570 : Pickle::Pickle(uint32_t header_size, size_t segment_capacity)</span>
+<span class="lineNum">     130 </span><span class="lineCov">        570 :     : buffers_(AlignInt(header_size),</span>
+<span class="lineNum">     131 </span>            :                segment_capacity ? segment_capacity : kHeaderSegmentCapacity,
+<span class="lineNum">     132 </span>            :                segment_capacity ? segment_capacity : kDefaultSegmentCapacity),
+<span class="lineNum">     133 </span>            :       header_(nullptr),
+<span class="lineNum">     134 </span><span class="lineCov">       1140 :       header_size_(AlignInt(header_size)) {</span>
+<span class="lineNum">     135 </span><span class="lineCov">        570 :   DCHECK(static_cast&lt;memberAlignmentType&gt;(header_size) &gt;= sizeof(Header));</span>
+<span class="lineNum">     136 </span><span class="lineCov">        570 :   DCHECK(header_size_ &lt;= kHeaderSegmentCapacity);</span>
+<span class="lineNum">     137 </span><span class="lineCov">        570 :   header_ = reinterpret_cast&lt;Header*&gt;(buffers_.Start());</span>
+<span class="lineNum">     138 </span><span class="lineCov">        570 :   header_-&gt;payload_size = 0;</span>
+<a name="139"><span class="lineNum">     139 </span><span class="lineCov">        570 : }</span></a>
+<span class="lineNum">     140 </span>            : 
+<span class="lineNum">     141 </span><span class="lineCov">        388 : Pickle::Pickle(uint32_t header_size, const char* data, uint32_t length)</span>
+<span class="lineNum">     142 </span><span class="lineCov">        388 :     : buffers_(length, AlignCapacity(length), kDefaultSegmentCapacity),</span>
+<span class="lineNum">     143 </span>            :       header_(nullptr),
+<span class="lineNum">     144 </span><span class="lineCov">        388 :       header_size_(AlignInt(header_size)) {</span>
+<span class="lineNum">     145 </span><span class="lineCov">        388 :   DCHECK(static_cast&lt;memberAlignmentType&gt;(header_size) &gt;= sizeof(Header));</span>
+<span class="lineNum">     146 </span><span class="lineCov">        388 :   DCHECK(header_size &lt;= kHeaderSegmentCapacity);</span>
+<span class="lineNum">     147 </span><span class="lineCov">        388 :   MOZ_RELEASE_ASSERT(header_size &lt;= length);</span>
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span><span class="lineCov">        388 :   header_ = reinterpret_cast&lt;Header*&gt;(buffers_.Start());</span>
+<span class="lineNum">     150 </span><span class="lineCov">        388 :   memcpy(header_, data, length);</span>
+<a name="151"><span class="lineNum">     151 </span><span class="lineCov">        388 : }</span></a>
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span><span class="lineCov">        476 : Pickle::Pickle(Pickle&amp;&amp; other)</span>
+<span class="lineNum">     154 </span><span class="lineCov">        476 :    : buffers_(mozilla::Move(other.buffers_)),</span>
+<span class="lineNum">     155 </span><span class="lineCov">        476 :      header_(other.header_),</span>
+<span class="lineNum">     156 </span><span class="lineCov">        952 :      header_size_(other.header_size_) {</span>
+<span class="lineNum">     157 </span><span class="lineCov">        476 :   other.header_ = nullptr;</span>
+<a name="158"><span class="lineNum">     158 </span><span class="lineCov">        476 : }</span></a>
+<span class="lineNum">     159 </span>            : 
+<span class="lineNum">     160 </span><span class="lineCov">       1418 : Pickle::~Pickle() {</span>
+<a name="161"><span class="lineNum">     161 </span><span class="lineCov">       1418 : }</span></a>
+<span class="lineNum">     162 </span>            : 
+<span class="lineNum">     163 </span><span class="lineCov">         56 : Pickle&amp; Pickle::operator=(Pickle&amp;&amp; other) {</span>
+<span class="lineNum">     164 </span><span class="lineCov">        112 :   BufferList tmp = mozilla::Move(other.buffers_);</span>
+<span class="lineNum">     165 </span><span class="lineCov">         56 :   other.buffers_ = mozilla::Move(buffers_);</span>
+<span class="lineNum">     166 </span><span class="lineCov">         56 :   buffers_ = mozilla::Move(tmp);</span>
+<span class="lineNum">     167 </span>            : 
+<span class="lineNum">     168 </span>            :   //std::swap(buffers_, other.buffers_);
+<span class="lineNum">     169 </span><span class="lineCov">         56 :   std::swap(header_, other.header_);</span>
+<span class="lineNum">     170 </span><span class="lineCov">         56 :   std::swap(header_size_, other.header_size_);</span>
+<span class="lineNum">     171 </span><span class="lineCov">        112 :   return *this;</span>
+<a name="172"><span class="lineNum">     172 </span>            : }</a>
+<span class="lineNum">     173 </span>            : 
+<span class="lineNum">     174 </span><span class="lineCov">      13711 : bool Pickle::ReadBool(PickleIterator* iter, bool* result) const {</span>
+<span class="lineNum">     175 </span><span class="lineCov">      13711 :   DCHECK(iter);</span>
+<span class="lineNum">     176 </span>            : 
+<span class="lineNum">     177 </span>            :   int tmp;
+<span class="lineNum">     178 </span><span class="lineCov">      13711 :   if (!ReadInt(iter, &amp;tmp))</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     180 </span><span class="lineCov">      13711 :   DCHECK(0 == tmp || 1 == tmp);</span>
+<span class="lineNum">     181 </span><span class="lineCov">      13711 :   *result = tmp ? true : false;</span>
+<span class="lineNum">     182 </span><span class="lineCov">      13711 :   return true;</span>
+<a name="183"><span class="lineNum">     183 </span>            : }</a>
+<span class="lineNum">     184 </span>            : 
+<span class="lineNum">     185 </span><span class="lineCov">         19 : bool Pickle::ReadInt16(PickleIterator* iter, int16_t* result) const {</span>
+<span class="lineNum">     186 </span><span class="lineCov">         19 :   DCHECK(iter);</span>
+<span class="lineNum">     187 </span>            : 
+<span class="lineNum">     188 </span><span class="lineCov">         19 :   if (!IteratorHasRoomFor(*iter, sizeof(*result)))</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :     return ReadBytesInto(iter, result, sizeof(*result));</span>
+<span class="lineNum">     190 </span>            : 
+<span class="lineNum">     191 </span><span class="lineCov">         19 :   iter-&gt;CopyInto(result);</span>
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span><span class="lineCov">         19 :   UpdateIter(iter, sizeof(*result));</span>
+<span class="lineNum">     194 </span><span class="lineCov">         19 :   return true;</span>
+<a name="195"><span class="lineNum">     195 </span>            : }</a>
+<span class="lineNum">     196 </span>            : 
+<span class="lineNum">     197 </span><span class="lineCov">         29 : bool Pickle::ReadUInt16(PickleIterator* iter, uint16_t* result) const {</span>
+<span class="lineNum">     198 </span><span class="lineCov">         29 :   DCHECK(iter);</span>
+<span class="lineNum">     199 </span>            : 
+<span class="lineNum">     200 </span><span class="lineCov">         29 :   if (!IteratorHasRoomFor(*iter, sizeof(*result)))</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :     return ReadBytesInto(iter, result, sizeof(*result));</span>
+<span class="lineNum">     202 </span>            : 
+<span class="lineNum">     203 </span><span class="lineCov">         29 :   iter-&gt;CopyInto(result);</span>
+<span class="lineNum">     204 </span>            : 
+<span class="lineNum">     205 </span><span class="lineCov">         29 :   UpdateIter(iter, sizeof(*result));</span>
+<span class="lineNum">     206 </span><span class="lineCov">         29 :   return true;</span>
+<a name="207"><span class="lineNum">     207 </span>            : }</a>
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span><span class="lineCov">      41500 : bool Pickle::ReadInt(PickleIterator* iter, int* result) const {</span>
+<span class="lineNum">     210 </span><span class="lineCov">      41500 :   DCHECK(iter);</span>
+<span class="lineNum">     211 </span>            : 
+<span class="lineNum">     212 </span><span class="lineCov">      41500 :   if (!IteratorHasRoomFor(*iter, sizeof(*result)))</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     return ReadBytesInto(iter, result, sizeof(*result));</span>
+<span class="lineNum">     214 </span>            : 
+<span class="lineNum">     215 </span><span class="lineCov">      41500 :   iter-&gt;CopyInto(result);</span>
+<span class="lineNum">     216 </span>            : 
+<span class="lineNum">     217 </span><span class="lineCov">      41500 :   UpdateIter(iter, sizeof(*result));</span>
+<span class="lineNum">     218 </span><span class="lineCov">      41500 :   return true;</span>
+<span class="lineNum">     219 </span>            : }
+<span class="lineNum">     220 </span>            : 
+<a name="221"><span class="lineNum">     221 </span>            : // Always written as a 64-bit value since the size for this type can</a>
+<span class="lineNum">     222 </span>            : // differ between architectures.
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 : bool Pickle::ReadLong(PickleIterator* iter, long* result) const {</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :   DCHECK(iter);</span>
+<span class="lineNum">     225 </span>            : 
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :   int64_t big_result = 0;</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :   if (IteratorHasRoomFor(*iter, sizeof(big_result))) {</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :     iter-&gt;CopyInto(&amp;big_result);</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     UpdateIter(iter, sizeof(big_result));</span>
+<span class="lineNum">     230 </span>            :   } else {
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     if (!ReadBytesInto(iter, &amp;big_result, sizeof(big_result))) {</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     233 </span>            :     }
+<span class="lineNum">     234 </span>            :   }
+<span class="lineNum">     235 </span>            :   DCHECK(big_result &lt;= LONG_MAX &amp;&amp; big_result &gt;= LONG_MIN);
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :   *result = static_cast&lt;long&gt;(big_result);</span>
+<span class="lineNum">     237 </span>            : 
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">     239 </span>            : }
+<span class="lineNum">     240 </span>            : 
+<a name="241"><span class="lineNum">     241 </span>            : // Always written as a 64-bit value since the size for this type can</a>
+<span class="lineNum">     242 </span>            : // differ between architectures.
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 : bool Pickle::ReadULong(PickleIterator* iter, unsigned long* result) const {</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   DCHECK(iter);</span>
+<span class="lineNum">     245 </span>            : 
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   uint64_t big_result = 0;</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   if (IteratorHasRoomFor(*iter, sizeof(big_result))) {</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :     iter-&gt;CopyInto(&amp;big_result);</span>
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :     UpdateIter(iter, sizeof(big_result));</span>
+<span class="lineNum">     250 </span>            :   } else {
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     if (!ReadBytesInto(iter, &amp;big_result, sizeof(big_result))) {</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     253 </span>            :     }
+<span class="lineNum">     254 </span>            :   }
+<span class="lineNum">     255 </span>            :   DCHECK(big_result &lt;= ULONG_MAX);
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   *result = static_cast&lt;unsigned long&gt;(big_result);</span>
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="259"><span class="lineNum">     259 </span>            : }</a>
+<span class="lineNum">     260 </span>            : 
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 : bool Pickle::ReadLength(PickleIterator* iter, int* result) const {</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   if (!ReadInt(iter, result))</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :   return ((*result) &gt;= 0);</span>
+<span class="lineNum">     265 </span>            : }
+<span class="lineNum">     266 </span>            : 
+<a name="267"><span class="lineNum">     267 </span>            : // Always written as a 64-bit value since the size for this type can</a>
+<span class="lineNum">     268 </span>            : // differ between architectures.
+<span class="lineNum">     269 </span><span class="lineCov">       1644 : bool Pickle::ReadSize(PickleIterator* iter, size_t* result) const {</span>
+<span class="lineNum">     270 </span><span class="lineCov">       1644 :   DCHECK(iter);</span>
+<span class="lineNum">     271 </span>            : 
+<span class="lineNum">     272 </span><span class="lineCov">       1644 :   uint64_t big_result = 0;</span>
+<span class="lineNum">     273 </span><span class="lineCov">       1644 :   if (IteratorHasRoomFor(*iter, sizeof(big_result))) {</span>
+<span class="lineNum">     274 </span><span class="lineCov">       1644 :     iter-&gt;CopyInto(&amp;big_result);</span>
+<span class="lineNum">     275 </span><span class="lineCov">       1644 :     UpdateIter(iter, sizeof(big_result));</span>
+<span class="lineNum">     276 </span>            :   } else {
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :     if (!ReadBytesInto(iter, &amp;big_result, sizeof(big_result))) {</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     279 </span>            :     }
+<span class="lineNum">     280 </span>            :   }
+<span class="lineNum">     281 </span><span class="lineCov">       1644 :   DCHECK(big_result &lt;= std::numeric_limits&lt;size_t&gt;::max());</span>
+<span class="lineNum">     282 </span><span class="lineCov">       1644 :   *result = static_cast&lt;size_t&gt;(big_result);</span>
+<span class="lineNum">     283 </span>            : 
+<span class="lineNum">     284 </span><span class="lineCov">       1644 :   return true;</span>
+<a name="285"><span class="lineNum">     285 </span>            : }</a>
+<span class="lineNum">     286 </span>            : 
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 : bool Pickle::ReadInt32(PickleIterator* iter, int32_t* result) const {</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :   DCHECK(iter);</span>
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   if (!IteratorHasRoomFor(*iter, sizeof(*result)))</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :     return ReadBytesInto(iter, result, sizeof(*result));</span>
+<span class="lineNum">     292 </span>            : 
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :   iter-&gt;CopyInto(result);</span>
+<span class="lineNum">     294 </span>            : 
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :   UpdateIter(iter, sizeof(*result));</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="297"><span class="lineNum">     297 </span>            : }</a>
+<span class="lineNum">     298 </span>            : 
+<span class="lineNum">     299 </span><span class="lineCov">      83179 : bool Pickle::ReadUInt32(PickleIterator* iter, uint32_t* result) const {</span>
+<span class="lineNum">     300 </span><span class="lineCov">      83179 :   DCHECK(iter);</span>
+<span class="lineNum">     301 </span>            : 
+<span class="lineNum">     302 </span><span class="lineCov">      83179 :   if (!IteratorHasRoomFor(*iter, sizeof(*result)))</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :     return ReadBytesInto(iter, result, sizeof(*result));</span>
+<span class="lineNum">     304 </span>            : 
+<span class="lineNum">     305 </span><span class="lineCov">      83179 :   iter-&gt;CopyInto(result);</span>
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span><span class="lineCov">      83180 :   UpdateIter(iter, sizeof(*result));</span>
+<span class="lineNum">     308 </span><span class="lineCov">      83180 :   return true;</span>
+<a name="309"><span class="lineNum">     309 </span>            : }</a>
+<span class="lineNum">     310 </span>            : 
+<span class="lineNum">     311 </span><span class="lineCov">         11 : bool Pickle::ReadInt64(PickleIterator* iter, int64_t* result) const {</span>
+<span class="lineNum">     312 </span><span class="lineCov">         11 :   DCHECK(iter);</span>
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span><span class="lineCov">         11 :   if (!IteratorHasRoomFor(*iter, sizeof(*result)))</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :     return ReadBytesInto(iter, result, sizeof(*result));</span>
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span><span class="lineCov">         11 :   iter-&gt;CopyInto(result);</span>
+<span class="lineNum">     318 </span>            : 
+<span class="lineNum">     319 </span><span class="lineCov">         11 :   UpdateIter(iter, sizeof(*result));</span>
+<span class="lineNum">     320 </span><span class="lineCov">         11 :   return true;</span>
+<a name="321"><span class="lineNum">     321 </span>            : }</a>
+<span class="lineNum">     322 </span>            : 
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 : bool Pickle::ReadUInt64(PickleIterator* iter, uint64_t* result) const {</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :   DCHECK(iter);</span>
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :   if (!IteratorHasRoomFor(*iter, sizeof(*result)))</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :     return ReadBytesInto(iter, result, sizeof(*result));</span>
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :   iter-&gt;CopyInto(result);</span>
+<span class="lineNum">     330 </span>            : 
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :   UpdateIter(iter, sizeof(*result));</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="333"><span class="lineNum">     333 </span>            : }</a>
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span><span class="lineCov">          2 : bool Pickle::ReadDouble(PickleIterator* iter, double* result) const {</span>
+<span class="lineNum">     336 </span><span class="lineCov">          2 :   DCHECK(iter);</span>
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span><span class="lineCov">          2 :   if (!IteratorHasRoomFor(*iter, sizeof(*result)))</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     return ReadBytesInto(iter, result, sizeof(*result));</span>
+<span class="lineNum">     340 </span>            : 
+<span class="lineNum">     341 </span><span class="lineCov">          2 :   iter-&gt;CopyInto(result);</span>
+<span class="lineNum">     342 </span>            : 
+<span class="lineNum">     343 </span><span class="lineCov">          2 :   UpdateIter(iter, sizeof(*result));</span>
+<span class="lineNum">     344 </span><span class="lineCov">          2 :   return true;</span>
+<span class="lineNum">     345 </span>            : }
+<span class="lineNum">     346 </span>            : 
+<a name="347"><span class="lineNum">     347 </span>            : // Always written as a 64-bit value since the size for this type can</a>
+<span class="lineNum">     348 </span>            : // differ between architectures.
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 : bool Pickle::ReadIntPtr(PickleIterator* iter, intptr_t* result) const {</span>
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :   DCHECK(iter);</span>
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :   int64_t big_result = 0;</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :   if (IteratorHasRoomFor(*iter, sizeof(big_result))) {</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :     iter-&gt;CopyInto(&amp;big_result);</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :     UpdateIter(iter, sizeof(big_result));</span>
+<span class="lineNum">     356 </span>            :   } else {
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :     if (!ReadBytesInto(iter, &amp;big_result, sizeof(big_result))) {</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     359 </span>            :     }
+<span class="lineNum">     360 </span>            :   }
+<span class="lineNum">     361 </span>            : 
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :   DCHECK(big_result &lt;= std::numeric_limits&lt;intptr_t&gt;::max() &amp;&amp; big_result &gt;= std::numeric_limits&lt;intptr_t&gt;::min());</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :   *result = static_cast&lt;intptr_t&gt;(big_result);</span>
+<span class="lineNum">     364 </span>            : 
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="366"><span class="lineNum">     366 </span>            : }</a>
+<span class="lineNum">     367 </span>            : 
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 : bool Pickle::ReadUnsignedChar(PickleIterator* iter, unsigned char* result) const {</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :   DCHECK(iter);</span>
+<span class="lineNum">     370 </span>            : 
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :   if (!IteratorHasRoomFor(*iter, sizeof(*result)))</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :     return ReadBytesInto(iter, result, sizeof(*result));</span>
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :   iter-&gt;CopyInto(result);</span>
+<span class="lineNum">     375 </span>            : 
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :   UpdateIter(iter, sizeof(*result));</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="378"><span class="lineNum">     378 </span>            : }</a>
+<span class="lineNum">     379 </span>            : 
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 : bool Pickle::ReadString(PickleIterator* iter, std::string* result) const {</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :   DCHECK(iter);</span>
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span>            :   int len;
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :   if (!ReadLength(iter, &amp;len))</span>
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :   auto chars = mozilla::MakeUnique&lt;char[]&gt;(len);</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :   if (!ReadBytesInto(iter, chars.get(), len)) {</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     390 </span>            :   }
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :   result-&gt;assign(chars.get(), len);</span>
+<span class="lineNum">     392 </span>            : 
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="394"><span class="lineNum">     394 </span>            : }</a>
+<span class="lineNum">     395 </span>            : 
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 : bool Pickle::ReadWString(PickleIterator* iter, std::wstring* result) const {</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :   DCHECK(iter);</span>
+<span class="lineNum">     398 </span>            : 
+<span class="lineNum">     399 </span>            :   int len;
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :   if (!ReadLength(iter, &amp;len))</span>
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     402 </span>            :   // Avoid integer multiplication overflow.
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :   if (len &gt; INT_MAX / static_cast&lt;int&gt;(sizeof(wchar_t)))</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     405 </span>            : 
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :   auto chars = mozilla::MakeUnique&lt;wchar_t[]&gt;(len);</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :   if (!ReadBytesInto(iter, chars.get(), len * sizeof(wchar_t))) {</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     409 </span>            :   }
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :   result-&gt;assign(chars.get(), len);</span>
+<span class="lineNum">     411 </span>            : 
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="413"><span class="lineNum">     413 </span>            : }</a>
+<span class="lineNum">     414 </span>            : 
+<span class="lineNum">     415 </span><span class="lineCov">         40 : bool Pickle::ExtractBuffers(PickleIterator* iter, size_t length, BufferList* buffers,</span>
+<span class="lineNum">     416 </span>            :                             uint32_t alignment) const
+<span class="lineNum">     417 </span>            : {
+<span class="lineNum">     418 </span><span class="lineCov">         40 :   DCHECK(iter);</span>
+<span class="lineNum">     419 </span><span class="lineCov">         40 :   DCHECK(buffers);</span>
+<span class="lineNum">     420 </span><span class="lineCov">         40 :   DCHECK(alignment == 4 || alignment == 8);</span>
+<span class="lineNum">     421 </span><span class="lineCov">         40 :   DCHECK(intptr_t(header_) % alignment == 0);</span>
+<span class="lineNum">     422 </span>            : 
+<span class="lineNum">     423 </span><span class="lineCov">         40 :   if (AlignInt(length) &lt; length) {</span>
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     425 </span>            :   }
+<span class="lineNum">     426 </span>            : 
+<span class="lineNum">     427 </span><span class="lineCov">         40 :   uint32_t padding_len = intptr_t(iter-&gt;iter_.Data()) % alignment;</span>
+<span class="lineNum">     428 </span><span class="lineCov">         40 :   if (!iter-&gt;iter_.AdvanceAcrossSegments(buffers_, padding_len)) {</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     430 </span>            :   }
+<span class="lineNum">     431 </span>            : 
+<span class="lineNum">     432 </span>            :   bool success;
+<span class="lineNum">     433 </span><span class="lineCov">         40 :   *buffers = const_cast&lt;BufferList*&gt;(&amp;buffers_)-&gt;Extract(iter-&gt;iter_, length, &amp;success);</span>
+<span class="lineNum">     434 </span><span class="lineCov">         40 :   if (!success) {</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     436 </span>            :   }
+<span class="lineNum">     437 </span>            : 
+<span class="lineNum">     438 </span><span class="lineCov">         40 :   return iter-&gt;iter_.AdvanceAcrossSegments(buffers_, AlignInt(length) - length);</span>
+<a name="439"><span class="lineNum">     439 </span>            : }</a>
+<span class="lineNum">     440 </span>            : 
+<span class="lineNum">     441 </span><span class="lineCov">      11278 : bool Pickle::ReadBytesInto(PickleIterator* iter, void* data, uint32_t length) const {</span>
+<span class="lineNum">     442 </span><span class="lineCov">      11278 :   if (AlignInt(length) &lt; length) {</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     444 </span>            :   }
+<span class="lineNum">     445 </span>            : 
+<span class="lineNum">     446 </span><span class="lineCov">      11278 :   if (!buffers_.ReadBytes(iter-&gt;iter_, reinterpret_cast&lt;char*&gt;(data), length)) {</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     448 </span>            :   }
+<span class="lineNum">     449 </span>            : 
+<span class="lineNum">     450 </span><span class="lineCov">      11278 :   return iter-&gt;iter_.AdvanceAcrossSegments(buffers_, AlignInt(length) - length);</span>
+<span class="lineNum">     451 </span>            : }
+<a name="452"><span class="lineNum">     452 </span>            : </a>
+<span class="lineNum">     453 </span>            : #ifdef MOZ_PICKLE_SENTINEL_CHECKING
+<span class="lineNum">     454 </span><span class="lineCov">      70354 : bool Pickle::ReadSentinel(PickleIterator* iter, uint32_t sentinel) const {</span>
+<span class="lineNum">     455 </span>            :   uint32_t found;
+<span class="lineNum">     456 </span><span class="lineCov">      70354 :   if (!ReadUInt32(iter, &amp;found)) {</span>
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     458 </span>            :   }
+<span class="lineNum">     459 </span><span class="lineCov">      70354 :   return found == sentinel;</span>
+<a name="460"><span class="lineNum">     460 </span>            : }</a>
+<span class="lineNum">     461 </span>            : 
+<span class="lineNum">     462 </span><span class="lineCov">          2 : bool Pickle::IgnoreSentinel(PickleIterator* iter) const {</span>
+<span class="lineNum">     463 </span>            :   uint32_t found;
+<span class="lineNum">     464 </span><span class="lineCov">          2 :   return ReadUInt32(iter, &amp;found);</span>
+<a name="465"><span class="lineNum">     465 </span>            : }</a>
+<span class="lineNum">     466 </span>            : 
+<span class="lineNum">     467 </span><span class="lineCov">      70459 : bool Pickle::WriteSentinel(uint32_t sentinel) {</span>
+<span class="lineNum">     468 </span><span class="lineCov">      70459 :   return WriteUInt32(sentinel);</span>
+<span class="lineNum">     469 </span>            : }
+<a name="470"><span class="lineNum">     470 </span>            : #endif</a>
+<span class="lineNum">     471 </span>            : 
+<span class="lineNum">     472 </span><span class="lineCov">        435 : void Pickle::EndRead(PickleIterator&amp; iter, uint32_t ipcMsgType) const {</span>
+<span class="lineNum">     473 </span><span class="lineCov">        435 :   DCHECK(iter.iter_.Done());</span>
+<span class="lineNum">     474 </span>            : 
+<span class="lineNum">     475 </span><span class="lineCov">        435 :   if (NS_IsMainThread() &amp;&amp; ipcMsgType != 0) {</span>
+<span class="lineNum">     476 </span><span class="lineCov">        272 :     uint32_t latencyMs = round((mozilla::TimeStamp::Now() - iter.start_).ToMilliseconds());</span>
+<span class="lineNum">     477 </span><span class="lineCov">        272 :     if (latencyMs &gt;= kMinTelemetryIPCReadLatencyMs) {</span>
+<span class="lineNum">     478 </span>            :       mozilla::Telemetry::Accumulate(mozilla::Telemetry::IPC_READ_MAIN_THREAD_LATENCY_MS,
+<span class="lineNum">     479 </span><span class="lineCov">          8 :                                      nsDependentCString(mozilla::ipc::StringFromIPCMessageType(ipcMsgType)),</span>
+<span class="lineNum">     480 </span><span class="lineCov">          4 :                                      latencyMs);</span>
+<span class="lineNum">     481 </span>            :     }
+<span class="lineNum">     482 </span>            :   }
+<a name="483"><span class="lineNum">     483 </span><span class="lineCov">        435 : }</span></a>
+<span class="lineNum">     484 </span>            : 
+<span class="lineNum">     485 </span><span class="lineCov">     138415 : void Pickle::BeginWrite(uint32_t length, uint32_t alignment) {</span>
+<span class="lineNum">     486 </span><span class="lineCov">     138415 :   DCHECK(alignment % 4 == 0) &lt;&lt; &quot;Must be at least 32-bit aligned!&quot;;</span>
+<span class="lineNum">     487 </span>            : 
+<span class="lineNum">     488 </span>            :   // write at an alignment-aligned offset from the beginning of the header
+<span class="lineNum">     489 </span><span class="lineCov">     138415 :   uint32_t offset = AlignInt(header_-&gt;payload_size);</span>
+<span class="lineNum">     490 </span><span class="lineCov">     138415 :   uint32_t padding = (header_size_ + offset) % alignment;</span>
+<span class="lineNum">     491 </span><span class="lineCov">     138415 :   uint32_t new_size = offset + padding + AlignInt(length);</span>
+<span class="lineNum">     492 </span><span class="lineCov">     138415 :   MOZ_RELEASE_ASSERT(new_size &gt;= header_-&gt;payload_size);</span>
+<span class="lineNum">     493 </span>            : 
+<span class="lineNum">     494 </span><span class="lineCov">     138415 :   DCHECK(intptr_t(header_) % alignment == 0);</span>
+<span class="lineNum">     495 </span>            : 
+<span class="lineNum">     496 </span>            : #ifdef ARCH_CPU_64_BITS
+<span class="lineNum">     497 </span><span class="lineCov">     138415 :   DCHECK_LE(length, std::numeric_limits&lt;uint32_t&gt;::max());</span>
+<span class="lineNum">     498 </span>            : #endif
+<span class="lineNum">     499 </span>            : 
+<span class="lineNum">     500 </span><span class="lineCov">     138415 :   if (padding) {</span>
+<span class="lineNum">     501 </span><span class="lineCov">         15 :     MOZ_RELEASE_ASSERT(padding &lt;= 8);</span>
+<span class="lineNum">     502 </span>            :     static const char padding_data[8] = {
+<span class="lineNum">     503 </span>            :       kBytePaddingMarker, kBytePaddingMarker, kBytePaddingMarker, kBytePaddingMarker,
+<span class="lineNum">     504 </span>            :       kBytePaddingMarker, kBytePaddingMarker, kBytePaddingMarker, kBytePaddingMarker,
+<span class="lineNum">     505 </span>            :     };
+<span class="lineNum">     506 </span><span class="lineCov">         15 :     buffers_.WriteBytes(padding_data, padding);</span>
+<span class="lineNum">     507 </span>            :   }
+<span class="lineNum">     508 </span>            : 
+<span class="lineNum">     509 </span><span class="lineCov">     138415 :   DCHECK((header_size_ + header_-&gt;payload_size + padding) % alignment == 0);</span>
+<span class="lineNum">     510 </span>            : 
+<span class="lineNum">     511 </span><span class="lineCov">     138415 :   header_-&gt;payload_size = new_size;</span>
+<a name="512"><span class="lineNum">     512 </span><span class="lineCov">     138415 : }</span></a>
+<span class="lineNum">     513 </span>            : 
+<span class="lineNum">     514 </span><span class="lineCov">     138414 : void Pickle::EndWrite(uint32_t length) {</span>
+<span class="lineNum">     515 </span>            :   // Zero-pad to keep tools like purify from complaining about uninitialized
+<span class="lineNum">     516 </span>            :   // memory.
+<span class="lineNum">     517 </span><span class="lineCov">     138414 :   uint32_t padding = AlignInt(length) - length;</span>
+<span class="lineNum">     518 </span><span class="lineCov">     138414 :   if (padding) {</span>
+<span class="lineNum">     519 </span><span class="lineCov">       6841 :     MOZ_RELEASE_ASSERT(padding &lt;= 4);</span>
+<span class="lineNum">     520 </span>            :     static const char padding_data[4] = {
+<span class="lineNum">     521 </span>            :       kBytePaddingMarker, kBytePaddingMarker, kBytePaddingMarker, kBytePaddingMarker,
+<span class="lineNum">     522 </span>            :     };
+<span class="lineNum">     523 </span><span class="lineCov">       6841 :     buffers_.WriteBytes(padding_data, padding);</span>
+<span class="lineNum">     524 </span>            :   }
+<a name="525"><span class="lineNum">     525 </span><span class="lineCov">     138414 : }</span></a>
+<span class="lineNum">     526 </span>            : 
+<span class="lineNum">     527 </span><span class="lineCov">     138415 : bool Pickle::WriteBytes(const void* data, uint32_t data_len, uint32_t alignment) {</span>
+<span class="lineNum">     528 </span><span class="lineCov">     138415 :   DCHECK(alignment == 4 || alignment == 8);</span>
+<span class="lineNum">     529 </span><span class="lineCov">     138415 :   DCHECK(intptr_t(header_) % alignment == 0);</span>
+<span class="lineNum">     530 </span>            : 
+<span class="lineNum">     531 </span><span class="lineCov">     138415 :   BeginWrite(data_len, alignment);</span>
+<span class="lineNum">     532 </span>            : 
+<span class="lineNum">     533 </span><span class="lineCov">     138415 :   buffers_.WriteBytes(reinterpret_cast&lt;const char*&gt;(data), data_len);</span>
+<span class="lineNum">     534 </span>            : 
+<span class="lineNum">     535 </span><span class="lineCov">     138414 :   EndWrite(data_len);</span>
+<span class="lineNum">     536 </span><span class="lineCov">     138414 :   return true;</span>
+<a name="537"><span class="lineNum">     537 </span>            : }</a>
+<span class="lineNum">     538 </span>            : 
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 : bool Pickle::WriteString(const std::string&amp; value) {</span>
+<span class="lineNum">     540 </span>            : #ifdef FUZZING
+<span class="lineNum">     541 </span>            :   std::string v(value);
+<span class="lineNum">     542 </span>            :   Singleton&lt;mozilla::ipc::Faulty&gt;::get()-&gt;FuzzString(v);
+<span class="lineNum">     543 </span>            :   if (!WriteInt(static_cast&lt;int&gt;(v.size())))
+<span class="lineNum">     544 </span>            :     return false;
+<span class="lineNum">     545 </span>            : 
+<span class="lineNum">     546 </span>            :   return WriteBytes(v.data(), static_cast&lt;int&gt;(v.size()));
+<span class="lineNum">     547 </span>            : #else
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :   if (!WriteInt(static_cast&lt;int&gt;(value.size())))</span>
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     550 </span>            : 
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :   return WriteBytes(value.data(), static_cast&lt;int&gt;(value.size()));</span>
+<span class="lineNum">     552 </span>            : #endif
+<a name="553"><span class="lineNum">     553 </span>            : }</a>
+<span class="lineNum">     554 </span>            : 
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 : bool Pickle::WriteWString(const std::wstring&amp; value) {</span>
+<span class="lineNum">     556 </span>            : #ifdef FUZZING
+<span class="lineNum">     557 </span>            :   std::wstring v(value);
+<span class="lineNum">     558 </span>            :   Singleton&lt;mozilla::ipc::Faulty&gt;::get()-&gt;FuzzWString(v);
+<span class="lineNum">     559 </span>            :   if (!WriteInt(static_cast&lt;int&gt;(v.size())))
+<span class="lineNum">     560 </span>            :     return false;
+<span class="lineNum">     561 </span>            : 
+<span class="lineNum">     562 </span>            :   return WriteBytes(v.data(),
+<span class="lineNum">     563 </span>            :                     static_cast&lt;int&gt;(v.size() * sizeof(wchar_t)));
+<span class="lineNum">     564 </span>            : #else
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :   if (!WriteInt(static_cast&lt;int&gt;(value.size())))</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     567 </span>            : 
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :   return WriteBytes(value.data(),</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :                     static_cast&lt;int&gt;(value.size() * sizeof(wchar_t)));</span>
+<span class="lineNum">     570 </span>            : #endif
+<a name="571"><span class="lineNum">     571 </span>            : }</a>
+<span class="lineNum">     572 </span>            : 
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 : bool Pickle::WriteData(const char* data, uint32_t length) {</span>
+<span class="lineNum">     574 </span>            : #ifdef FUZZING
+<span class="lineNum">     575 </span>            :   std::string v(data, length);
+<span class="lineNum">     576 </span>            :   Singleton&lt;mozilla::ipc::Faulty&gt;::get()-&gt;FuzzData(v, v.size());
+<span class="lineNum">     577 </span>            :   return WriteInt(v.size()) &amp;&amp; WriteBytes(v.data(), v.size());
+<span class="lineNum">     578 </span>            : #else
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :    return WriteInt(length) &amp;&amp; WriteBytes(data, length);</span>
+<span class="lineNum">     580 </span>            : #endif
+<a name="581"><span class="lineNum">     581 </span>            : }</a>
+<span class="lineNum">     582 </span>            : 
+<span class="lineNum">     583 </span><span class="lineCov">        419 : void Pickle::InputBytes(const char* data, uint32_t length) {</span>
+<span class="lineNum">     584 </span><span class="lineCov">        419 :   buffers_.WriteBytes(data, length);</span>
+<a name="585"><span class="lineNum">     585 </span><span class="lineCov">        419 : }</span></a>
+<span class="lineNum">     586 </span>            : 
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 : int32_t* Pickle::GetInt32PtrForTest(uint32_t offset) {</span>
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :   size_t pos = buffers_.Size() - offset;</span>
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 :   BufferList::IterImpl iter(buffers_);</span>
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :   MOZ_RELEASE_ASSERT(iter.AdvanceAcrossSegments(buffers_, pos));</span>
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :   return reinterpret_cast&lt;int32_t*&gt;(iter.Data());</span>
+<span class="lineNum">     592 </span>            : }
+<a name="593"><span class="lineNum">     593 </span>            : </a>
+<span class="lineNum">     594 </span>            : // static
+<span class="lineNum">     595 </span><span class="lineCov">        388 : uint32_t Pickle::MessageSize(uint32_t header_size,</span>
+<span class="lineNum">     596 </span>            :                              const char* start,
+<span class="lineNum">     597 </span>            :                              const char* end) {
+<span class="lineNum">     598 </span><span class="lineCov">        388 :   DCHECK(header_size == AlignInt(header_size));</span>
+<span class="lineNum">     599 </span><span class="lineCov">        388 :   DCHECK(header_size &lt;= static_cast&lt;memberAlignmentType&gt;(kHeaderSegmentCapacity));</span>
+<span class="lineNum">     600 </span>            : 
+<span class="lineNum">     601 </span><span class="lineCov">        388 :   if (end &lt; start)</span>
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     603 </span><span class="lineCov">        388 :   size_t length = static_cast&lt;size_t&gt;(end - start);</span>
+<span class="lineNum">     604 </span><span class="lineCov">        388 :   if (length &lt; sizeof(Header))</span>
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     606 </span>            : 
+<span class="lineNum">     607 </span><span class="lineCov">        388 :   const Header* hdr = reinterpret_cast&lt;const Header*&gt;(start);</span>
+<span class="lineNum">     608 </span><span class="lineCov">        388 :   if (length &lt; header_size)</span>
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     610 </span>            : 
+<span class="lineNum">     611 </span><span class="lineCov">        388 :   mozilla::CheckedInt&lt;uint32_t&gt; sum(header_size);</span>
+<span class="lineNum">     612 </span><span class="lineCov">        388 :   sum += hdr-&gt;payload_size;</span>
+<span class="lineNum">     613 </span>            : 
+<span class="lineNum">     614 </span><span class="lineCov">        388 :   if (!sum.isValid())</span>
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     616 </span>            : 
+<span class="lineNum">     617 </span><span class="lineCov">        388 :   return sum.value();</span>
+<span class="lineNum">     618 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

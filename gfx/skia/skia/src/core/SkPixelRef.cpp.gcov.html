@@ -1,0 +1,458 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - gfx/skia/skia/src/core/SkPixelRef.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../index.html">top level</a> - <a href="index.html">gfx/skia/skia/src/core</a> - SkPixelRef.cpp<span style="font-size: 80%;"> (source / <a href="SkPixelRef.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">81</td>
+            <td class="headerCovTableEntry">173</td>
+            <td class="headerCovTableEntryLo">46.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">14</td>
+            <td class="headerCovTableEntry">26</td>
+            <td class="headerCovTableEntryLo">53.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * Copyright 2011 Google Inc.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * Use of this source code is governed by a BSD-style license that can be
+<span class="lineNum">       5 </span>            :  * found in the LICENSE file.
+<span class="lineNum">       6 </span>            :  */
+<span class="lineNum">       7 </span>            : 
+<span class="lineNum">       8 </span>            : #include &quot;SkBitmapCache.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;SkMutex.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;SkPixelRef.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;SkTraceEvent.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : //#define SK_SUPPORT_LEGACY_UNBALANCED_PIXELREF_LOCKCOUNT
+<span class="lineNum">      14 </span>            : //#define SK_TRACE_PIXELREF_LIFETIME
+<span class="lineNum">      15 </span>            : 
+<a name="16"><span class="lineNum">      16 </span>            : #include &quot;SkNextID.h&quot;</a>
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span><span class="lineCov">        211 : uint32_t SkNextID::ImageID() {</span>
+<span class="lineNum">      19 </span>            :     static uint32_t gID = 0;
+<span class="lineNum">      20 </span>            :     uint32_t id;
+<span class="lineNum">      21 </span>            :     // Loop in case our global wraps around, as we never want to return a 0.
+<span class="lineNum">      22 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">      23 </span><span class="lineCov">        211 :         id = sk_atomic_fetch_add(&amp;gID, 2u) + 2;  // Never set the low bit.</span>
+<span class="lineNum">      24 </span><span class="lineCov">        211 :     } while (0 == id);</span>
+<span class="lineNum">      25 </span><span class="lineCov">        211 :     return id;</span>
+<span class="lineNum">      26 </span>            : }
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : ///////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : // just need a &gt; 0 value, so pick a funny one to aid in debugging
+<a name="31"><span class="lineNum">      31 </span>            : #define SKPIXELREF_PRELOCKED_LOCKCOUNT     123456789</a>
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span><span class="lineCov">        270 : static SkImageInfo validate_info(const SkImageInfo&amp; info) {</span>
+<span class="lineNum">      34 </span><span class="lineCov">        270 :     SkAlphaType newAlphaType = info.alphaType();</span>
+<span class="lineNum">      35 </span><span class="lineCov">        270 :     SkAssertResult(SkColorTypeValidateAlphaType(info.colorType(), info.alphaType(), &amp;newAlphaType));</span>
+<span class="lineNum">      36 </span><span class="lineCov">        270 :     return info.makeAlphaType(newAlphaType);</span>
+<a name="37"><span class="lineNum">      37 </span>            : }</a>
+<span class="lineNum">      38 </span>            : 
+<span class="lineNum">      39 </span><span class="lineCov">        921 : static void validate_pixels_ctable(const SkImageInfo&amp; info, const SkColorTable* ctable) {</span>
+<span class="lineNum">      40 </span><span class="lineCov">        921 :     if (info.isEmpty()) {</span>
+<span class="lineNum">      41 </span><span class="lineNoCov">          0 :         return; // can't require ctable if the dimensions are empty</span>
+<span class="lineNum">      42 </span>            :     }
+<span class="lineNum">      43 </span><span class="lineCov">        921 :     if (kIndex_8_SkColorType == info.colorType()) {</span>
+<span class="lineNum">      44 </span><span class="lineNoCov">          0 :         SkASSERT(ctable);</span>
+<span class="lineNum">      45 </span>            :     } else {
+<span class="lineNum">      46 </span><span class="lineCov">        921 :         SkASSERT(nullptr == ctable);</span>
+<span class="lineNum">      47 </span>            :     }
+<span class="lineNum">      48 </span>            : }
+<span class="lineNum">      49 </span>            : 
+<span class="lineNum">      50 </span>            : #ifdef SK_TRACE_PIXELREF_LIFETIME
+<span class="lineNum">      51 </span>            :     static int32_t gInstCounter;
+<span class="lineNum">      52 </span>            : #endif
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span>            : #ifdef SK_SUPPORT_LEGACY_NO_ADDR_PIXELREF
+<span class="lineNum">      55 </span>            : SkPixelRef::SkPixelRef(const SkImageInfo&amp; info)
+<span class="lineNum">      56 </span>            :     : fInfo(validate_info(info))
+<span class="lineNum">      57 </span>            : #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
+<span class="lineNum">      58 </span>            :     , fStableID(SkNextID::ImageID())
+<span class="lineNum">      59 </span>            : #endif
+<span class="lineNum">      60 </span>            : 
+<span class="lineNum">      61 </span>            : {
+<span class="lineNum">      62 </span>            : #ifdef SK_TRACE_PIXELREF_LIFETIME
+<span class="lineNum">      63 </span>            :     SkDebugf(&quot; pixelref %d\n&quot;, sk_atomic_inc(&amp;gInstCounter));
+<span class="lineNum">      64 </span>            : #endif
+<span class="lineNum">      65 </span>            :     fRec.zero();
+<span class="lineNum">      66 </span>            :     fLockCount = 0;
+<span class="lineNum">      67 </span>            :     this-&gt;needsNewGenID();
+<span class="lineNum">      68 </span>            :     fMutability = kMutable;
+<span class="lineNum">      69 </span>            :     fPreLocked = false;
+<span class="lineNum">      70 </span>            :     fAddedToCache.store(false);
+<span class="lineNum">      71 </span>            : }
+<a name="72"><span class="lineNum">      72 </span>            : #endif</a>
+<span class="lineNum">      73 </span>            : 
+<span class="lineNum">      74 </span><span class="lineCov">        270 : SkPixelRef::SkPixelRef(const SkImageInfo&amp; info, void* pixels, size_t rowBytes,</span>
+<span class="lineNum">      75 </span><span class="lineCov">        270 :                        sk_sp&lt;SkColorTable&gt; ctable)</span>
+<span class="lineNum">      76 </span>            :     : fInfo(validate_info(info))
+<span class="lineNum">      77 </span><span class="lineCov">        270 :     , fCTable(std::move(ctable))</span>
+<span class="lineNum">      78 </span>            : #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
+<span class="lineNum">      79 </span>            :     , fStableID(SkNextID::ImageID())
+<span class="lineNum">      80 </span>            : #endif
+<span class="lineNum">      81 </span>            : {
+<span class="lineNum">      82 </span><span class="lineCov">        270 :     validate_pixels_ctable(fInfo, fCTable.get());</span>
+<span class="lineNum">      83 </span><span class="lineCov">        270 :     SkASSERT(rowBytes &gt;= info.minRowBytes());</span>
+<span class="lineNum">      84 </span>            : #ifdef SK_TRACE_PIXELREF_LIFETIME
+<span class="lineNum">      85 </span>            :     SkDebugf(&quot; pixelref %d\n&quot;, sk_atomic_inc(&amp;gInstCounter));
+<span class="lineNum">      86 </span>            : #endif
+<span class="lineNum">      87 </span><span class="lineCov">        270 :     fRec.fPixels = pixels;</span>
+<span class="lineNum">      88 </span><span class="lineCov">        270 :     fRec.fRowBytes = rowBytes;</span>
+<span class="lineNum">      89 </span><span class="lineCov">        270 :     fRec.fColorTable = fCTable.get();</span>
+<span class="lineNum">      90 </span>            : 
+<span class="lineNum">      91 </span><span class="lineCov">        270 :     fLockCount = SKPIXELREF_PRELOCKED_LOCKCOUNT;</span>
+<span class="lineNum">      92 </span><span class="lineCov">        270 :     this-&gt;needsNewGenID();</span>
+<span class="lineNum">      93 </span><span class="lineCov">        270 :     fMutability = kMutable;</span>
+<span class="lineNum">      94 </span><span class="lineCov">        270 :     fPreLocked = true;</span>
+<span class="lineNum">      95 </span><span class="lineCov">        270 :     fAddedToCache.store(false);</span>
+<a name="96"><span class="lineNum">      96 </span><span class="lineCov">        270 : }</span></a>
+<span class="lineNum">      97 </span>            : 
+<span class="lineNum">      98 </span><span class="lineCov">        450 : SkPixelRef::~SkPixelRef() {</span>
+<span class="lineNum">      99 </span>            : #ifndef SK_SUPPORT_LEGACY_UNBALANCED_PIXELREF_LOCKCOUNT
+<span class="lineNum">     100 </span><span class="lineCov">        225 :     SkASSERT(SKPIXELREF_PRELOCKED_LOCKCOUNT == fLockCount || 0 == fLockCount);</span>
+<span class="lineNum">     101 </span>            : #endif
+<span class="lineNum">     102 </span>            : 
+<span class="lineNum">     103 </span>            : #ifdef SK_TRACE_PIXELREF_LIFETIME
+<span class="lineNum">     104 </span>            :     SkDebugf(&quot;~pixelref %d\n&quot;, sk_atomic_dec(&amp;gInstCounter) - 1);
+<span class="lineNum">     105 </span>            : #endif
+<span class="lineNum">     106 </span><span class="lineCov">        225 :     this-&gt;callGenIDChangeListeners();</span>
+<span class="lineNum">     107 </span><span class="lineCov">        225 : }</span>
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span>            : #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
+<span class="lineNum">     110 </span>            : // This is undefined if there are clients in-flight trying to use us
+<span class="lineNum">     111 </span>            : void SkPixelRef::android_only_reset(const SkImageInfo&amp; info, size_t rowBytes,
+<span class="lineNum">     112 </span>            :                                     sk_sp&lt;SkColorTable&gt; ctable) {
+<span class="lineNum">     113 </span>            :     validate_pixels_ctable(info, ctable.get());
+<span class="lineNum">     114 </span>            : 
+<span class="lineNum">     115 </span>            :     *const_cast&lt;SkImageInfo*&gt;(&amp;fInfo) = info;
+<span class="lineNum">     116 </span>            :     fCTable = std::move(ctable);
+<span class="lineNum">     117 </span>            :     // note: we do not change fRec.fPixels
+<span class="lineNum">     118 </span>            :     fRec.fRowBytes = rowBytes;
+<span class="lineNum">     119 </span>            :     fRec.fColorTable = fCTable.get();
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span>            :     // conservative, since its possible the &quot;new&quot; settings are the same as the old.
+<span class="lineNum">     122 </span>            :     this-&gt;notifyPixelsChanged();
+<span class="lineNum">     123 </span>            : }
+<a name="124"><span class="lineNum">     124 </span>            : #endif</a>
+<span class="lineNum">     125 </span>            : 
+<span class="lineNum">     126 </span><span class="lineCov">        743 : void SkPixelRef::needsNewGenID() {</span>
+<span class="lineNum">     127 </span><span class="lineCov">        743 :     fTaggedGenID.store(0);</span>
+<span class="lineNum">     128 </span><span class="lineCov">        743 :     SkASSERT(!this-&gt;genIDIsUnique()); // This method isn't threadsafe, so the assert should be fine.</span>
+<a name="129"><span class="lineNum">     129 </span><span class="lineCov">        743 : }</span></a>
+<span class="lineNum">     130 </span>            : 
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 : void SkPixelRef::cloneGenID(const SkPixelRef&amp; that) {</span>
+<span class="lineNum">     132 </span>            :     // This is subtle.  We must call that.getGenerationID() to make sure its genID isn't 0.
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :     uint32_t genID = that.getGenerationID();</span>
+<span class="lineNum">     134 </span>            : 
+<span class="lineNum">     135 </span>            :     // Neither ID is unique any more.
+<span class="lineNum">     136 </span>            :     // (These &amp; ~1u are actually redundant.  that.getGenerationID() just did it for us.)
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :     this-&gt;fTaggedGenID.store(genID &amp; ~1u);</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :     that. fTaggedGenID.store(genID &amp; ~1u);</span>
+<span class="lineNum">     139 </span>            : 
+<span class="lineNum">     140 </span>            :     // This method isn't threadsafe, so these asserts should be fine.
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :     SkASSERT(!this-&gt;genIDIsUnique());</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :     SkASSERT(!that. genIDIsUnique());</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span>            : #ifdef SK_SUPPORT_LEGACY_NO_ADDR_PIXELREF
+<span class="lineNum">     146 </span>            : void SkPixelRef::setPreLocked(void* pixels, size_t rowBytes, SkColorTable* ctable) {
+<span class="lineNum">     147 </span>            :     SkASSERT(pixels);
+<span class="lineNum">     148 </span>            :     validate_pixels_ctable(fInfo, ctable);
+<span class="lineNum">     149 </span>            :     // only call me in your constructor, otherwise fLockCount tracking can get
+<span class="lineNum">     150 </span>            :     // out of sync.
+<span class="lineNum">     151 </span>            :     fRec.fPixels = pixels;
+<span class="lineNum">     152 </span>            :     fRec.fColorTable = ctable;
+<span class="lineNum">     153 </span>            :     fRec.fRowBytes = rowBytes;
+<span class="lineNum">     154 </span>            :     fLockCount = SKPIXELREF_PRELOCKED_LOCKCOUNT;
+<span class="lineNum">     155 </span>            :     fPreLocked = true;
+<span class="lineNum">     156 </span>            : }
+<span class="lineNum">     157 </span>            : #endif
+<a name="158"><span class="lineNum">     158 </span>            : </a>
+<span class="lineNum">     159 </span>            : // Increments fLockCount only on success
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 : bool SkPixelRef::lockPixelsInsideMutex() {</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :     fMutex.assertHeld();</span>
+<span class="lineNum">     162 </span>            : 
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :     if (1 == ++fLockCount) {</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :         SkASSERT(fRec.isZero());</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :         if (!this-&gt;onNewLockPixels(&amp;fRec)) {</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :             fRec.zero();</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :             fLockCount -= 1;    // we return fLockCount unchanged if we fail.</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     169 </span>            :         }
+<span class="lineNum">     170 </span>            :     }
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :     if (fRec.fPixels) {</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :         validate_pixels_ctable(fInfo, fRec.fColorTable);</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     174 </span>            :     }
+<span class="lineNum">     175 </span>            :     // no pixels, so we failed (somehow)
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :     --fLockCount;</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     178 </span>            : }
+<span class="lineNum">     179 </span>            : 
+<a name="180"><span class="lineNum">     180 </span>            : // For historical reasons, we always inc fLockCount, even if we return false.</a>
+<span class="lineNum">     181 </span>            : // It would be nice to change this (it seems), and only inc if we actually succeed...
+<span class="lineNum">     182 </span><span class="lineCov">        499 : bool SkPixelRef::lockPixels() {</span>
+<span class="lineNum">     183 </span><span class="lineCov">        499 :     SkASSERT(!fPreLocked || SKPIXELREF_PRELOCKED_LOCKCOUNT == fLockCount);</span>
+<span class="lineNum">     184 </span>            : 
+<span class="lineNum">     185 </span><span class="lineCov">        499 :     if (!fPreLocked) {</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :         TRACE_EVENT_BEGIN0(&quot;skia&quot;, &quot;SkPixelRef::lockPixelsMutex&quot;);</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :         SkAutoMutexAcquire  ac(fMutex);</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :         TRACE_EVENT_END0(&quot;skia&quot;, &quot;SkPixelRef::lockPixelsMutex&quot;);</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :         SkDEBUGCODE(int oldCount = fLockCount;)</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :         bool success = this-&gt;lockPixelsInsideMutex();</span>
+<span class="lineNum">     191 </span>            :         // lockPixelsInsideMutex only increments the count if it succeeds.
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :         SkASSERT(oldCount + (int)success == fLockCount);</span>
+<span class="lineNum">     193 </span>            : 
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :         if (!success) {</span>
+<span class="lineNum">     195 </span>            :             // For compatibility with SkBitmap calling lockPixels, we still want to increment
+<span class="lineNum">     196 </span>            :             // fLockCount even if we failed. If we updated SkBitmap we could remove this oddity.
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :             fLockCount += 1;</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     199 </span>            :         }
+<span class="lineNum">     200 </span>            :     }
+<span class="lineNum">     201 </span><span class="lineCov">        499 :     if (fRec.fPixels) {</span>
+<span class="lineNum">     202 </span><span class="lineCov">        499 :         validate_pixels_ctable(fInfo, fRec.fColorTable);</span>
+<span class="lineNum">     203 </span><span class="lineCov">        499 :         return true;</span>
+<span class="lineNum">     204 </span>            :     }
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :     return false;</span>
+<a name="206"><span class="lineNum">     206 </span>            : }</a>
+<span class="lineNum">     207 </span>            : 
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 : bool SkPixelRef::lockPixels(LockRec* rec) {</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :     if (this-&gt;lockPixels()) {</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :         *rec = fRec;</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     212 </span>            :     }
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     return false;</span>
+<a name="214"><span class="lineNum">     214 </span>            : }</a>
+<span class="lineNum">     215 </span>            : 
+<span class="lineNum">     216 </span><span class="lineCov">        451 : void SkPixelRef::unlockPixels() {</span>
+<span class="lineNum">     217 </span><span class="lineCov">        451 :     SkASSERT(!fPreLocked || SKPIXELREF_PRELOCKED_LOCKCOUNT == fLockCount);</span>
+<span class="lineNum">     218 </span>            : 
+<span class="lineNum">     219 </span><span class="lineCov">        451 :     if (!fPreLocked) {</span>
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :         SkAutoMutexAcquire  ac(fMutex);</span>
+<span class="lineNum">     221 </span>            : 
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :         SkASSERT(fLockCount &gt; 0);</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :         if (0 == --fLockCount) {</span>
+<span class="lineNum">     224 </span>            :             // don't call onUnlockPixels unless onLockPixels succeeded
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :             if (fRec.fPixels) {</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :                 this-&gt;onUnlockPixels();</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :                 fRec.zero();</span>
+<span class="lineNum">     228 </span>            :             } else {
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :                 SkASSERT(fRec.isZero());</span>
+<span class="lineNum">     230 </span>            :             }
+<span class="lineNum">     231 </span>            :         }
+<span class="lineNum">     232 </span>            :     }
+<a name="233"><span class="lineNum">     233 </span><span class="lineCov">        451 : }</span></a>
+<span class="lineNum">     234 </span>            : 
+<span class="lineNum">     235 </span><span class="lineCov">        152 : bool SkPixelRef::requestLock(const LockRequest&amp; request, LockResult* result) {</span>
+<span class="lineNum">     236 </span><span class="lineCov">        152 :     SkASSERT(result);</span>
+<span class="lineNum">     237 </span><span class="lineCov">        152 :     if (request.fSize.isEmpty()) {</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     239 </span>            :     }
+<span class="lineNum">     240 </span>            :     // until we support subsets, we have to check this...
+<span class="lineNum">     241 </span><span class="lineCov">        152 :     if (request.fSize.width() != fInfo.width() || request.fSize.height() != fInfo.height()) {</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     243 </span>            :     }
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span><span class="lineCov">        152 :     if (fPreLocked) {</span>
+<span class="lineNum">     246 </span><span class="lineCov">        152 :         result-&gt;fUnlockProc = nullptr;</span>
+<span class="lineNum">     247 </span><span class="lineCov">        152 :         result-&gt;fUnlockContext = nullptr;</span>
+<span class="lineNum">     248 </span><span class="lineCov">        152 :         result-&gt;fCTable = fRec.fColorTable;</span>
+<span class="lineNum">     249 </span><span class="lineCov">        152 :         result-&gt;fPixels = fRec.fPixels;</span>
+<span class="lineNum">     250 </span><span class="lineCov">        152 :         result-&gt;fRowBytes = fRec.fRowBytes;</span>
+<span class="lineNum">     251 </span><span class="lineCov">        152 :         result-&gt;fSize.set(fInfo.width(), fInfo.height());</span>
+<span class="lineNum">     252 </span>            :     } else {
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :         SkAutoMutexAcquire  ac(fMutex);</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :         if (!this-&gt;internalRequestLock(request, result)) {</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     256 </span>            :         }
+<span class="lineNum">     257 </span>            :     }
+<span class="lineNum">     258 </span><span class="lineCov">        152 :     if (result-&gt;fPixels) {</span>
+<span class="lineNum">     259 </span><span class="lineCov">        152 :         validate_pixels_ctable(fInfo, result-&gt;fCTable);</span>
+<span class="lineNum">     260 </span><span class="lineCov">        152 :         return true;</span>
+<span class="lineNum">     261 </span>            :     }
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :     return false;</span>
+<a name="263"><span class="lineNum">     263 </span>            : }</a>
+<span class="lineNum">     264 </span>            : 
+<span class="lineNum">     265 </span><span class="lineCov">         22 : uint32_t SkPixelRef::getGenerationID() const {</span>
+<span class="lineNum">     266 </span><span class="lineCov">         22 :     uint32_t id = fTaggedGenID.load();</span>
+<span class="lineNum">     267 </span><span class="lineCov">         22 :     if (0 == id) {</span>
+<span class="lineNum">     268 </span><span class="lineCov">         19 :         uint32_t next = SkNextID::ImageID() | 1u;</span>
+<span class="lineNum">     269 </span><span class="lineCov">         19 :         if (fTaggedGenID.compare_exchange(&amp;id, next)) {</span>
+<span class="lineNum">     270 </span><span class="lineCov">         19 :             id = next;  // There was no race or we won the race.  fTaggedGenID is next now.</span>
+<span class="lineNum">     271 </span>            :         } else {
+<span class="lineNum">     272 </span>            :             // We lost a race to set fTaggedGenID. compare_exchange() filled id with the winner.
+<span class="lineNum">     273 </span>            :         }
+<span class="lineNum">     274 </span>            :         // We can't quite SkASSERT(this-&gt;genIDIsUnique()). It could be non-unique
+<span class="lineNum">     275 </span>            :         // if we got here via the else path (pretty unlikely, but possible).
+<span class="lineNum">     276 </span>            :     }
+<span class="lineNum">     277 </span><span class="lineCov">         22 :     return id &amp; ~1u;  // Mask off bottom unique bit.</span>
+<a name="278"><span class="lineNum">     278 </span>            : }</a>
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 : void SkPixelRef::addGenIDChangeListener(GenIDChangeListener* listener) {</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     if (nullptr == listener || !this-&gt;genIDIsUnique()) {</span>
+<span class="lineNum">     282 </span>            :         // No point in tracking this if we're not going to call it.
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :         delete listener;</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     285 </span>            :     }
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :     *fGenIDChangeListeners.append() = listener;</span>
+<span class="lineNum">     287 </span>            : }
+<a name="288"><span class="lineNum">     288 </span>            : </a>
+<span class="lineNum">     289 </span>            : // we need to be called *before* the genID gets changed or zerod
+<span class="lineNum">     290 </span><span class="lineCov">        698 : void SkPixelRef::callGenIDChangeListeners() {</span>
+<span class="lineNum">     291 </span>            :     // We don't invalidate ourselves if we think another SkPixelRef is sharing our genID.
+<span class="lineNum">     292 </span><span class="lineCov">        698 :     if (this-&gt;genIDIsUnique()) {</span>
+<span class="lineNum">     293 </span><span class="lineCov">         11 :         for (int i = 0; i &lt; fGenIDChangeListeners.count(); i++) {</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :             fGenIDChangeListeners[i]-&gt;onChange();</span>
+<span class="lineNum">     295 </span>            :         }
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span>            :         // TODO: SkAtomic could add &quot;old_value = atomic.xchg(new_value)&quot; to make this clearer.
+<span class="lineNum">     298 </span><span class="lineCov">         11 :         if (fAddedToCache.load()) {</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :             SkNotifyBitmapGenIDIsStale(this-&gt;getGenerationID());</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :             fAddedToCache.store(false);</span>
+<span class="lineNum">     301 </span>            :         }
+<span class="lineNum">     302 </span>            :     }
+<span class="lineNum">     303 </span>            :     // Listeners get at most one shot, so whether these triggered or not, blow them away.
+<span class="lineNum">     304 </span><span class="lineCov">        698 :     fGenIDChangeListeners.deleteAll();</span>
+<a name="305"><span class="lineNum">     305 </span><span class="lineCov">        698 : }</span></a>
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span><span class="lineCov">        473 : void SkPixelRef::notifyPixelsChanged() {</span>
+<span class="lineNum">     308 </span>            : #ifdef SK_DEBUG
+<span class="lineNum">     309 </span><span class="lineCov">        473 :     if (this-&gt;isImmutable()) {</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :         SkDebugf(&quot;========== notifyPixelsChanged called on immutable pixelref&quot;);</span>
+<span class="lineNum">     311 </span>            :     }
+<span class="lineNum">     312 </span>            : #endif
+<span class="lineNum">     313 </span><span class="lineCov">        473 :     this-&gt;callGenIDChangeListeners();</span>
+<span class="lineNum">     314 </span><span class="lineCov">        473 :     this-&gt;needsNewGenID();</span>
+<span class="lineNum">     315 </span><span class="lineCov">        473 :     this-&gt;onNotifyPixelsChanged();</span>
+<a name="316"><span class="lineNum">     316 </span><span class="lineCov">        473 : }</span></a>
+<span class="lineNum">     317 </span>            : 
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 : void SkPixelRef::changeAlphaType(SkAlphaType at) {</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     *const_cast&lt;SkImageInfo*&gt;(&amp;fInfo) = fInfo.makeAlphaType(at);</span>
+<a name="320"><span class="lineNum">     320 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineCov">        167 : void SkPixelRef::setImmutable() {</span>
+<span class="lineNum">     323 </span><span class="lineCov">        167 :     fMutability = kImmutable;</span>
+<a name="324"><span class="lineNum">     324 </span><span class="lineCov">        167 : }</span></a>
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 : void SkPixelRef::setImmutableWithID(uint32_t genID) {</span>
+<span class="lineNum">     327 </span>            :     /*
+<span class="lineNum">     328 </span>            :      *  We are forcing the genID to match an external value. The caller must ensure that this
+<span class="lineNum">     329 </span>            :      *  value does not conflict with other content.
+<span class="lineNum">     330 </span>            :      *
+<span class="lineNum">     331 </span>            :      *  One use is to force this pixelref's id to match an SkImage's id
+<span class="lineNum">     332 </span>            :      */
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :     fMutability = kImmutable;</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :     fTaggedGenID.store(genID);</span>
+<a name="335"><span class="lineNum">     335 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     336 </span>            : 
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 : void SkPixelRef::setTemporarilyImmutable() {</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :     SkASSERT(fMutability != kImmutable);</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     fMutability = kTemporarilyImmutable;</span>
+<a name="340"><span class="lineNum">     340 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 : void SkPixelRef::restoreMutability() {</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :     SkASSERT(fMutability != kImmutable);</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :     fMutability = kMutable;</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     346 </span>            : 
+<span class="lineNum">     347 </span>            : ///////////////////////////////////////////////////////////////////////////////////////////////////
+<a name="348"><span class="lineNum">     348 </span>            : </a>
+<span class="lineNum">     349 </span>            : 
+<a name="350"><span class="lineNum">     350 </span><span class="lineCov">        473 : void SkPixelRef::onNotifyPixelsChanged() { }</span></a>
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 : size_t SkPixelRef::getAllocatedSizeInBytes() const {</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     return 0;</span>
+<a name="354"><span class="lineNum">     354 </span>            : }</a>
+<span class="lineNum">     355 </span>            : 
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 : static void unlock_legacy_result(void* ctx) {</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :     SkPixelRef* pr = (SkPixelRef*)ctx;</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :     pr-&gt;unlockPixels();</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :     pr-&gt;unref();    // balancing the Ref in onRequestLoc</span>
+<a name="360"><span class="lineNum">     360 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     361 </span>            : 
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 : bool SkPixelRef::internalRequestLock(const LockRequest&amp; request, LockResult* result) {</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :     if (!this-&gt;lockPixelsInsideMutex()) {</span>
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     365 </span>            :     }
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :     result-&gt;fUnlockProc = unlock_legacy_result;</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :     result-&gt;fUnlockContext = SkRef(this);   // this is balanced in our fUnlockProc</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :     result-&gt;fCTable = fRec.fColorTable;</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :     result-&gt;fPixels = fRec.fPixels;</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :     result-&gt;fRowBytes = fRec.fRowBytes;</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :     result-&gt;fSize.set(fInfo.width(), fInfo.height());</span>
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     374 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

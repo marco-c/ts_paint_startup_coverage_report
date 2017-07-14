@@ -1,0 +1,1001 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - third_party/aom/av1/encoder/ransac.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">third_party/aom/av1/encoder</a> - ransac.c<span style="font-size: 80%;"> (source / <a href="ransac.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">561</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">36</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * Copyright (c) 2016, Alliance for Open Media. All rights reserved
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * This source code is subject to the terms of the BSD 2 Clause License and
+<span class="lineNum">       5 </span>            :  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
+<span class="lineNum">       6 </span>            :  * was not distributed with this source code in the LICENSE file, you can
+<span class="lineNum">       7 </span>            :  * obtain it at www.aomedia.org/license/software. If the Alliance for Open
+<span class="lineNum">       8 </span>            :  * Media Patent License 1.0 was not distributed with this source code in the
+<span class="lineNum">       9 </span>            :  * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
+<span class="lineNum">      10 </span>            :  */
+<span class="lineNum">      11 </span>            : #include &lt;memory.h&gt;
+<span class="lineNum">      12 </span>            : #include &lt;math.h&gt;
+<span class="lineNum">      13 </span>            : #include &lt;time.h&gt;
+<span class="lineNum">      14 </span>            : #include &lt;stdio.h&gt;
+<span class="lineNum">      15 </span>            : #include &lt;stdlib.h&gt;
+<span class="lineNum">      16 </span>            : #include &lt;assert.h&gt;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : #include &quot;av1/encoder/ransac.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;av1/encoder/mathutils.h&quot;
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : #define MAX_MINPTS 4
+<span class="lineNum">      22 </span>            : #define MAX_DEGENERATE_ITER 10
+<span class="lineNum">      23 </span>            : #define MINPTS_MULTIPLIER 5
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : #define INLIER_THRESHOLD 1.0
+<span class="lineNum">      26 </span>            : #define MIN_TRIALS 20
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">      29 </span>            : // ransac
+<span class="lineNum">      30 </span>            : typedef int (*IsDegenerateFunc)(double *p);
+<span class="lineNum">      31 </span>            : typedef void (*NormalizeFunc)(double *p, int np, double *T);
+<span class="lineNum">      32 </span>            : typedef void (*DenormalizeFunc)(double *params, double *T1, double *T2);
+<span class="lineNum">      33 </span>            : typedef int (*FindTransformationFunc)(int points, double *points1,
+<span class="lineNum">      34 </span>            :                                       double *points2, double *params);
+<span class="lineNum">      35 </span>            : typedef void (*ProjectPointsDoubleFunc)(double *mat, double *points,
+<span class="lineNum">      36 </span>            :                                         double *proj, const int n,
+<span class="lineNum">      37 </span>            :                                         const int stride_points,
+<a name="38"><span class="lineNum">      38 </span>            :                                         const int stride_proj);</a>
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span><span class="lineNoCov">          0 : static void project_points_double_translation(double *mat, double *points,</span>
+<span class="lineNum">      41 </span>            :                                               double *proj, const int n,
+<span class="lineNum">      42 </span>            :                                               const int stride_points,
+<span class="lineNum">      43 </span>            :                                               const int stride_proj) {
+<span class="lineNum">      44 </span>            :   int i;
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; n; ++i) {</span>
+<span class="lineNum">      46 </span><span class="lineNoCov">          0 :     const double x = *(points++), y = *(points++);</span>
+<span class="lineNum">      47 </span><span class="lineNoCov">          0 :     *(proj++) = x + mat[0];</span>
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 :     *(proj++) = y + mat[1];</span>
+<span class="lineNum">      49 </span><span class="lineNoCov">          0 :     points += stride_points - 2;</span>
+<span class="lineNum">      50 </span><span class="lineNoCov">          0 :     proj += stride_proj - 2;</span>
+<span class="lineNum">      51 </span>            :   }
+<a name="52"><span class="lineNum">      52 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 : static void project_points_double_rotzoom(double *mat, double *points,</span>
+<span class="lineNum">      55 </span>            :                                           double *proj, const int n,
+<span class="lineNum">      56 </span>            :                                           const int stride_points,
+<span class="lineNum">      57 </span>            :                                           const int stride_proj) {
+<span class="lineNum">      58 </span>            :   int i;
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; n; ++i) {</span>
+<span class="lineNum">      60 </span><span class="lineNoCov">          0 :     const double x = *(points++), y = *(points++);</span>
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 :     *(proj++) = mat[2] * x + mat[3] * y + mat[0];</span>
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :     *(proj++) = -mat[3] * x + mat[2] * y + mat[1];</span>
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :     points += stride_points - 2;</span>
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 :     proj += stride_proj - 2;</span>
+<span class="lineNum">      65 </span>            :   }
+<a name="66"><span class="lineNum">      66 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 : static void project_points_double_affine(double *mat, double *points,</span>
+<span class="lineNum">      69 </span>            :                                          double *proj, const int n,
+<span class="lineNum">      70 </span>            :                                          const int stride_points,
+<span class="lineNum">      71 </span>            :                                          const int stride_proj) {
+<span class="lineNum">      72 </span>            :   int i;
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; n; ++i) {</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :     const double x = *(points++), y = *(points++);</span>
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 :     *(proj++) = mat[2] * x + mat[3] * y + mat[0];</span>
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :     *(proj++) = mat[4] * x + mat[5] * y + mat[1];</span>
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :     points += stride_points - 2;</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :     proj += stride_proj - 2;</span>
+<span class="lineNum">      79 </span>            :   }
+<a name="80"><span class="lineNum">      80 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      81 </span>            : 
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 : static void project_points_double_hortrapezoid(double *mat, double *points,</span>
+<span class="lineNum">      83 </span>            :                                                double *proj, const int n,
+<span class="lineNum">      84 </span>            :                                                const int stride_points,
+<span class="lineNum">      85 </span>            :                                                const int stride_proj) {
+<span class="lineNum">      86 </span>            :   int i;
+<span class="lineNum">      87 </span>            :   double x, y, Z, Z_inv;
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; n; ++i) {</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :     x = *(points++), y = *(points++);</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :     Z_inv = mat[7] * y + 1;</span>
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :     assert(fabs(Z_inv) &gt; 0.000001);</span>
+<span class="lineNum">      92 </span><span class="lineNoCov">          0 :     Z = 1. / Z_inv;</span>
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :     *(proj++) = (mat[2] * x + mat[3] * y + mat[0]) * Z;</span>
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :     *(proj++) = (mat[5] * y + mat[1]) * Z;</span>
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :     points += stride_points - 2;</span>
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :     proj += stride_proj - 2;</span>
+<span class="lineNum">      97 </span>            :   }
+<a name="98"><span class="lineNum">      98 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      99 </span>            : 
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 : static void project_points_double_vertrapezoid(double *mat, double *points,</span>
+<span class="lineNum">     101 </span>            :                                                double *proj, const int n,
+<span class="lineNum">     102 </span>            :                                                const int stride_points,
+<span class="lineNum">     103 </span>            :                                                const int stride_proj) {
+<span class="lineNum">     104 </span>            :   int i;
+<span class="lineNum">     105 </span>            :   double x, y, Z, Z_inv;
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; n; ++i) {</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :     x = *(points++), y = *(points++);</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :     Z_inv = mat[6] * x + 1;</span>
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :     assert(fabs(Z_inv) &gt; 0.000001);</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :     Z = 1. / Z_inv;</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :     *(proj++) = (mat[2] * x + mat[0]) * Z;</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :     *(proj++) = (mat[4] * x + mat[5] * y + mat[1]) * Z;</span>
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :     points += stride_points - 2;</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :     proj += stride_proj - 2;</span>
+<span class="lineNum">     115 </span>            :   }
+<a name="116"><span class="lineNum">     116 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     117 </span>            : 
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 : static void project_points_double_homography(double *mat, double *points,</span>
+<span class="lineNum">     119 </span>            :                                              double *proj, const int n,
+<span class="lineNum">     120 </span>            :                                              const int stride_points,
+<span class="lineNum">     121 </span>            :                                              const int stride_proj) {
+<span class="lineNum">     122 </span>            :   int i;
+<span class="lineNum">     123 </span>            :   double x, y, Z, Z_inv;
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; n; ++i) {</span>
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :     x = *(points++), y = *(points++);</span>
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :     Z_inv = mat[6] * x + mat[7] * y + 1;</span>
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :     assert(fabs(Z_inv) &gt; 0.000001);</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :     Z = 1. / Z_inv;</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :     *(proj++) = (mat[2] * x + mat[3] * y + mat[0]) * Z;</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :     *(proj++) = (mat[4] * x + mat[5] * y + mat[1]) * Z;</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :     points += stride_points - 2;</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :     proj += stride_proj - 2;</span>
+<span class="lineNum">     133 </span>            :   }
+<a name="134"><span class="lineNum">     134 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     135 </span>            : 
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 : static void normalize_homography(double *pts, int n, double *T) {</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :   double *p = pts;</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :   double mean[2] = { 0, 0 };</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   double msqe = 0;</span>
+<span class="lineNum">     140 </span>            :   double scale;
+<span class="lineNum">     141 </span>            :   int i;
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; n; ++i, p += 2) {</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :     mean[0] += p[0];</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :     mean[1] += p[1];</span>
+<span class="lineNum">     145 </span>            :   }
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :   mean[0] /= n;</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :   mean[1] /= n;</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :   for (p = pts, i = 0; i &lt; n; ++i, p += 2) {</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     p[0] -= mean[0];</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :     p[1] -= mean[1];</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :     msqe += sqrt(p[0] * p[0] + p[1] * p[1]);</span>
+<span class="lineNum">     152 </span>            :   }
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :   msqe /= n;</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :   scale = (msqe == 0 ? 1.0 : sqrt(2) / msqe);</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :   T[0] = scale;</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :   T[1] = 0;</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :   T[2] = -scale * mean[0];</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :   T[3] = 0;</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :   T[4] = scale;</span>
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :   T[5] = -scale * mean[1];</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :   T[6] = 0;</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   T[7] = 0;</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :   T[8] = 1;</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :   for (p = pts, i = 0; i &lt; n; ++i, p += 2) {</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :     p[0] *= scale;</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     p[1] *= scale;</span>
+<span class="lineNum">     167 </span>            :   }
+<a name="168"><span class="lineNum">     168 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     169 </span>            : 
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 : static void invnormalize_mat(double *T, double *iT) {</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :   double is = 1.0 / T[0];</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :   double m0 = -T[2] * is;</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :   double m1 = -T[5] * is;</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :   iT[0] = is;</span>
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :   iT[1] = 0;</span>
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :   iT[2] = m0;</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :   iT[3] = 0;</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :   iT[4] = is;</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   iT[5] = m1;</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :   iT[6] = 0;</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :   iT[7] = 0;</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :   iT[8] = 1;</span>
+<a name="183"><span class="lineNum">     183 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     184 </span>            : 
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 : static void denormalize_homography(double *params, double *T1, double *T2) {</span>
+<span class="lineNum">     186 </span>            :   double iT2[9];
+<span class="lineNum">     187 </span>            :   double params2[9];
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   invnormalize_mat(T2, iT2);</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :   multiply_mat(params, T1, params2, 3, 3, 3);</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :   multiply_mat(iT2, params2, params, 3, 3, 3);</span>
+<a name="191"><span class="lineNum">     191 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 : static void denormalize_homography_reorder(double *params, double *T1,</span>
+<span class="lineNum">     194 </span>            :                                            double *T2) {
+<span class="lineNum">     195 </span>            :   double params_denorm[MAX_PARAMDIM];
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :   memcpy(params_denorm, params, sizeof(*params) * 8);</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   params_denorm[8] = 1.0;</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :   denormalize_homography(params_denorm, T1, T2);</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :   params[0] = params_denorm[2];</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :   params[1] = params_denorm[5];</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :   params[2] = params_denorm[0];</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :   params[3] = params_denorm[1];</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :   params[4] = params_denorm[3];</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :   params[5] = params_denorm[4];</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :   params[6] = params_denorm[6];</span>
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :   params[7] = params_denorm[7];</span>
+<a name="207"><span class="lineNum">     207 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 : static void denormalize_affine_reorder(double *params, double *T1, double *T2) {</span>
+<span class="lineNum">     210 </span>            :   double params_denorm[MAX_PARAMDIM];
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :   params_denorm[0] = params[0];</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :   params_denorm[1] = params[1];</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   params_denorm[2] = params[4];</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :   params_denorm[3] = params[2];</span>
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :   params_denorm[4] = params[3];</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :   params_denorm[5] = params[5];</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :   params_denorm[6] = params_denorm[7] = 0;</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :   params_denorm[8] = 1;</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :   denormalize_homography(params_denorm, T1, T2);</span>
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :   params[0] = params_denorm[2];</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :   params[1] = params_denorm[5];</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :   params[2] = params_denorm[0];</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :   params[3] = params_denorm[1];</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :   params[4] = params_denorm[3];</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :   params[5] = params_denorm[4];</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :   params[6] = params[7] = 0;</span>
+<a name="227"><span class="lineNum">     227 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     228 </span>            : 
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 : static void denormalize_rotzoom_reorder(double *params, double *T1,</span>
+<span class="lineNum">     230 </span>            :                                         double *T2) {
+<span class="lineNum">     231 </span>            :   double params_denorm[MAX_PARAMDIM];
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   params_denorm[0] = params[0];</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :   params_denorm[1] = params[1];</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :   params_denorm[2] = params[2];</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :   params_denorm[3] = -params[1];</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :   params_denorm[4] = params[0];</span>
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :   params_denorm[5] = params[3];</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :   params_denorm[6] = params_denorm[7] = 0;</span>
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :   params_denorm[8] = 1;</span>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :   denormalize_homography(params_denorm, T1, T2);</span>
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :   params[0] = params_denorm[2];</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :   params[1] = params_denorm[5];</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   params[2] = params_denorm[0];</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   params[3] = params_denorm[1];</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :   params[4] = -params[3];</span>
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   params[5] = params[2];</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   params[6] = params[7] = 0;</span>
+<a name="248"><span class="lineNum">     248 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 : static void denormalize_translation_reorder(double *params, double *T1,</span>
+<span class="lineNum">     251 </span>            :                                             double *T2) {
+<span class="lineNum">     252 </span>            :   double params_denorm[MAX_PARAMDIM];
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :   params_denorm[0] = 1;</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :   params_denorm[1] = 0;</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :   params_denorm[2] = params[0];</span>
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   params_denorm[3] = 0;</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :   params_denorm[4] = 1;</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :   params_denorm[5] = params[1];</span>
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :   params_denorm[6] = params_denorm[7] = 0;</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :   params_denorm[8] = 1;</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :   denormalize_homography(params_denorm, T1, T2);</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   params[0] = params_denorm[2];</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :   params[1] = params_denorm[5];</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :   params[2] = params[5] = 1;</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :   params[3] = params[4] = 0;</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :   params[6] = params[7] = 0;</span>
+<a name="267"><span class="lineNum">     267 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 : static int find_translation(int np, double *pts1, double *pts2, double *mat) {</span>
+<span class="lineNum">     270 </span>            :   int i;
+<span class="lineNum">     271 </span>            :   double sx, sy, dx, dy;
+<span class="lineNum">     272 </span>            :   double sumx, sumy;
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span>            :   double T1[9], T2[9];
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :   normalize_homography(pts1, np, T1);</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :   normalize_homography(pts2, np, T2);</span>
+<span class="lineNum">     277 </span>            : 
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :   sumx = 0;</span>
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :   sumy = 0;</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; np; ++i) {</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     dx = *(pts2++);</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :     dy = *(pts2++);</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :     sx = *(pts1++);</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :     sy = *(pts1++);</span>
+<span class="lineNum">     285 </span>            : 
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :     sumx += dx - sx;</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :     sumy += dy - sy;</span>
+<span class="lineNum">     288 </span>            :   }
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   mat[0] = sumx / np;</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   mat[1] = sumy / np;</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   denormalize_translation_reorder(mat, T1, T2);</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="293"><span class="lineNum">     293 </span>            : }</a>
+<span class="lineNum">     294 </span>            : 
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 : static int find_rotzoom(int np, double *pts1, double *pts2, double *mat) {</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :   const int np2 = np * 2;</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :   double *a = (double *)aom_malloc(sizeof(*a) * (np2 * 5 + 20));</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :   double *b = a + np2 * 4;</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :   double *temp = b + np2;</span>
+<span class="lineNum">     300 </span>            :   int i;
+<span class="lineNum">     301 </span>            :   double sx, sy, dx, dy;
+<span class="lineNum">     302 </span>            : 
+<span class="lineNum">     303 </span>            :   double T1[9], T2[9];
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :   normalize_homography(pts1, np, T1);</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :   normalize_homography(pts2, np, T2);</span>
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; np; ++i) {</span>
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :     dx = *(pts2++);</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     dy = *(pts2++);</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     sx = *(pts1++);</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :     sy = *(pts1++);</span>
+<span class="lineNum">     312 </span>            : 
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :     a[i * 2 * 4 + 0] = sx;</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :     a[i * 2 * 4 + 1] = sy;</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :     a[i * 2 * 4 + 2] = 1;</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :     a[i * 2 * 4 + 3] = 0;</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :     a[(i * 2 + 1) * 4 + 0] = sy;</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     a[(i * 2 + 1) * 4 + 1] = -sx;</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     a[(i * 2 + 1) * 4 + 2] = 0;</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     a[(i * 2 + 1) * 4 + 3] = 1;</span>
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :     b[2 * i] = dx;</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :     b[2 * i + 1] = dy;</span>
+<span class="lineNum">     324 </span>            :   }
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :   if (!least_squares(4, a, np2, 4, b, temp, mat)) {</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :     aom_free(a);</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :     return 1;</span>
+<span class="lineNum">     328 </span>            :   }
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :   denormalize_rotzoom_reorder(mat, T1, T2);</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :   aom_free(a);</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="332"><span class="lineNum">     332 </span>            : }</a>
+<span class="lineNum">     333 </span>            : 
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 : static int find_affine(int np, double *pts1, double *pts2, double *mat) {</span>
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :   const int np2 = np * 2;</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :   double *a = (double *)aom_malloc(sizeof(*a) * (np2 * 7 + 42));</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :   double *b = a + np2 * 6;</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :   double *temp = b + np2;</span>
+<span class="lineNum">     339 </span>            :   int i;
+<span class="lineNum">     340 </span>            :   double sx, sy, dx, dy;
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span>            :   double T1[9], T2[9];
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :   normalize_homography(pts1, np, T1);</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :   normalize_homography(pts2, np, T2);</span>
+<span class="lineNum">     345 </span>            : 
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; np; ++i) {</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :     dx = *(pts2++);</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :     dy = *(pts2++);</span>
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :     sx = *(pts1++);</span>
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :     sy = *(pts1++);</span>
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :     a[i * 2 * 6 + 0] = sx;</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     a[i * 2 * 6 + 1] = sy;</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :     a[i * 2 * 6 + 2] = 0;</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :     a[i * 2 * 6 + 3] = 0;</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :     a[i * 2 * 6 + 4] = 1;</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :     a[i * 2 * 6 + 5] = 0;</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :     a[(i * 2 + 1) * 6 + 0] = 0;</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :     a[(i * 2 + 1) * 6 + 1] = 0;</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :     a[(i * 2 + 1) * 6 + 2] = sx;</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :     a[(i * 2 + 1) * 6 + 3] = sy;</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :     a[(i * 2 + 1) * 6 + 4] = 0;</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :     a[(i * 2 + 1) * 6 + 5] = 1;</span>
+<span class="lineNum">     364 </span>            : 
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :     b[2 * i] = dx;</span>
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :     b[2 * i + 1] = dy;</span>
+<span class="lineNum">     367 </span>            :   }
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :   if (!least_squares(6, a, np2, 6, b, temp, mat)) {</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :     aom_free(a);</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :     return 1;</span>
+<span class="lineNum">     371 </span>            :   }
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :   denormalize_affine_reorder(mat, T1, T2);</span>
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :   aom_free(a);</span>
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="375"><span class="lineNum">     375 </span>            : }</a>
+<span class="lineNum">     376 </span>            : 
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 : static int find_vertrapezoid(int np, double *pts1, double *pts2, double *mat) {</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :   const int np3 = np * 3;</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :   double *a = (double *)aom_malloc(sizeof(*a) * np3 * 14);</span>
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :   double *U = a + np3 * 7;</span>
+<span class="lineNum">     381 </span>            :   double S[7], V[7 * 7], H[9];
+<span class="lineNum">     382 </span>            :   int i, mini;
+<span class="lineNum">     383 </span>            :   double sx, sy, dx, dy;
+<span class="lineNum">     384 </span>            :   double T1[9], T2[9];
+<span class="lineNum">     385 </span>            : 
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :   normalize_homography(pts1, np, T1);</span>
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :   normalize_homography(pts2, np, T2);</span>
+<span class="lineNum">     388 </span>            : 
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; np; ++i) {</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :     dx = *(pts2++);</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :     dy = *(pts2++);</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :     sx = *(pts1++);</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :     sy = *(pts1++);</span>
+<span class="lineNum">     394 </span>            : 
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 0] = a[i * 3 * 7 + 1] = 0;</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 2] = -sx;</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 3] = -sy;</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 4] = -1;</span>
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 5] = dy * sx;</span>
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 6] = dy;</span>
+<span class="lineNum">     401 </span>            : 
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 0] = sx;</span>
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 1] = 1;</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 2] = a[(i * 3 + 1) * 7 + 3] = a[(i * 3 + 1) * 7 + 4] =</span>
+<span class="lineNum">     405 </span>            :         0;
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 5] = -dx * sx;</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 6] = -dx;</span>
+<span class="lineNum">     408 </span>            : 
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 0] = -dy * sx;</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 1] = -dy;</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 2] = dx * sx;</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 3] = dx * sy;</span>
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 4] = dx;</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 5] = a[(i * 3 + 2) * 7 + 6] = 0;</span>
+<span class="lineNum">     415 </span>            :   }
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :   if (SVD(U, S, V, a, np3, 7)) {</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :     aom_free(a);</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :     return 1;</span>
+<span class="lineNum">     419 </span>            :   } else {
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :     double minS = 1e12;</span>
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :     mini = -1;</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; 7; ++i) {</span>
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :       if (S[i] &lt; minS) {</span>
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :         minS = S[i];</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :         mini = i;</span>
+<span class="lineNum">     426 </span>            :       }
+<span class="lineNum">     427 </span>            :     }
+<span class="lineNum">     428 </span>            :   }
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :   H[1] = H[7] = 0;</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; 1; i++) H[i] = V[i * 7 + mini];</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :   for (; i &lt; 6; i++) H[i + 1] = V[i * 7 + mini];</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :   for (; i &lt; 7; i++) H[i + 2] = V[i * 7 + mini];</span>
+<span class="lineNum">     433 </span>            : 
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :   denormalize_homography_reorder(H, T1, T2);</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :   aom_free(a);</span>
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :   if (H[8] == 0.0) {</span>
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :     return 1;</span>
+<span class="lineNum">     438 </span>            :   } else {
+<span class="lineNum">     439 </span>            :     // normalize
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :     double f = 1.0 / H[8];</span>
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; 8; i++) mat[i] = f * H[i];</span>
+<span class="lineNum">     442 </span>            :   }
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="444"><span class="lineNum">     444 </span>            : }</a>
+<span class="lineNum">     445 </span>            : 
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 : static int find_hortrapezoid(int np, double *pts1, double *pts2, double *mat) {</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :   const int np3 = np * 3;</span>
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :   double *a = (double *)aom_malloc(sizeof(*a) * np3 * 14);</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :   double *U = a + np3 * 7;</span>
+<span class="lineNum">     450 </span>            :   double S[7], V[7 * 7], H[9];
+<span class="lineNum">     451 </span>            :   int i, mini;
+<span class="lineNum">     452 </span>            :   double sx, sy, dx, dy;
+<span class="lineNum">     453 </span>            :   double T1[9], T2[9];
+<span class="lineNum">     454 </span>            : 
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :   normalize_homography(pts1, np, T1);</span>
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 :   normalize_homography(pts2, np, T2);</span>
+<span class="lineNum">     457 </span>            : 
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; np; ++i) {</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :     dx = *(pts2++);</span>
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :     dy = *(pts2++);</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :     sx = *(pts1++);</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :     sy = *(pts1++);</span>
+<span class="lineNum">     463 </span>            : 
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 0] = a[i * 3 * 7 + 1] = a[i * 3 * 7 + 2] = 0;</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 3] = -sy;</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 4] = -1;</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 5] = dy * sy;</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :     a[i * 3 * 7 + 6] = dy;</span>
+<span class="lineNum">     469 </span>            : 
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 0] = sx;</span>
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 1] = sy;</span>
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 2] = 1;</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 3] = a[(i * 3 + 1) * 7 + 4] = 0;</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 5] = -dx * sy;</span>
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 7 + 6] = -dx;</span>
+<span class="lineNum">     476 </span>            : 
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 0] = -dy * sx;</span>
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 1] = -dy * sy;</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 2] = -dy;</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 3] = dx * sy;</span>
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 4] = dx;</span>
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 7 + 5] = a[(i * 3 + 2) * 7 + 6] = 0;</span>
+<span class="lineNum">     483 </span>            :   }
+<span class="lineNum">     484 </span>            : 
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :   if (SVD(U, S, V, a, np3, 7)) {</span>
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :     aom_free(a);</span>
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :     return 1;</span>
+<span class="lineNum">     488 </span>            :   } else {
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :     double minS = 1e12;</span>
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :     mini = -1;</span>
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; 7; ++i) {</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :       if (S[i] &lt; minS) {</span>
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :         minS = S[i];</span>
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :         mini = i;</span>
+<span class="lineNum">     495 </span>            :       }
+<span class="lineNum">     496 </span>            :     }
+<span class="lineNum">     497 </span>            :   }
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :   H[3] = H[6] = 0;</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; 3; i++) H[i] = V[i * 7 + mini];</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :   for (; i &lt; 5; i++) H[i + 1] = V[i * 7 + mini];</span>
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :   for (; i &lt; 7; i++) H[i + 2] = V[i * 7 + mini];</span>
+<span class="lineNum">     502 </span>            : 
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :   denormalize_homography_reorder(H, T1, T2);</span>
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :   aom_free(a);</span>
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :   if (H[8] == 0.0) {</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :     return 1;</span>
+<span class="lineNum">     507 </span>            :   } else {
+<span class="lineNum">     508 </span>            :     // normalize
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :     double f = 1.0 / H[8];</span>
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; 8; i++) mat[i] = f * H[i];</span>
+<span class="lineNum">     511 </span>            :   }
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="513"><span class="lineNum">     513 </span>            : }</a>
+<span class="lineNum">     514 </span>            : 
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 : static int find_homography(int np, double *pts1, double *pts2, double *mat) {</span>
+<span class="lineNum">     516 </span>            :   // Implemented from Peter Kovesi's normalized implementation
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :   const int np3 = np * 3;</span>
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :   double *a = (double *)aom_malloc(sizeof(*a) * np3 * 18);</span>
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :   double *U = a + np3 * 9;</span>
+<span class="lineNum">     520 </span>            :   double S[9], V[9 * 9], H[9];
+<span class="lineNum">     521 </span>            :   int i, mini;
+<span class="lineNum">     522 </span>            :   double sx, sy, dx, dy;
+<span class="lineNum">     523 </span>            :   double T1[9], T2[9];
+<span class="lineNum">     524 </span>            : 
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :   normalize_homography(pts1, np, T1);</span>
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :   normalize_homography(pts2, np, T2);</span>
+<span class="lineNum">     527 </span>            : 
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; np; ++i) {</span>
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :     dx = *(pts2++);</span>
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 :     dy = *(pts2++);</span>
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :     sx = *(pts1++);</span>
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :     sy = *(pts1++);</span>
+<span class="lineNum">     533 </span>            : 
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :     a[i * 3 * 9 + 0] = a[i * 3 * 9 + 1] = a[i * 3 * 9 + 2] = 0;</span>
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :     a[i * 3 * 9 + 3] = -sx;</span>
+<span class="lineNum">     536 </span><span class="lineNoCov">          0 :     a[i * 3 * 9 + 4] = -sy;</span>
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :     a[i * 3 * 9 + 5] = -1;</span>
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :     a[i * 3 * 9 + 6] = dy * sx;</span>
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :     a[i * 3 * 9 + 7] = dy * sy;</span>
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :     a[i * 3 * 9 + 8] = dy;</span>
+<span class="lineNum">     541 </span>            : 
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 9 + 0] = sx;</span>
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 9 + 1] = sy;</span>
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 9 + 2] = 1;</span>
+<span class="lineNum">     545 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 9 + 3] = a[(i * 3 + 1) * 9 + 4] = a[(i * 3 + 1) * 9 + 5] =</span>
+<span class="lineNum">     546 </span>            :         0;
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 9 + 6] = -dx * sx;</span>
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 9 + 7] = -dx * sy;</span>
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :     a[(i * 3 + 1) * 9 + 8] = -dx;</span>
+<span class="lineNum">     550 </span>            : 
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 9 + 0] = -dy * sx;</span>
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 9 + 1] = -dy * sy;</span>
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 9 + 2] = -dy;</span>
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 9 + 3] = dx * sx;</span>
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 9 + 4] = dx * sy;</span>
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 9 + 5] = dx;</span>
+<span class="lineNum">     557 </span><span class="lineNoCov">          0 :     a[(i * 3 + 2) * 9 + 6] = a[(i * 3 + 2) * 9 + 7] = a[(i * 3 + 2) * 9 + 8] =</span>
+<span class="lineNum">     558 </span>            :         0;
+<span class="lineNum">     559 </span>            :   }
+<span class="lineNum">     560 </span>            : 
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 :   if (SVD(U, S, V, a, np3, 9)) {</span>
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :     aom_free(a);</span>
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :     return 1;</span>
+<span class="lineNum">     564 </span>            :   } else {
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :     double minS = 1e12;</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :     mini = -1;</span>
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; 9; ++i) {</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :       if (S[i] &lt; minS) {</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :         minS = S[i];</span>
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :         mini = i;</span>
+<span class="lineNum">     571 </span>            :       }
+<span class="lineNum">     572 </span>            :     }
+<span class="lineNum">     573 </span>            :   }
+<span class="lineNum">     574 </span>            : 
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; 9; i++) H[i] = V[i * 9 + mini];</span>
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :   denormalize_homography_reorder(H, T1, T2);</span>
+<span class="lineNum">     577 </span><span class="lineNoCov">          0 :   aom_free(a);</span>
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :   if (H[8] == 0.0) {</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :     return 1;</span>
+<span class="lineNum">     580 </span>            :   } else {
+<span class="lineNum">     581 </span>            :     // normalize
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :     double f = 1.0 / H[8];</span>
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; 8; i++) mat[i] = f * H[i];</span>
+<span class="lineNum">     584 </span>            :   }
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :   return 0;</span>
+<span class="lineNum">     586 </span>            : }
+<a name="587"><span class="lineNum">     587 </span>            : </a>
+<span class="lineNum">     588 </span>            : // Generate a random number in the range [0, 32768).
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 : static unsigned int lcg_rand16(unsigned int *state) {</span>
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :   *state = (unsigned int)(*state * 1103515245ULL + 12345);</span>
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :   return *state / 65536 % 32768;</span>
+<a name="592"><span class="lineNum">     592 </span>            : }</a>
+<span class="lineNum">     593 </span>            : 
+<span class="lineNum">     594 </span><span class="lineNoCov">          0 : static int get_rand_indices(int npoints, int minpts, int *indices,</span>
+<span class="lineNum">     595 </span>            :                             unsigned int *seed) {
+<span class="lineNum">     596 </span>            :   int i, j;
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 :   int ptr = lcg_rand16(seed) % npoints;</span>
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :   if (minpts &gt; npoints) return 0;</span>
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :   indices[0] = ptr;</span>
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :   ptr = (ptr == npoints - 1 ? 0 : ptr + 1);</span>
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :   i = 1;</span>
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :   while (i &lt; minpts) {</span>
+<span class="lineNum">     603 </span><span class="lineNoCov">          0 :     int index = lcg_rand16(seed) % npoints;</span>
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :     while (index) {</span>
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :       ptr = (ptr == npoints - 1 ? 0 : ptr + 1);</span>
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :       for (j = 0; j &lt; i; ++j) {</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :         if (indices[j] == ptr) break;</span>
+<span class="lineNum">     608 </span>            :       }
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :       if (j == i) index--;</span>
+<span class="lineNum">     610 </span>            :     }
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :     indices[i++] = ptr;</span>
+<span class="lineNum">     612 </span>            :   }
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 :   return 1;</span>
+<span class="lineNum">     614 </span>            : }
+<span class="lineNum">     615 </span>            : 
+<span class="lineNum">     616 </span>            : typedef struct {
+<span class="lineNum">     617 </span>            :   int num_inliers;
+<span class="lineNum">     618 </span>            :   double variance;
+<span class="lineNum">     619 </span>            :   int *inlier_indices;
+<span class="lineNum">     620 </span>            : } RANSAC_MOTION;
+<a name="621"><span class="lineNum">     621 </span>            : </a>
+<span class="lineNum">     622 </span>            : // Return -1 if 'a' is a better motion, 1 if 'b' is better, 0 otherwise.
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 : static int compare_motions(const void *arg_a, const void *arg_b) {</span>
+<span class="lineNum">     624 </span><span class="lineNoCov">          0 :   const RANSAC_MOTION *motion_a = (RANSAC_MOTION *)arg_a;</span>
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :   const RANSAC_MOTION *motion_b = (RANSAC_MOTION *)arg_b;</span>
+<span class="lineNum">     626 </span>            : 
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :   if (motion_a-&gt;num_inliers &gt; motion_b-&gt;num_inliers) return -1;</span>
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :   if (motion_a-&gt;num_inliers &lt; motion_b-&gt;num_inliers) return 1;</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :   if (motion_a-&gt;variance &lt; motion_b-&gt;variance) return -1;</span>
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 :   if (motion_a-&gt;variance &gt; motion_b-&gt;variance) return 1;</span>
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="632"><span class="lineNum">     632 </span>            : }</a>
+<span class="lineNum">     633 </span>            : 
+<span class="lineNum">     634 </span><span class="lineNoCov">          0 : static int is_better_motion(const RANSAC_MOTION *motion_a,</span>
+<span class="lineNum">     635 </span>            :                             const RANSAC_MOTION *motion_b) {
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :   return compare_motions(motion_a, motion_b) &lt; 0;</span>
+<a name="637"><span class="lineNum">     637 </span>            : }</a>
+<span class="lineNum">     638 </span>            : 
+<span class="lineNum">     639 </span><span class="lineNoCov">          0 : static void copy_points_at_indices(double *dest, const double *src,</span>
+<span class="lineNum">     640 </span>            :                                    const int *indices, int num_points) {
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :   for (int i = 0; i &lt; num_points; ++i) {</span>
+<span class="lineNum">     642 </span><span class="lineNoCov">          0 :     const int index = indices[i];</span>
+<span class="lineNum">     643 </span><span class="lineNoCov">          0 :     dest[i * 2] = src[index * 2];</span>
+<span class="lineNum">     644 </span><span class="lineNoCov">          0 :     dest[i * 2 + 1] = src[index * 2 + 1];</span>
+<span class="lineNum">     645 </span>            :   }
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     647 </span>            : 
+<a name="648"><span class="lineNum">     648 </span>            : static const double kInfiniteVariance = 1e12;</a>
+<span class="lineNum">     649 </span>            : 
+<span class="lineNum">     650 </span><span class="lineNoCov">          0 : static void clear_motion(RANSAC_MOTION *motion, int num_points) {</span>
+<span class="lineNum">     651 </span><span class="lineNoCov">          0 :   motion-&gt;num_inliers = 0;</span>
+<span class="lineNum">     652 </span><span class="lineNoCov">          0 :   motion-&gt;variance = kInfiniteVariance;</span>
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 :   memset(motion-&gt;inlier_indices, 0,</span>
+<span class="lineNum">     654 </span>            :          sizeof(*motion-&gt;inlier_indices * num_points));
+<a name="655"><span class="lineNum">     655 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     656 </span>            : 
+<span class="lineNum">     657 </span><span class="lineNoCov">          0 : static int ransac(const int *matched_points, int npoints,</span>
+<span class="lineNum">     658 </span>            :                   int *num_inliers_by_motion, double *params_by_motion,
+<span class="lineNum">     659 </span>            :                   int num_desired_motions, const int minpts,
+<span class="lineNum">     660 </span>            :                   IsDegenerateFunc is_degenerate,
+<span class="lineNum">     661 </span>            :                   FindTransformationFunc find_transformation,
+<span class="lineNum">     662 </span>            :                   ProjectPointsDoubleFunc projectpoints) {
+<span class="lineNum">     663 </span>            :   static const double PROBABILITY_REQUIRED = 0.9;
+<span class="lineNum">     664 </span>            :   static const double EPS = 1e-12;
+<span class="lineNum">     665 </span>            : 
+<span class="lineNum">     666 </span><span class="lineNoCov">          0 :   int N = 10000, trial_count = 0;</span>
+<span class="lineNum">     667 </span><span class="lineNoCov">          0 :   int i = 0;</span>
+<span class="lineNum">     668 </span><span class="lineNoCov">          0 :   int ret_val = 0;</span>
+<span class="lineNum">     669 </span>            : 
+<span class="lineNum">     670 </span><span class="lineNoCov">          0 :   unsigned int seed = (unsigned int)npoints;</span>
+<span class="lineNum">     671 </span>            : 
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :   int indices[MAX_MINPTS] = { 0 };</span>
+<span class="lineNum">     673 </span>            : 
+<span class="lineNum">     674 </span>            :   double *points1, *points2;
+<span class="lineNum">     675 </span>            :   double *corners1, *corners2;
+<span class="lineNum">     676 </span>            :   double *image1_coord;
+<span class="lineNum">     677 </span>            : 
+<span class="lineNum">     678 </span>            :   // Store information for the num_desired_motions best transformations found
+<span class="lineNum">     679 </span>            :   // and the worst motion among them, as well as the motion currently under
+<span class="lineNum">     680 </span>            :   // consideration.
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :   RANSAC_MOTION *motions, *worst_kept_motion = NULL;</span>
+<span class="lineNum">     682 </span>            :   RANSAC_MOTION current_motion;
+<span class="lineNum">     683 </span>            : 
+<span class="lineNum">     684 </span>            :   // Store the parameters and the indices of the inlier points for the motion
+<span class="lineNum">     685 </span>            :   // currently under consideration.
+<span class="lineNum">     686 </span>            :   double params_this_motion[MAX_PARAMDIM];
+<span class="lineNum">     687 </span>            : 
+<span class="lineNum">     688 </span>            :   double *cnp1, *cnp2;
+<span class="lineNum">     689 </span>            : 
+<span class="lineNum">     690 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; num_desired_motions; ++i) {</span>
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :     num_inliers_by_motion[i] = 0;</span>
+<span class="lineNum">     692 </span>            :   }
+<span class="lineNum">     693 </span><span class="lineNoCov">          0 :   if (npoints &lt; minpts * MINPTS_MULTIPLIER || npoints == 0) {</span>
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :     return 1;</span>
+<span class="lineNum">     695 </span>            :   }
+<span class="lineNum">     696 </span>            : 
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :   points1 = (double *)aom_malloc(sizeof(*points1) * npoints * 2);</span>
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :   points2 = (double *)aom_malloc(sizeof(*points2) * npoints * 2);</span>
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :   corners1 = (double *)aom_malloc(sizeof(*corners1) * npoints * 2);</span>
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :   corners2 = (double *)aom_malloc(sizeof(*corners2) * npoints * 2);</span>
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :   image1_coord = (double *)aom_malloc(sizeof(*image1_coord) * npoints * 2);</span>
+<span class="lineNum">     702 </span>            : 
+<span class="lineNum">     703 </span><span class="lineNoCov">          0 :   motions =</span>
+<span class="lineNum">     704 </span><span class="lineNoCov">          0 :       (RANSAC_MOTION *)aom_malloc(sizeof(RANSAC_MOTION) * num_desired_motions);</span>
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; num_desired_motions; ++i) {</span>
+<span class="lineNum">     706 </span><span class="lineNoCov">          0 :     motions[i].inlier_indices =</span>
+<span class="lineNum">     707 </span><span class="lineNoCov">          0 :         (int *)aom_malloc(sizeof(*motions-&gt;inlier_indices) * npoints);</span>
+<span class="lineNum">     708 </span><span class="lineNoCov">          0 :     clear_motion(motions + i, npoints);</span>
+<span class="lineNum">     709 </span>            :   }
+<span class="lineNum">     710 </span><span class="lineNoCov">          0 :   current_motion.inlier_indices =</span>
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :       (int *)aom_malloc(sizeof(*current_motion.inlier_indices) * npoints);</span>
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :   clear_motion(&amp;current_motion, npoints);</span>
+<span class="lineNum">     713 </span>            : 
+<span class="lineNum">     714 </span><span class="lineNoCov">          0 :   worst_kept_motion = motions;</span>
+<span class="lineNum">     715 </span>            : 
+<span class="lineNum">     716 </span><span class="lineNoCov">          0 :   if (!(points1 &amp;&amp; points2 &amp;&amp; corners1 &amp;&amp; corners2 &amp;&amp; image1_coord &amp;&amp; motions &amp;&amp;</span>
+<span class="lineNum">     717 </span><span class="lineNoCov">          0 :         current_motion.inlier_indices)) {</span>
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 :     ret_val = 1;</span>
+<span class="lineNum">     719 </span><span class="lineNoCov">          0 :     goto finish_ransac;</span>
+<span class="lineNum">     720 </span>            :   }
+<span class="lineNum">     721 </span>            : 
+<span class="lineNum">     722 </span><span class="lineNoCov">          0 :   cnp1 = corners1;</span>
+<span class="lineNum">     723 </span><span class="lineNoCov">          0 :   cnp2 = corners2;</span>
+<span class="lineNum">     724 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; npoints; ++i) {</span>
+<span class="lineNum">     725 </span><span class="lineNoCov">          0 :     *(cnp1++) = *(matched_points++);</span>
+<span class="lineNum">     726 </span><span class="lineNoCov">          0 :     *(cnp1++) = *(matched_points++);</span>
+<span class="lineNum">     727 </span><span class="lineNoCov">          0 :     *(cnp2++) = *(matched_points++);</span>
+<span class="lineNum">     728 </span><span class="lineNoCov">          0 :     *(cnp2++) = *(matched_points++);</span>
+<span class="lineNum">     729 </span>            :   }
+<span class="lineNum">     730 </span>            : 
+<span class="lineNum">     731 </span><span class="lineNoCov">          0 :   while (N &gt; trial_count) {</span>
+<span class="lineNum">     732 </span><span class="lineNoCov">          0 :     double sum_distance = 0.0;</span>
+<span class="lineNum">     733 </span><span class="lineNoCov">          0 :     double sum_distance_squared = 0.0;</span>
+<span class="lineNum">     734 </span>            : 
+<span class="lineNum">     735 </span><span class="lineNoCov">          0 :     clear_motion(&amp;current_motion, npoints);</span>
+<span class="lineNum">     736 </span>            : 
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :     int degenerate = 1;</span>
+<span class="lineNum">     738 </span><span class="lineNoCov">          0 :     int num_degenerate_iter = 0;</span>
+<span class="lineNum">     739 </span>            : 
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :     while (degenerate) {</span>
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 :       num_degenerate_iter++;</span>
+<span class="lineNum">     742 </span><span class="lineNoCov">          0 :       if (!get_rand_indices(npoints, minpts, indices, &amp;seed)) {</span>
+<span class="lineNum">     743 </span><span class="lineNoCov">          0 :         ret_val = 1;</span>
+<span class="lineNum">     744 </span><span class="lineNoCov">          0 :         goto finish_ransac;</span>
+<span class="lineNum">     745 </span>            :       }
+<span class="lineNum">     746 </span>            : 
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 :       copy_points_at_indices(points1, corners1, indices, minpts);</span>
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :       copy_points_at_indices(points2, corners2, indices, minpts);</span>
+<span class="lineNum">     749 </span>            : 
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :       degenerate = is_degenerate(points1);</span>
+<span class="lineNum">     751 </span><span class="lineNoCov">          0 :       if (num_degenerate_iter &gt; MAX_DEGENERATE_ITER) {</span>
+<span class="lineNum">     752 </span><span class="lineNoCov">          0 :         ret_val = 1;</span>
+<span class="lineNum">     753 </span><span class="lineNoCov">          0 :         goto finish_ransac;</span>
+<span class="lineNum">     754 </span>            :       }
+<span class="lineNum">     755 </span>            :     }
+<span class="lineNum">     756 </span>            : 
+<span class="lineNum">     757 </span><span class="lineNoCov">          0 :     if (find_transformation(minpts, points1, points2, params_this_motion)) {</span>
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :       trial_count++;</span>
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     760 </span>            :     }
+<span class="lineNum">     761 </span>            : 
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :     projectpoints(params_this_motion, corners1, image1_coord, npoints, 2, 2);</span>
+<span class="lineNum">     763 </span>            : 
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; npoints; ++i) {</span>
+<span class="lineNum">     765 </span><span class="lineNoCov">          0 :       double dx = image1_coord[i * 2] - corners2[i * 2];</span>
+<span class="lineNum">     766 </span><span class="lineNoCov">          0 :       double dy = image1_coord[i * 2 + 1] - corners2[i * 2 + 1];</span>
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 :       double distance = sqrt(dx * dx + dy * dy);</span>
+<span class="lineNum">     768 </span>            : 
+<span class="lineNum">     769 </span><span class="lineNoCov">          0 :       if (distance &lt; INLIER_THRESHOLD) {</span>
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :         current_motion.inlier_indices[current_motion.num_inliers++] = i;</span>
+<span class="lineNum">     771 </span><span class="lineNoCov">          0 :         sum_distance += distance;</span>
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 :         sum_distance_squared += distance * distance;</span>
+<span class="lineNum">     773 </span>            :       }
+<span class="lineNum">     774 </span>            :     }
+<span class="lineNum">     775 </span>            : 
+<span class="lineNum">     776 </span><span class="lineNoCov">          0 :     if (current_motion.num_inliers &gt;= worst_kept_motion-&gt;num_inliers &amp;&amp;</span>
+<span class="lineNum">     777 </span><span class="lineNoCov">          0 :         current_motion.num_inliers &gt; 1) {</span>
+<span class="lineNum">     778 </span>            :       int temp;
+<span class="lineNum">     779 </span>            :       double fracinliers, pNoOutliers, mean_distance, dtemp;
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 :       mean_distance = sum_distance / ((double)current_motion.num_inliers);</span>
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 :       current_motion.variance =</span>
+<span class="lineNum">     782 </span><span class="lineNoCov">          0 :           sum_distance_squared / ((double)current_motion.num_inliers - 1.0) -</span>
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :           mean_distance * mean_distance * ((double)current_motion.num_inliers) /</span>
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :               ((double)current_motion.num_inliers - 1.0);</span>
+<span class="lineNum">     785 </span><span class="lineNoCov">          0 :       if (is_better_motion(&amp;current_motion, worst_kept_motion)) {</span>
+<span class="lineNum">     786 </span>            :         // This motion is better than the worst currently kept motion. Remember
+<span class="lineNum">     787 </span>            :         // the inlier points and variance. The parameters for each kept motion
+<span class="lineNum">     788 </span>            :         // will be recomputed later using only the inliers.
+<span class="lineNum">     789 </span><span class="lineNoCov">          0 :         worst_kept_motion-&gt;num_inliers = current_motion.num_inliers;</span>
+<span class="lineNum">     790 </span><span class="lineNoCov">          0 :         worst_kept_motion-&gt;variance = current_motion.variance;</span>
+<span class="lineNum">     791 </span><span class="lineNoCov">          0 :         memcpy(worst_kept_motion-&gt;inlier_indices, current_motion.inlier_indices,</span>
+<span class="lineNum">     792 </span>            :                sizeof(*current_motion.inlier_indices) * npoints);
+<span class="lineNum">     793 </span>            : 
+<span class="lineNum">     794 </span><span class="lineNoCov">          0 :         assert(npoints &gt; 0);</span>
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :         fracinliers = (double)current_motion.num_inliers / (double)npoints;</span>
+<span class="lineNum">     796 </span><span class="lineNoCov">          0 :         pNoOutliers = 1 - pow(fracinliers, minpts);</span>
+<span class="lineNum">     797 </span><span class="lineNoCov">          0 :         pNoOutliers = fmax(EPS, pNoOutliers);</span>
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 :         pNoOutliers = fmin(1 - EPS, pNoOutliers);</span>
+<span class="lineNum">     799 </span><span class="lineNoCov">          0 :         dtemp = log(1.0 - PROBABILITY_REQUIRED) / log(pNoOutliers);</span>
+<span class="lineNum">     800 </span><span class="lineNoCov">          0 :         temp = (dtemp &gt; (double)INT32_MAX)</span>
+<span class="lineNum">     801 </span>            :                    ? INT32_MAX
+<span class="lineNum">     802 </span><span class="lineNoCov">          0 :                    : dtemp &lt; (double)INT32_MIN ? INT32_MIN : (int)dtemp;</span>
+<span class="lineNum">     803 </span>            : 
+<span class="lineNum">     804 </span><span class="lineNoCov">          0 :         if (temp &gt; 0 &amp;&amp; temp &lt; N) {</span>
+<span class="lineNum">     805 </span><span class="lineNoCov">          0 :           N = AOMMAX(temp, MIN_TRIALS);</span>
+<span class="lineNum">     806 </span>            :         }
+<span class="lineNum">     807 </span>            : 
+<span class="lineNum">     808 </span>            :         // Determine the new worst kept motion and its num_inliers and variance.
+<span class="lineNum">     809 </span><span class="lineNoCov">          0 :         for (i = 0; i &lt; num_desired_motions; ++i) {</span>
+<span class="lineNum">     810 </span><span class="lineNoCov">          0 :           if (is_better_motion(worst_kept_motion, &amp;motions[i])) {</span>
+<span class="lineNum">     811 </span><span class="lineNoCov">          0 :             worst_kept_motion = &amp;motions[i];</span>
+<span class="lineNum">     812 </span>            :           }
+<span class="lineNum">     813 </span>            :         }
+<span class="lineNum">     814 </span>            :       }
+<span class="lineNum">     815 </span>            :     }
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 :     trial_count++;</span>
+<span class="lineNum">     817 </span>            :   }
+<span class="lineNum">     818 </span>            : 
+<span class="lineNum">     819 </span>            :   // Sort the motions, best first.
+<span class="lineNum">     820 </span><span class="lineNoCov">          0 :   qsort(motions, num_desired_motions, sizeof(RANSAC_MOTION), compare_motions);</span>
+<span class="lineNum">     821 </span>            : 
+<span class="lineNum">     822 </span>            :   // Recompute the motions using only the inliers.
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; num_desired_motions; ++i) {</span>
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :     copy_points_at_indices(points1, corners1, motions[i].inlier_indices,</span>
+<span class="lineNum">     825 </span><span class="lineNoCov">          0 :                            motions[i].num_inliers);</span>
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 :     copy_points_at_indices(points2, corners2, motions[i].inlier_indices,</span>
+<span class="lineNum">     827 </span><span class="lineNoCov">          0 :                            motions[i].num_inliers);</span>
+<span class="lineNum">     828 </span>            : 
+<span class="lineNum">     829 </span><span class="lineNoCov">          0 :     find_transformation(motions[i].num_inliers, points1, points2,</span>
+<span class="lineNum">     830 </span>            :                         params_by_motion + (MAX_PARAMDIM - 1) * i);
+<span class="lineNum">     831 </span><span class="lineNoCov">          0 :     num_inliers_by_motion[i] = motions[i].num_inliers;</span>
+<span class="lineNum">     832 </span>            :   }
+<span class="lineNum">     833 </span>            : 
+<span class="lineNum">     834 </span>            : finish_ransac:
+<span class="lineNum">     835 </span><span class="lineNoCov">          0 :   aom_free(points1);</span>
+<span class="lineNum">     836 </span><span class="lineNoCov">          0 :   aom_free(points2);</span>
+<span class="lineNum">     837 </span><span class="lineNoCov">          0 :   aom_free(corners1);</span>
+<span class="lineNum">     838 </span><span class="lineNoCov">          0 :   aom_free(corners2);</span>
+<span class="lineNum">     839 </span><span class="lineNoCov">          0 :   aom_free(image1_coord);</span>
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :   aom_free(current_motion.inlier_indices);</span>
+<span class="lineNum">     841 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; num_desired_motions; ++i) {</span>
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :     aom_free(motions[i].inlier_indices);</span>
+<span class="lineNum">     843 </span>            :   }
+<span class="lineNum">     844 </span><span class="lineNoCov">          0 :   aom_free(motions);</span>
+<span class="lineNum">     845 </span>            : 
+<span class="lineNum">     846 </span><span class="lineNoCov">          0 :   return ret_val;</span>
+<a name="847"><span class="lineNum">     847 </span>            : }</a>
+<span class="lineNum">     848 </span>            : 
+<span class="lineNum">     849 </span><span class="lineNoCov">          0 : static int is_collinear3(double *p1, double *p2, double *p3) {</span>
+<span class="lineNum">     850 </span>            :   static const double collinear_eps = 1e-3;
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :   const double v =</span>
+<span class="lineNum">     852 </span><span class="lineNoCov">          0 :       (p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (p3[0] - p1[0]);</span>
+<span class="lineNum">     853 </span><span class="lineNoCov">          0 :   return fabs(v) &lt; collinear_eps;</span>
+<a name="854"><span class="lineNum">     854 </span>            : }</a>
+<span class="lineNum">     855 </span>            : 
+<span class="lineNum">     856 </span><span class="lineNoCov">          0 : static int is_degenerate_translation(double *p) {</span>
+<span class="lineNum">     857 </span><span class="lineNoCov">          0 :   return (p[0] - p[2]) * (p[0] - p[2]) + (p[1] - p[3]) * (p[1] - p[3]) &lt;= 2;</span>
+<a name="858"><span class="lineNum">     858 </span>            : }</a>
+<span class="lineNum">     859 </span>            : 
+<span class="lineNum">     860 </span><span class="lineNoCov">          0 : static int is_degenerate_affine(double *p) {</span>
+<span class="lineNum">     861 </span><span class="lineNoCov">          0 :   return is_collinear3(p, p + 2, p + 4);</span>
+<a name="862"><span class="lineNum">     862 </span>            : }</a>
+<span class="lineNum">     863 </span>            : 
+<span class="lineNum">     864 </span><span class="lineNoCov">          0 : static int is_degenerate_homography(double *p) {</span>
+<span class="lineNum">     865 </span><span class="lineNoCov">          0 :   return is_collinear3(p, p + 2, p + 4) || is_collinear3(p, p + 2, p + 6) ||</span>
+<span class="lineNum">     866 </span><span class="lineNoCov">          0 :          is_collinear3(p, p + 4, p + 6) || is_collinear3(p + 2, p + 4, p + 6);</span>
+<a name="867"><span class="lineNum">     867 </span>            : }</a>
+<span class="lineNum">     868 </span>            : 
+<span class="lineNum">     869 </span><span class="lineNoCov">          0 : int ransac_translation(int *matched_points, int npoints,</span>
+<span class="lineNum">     870 </span>            :                        int *num_inliers_by_motion, double *params_by_motion,
+<span class="lineNum">     871 </span>            :                        int num_desired_motions) {
+<span class="lineNum">     872 </span><span class="lineNoCov">          0 :   return ransac(matched_points, npoints, num_inliers_by_motion,</span>
+<span class="lineNum">     873 </span>            :                 params_by_motion, num_desired_motions, 3,
+<span class="lineNum">     874 </span>            :                 is_degenerate_translation, find_translation,
+<span class="lineNum">     875 </span>            :                 project_points_double_translation);
+<a name="876"><span class="lineNum">     876 </span>            : }</a>
+<span class="lineNum">     877 </span>            : 
+<span class="lineNum">     878 </span><span class="lineNoCov">          0 : int ransac_rotzoom(int *matched_points, int npoints, int *num_inliers_by_motion,</span>
+<span class="lineNum">     879 </span>            :                    double *params_by_motion, int num_desired_motions) {
+<span class="lineNum">     880 </span><span class="lineNoCov">          0 :   return ransac(matched_points, npoints, num_inliers_by_motion,</span>
+<span class="lineNum">     881 </span>            :                 params_by_motion, num_desired_motions, 3, is_degenerate_affine,
+<span class="lineNum">     882 </span>            :                 find_rotzoom, project_points_double_rotzoom);
+<a name="883"><span class="lineNum">     883 </span>            : }</a>
+<span class="lineNum">     884 </span>            : 
+<span class="lineNum">     885 </span><span class="lineNoCov">          0 : int ransac_affine(int *matched_points, int npoints, int *num_inliers_by_motion,</span>
+<span class="lineNum">     886 </span>            :                   double *params_by_motion, int num_desired_motions) {
+<span class="lineNum">     887 </span><span class="lineNoCov">          0 :   return ransac(matched_points, npoints, num_inliers_by_motion,</span>
+<span class="lineNum">     888 </span>            :                 params_by_motion, num_desired_motions, 3, is_degenerate_affine,
+<span class="lineNum">     889 </span>            :                 find_affine, project_points_double_affine);
+<a name="890"><span class="lineNum">     890 </span>            : }</a>
+<span class="lineNum">     891 </span>            : 
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 : int ransac_homography(int *matched_points, int npoints,</span>
+<span class="lineNum">     893 </span>            :                       int *num_inliers_by_motion, double *params_by_motion,
+<span class="lineNum">     894 </span>            :                       int num_desired_motions) {
+<span class="lineNum">     895 </span><span class="lineNoCov">          0 :   return ransac(matched_points, npoints, num_inliers_by_motion,</span>
+<span class="lineNum">     896 </span>            :                 params_by_motion, num_desired_motions, 4,
+<span class="lineNum">     897 </span>            :                 is_degenerate_homography, find_homography,
+<span class="lineNum">     898 </span>            :                 project_points_double_homography);
+<a name="899"><span class="lineNum">     899 </span>            : }</a>
+<span class="lineNum">     900 </span>            : 
+<span class="lineNum">     901 </span><span class="lineNoCov">          0 : int ransac_hortrapezoid(int *matched_points, int npoints,</span>
+<span class="lineNum">     902 </span>            :                         int *num_inliers_by_motion, double *params_by_motion,
+<span class="lineNum">     903 </span>            :                         int num_desired_motions) {
+<span class="lineNum">     904 </span><span class="lineNoCov">          0 :   return ransac(matched_points, npoints, num_inliers_by_motion,</span>
+<span class="lineNum">     905 </span>            :                 params_by_motion, num_desired_motions, 4,
+<span class="lineNum">     906 </span>            :                 is_degenerate_homography, find_hortrapezoid,
+<span class="lineNum">     907 </span>            :                 project_points_double_hortrapezoid);
+<a name="908"><span class="lineNum">     908 </span>            : }</a>
+<span class="lineNum">     909 </span>            : 
+<span class="lineNum">     910 </span><span class="lineNoCov">          0 : int ransac_vertrapezoid(int *matched_points, int npoints,</span>
+<span class="lineNum">     911 </span>            :                         int *num_inliers_by_motion, double *params_by_motion,
+<span class="lineNum">     912 </span>            :                         int num_desired_motions) {
+<span class="lineNum">     913 </span><span class="lineNoCov">          0 :   return ransac(matched_points, npoints, num_inliers_by_motion,</span>
+<span class="lineNum">     914 </span>            :                 params_by_motion, num_desired_motions, 4,
+<span class="lineNum">     915 </span>            :                 is_degenerate_homography, find_vertrapezoid,
+<span class="lineNum">     916 </span>            :                 project_points_double_vertrapezoid);
+<span class="lineNum">     917 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

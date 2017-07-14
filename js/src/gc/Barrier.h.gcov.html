@@ -1,0 +1,1073 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - js/src/gc/Barrier.h</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">js/src/gc</a> - Barrier.h<span style="font-size: 80%;"> (source / <a href="Barrier.h.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">183</td>
+            <td class="headerCovTableEntry">204</td>
+            <td class="headerCovTableEntryMed">89.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">541</td>
+            <td class="headerCovTableEntry">987</td>
+            <td class="headerCovTableEntryLo">54.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-</a>
+<span class="lineNum">       2 </span>            :  * vim: set ts=8 sts=4 et sw=4 tw=99:
+<span class="lineNum">       3 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #ifndef gc_Barrier_h
+<span class="lineNum">       8 </span>            : #define gc_Barrier_h
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &quot;NamespaceImports.h&quot;
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : #include &quot;gc/Heap.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;gc/StoreBuffer.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;js/HeapAPI.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;js/Id.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;js/RootingAPI.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;js/Value.h&quot;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : /*
+<span class="lineNum">      20 </span>            :  * A write barrier is a mechanism used by incremental or generation GCs to
+<span class="lineNum">      21 </span>            :  * ensure that every value that needs to be marked is marked. In general, the
+<span class="lineNum">      22 </span>            :  * write barrier should be invoked whenever a write can cause the set of things
+<span class="lineNum">      23 </span>            :  * traced through by the GC to change. This includes:
+<span class="lineNum">      24 </span>            :  *   - writes to object properties
+<span class="lineNum">      25 </span>            :  *   - writes to array slots
+<span class="lineNum">      26 </span>            :  *   - writes to fields like JSObject::shape_ that we trace through
+<span class="lineNum">      27 </span>            :  *   - writes to fields in private data
+<span class="lineNum">      28 </span>            :  *   - writes to non-markable fields like JSObject::private that point to
+<span class="lineNum">      29 </span>            :  *     markable data
+<span class="lineNum">      30 </span>            :  * The last category is the trickiest. Even though the private pointers does not
+<span class="lineNum">      31 </span>            :  * point to a GC thing, changing the private pointer may change the set of
+<span class="lineNum">      32 </span>            :  * objects that are traced by the GC. Therefore it needs a write barrier.
+<span class="lineNum">      33 </span>            :  *
+<span class="lineNum">      34 </span>            :  * Every barriered write should have the following form:
+<span class="lineNum">      35 </span>            :  *   &lt;pre-barrier&gt;
+<span class="lineNum">      36 </span>            :  *   obj-&gt;field = value; // do the actual write
+<span class="lineNum">      37 </span>            :  *   &lt;post-barrier&gt;
+<span class="lineNum">      38 </span>            :  * The pre-barrier is used for incremental GC and the post-barrier is for
+<span class="lineNum">      39 </span>            :  * generational GC.
+<span class="lineNum">      40 </span>            :  *
+<span class="lineNum">      41 </span>            :  *                               PRE-BARRIER
+<span class="lineNum">      42 </span>            :  *
+<span class="lineNum">      43 </span>            :  * To understand the pre-barrier, let's consider how incremental GC works. The
+<span class="lineNum">      44 </span>            :  * GC itself is divided into &quot;slices&quot;. Between each slice, JS code is allowed to
+<span class="lineNum">      45 </span>            :  * run. Each slice should be short so that the user doesn't notice the
+<span class="lineNum">      46 </span>            :  * interruptions. In our GC, the structure of the slices is as follows:
+<span class="lineNum">      47 </span>            :  *
+<span class="lineNum">      48 </span>            :  * 1. ... JS work, which leads to a request to do GC ...
+<span class="lineNum">      49 </span>            :  * 2. [first GC slice, which performs all root marking and possibly more marking]
+<span class="lineNum">      50 </span>            :  * 3. ... more JS work is allowed to run ...
+<span class="lineNum">      51 </span>            :  * 4. [GC mark slice, which runs entirely in drainMarkStack]
+<span class="lineNum">      52 </span>            :  * 5. ... more JS work ...
+<span class="lineNum">      53 </span>            :  * 6. [GC mark slice, which runs entirely in drainMarkStack]
+<span class="lineNum">      54 </span>            :  * 7. ... more JS work ...
+<span class="lineNum">      55 </span>            :  * 8. [GC marking finishes; sweeping done non-incrementally; GC is done]
+<span class="lineNum">      56 </span>            :  * 9. ... JS continues uninterrupted now that GC is finishes ...
+<span class="lineNum">      57 </span>            :  *
+<span class="lineNum">      58 </span>            :  * Of course, there may be a different number of slices depending on how much
+<span class="lineNum">      59 </span>            :  * marking is to be done.
+<span class="lineNum">      60 </span>            :  *
+<span class="lineNum">      61 </span>            :  * The danger inherent in this scheme is that the JS code in steps 3, 5, and 7
+<span class="lineNum">      62 </span>            :  * might change the heap in a way that causes the GC to collect an object that
+<span class="lineNum">      63 </span>            :  * is actually reachable. The write barrier prevents this from happening. We use
+<span class="lineNum">      64 </span>            :  * a variant of incremental GC called &quot;snapshot at the beginning.&quot; This approach
+<span class="lineNum">      65 </span>            :  * guarantees the invariant that if an object is reachable in step 2, then we
+<span class="lineNum">      66 </span>            :  * will mark it eventually. The name comes from the idea that we take a
+<span class="lineNum">      67 </span>            :  * theoretical &quot;snapshot&quot; of all reachable objects in step 2; all objects in
+<span class="lineNum">      68 </span>            :  * that snapshot should eventually be marked. (Note that the write barrier
+<span class="lineNum">      69 </span>            :  * verifier code takes an actual snapshot.)
+<span class="lineNum">      70 </span>            :  *
+<span class="lineNum">      71 </span>            :  * The basic correctness invariant of a snapshot-at-the-beginning collector is
+<span class="lineNum">      72 </span>            :  * that any object reachable at the end of the GC (step 9) must either:
+<span class="lineNum">      73 </span>            :  *   (1) have been reachable at the beginning (step 2) and thus in the snapshot
+<span class="lineNum">      74 </span>            :  *   (2) or must have been newly allocated, in steps 3, 5, or 7.
+<span class="lineNum">      75 </span>            :  * To deal with case (2), any objects allocated during an incremental GC are
+<span class="lineNum">      76 </span>            :  * automatically marked black.
+<span class="lineNum">      77 </span>            :  *
+<span class="lineNum">      78 </span>            :  * This strategy is actually somewhat conservative: if an object becomes
+<span class="lineNum">      79 </span>            :  * unreachable between steps 2 and 8, it would be safe to collect it. We won't,
+<span class="lineNum">      80 </span>            :  * mainly for simplicity. (Also, note that the snapshot is entirely
+<span class="lineNum">      81 </span>            :  * theoretical. We don't actually do anything special in step 2 that we wouldn't
+<span class="lineNum">      82 </span>            :  * do in a non-incremental GC.
+<span class="lineNum">      83 </span>            :  *
+<span class="lineNum">      84 </span>            :  * It's the pre-barrier's job to maintain the snapshot invariant. Consider the
+<span class="lineNum">      85 </span>            :  * write &quot;obj-&gt;field = value&quot;. Let the prior value of obj-&gt;field be
+<span class="lineNum">      86 </span>            :  * value0. Since it's possible that value0 may have been what obj-&gt;field
+<span class="lineNum">      87 </span>            :  * contained in step 2, when the snapshot was taken, the barrier marks
+<span class="lineNum">      88 </span>            :  * value0. Note that it only does this if we're in the middle of an incremental
+<span class="lineNum">      89 </span>            :  * GC. Since this is rare, the cost of the write barrier is usually just an
+<span class="lineNum">      90 </span>            :  * extra branch.
+<span class="lineNum">      91 </span>            :  *
+<span class="lineNum">      92 </span>            :  * In practice, we implement the pre-barrier differently based on the type of
+<span class="lineNum">      93 </span>            :  * value0. E.g., see JSObject::writeBarrierPre, which is used if obj-&gt;field is
+<span class="lineNum">      94 </span>            :  * a JSObject*. It takes value0 as a parameter.
+<span class="lineNum">      95 </span>            :  *
+<span class="lineNum">      96 </span>            :  *                                READ-BARRIER
+<span class="lineNum">      97 </span>            :  *
+<span class="lineNum">      98 </span>            :  * Incremental GC requires that weak pointers have read barriers. The problem
+<span class="lineNum">      99 </span>            :  * happens when, during an incremental GC, some code reads a weak pointer and
+<span class="lineNum">     100 </span>            :  * writes it somewhere on the heap that has been marked black in a previous
+<span class="lineNum">     101 </span>            :  * slice. Since the weak pointer will not otherwise be marked and will be swept
+<span class="lineNum">     102 </span>            :  * and finalized in the last slice, this will leave the pointer just written
+<span class="lineNum">     103 </span>            :  * dangling after the GC. To solve this, we immediately mark black all weak
+<span class="lineNum">     104 </span>            :  * pointers that get read between slices so that it is safe to store them in an
+<span class="lineNum">     105 </span>            :  * already marked part of the heap, e.g. in Rooted.
+<span class="lineNum">     106 </span>            :  *
+<span class="lineNum">     107 </span>            :  *                                POST-BARRIER
+<span class="lineNum">     108 </span>            :  *
+<span class="lineNum">     109 </span>            :  * For generational GC, we want to be able to quickly collect the nursery in a
+<span class="lineNum">     110 </span>            :  * minor collection.  Part of the way this is achieved is to only mark the
+<span class="lineNum">     111 </span>            :  * nursery itself; tenured things, which may form the majority of the heap, are
+<span class="lineNum">     112 </span>            :  * not traced through or marked.  This leads to the problem of what to do about
+<span class="lineNum">     113 </span>            :  * tenured objects that have pointers into the nursery: if such things are not
+<span class="lineNum">     114 </span>            :  * marked, they may be discarded while there are still live objects which
+<span class="lineNum">     115 </span>            :  * reference them. The solution is to maintain information about these pointers,
+<span class="lineNum">     116 </span>            :  * and mark their targets when we start a minor collection.
+<span class="lineNum">     117 </span>            :  *
+<span class="lineNum">     118 </span>            :  * The pointers can be thought of as edges in object graph, and the set of edges
+<span class="lineNum">     119 </span>            :  * from the tenured generation into the nursery is know as the remembered set.
+<span class="lineNum">     120 </span>            :  * Post barriers are used to track this remembered set.
+<span class="lineNum">     121 </span>            :  *
+<span class="lineNum">     122 </span>            :  * Whenever a slot which could contain such a pointer is written, we use a write
+<span class="lineNum">     123 </span>            :  * barrier to check if the edge created is in the remembered set, and if so we
+<span class="lineNum">     124 </span>            :  * insert it into the store buffer, which is the collector's representation of
+<span class="lineNum">     125 </span>            :  * the remembered set.  This means than when we come to do a minor collection we
+<span class="lineNum">     126 </span>            :  * can examine the contents of the store buffer and mark any edge targets that
+<span class="lineNum">     127 </span>            :  * are in the nursery.
+<span class="lineNum">     128 </span>            :  *
+<span class="lineNum">     129 </span>            :  *                            IMPLEMENTATION DETAILS
+<span class="lineNum">     130 </span>            :  *
+<span class="lineNum">     131 </span>            :  * Since it would be awkward to change every write to memory into a function
+<span class="lineNum">     132 </span>            :  * call, this file contains a bunch of C++ classes and templates that use
+<span class="lineNum">     133 </span>            :  * operator overloading to take care of barriers automatically. In many cases,
+<span class="lineNum">     134 </span>            :  * all that's necessary to make some field be barriered is to replace
+<span class="lineNum">     135 </span>            :  *     Type* field;
+<span class="lineNum">     136 </span>            :  * with
+<span class="lineNum">     137 </span>            :  *     GCPtr&lt;Type&gt; field;
+<span class="lineNum">     138 </span>            :  *
+<span class="lineNum">     139 </span>            :  * One additional note: not all object writes need to be pre-barriered. Writes
+<span class="lineNum">     140 </span>            :  * to newly allocated objects do not need a pre-barrier. In these cases, we use
+<span class="lineNum">     141 </span>            :  * the &quot;obj-&gt;field.init(value)&quot; method instead of &quot;obj-&gt;field = value&quot;. We use
+<span class="lineNum">     142 </span>            :  * the init naming idiom in many places to signify that a field is being
+<span class="lineNum">     143 </span>            :  * assigned for the first time.
+<span class="lineNum">     144 </span>            :  *
+<span class="lineNum">     145 </span>            :  * This file implements four classes, illustrated here:
+<span class="lineNum">     146 </span>            :  *
+<span class="lineNum">     147 </span>            :  * BarrieredBase             base class of all barriers
+<span class="lineNum">     148 </span>            :  *  |  |
+<span class="lineNum">     149 </span>            :  *  | WriteBarrieredBase     base class which provides common write operations
+<span class="lineNum">     150 </span>            :  *  |  |  |  |  |
+<span class="lineNum">     151 </span>            :  *  |  |  |  | PreBarriered  provides pre-barriers only
+<span class="lineNum">     152 </span>            :  *  |  |  |  |
+<span class="lineNum">     153 </span>            :  *  |  |  | GCPtr            provides pre- and post-barriers
+<span class="lineNum">     154 </span>            :  *  |  |  |
+<span class="lineNum">     155 </span>            :  *  |  | HeapPtr             provides pre- and post-barriers; is relocatable
+<span class="lineNum">     156 </span>            :  *  |  |                     and deletable for use inside C++ managed memory
+<span class="lineNum">     157 </span>            :  *  |  |
+<span class="lineNum">     158 </span>            :  *  | HeapSlot               similar to GCPtr, but tailored to slots storage
+<span class="lineNum">     159 </span>            :  *  |
+<span class="lineNum">     160 </span>            :  * ReadBarrieredBase         base class which provides common read operations
+<span class="lineNum">     161 </span>            :  *  |
+<span class="lineNum">     162 </span>            :  * ReadBarriered             provides read barriers only
+<span class="lineNum">     163 </span>            :  *
+<span class="lineNum">     164 </span>            :  *
+<span class="lineNum">     165 </span>            :  * The implementation of the barrier logic is implemented on T::writeBarrier.*,
+<span class="lineNum">     166 </span>            :  * via:
+<span class="lineNum">     167 </span>            :  *
+<span class="lineNum">     168 </span>            :  * WriteBarrieredBase&lt;T&gt;::pre
+<span class="lineNum">     169 </span>            :  *  -&gt; InternalBarrierMethods&lt;T*&gt;::preBarrier
+<span class="lineNum">     170 </span>            :  *      -&gt; T::writeBarrierPre
+<span class="lineNum">     171 </span>            :  *  -&gt; InternalBarrierMethods&lt;Value&gt;::preBarrier
+<span class="lineNum">     172 </span>            :  *  -&gt; InternalBarrierMethods&lt;jsid&gt;::preBarrier
+<span class="lineNum">     173 </span>            :  *      -&gt; InternalBarrierMethods&lt;T*&gt;::preBarrier
+<span class="lineNum">     174 </span>            :  *          -&gt; T::writeBarrierPre
+<span class="lineNum">     175 </span>            :  *
+<span class="lineNum">     176 </span>            :  * GCPtr&lt;T&gt;::post and HeapPtr&lt;T&gt;::post
+<span class="lineNum">     177 </span>            :  *  -&gt; InternalBarrierMethods&lt;T*&gt;::postBarrier
+<span class="lineNum">     178 </span>            :  *      -&gt; T::writeBarrierPost
+<span class="lineNum">     179 </span>            :  *  -&gt; InternalBarrierMethods&lt;Value&gt;::postBarrier
+<span class="lineNum">     180 </span>            :  *      -&gt; StoreBuffer::put
+<span class="lineNum">     181 </span>            :  *
+<span class="lineNum">     182 </span>            :  * These classes are designed to be used by the internals of the JS engine.
+<span class="lineNum">     183 </span>            :  * Barriers designed to be used externally are provided in js/RootingAPI.h.
+<span class="lineNum">     184 </span>            :  * These external barriers call into the same post-barrier implementations at
+<span class="lineNum">     185 </span>            :  * InternalBarrierMethods&lt;T&gt;::post via an indirect call to Heap(.+)Barrier.
+<span class="lineNum">     186 </span>            :  *
+<span class="lineNum">     187 </span>            :  * These clases are designed to be used to wrap GC thing pointers or values that
+<span class="lineNum">     188 </span>            :  * act like them (i.e. JS::Value and jsid).  It is possible to use them for
+<span class="lineNum">     189 </span>            :  * other types by supplying the necessary barrier implementations but this
+<span class="lineNum">     190 </span>            :  * is not usually necessary and should be done with caution.
+<span class="lineNum">     191 </span>            :  */
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span>            : class JSAtom;
+<span class="lineNum">     194 </span>            : struct JSCompartment;
+<span class="lineNum">     195 </span>            : class JSFlatString;
+<span class="lineNum">     196 </span>            : class JSLinearString;
+<span class="lineNum">     197 </span>            : 
+<span class="lineNum">     198 </span>            : namespace JS {
+<span class="lineNum">     199 </span>            : class Symbol;
+<span class="lineNum">     200 </span>            : } // namespace JS
+<span class="lineNum">     201 </span>            : 
+<span class="lineNum">     202 </span>            : namespace js {
+<span class="lineNum">     203 </span>            : 
+<span class="lineNum">     204 </span>            : class AccessorShape;
+<span class="lineNum">     205 </span>            : class ArrayObject;
+<span class="lineNum">     206 </span>            : class ArgumentsObject;
+<span class="lineNum">     207 </span>            : class ArrayBufferObjectMaybeShared;
+<span class="lineNum">     208 </span>            : class ArrayBufferObject;
+<span class="lineNum">     209 </span>            : class ArrayBufferViewObject;
+<span class="lineNum">     210 </span>            : class SharedArrayBufferObject;
+<span class="lineNum">     211 </span>            : class BaseShape;
+<span class="lineNum">     212 </span>            : class DebugEnvironmentProxy;
+<span class="lineNum">     213 </span>            : class GlobalObject;
+<span class="lineNum">     214 </span>            : class LazyScript;
+<span class="lineNum">     215 </span>            : class ModuleObject;
+<span class="lineNum">     216 </span>            : class ModuleEnvironmentObject;
+<span class="lineNum">     217 </span>            : class ModuleNamespaceObject;
+<span class="lineNum">     218 </span>            : class NativeObject;
+<span class="lineNum">     219 </span>            : class PlainObject;
+<span class="lineNum">     220 </span>            : class PropertyName;
+<span class="lineNum">     221 </span>            : class SavedFrame;
+<span class="lineNum">     222 </span>            : class EnvironmentObject;
+<span class="lineNum">     223 </span>            : class ScriptSourceObject;
+<span class="lineNum">     224 </span>            : class Shape;
+<span class="lineNum">     225 </span>            : class UnownedBaseShape;
+<span class="lineNum">     226 </span>            : class ObjectGroup;
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span>            : namespace jit {
+<span class="lineNum">     229 </span>            : class JitCode;
+<span class="lineNum">     230 </span>            : } // namespace jit
+<span class="lineNum">     231 </span>            : 
+<span class="lineNum">     232 </span>            : #ifdef DEBUG
+<span class="lineNum">     233 </span>            : // Barriers can't be triggered during backend Ion compilation, which may run on
+<span class="lineNum">     234 </span>            : // a helper thread.
+<span class="lineNum">     235 </span>            : bool
+<span class="lineNum">     236 </span>            : CurrentThreadIsIonCompiling();
+<span class="lineNum">     237 </span>            : 
+<span class="lineNum">     238 </span>            : bool
+<span class="lineNum">     239 </span>            : CurrentThreadIsIonCompilingSafeForMinorGC();
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span>            : bool
+<span class="lineNum">     242 </span>            : CurrentThreadIsGCSweeping();
+<span class="lineNum">     243 </span>            : 
+<span class="lineNum">     244 </span>            : bool
+<span class="lineNum">     245 </span>            : IsMarkedBlack(JSObject* obj);
+<span class="lineNum">     246 </span>            : #endif
+<a name="247"><span class="lineNum">     247 </span>            : </a>
+<span class="lineNum">     248 </span>            : MOZ_ALWAYS_INLINE void
+<span class="lineNum">     249 </span><span class="lineCov">     563089 : CheckEdgeIsNotBlackToGray(JSObject* src, const Value&amp; dst)</span>
+<span class="lineNum">     250 </span>            : {
+<span class="lineNum">     251 </span><span class="lineCov">     563089 :     MOZ_ASSERT_IF(IsMarkedBlack(src), JS::ValueIsNotGray(dst));</span>
+<span class="lineNum">     252 </span><span class="lineCov">     563096 : }</span>
+<span class="lineNum">     253 </span>            : 
+<span class="lineNum">     254 </span>            : template &lt;typename T&gt;
+<span class="lineNum">     255 </span>            : struct InternalBarrierMethods {};
+<span class="lineNum">     256 </span>            : 
+<span class="lineNum">     257 </span>            : template &lt;typename T&gt;
+<a name="258"><span class="lineNum">     258 </span>            : struct InternalBarrierMethods&lt;T*&gt;</a>
+<span class="lineNum">     259 </span>            : {
+<a name="260"><span class="lineNum">     260 </span><span class="lineCov">     404331 :     static bool isMarkable(T* v) { return v != nullptr; }</span></a>
+<span class="lineNum">     261 </span>            : 
+<a name="262"><span class="lineNum">     262 </span><span class="lineCov">     619076 :     static void preBarrier(T* v) { T::writeBarrierPre(v); }</span></a>
+<span class="lineNum">     263 </span>            : 
+<a name="264"><span class="lineNum">     264 </span><span class="lineCov">    2107698 :     static void postBarrier(T** vp, T* prev, T* next) { T::writeBarrierPost(vp, prev, next); }</span></a>
+<span class="lineNum">     265 </span>            : 
+<span class="lineNum">     266 </span><span class="lineCov">     392965 :     static void readBarrier(T* v) { T::readBarrier(v); }</span>
+<span class="lineNum">     267 </span>            : };
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span>            : template &lt;typename S&gt; struct PreBarrierFunctor : public VoidDefaultAdaptor&lt;S&gt; {
+<span class="lineNum">     270 </span>            :     template &lt;typename T&gt; void operator()(T* t);
+<span class="lineNum">     271 </span>            : };
+<span class="lineNum">     272 </span>            : 
+<span class="lineNum">     273 </span>            : template &lt;typename S&gt; struct ReadBarrierFunctor : public VoidDefaultAdaptor&lt;S&gt; {
+<span class="lineNum">     274 </span>            :     template &lt;typename T&gt; void operator()(T* t);
+<span class="lineNum">     275 </span>            : };
+<span class="lineNum">     276 </span>            : 
+<span class="lineNum">     277 </span>            : template &lt;&gt;
+<a name="278"><span class="lineNum">     278 </span>            : struct InternalBarrierMethods&lt;Value&gt;</a>
+<span class="lineNum">     279 </span>            : {
+<a name="280"><span class="lineNum">     280 </span><span class="lineCov">      35285 :     static bool isMarkable(const Value&amp; v) { return v.isGCThing(); }</span></a>
+<span class="lineNum">     281 </span>            : 
+<span class="lineNum">     282 </span><span class="lineCov">     256699 :     static void preBarrier(const Value&amp; v) {</span>
+<span class="lineNum">     283 </span><span class="lineCov">     256699 :         DispatchTyped(PreBarrierFunctor&lt;Value&gt;(), v);</span>
+<a name="284"><span class="lineNum">     284 </span><span class="lineCov">     256699 :     }</span></a>
+<span class="lineNum">     285 </span>            : 
+<span class="lineNum">     286 </span><span class="lineCov">     149825 :     static void postBarrier(Value* vp, const Value&amp; prev, const Value&amp; next) {</span>
+<span class="lineNum">     287 </span><span class="lineCov">     149825 :         MOZ_ASSERT(!CurrentThreadIsIonCompiling());</span>
+<span class="lineNum">     288 </span><span class="lineCov">     149823 :         MOZ_ASSERT(vp);</span>
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span>            :         // If the target needs an entry, add it.
+<span class="lineNum">     291 </span>            :         js::gc::StoreBuffer* sb;
+<span class="lineNum">     292 </span><span class="lineCov">     149823 :         if (next.isObject() &amp;&amp; (sb = reinterpret_cast&lt;gc::Cell*&gt;(&amp;next.toObject())-&gt;storeBuffer())) {</span>
+<span class="lineNum">     293 </span>            :             // If we know that the prev has already inserted an entry, we can
+<span class="lineNum">     294 </span>            :             // skip doing the lookup to add the new entry. Note that we cannot
+<span class="lineNum">     295 </span>            :             // safely assert the presence of the entry because it may have been
+<span class="lineNum">     296 </span>            :             // added via a different store buffer.
+<span class="lineNum">     297 </span><span class="lineCov">       5041 :             if (prev.isObject() &amp;&amp; reinterpret_cast&lt;gc::Cell*&gt;(&amp;prev.toObject())-&gt;storeBuffer())</span>
+<span class="lineNum">     298 </span><span class="lineCov">          1 :                 return;</span>
+<span class="lineNum">     299 </span><span class="lineCov">       5040 :             sb-&gt;putValue(vp);</span>
+<span class="lineNum">     300 </span><span class="lineCov">       5040 :             return;</span>
+<span class="lineNum">     301 </span>            :         }
+<span class="lineNum">     302 </span>            :         // Remove the prev entry if the new value does not need it.
+<span class="lineNum">     303 </span><span class="lineCov">     144782 :         if (prev.isObject() &amp;&amp; (sb = reinterpret_cast&lt;gc::Cell*&gt;(&amp;prev.toObject())-&gt;storeBuffer()))</span>
+<span class="lineNum">     304 </span><span class="lineCov">        536 :             sb-&gt;unputValue(vp);</span>
+<a name="305"><span class="lineNum">     305 </span>            :     }</a>
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span><span class="lineCov">      20105 :     static void readBarrier(const Value&amp; v) {</span>
+<span class="lineNum">     308 </span><span class="lineCov">      20105 :         DispatchTyped(ReadBarrierFunctor&lt;Value&gt;(), v);</span>
+<span class="lineNum">     309 </span><span class="lineCov">      20105 :     }</span>
+<span class="lineNum">     310 </span>            : };
+<span class="lineNum">     311 </span>            : 
+<span class="lineNum">     312 </span>            : template &lt;&gt;
+<a name="313"><span class="lineNum">     313 </span>            : struct InternalBarrierMethods&lt;jsid&gt;</a>
+<a name="314"><span class="lineNum">     314 </span>            : {</a>
+<a name="315"><span class="lineNum">     315 </span><span class="lineCov">        117 :     static bool isMarkable(jsid id) { return JSID_IS_GCTHING(id); }</span></a>
+<span class="lineNum">     316 </span><span class="lineCov">       1034 :     static void preBarrier(jsid id) { DispatchTyped(PreBarrierFunctor&lt;jsid&gt;(), id); }</span>
+<span class="lineNum">     317 </span><span class="lineCov">      27104 :     static void postBarrier(jsid* idp, jsid prev, jsid next) {}</span>
+<span class="lineNum">     318 </span>            : };
+<span class="lineNum">     319 </span>            : 
+<span class="lineNum">     320 </span>            : // Base class of all barrier types.
+<span class="lineNum">     321 </span>            : template &lt;typename T&gt;
+<span class="lineNum">     322 </span>            : class BarrieredBase
+<span class="lineNum">     323 </span>            : {
+<a name="324"><span class="lineNum">     324 </span>            :   protected:</a>
+<span class="lineNum">     325 </span>            :     // BarrieredBase is not directly instantiable.
+<span class="lineNum">     326 </span><span class="lineCov">     776040 :     explicit BarrieredBase(const T&amp; v) : value(v) {}</span>
+<a name="327"><span class="lineNum">     327 </span>            : </a>
+<span class="lineNum">     328 </span>            :     // BarrieredBase subclasses cannot be copy constructed by default.
+<span class="lineNum">     329 </span><span class="lineCov">      29191 :     BarrieredBase(const BarrieredBase&lt;T&gt;&amp; other) = default;</span>
+<span class="lineNum">     330 </span>            : 
+<span class="lineNum">     331 </span>            :     // Storage for all barrier classes. |value| must be a GC thing reference
+<span class="lineNum">     332 </span>            :     // type: either a direct pointer to a GC thing or a supported tagged
+<span class="lineNum">     333 </span>            :     // pointer that can reference GC things, such as JS::Value or jsid. Nested
+<span class="lineNum">     334 </span>            :     // barrier types are NOT supported. See assertTypeConstraints.
+<span class="lineNum">     335 </span>            :     T value;
+<span class="lineNum">     336 </span>            : 
+<span class="lineNum">     337 </span>            :   public:
+<span class="lineNum">     338 </span>            :     // Note: this is public because C++ cannot friend to a specific template instantiation.
+<a name="339"><span class="lineNum">     339 </span>            :     // Friending to the generic template leads to a number of unintended consequences, including</a>
+<span class="lineNum">     340 </span>            :     // template resolution ambiguity and a circular dependency with Tracing.h.
+<span class="lineNum">     341 </span><span class="lineCov">      55619 :     T* unsafeUnbarrieredForTracing() { return &amp;value; }</span>
+<span class="lineNum">     342 </span>            : };
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span>            : // Base class for barriered pointer types that intercept only writes.
+<span class="lineNum">     345 </span>            : template &lt;class T&gt;
+<span class="lineNum">     346 </span>            : class WriteBarrieredBase : public BarrieredBase&lt;T&gt;,
+<span class="lineNum">     347 </span>            :                            public WrappedPtrOperations&lt;T, WriteBarrieredBase&lt;T&gt;&gt;
+<span class="lineNum">     348 </span>            : {
+<span class="lineNum">     349 </span>            :   protected:
+<span class="lineNum">     350 </span>            :     using BarrieredBase&lt;T&gt;::value;
+<a name="351"><span class="lineNum">     351 </span>            : </a>
+<span class="lineNum">     352 </span>            :     // WriteBarrieredBase is not directly instantiable.
+<span class="lineNum">     353 </span><span class="lineCov">     695737 :     explicit WriteBarrieredBase(const T&amp; v) : BarrieredBase&lt;T&gt;(v) {}</span>
+<span class="lineNum">     354 </span>            : 
+<span class="lineNum">     355 </span>            :   public:
+<a name="356"><span class="lineNum">     356 </span>            :     using ElementType = T;</a>
+<span class="lineNum">     357 </span>            : 
+<span class="lineNum">     358 </span><span class="lineCov">   69081333 :     DECLARE_POINTER_CONSTREF_OPS(T);</span>
+<a name="359"><span class="lineNum">     359 </span>            : </a>
+<span class="lineNum">     360 </span>            :     // Use this if the automatic coercion to T isn't working.
+<span class="lineNum">     361 </span><span class="lineCov">   83091215 :     const T&amp; get() const { return this-&gt;value; }</span>
+<span class="lineNum">     362 </span>            : 
+<a name="363"><span class="lineNum">     363 </span>            :     // Use this if you want to change the value without invoking barriers.</a>
+<span class="lineNum">     364 </span>            :     // Obviously this is dangerous unless you know the barrier is not needed.
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :     void unsafeSet(const T&amp; v) { this-&gt;value = v; }</span>
+<a name="366"><span class="lineNum">     366 </span>            : </a>
+<span class="lineNum">     367 </span>            :     // For users who need to manually barrier the raw types.
+<span class="lineNum">     368 </span><span class="lineCov">         53 :     static void writeBarrierPre(const T&amp; v) { InternalBarrierMethods&lt;T&gt;::preBarrier(v); }</span>
+<a name="369"><span class="lineNum">     369 </span>            : </a>
+<a name="370"><span class="lineNum">     370 </span>            :   protected:</a>
+<span class="lineNum">     371 </span><span class="lineCov">     867490 :     void pre() { InternalBarrierMethods&lt;T&gt;::preBarrier(this-&gt;value); }</span>
+<span class="lineNum">     372 </span><span class="lineCov">    1929503 :     void post(const T&amp; prev, const T&amp; next) {</span>
+<span class="lineNum">     373 </span><span class="lineCov">    1929503 :         InternalBarrierMethods&lt;T&gt;::postBarrier(&amp;this-&gt;value, prev, next);</span>
+<span class="lineNum">     374 </span><span class="lineCov">    1929518 :     }</span>
+<span class="lineNum">     375 </span>            : };
+<span class="lineNum">     376 </span>            : 
+<span class="lineNum">     377 </span>            : /*
+<span class="lineNum">     378 </span>            :  * PreBarriered only automatically handles pre-barriers. Post-barriers must be
+<span class="lineNum">     379 </span>            :  * manually implemented when using this class. GCPtr and HeapPtr should be used
+<span class="lineNum">     380 </span>            :  * in all cases that do not require explicit low-level control of moving
+<span class="lineNum">     381 </span>            :  * behavior, e.g. for HashMap keys.
+<span class="lineNum">     382 </span>            :  */
+<span class="lineNum">     383 </span>            : template &lt;class T&gt;
+<span class="lineNum">     384 </span>            : class PreBarriered : public WriteBarrieredBase&lt;T&gt;
+<span class="lineNum">     385 </span>            : {
+<span class="lineNum">     386 </span>            :   public:
+<span class="lineNum">     387 </span>            :     PreBarriered() : WriteBarrieredBase&lt;T&gt;(JS::GCPolicy&lt;T&gt;::initial()) {}
+<span class="lineNum">     388 </span>            :     /*
+<span class="lineNum">     389 </span>            :      * Allow implicit construction for use in generic contexts, such as
+<a name="390"><span class="lineNum">     390 </span>            :      * DebuggerWeakMap::markKeys.</a>
+<a name="391"><span class="lineNum">     391 </span>            :      */</a>
+<a name="392"><span class="lineNum">     392 </span><span class="lineCov">     108139 :     MOZ_IMPLICIT PreBarriered(const T&amp; v) : WriteBarrieredBase&lt;T&gt;(v) {}</span></a>
+<span class="lineNum">     393 </span><span class="lineCov">       4271 :     explicit PreBarriered(const PreBarriered&lt;T&gt;&amp; v) : WriteBarrieredBase&lt;T&gt;(v.value) {}</span>
+<a name="394"><span class="lineNum">     394 </span><span class="lineCov">       5345 :     ~PreBarriered() { this-&gt;pre(); }</span></a>
+<span class="lineNum">     395 </span>            : 
+<span class="lineNum">     396 </span><span class="lineCov">        311 :     void init(const T&amp; v) {</span>
+<span class="lineNum">     397 </span><span class="lineCov">        311 :         this-&gt;value = v;</span>
+<span class="lineNum">     398 </span><span class="lineCov">        311 :     }</span>
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span>            :     /* Use to set the pointer to nullptr. */
+<span class="lineNum">     401 </span>            :     void clear() {
+<span class="lineNum">     402 </span>            :         this-&gt;pre();
+<span class="lineNum">     403 </span>            :         this-&gt;value = nullptr;
+<a name="404"><span class="lineNum">     404 </span>            :     }</a>
+<span class="lineNum">     405 </span>            : 
+<span class="lineNum">     406 </span><span class="lineCov">       3392 :     DECLARE_POINTER_ASSIGN_OPS(PreBarriered, T);</span>
+<a name="407"><span class="lineNum">     407 </span>            : </a>
+<span class="lineNum">     408 </span>            :   private:
+<span class="lineNum">     409 </span><span class="lineCov">       3392 :     void set(const T&amp; v) {</span>
+<span class="lineNum">     410 </span><span class="lineCov">       3392 :         this-&gt;pre();</span>
+<span class="lineNum">     411 </span><span class="lineCov">       3392 :         this-&gt;value = v;</span>
+<span class="lineNum">     412 </span><span class="lineCov">       3392 :     }</span>
+<span class="lineNum">     413 </span>            : };
+<span class="lineNum">     414 </span>            : 
+<span class="lineNum">     415 </span>            : /*
+<span class="lineNum">     416 </span>            :  * A pre- and post-barriered heap pointer, for use inside the JS engine.
+<span class="lineNum">     417 </span>            :  *
+<span class="lineNum">     418 </span>            :  * It must only be stored in memory that has GC lifetime. GCPtr must not be
+<span class="lineNum">     419 </span>            :  * used in contexts where it may be implicitly moved or deleted, e.g. most
+<span class="lineNum">     420 </span>            :  * containers.
+<span class="lineNum">     421 </span>            :  *
+<span class="lineNum">     422 </span>            :  * The post-barriers implemented by this class are faster than those
+<span class="lineNum">     423 </span>            :  * implemented by js::HeapPtr&lt;T&gt; or JS::Heap&lt;T&gt; at the cost of not
+<span class="lineNum">     424 </span>            :  * automatically handling deletion or movement.
+<span class="lineNum">     425 </span>            :  */
+<span class="lineNum">     426 </span>            : template &lt;class T&gt;
+<span class="lineNum">     427 </span>            : class GCPtr : public WriteBarrieredBase&lt;T&gt;
+<a name="428"><span class="lineNum">     428 </span>            : {</a>
+<a name="429"><span class="lineNum">     429 </span>            :   public:</a>
+<span class="lineNum">     430 </span><span class="lineCov">     197567 :     GCPtr() : WriteBarrieredBase&lt;T&gt;(JS::GCPolicy&lt;T&gt;::initial()) {}</span>
+<span class="lineNum">     431 </span><span class="lineCov">     350770 :     explicit GCPtr(const T&amp; v) : WriteBarrieredBase&lt;T&gt;(v) {</span>
+<a name="432"><span class="lineNum">     432 </span><span class="lineCov">     350770 :         this-&gt;post(JS::GCPolicy&lt;T&gt;::initial(), v);</span></a>
+<span class="lineNum">     433 </span><span class="lineCov">     350769 :     }</span>
+<span class="lineNum">     434 </span><span class="lineCov">      14028 :     explicit GCPtr(const GCPtr&lt;T&gt;&amp; v) : WriteBarrieredBase&lt;T&gt;(v) {</span>
+<span class="lineNum">     435 </span><span class="lineCov">      14028 :         this-&gt;post(JS::GCPolicy&lt;T&gt;::initial(), v);</span>
+<a name="436"><span class="lineNum">     436 </span><span class="lineCov">      14028 :     }</span></a>
+<span class="lineNum">     437 </span>            : #ifdef DEBUG
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :     ~GCPtr() {</span>
+<span class="lineNum">     439 </span>            :         // No barriers are necessary as this only happens when we are sweeping
+<span class="lineNum">     440 </span>            :         // or when after GCManagedDeletePolicy has triggered the barriers for us
+<span class="lineNum">     441 </span>            :         // and cleared the pointer.
+<span class="lineNum">     442 </span>            :         //
+<span class="lineNum">     443 </span>            :         // If you get a crash here, you may need to make the containing object
+<span class="lineNum">     444 </span>            :         // use GCManagedDeletePolicy and use JS::DeletePolicy to destroy it.
+<span class="lineNum">     445 </span>            :         //
+<span class="lineNum">     446 </span>            :         // Note that when sweeping the wrapped pointer may already have been
+<span class="lineNum">     447 </span>            :         // freed by this point.
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(CurrentThreadIsGCSweeping() || this-&gt;value == JS::GCPolicy&lt;T&gt;::initial());</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :         Poison(this, JS_FREED_HEAP_PTR_PATTERN, sizeof(*this));</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :     }</span>
+<a name="451"><span class="lineNum">     451 </span>            : #endif</a>
+<span class="lineNum">     452 </span>            : 
+<span class="lineNum">     453 </span><span class="lineCov">     858995 :     void init(const T&amp; v) {</span>
+<span class="lineNum">     454 </span><span class="lineCov">     858995 :         this-&gt;value = v;</span>
+<span class="lineNum">     455 </span><span class="lineCov">     858995 :         this-&gt;post(JS::GCPolicy&lt;T&gt;::initial(), v);</span>
+<a name="456"><span class="lineNum">     456 </span><span class="lineCov">     859005 :     }</span></a>
+<span class="lineNum">     457 </span>            : 
+<span class="lineNum">     458 </span><span class="lineCov">     596059 :     DECLARE_POINTER_ASSIGN_OPS(GCPtr, T);</span>
+<a name="459"><span class="lineNum">     459 </span>            : </a>
+<span class="lineNum">     460 </span>            :   private:
+<span class="lineNum">     461 </span><span class="lineCov">     596099 :     void set(const T&amp; v) {</span>
+<span class="lineNum">     462 </span><span class="lineCov">     596099 :         this-&gt;pre();</span>
+<span class="lineNum">     463 </span><span class="lineCov">     596102 :         T tmp = this-&gt;value;</span>
+<span class="lineNum">     464 </span><span class="lineCov">     596102 :         this-&gt;value = v;</span>
+<span class="lineNum">     465 </span><span class="lineCov">     596102 :         this-&gt;post(tmp, this-&gt;value);</span>
+<span class="lineNum">     466 </span><span class="lineCov">     596104 :     }</span>
+<span class="lineNum">     467 </span>            : 
+<span class="lineNum">     468 </span>            :     /*
+<span class="lineNum">     469 </span>            :      * Unlike HeapPtr&lt;T&gt;, GCPtr&lt;T&gt; must be managed with GC lifetimes.
+<span class="lineNum">     470 </span>            :      * Specifically, the memory used by the pointer itself must be live until
+<span class="lineNum">     471 </span>            :      * at least the next minor GC. For that reason, move semantics are invalid
+<span class="lineNum">     472 </span>            :      * and are deleted here. Please note that not all containers support move
+<span class="lineNum">     473 </span>            :      * semantics, so this does not completely prevent invalid uses.
+<span class="lineNum">     474 </span>            :      */
+<span class="lineNum">     475 </span>            :     GCPtr(GCPtr&lt;T&gt;&amp;&amp;) = delete;
+<span class="lineNum">     476 </span>            :     GCPtr&lt;T&gt;&amp; operator=(GCPtr&lt;T&gt;&amp;&amp;) = delete;
+<span class="lineNum">     477 </span>            : };
+<span class="lineNum">     478 </span>            : 
+<span class="lineNum">     479 </span>            : /*
+<span class="lineNum">     480 </span>            :  * A pre- and post-barriered heap pointer, for use inside the JS engine. These
+<span class="lineNum">     481 </span>            :  * heap pointers can be stored in C++ containers like GCVector and GCHashMap.
+<span class="lineNum">     482 </span>            :  *
+<span class="lineNum">     483 </span>            :  * The GC sometimes keeps pointers to pointers to GC things --- for example, to
+<span class="lineNum">     484 </span>            :  * track references into the nursery. However, C++ containers like GCVector and
+<span class="lineNum">     485 </span>            :  * GCHashMap usually reserve the right to relocate their elements any time
+<span class="lineNum">     486 </span>            :  * they're modified, invalidating all pointers to the elements. HeapPtr
+<span class="lineNum">     487 </span>            :  * has a move constructor which knows how to keep the GC up to date if it is
+<span class="lineNum">     488 </span>            :  * moved to a new location.
+<span class="lineNum">     489 </span>            :  *
+<span class="lineNum">     490 </span>            :  * However, because of this additional communication with the GC, HeapPtr
+<span class="lineNum">     491 </span>            :  * is somewhat slower, so it should only be used in contexts where this ability
+<span class="lineNum">     492 </span>            :  * is necessary.
+<span class="lineNum">     493 </span>            :  *
+<span class="lineNum">     494 </span>            :  * Obviously, JSObjects, JSStrings, and the like get tenured and compacted, so
+<span class="lineNum">     495 </span>            :  * whatever pointers they contain get relocated, in the sense used here.
+<span class="lineNum">     496 </span>            :  * However, since the GC itself is moving those values, it takes care of its
+<span class="lineNum">     497 </span>            :  * internal pointers to those pointers itself. HeapPtr is only necessary
+<span class="lineNum">     498 </span>            :  * when the relocation would otherwise occur without the GC's knowledge.
+<span class="lineNum">     499 </span>            :  */
+<span class="lineNum">     500 </span>            : template &lt;class T&gt;
+<span class="lineNum">     501 </span>            : class HeapPtr : public WriteBarrieredBase&lt;T&gt;
+<a name="502"><span class="lineNum">     502 </span>            : {</a>
+<span class="lineNum">     503 </span>            :   public:
+<span class="lineNum">     504 </span><span class="lineCov">        839 :     HeapPtr() : WriteBarrieredBase&lt;T&gt;(JS::GCPolicy&lt;T&gt;::initial()) {}</span>
+<a name="505"><span class="lineNum">     505 </span>            : </a>
+<span class="lineNum">     506 </span>            :     // Implicitly adding barriers is a reasonable default.
+<span class="lineNum">     507 </span><span class="lineCov">      33653 :     MOZ_IMPLICIT HeapPtr(const T&amp; v) : WriteBarrieredBase&lt;T&gt;(v) {</span>
+<span class="lineNum">     508 </span><span class="lineCov">      33653 :         this-&gt;post(JS::GCPolicy&lt;T&gt;::initial(), this-&gt;value);</span>
+<span class="lineNum">     509 </span><span class="lineCov">      33653 :     }</span>
+<span class="lineNum">     510 </span>            : 
+<span class="lineNum">     511 </span>            :     /*
+<span class="lineNum">     512 </span>            :      * For HeapPtr, move semantics are equivalent to copy semantics. In
+<span class="lineNum">     513 </span>            :      * C++, a copy constructor taking const-ref is the way to get a single
+<span class="lineNum">     514 </span>            :      * function that will be used for both lvalue and rvalue copies, so we can
+<a name="515"><span class="lineNum">     515 </span>            :      * simply omit the rvalue variant.</a>
+<span class="lineNum">     516 </span>            :      */
+<span class="lineNum">     517 </span><span class="lineCov">      16428 :     MOZ_IMPLICIT HeapPtr(const HeapPtr&lt;T&gt;&amp; v) : WriteBarrieredBase&lt;T&gt;(v) {</span>
+<span class="lineNum">     518 </span><span class="lineCov">      16428 :         this-&gt;post(JS::GCPolicy&lt;T&gt;::initial(), this-&gt;value);</span>
+<a name="519"><span class="lineNum">     519 </span><span class="lineCov">      16428 :     }</span></a>
+<span class="lineNum">     520 </span>            : 
+<span class="lineNum">     521 </span><span class="lineCov">      44510 :     ~HeapPtr() {</span>
+<span class="lineNum">     522 </span><span class="lineCov">      44510 :         this-&gt;pre();</span>
+<span class="lineNum">     523 </span><span class="lineCov">      44510 :         this-&gt;post(this-&gt;value, JS::GCPolicy&lt;T&gt;::initial());</span>
+<a name="524"><span class="lineNum">     524 </span><span class="lineCov">      44510 :     }</span></a>
+<span class="lineNum">     525 </span>            : 
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :     void init(const T&amp; v) {</span>
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :         this-&gt;value = v;</span>
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :         this-&gt;post(JS::GCPolicy&lt;T&gt;::initial(), this-&gt;value);</span>
+<a name="529"><span class="lineNum">     529 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     530 </span>            : 
+<span class="lineNum">     531 </span><span class="lineCov">      14118 :     DECLARE_POINTER_ASSIGN_OPS(HeapPtr, T);</span>
+<span class="lineNum">     532 </span>            : 
+<span class="lineNum">     533 </span>            :     /* Make this friend so it can access pre() and post(). */
+<span class="lineNum">     534 </span>            :     template &lt;class T1, class T2&gt;
+<span class="lineNum">     535 </span>            :     friend inline void
+<span class="lineNum">     536 </span>            :     BarrieredSetPair(Zone* zone,
+<span class="lineNum">     537 </span>            :                      HeapPtr&lt;T1*&gt;&amp; v1, T1* val1,
+<span class="lineNum">     538 </span>            :                      HeapPtr&lt;T2*&gt;&amp; v2, T2* val2);
+<a name="539"><span class="lineNum">     539 </span>            : </a>
+<span class="lineNum">     540 </span>            :   protected:
+<span class="lineNum">     541 </span><span class="lineCov">      14118 :     void set(const T&amp; v) {</span>
+<span class="lineNum">     542 </span><span class="lineCov">      14118 :         this-&gt;pre();</span>
+<span class="lineNum">     543 </span><span class="lineCov">      14118 :         postBarrieredSet(v);</span>
+<a name="544"><span class="lineNum">     544 </span><span class="lineCov">      14118 :     }</span></a>
+<span class="lineNum">     545 </span>            : 
+<span class="lineNum">     546 </span><span class="lineCov">      14362 :     void postBarrieredSet(const T&amp; v) {</span>
+<span class="lineNum">     547 </span><span class="lineCov">      14362 :         T tmp = this-&gt;value;</span>
+<span class="lineNum">     548 </span><span class="lineCov">      14362 :         this-&gt;value = v;</span>
+<span class="lineNum">     549 </span><span class="lineCov">      14362 :         this-&gt;post(tmp, this-&gt;value);</span>
+<span class="lineNum">     550 </span><span class="lineCov">      14362 :     }</span>
+<span class="lineNum">     551 </span>            : };
+<span class="lineNum">     552 </span>            : 
+<a name="553"><span class="lineNum">     553 </span>            : // Base class for barriered pointer types that intercept reads and writes.</a>
+<span class="lineNum">     554 </span>            : template &lt;typename T&gt;
+<span class="lineNum">     555 </span><span class="lineCov">      29191 : class ReadBarrieredBase : public BarrieredBase&lt;T&gt;</span>
+<span class="lineNum">     556 </span>            : {
+<a name="557"><span class="lineNum">     557 </span>            :   protected:</a>
+<span class="lineNum">     558 </span>            :     // ReadBarrieredBase is not directly instantiable.
+<span class="lineNum">     559 </span><span class="lineCov">      80223 :     explicit ReadBarrieredBase(const T&amp; v) : BarrieredBase&lt;T&gt;(v) {}</span>
+<a name="560"><span class="lineNum">     560 </span>            : </a>
+<a name="561"><span class="lineNum">     561 </span>            :   protected:</a>
+<span class="lineNum">     562 </span><span class="lineCov">     392967 :     void read() const { InternalBarrierMethods&lt;T&gt;::readBarrier(this-&gt;value); }</span>
+<span class="lineNum">     563 </span><span class="lineCov">     322499 :     void post(const T&amp; prev, const T&amp; next) {</span>
+<span class="lineNum">     564 </span><span class="lineCov">     322499 :         InternalBarrierMethods&lt;T&gt;::postBarrier(&amp;this-&gt;value, prev, next);</span>
+<span class="lineNum">     565 </span><span class="lineCov">     322500 :     }</span>
+<span class="lineNum">     566 </span>            : };
+<span class="lineNum">     567 </span>            : 
+<span class="lineNum">     568 </span>            : // Incremental GC requires that weak pointers have read barriers. See the block
+<span class="lineNum">     569 </span>            : // comment at the top of Barrier.h for a complete discussion of why.
+<span class="lineNum">     570 </span>            : //
+<span class="lineNum">     571 </span>            : // Note that this class also has post-barriers, so is safe to use with nursery
+<span class="lineNum">     572 </span>            : // pointers. However, when used as a hashtable key, care must still be taken to
+<span class="lineNum">     573 </span>            : // insert manual post-barriers on the table for rekeying if the key is based in
+<span class="lineNum">     574 </span>            : // any way on the address of the object.
+<span class="lineNum">     575 </span>            : template &lt;typename T&gt;
+<span class="lineNum">     576 </span>            : class ReadBarriered : public ReadBarrieredBase&lt;T&gt;,
+<span class="lineNum">     577 </span>            :                       public WrappedPtrOperations&lt;T, ReadBarriered&lt;T&gt;&gt;
+<span class="lineNum">     578 </span>            : {
+<span class="lineNum">     579 </span>            :   protected:
+<span class="lineNum">     580 </span>            :     using ReadBarrieredBase&lt;T&gt;::value;
+<a name="581"><span class="lineNum">     581 </span>            : </a>
+<span class="lineNum">     582 </span>            :   public:
+<span class="lineNum">     583 </span><span class="lineCov">       9765 :     ReadBarriered() : ReadBarrieredBase&lt;T&gt;(JS::GCPolicy&lt;T&gt;::initial()) {}</span>
+<a name="584"><span class="lineNum">     584 </span>            : </a>
+<span class="lineNum">     585 </span>            :     // It is okay to add barriers implicitly.
+<span class="lineNum">     586 </span><span class="lineCov">      60857 :     MOZ_IMPLICIT ReadBarriered(const T&amp; v) : ReadBarrieredBase&lt;T&gt;(v) {</span>
+<span class="lineNum">     587 </span><span class="lineCov">      60857 :         this-&gt;post(JS::GCPolicy&lt;T&gt;::initial(), v);</span>
+<span class="lineNum">     588 </span><span class="lineCov">      60857 :     }</span>
+<span class="lineNum">     589 </span>            : 
+<a name="590"><span class="lineNum">     590 </span>            :     // The copy constructor creates a new weak edge but the wrapped pointer does</a>
+<span class="lineNum">     591 </span>            :     // not escape, so no read barrier is necessary.
+<span class="lineNum">     592 </span><span class="lineCov">      42399 :     explicit ReadBarriered(const ReadBarriered&amp; v) : ReadBarrieredBase&lt;T&gt;(v) {</span>
+<span class="lineNum">     593 </span><span class="lineCov">      42399 :         this-&gt;post(JS::GCPolicy&lt;T&gt;::initial(), v.unbarrieredGet());</span>
+<span class="lineNum">     594 </span><span class="lineCov">      42399 :     }</span>
+<span class="lineNum">     595 </span>            : 
+<a name="596"><span class="lineNum">     596 </span>            :     // Move retains the lifetime status of the source edge, so does not fire</a>
+<span class="lineNum">     597 </span>            :     // the read barrier of the defunct edge.
+<span class="lineNum">     598 </span><span class="lineCov">      78728 :     ReadBarriered(ReadBarriered&amp;&amp; v)</span>
+<span class="lineNum">     599 </span><span class="lineCov">      78728 :       : ReadBarrieredBase&lt;T&gt;(mozilla::Move(v))</span>
+<span class="lineNum">     600 </span>            :     {
+<span class="lineNum">     601 </span><span class="lineCov">      78728 :         this-&gt;post(JS::GCPolicy&lt;T&gt;::initial(), v.value);</span>
+<a name="602"><span class="lineNum">     602 </span><span class="lineCov">      78728 :     }</span></a>
+<span class="lineNum">     603 </span>            : 
+<span class="lineNum">     604 </span><span class="lineCov">     131738 :     ~ReadBarriered() {</span>
+<span class="lineNum">     605 </span><span class="lineCov">     131738 :         this-&gt;post(this-&gt;value, JS::GCPolicy&lt;T&gt;::initial());</span>
+<a name="606"><span class="lineNum">     606 </span><span class="lineCov">     131738 :     }</span></a>
+<span class="lineNum">     607 </span>            : 
+<span class="lineNum">     608 </span><span class="lineCov">        137 :     ReadBarriered&amp; operator=(const ReadBarriered&amp; v) {</span>
+<span class="lineNum">     609 </span><span class="lineCov">        137 :         T prior = this-&gt;value;</span>
+<span class="lineNum">     610 </span><span class="lineCov">        137 :         this-&gt;value = v.value;</span>
+<span class="lineNum">     611 </span><span class="lineCov">        137 :         this-&gt;post(prior, v.value);</span>
+<span class="lineNum">     612 </span><span class="lineCov">        137 :         return *this;</span>
+<a name="613"><span class="lineNum">     613 </span>            :     }</a>
+<span class="lineNum">     614 </span>            : 
+<span class="lineNum">     615 </span><span class="lineCov">     376189 :     const T&amp; get() const {</span>
+<span class="lineNum">     616 </span><span class="lineCov">     376189 :         if (InternalBarrierMethods&lt;T&gt;::isMarkable(this-&gt;value))</span>
+<span class="lineNum">     617 </span><span class="lineCov">     372862 :             this-&gt;read();</span>
+<span class="lineNum">     618 </span><span class="lineCov">     376191 :         return this-&gt;value;</span>
+<a name="619"><span class="lineNum">     619 </span>            :     }</a>
+<span class="lineNum">     620 </span>            : 
+<span class="lineNum">     621 </span><span class="lineCov">     587458 :     const T&amp; unbarrieredGet() const {</span>
+<span class="lineNum">     622 </span><span class="lineCov">     587458 :         return this-&gt;value;</span>
+<a name="623"><span class="lineNum">     623 </span>            :     }</a>
+<span class="lineNum">     624 </span>            : 
+<span class="lineNum">     625 </span><span class="lineCov">      31833 :     explicit operator bool() const {</span>
+<span class="lineNum">     626 </span><span class="lineCov">      31833 :         return bool(this-&gt;value);</span>
+<a name="627"><span class="lineNum">     627 </span>            :     }</a>
+<span class="lineNum">     628 </span>            : 
+<a name="629"><span class="lineNum">     629 </span><span class="lineCov">     360506 :     operator const T&amp;() const { return get(); }</span></a>
+<span class="lineNum">     630 </span>            : 
+<a name="631"><span class="lineNum">     631 </span><span class="lineCov">      15613 :     const T&amp; operator-&gt;() const { return get(); }</span></a>
+<a name="632"><span class="lineNum">     632 </span>            : </a>
+<span class="lineNum">     633 </span><span class="lineCov">     522011 :     T* unsafeGet() { return &amp;this-&gt;value; }</span>
+<a name="634"><span class="lineNum">     634 </span><span class="lineCov">     124745 :     T const* unsafeGet() const { return &amp;this-&gt;value; }</span></a>
+<span class="lineNum">     635 </span>            : 
+<span class="lineNum">     636 </span><span class="lineCov">       8565 :     void set(const T&amp; v)</span>
+<span class="lineNum">     637 </span>            :     {
+<span class="lineNum">     638 </span><span class="lineCov">       8565 :         T tmp = this-&gt;value;</span>
+<span class="lineNum">     639 </span><span class="lineCov">       8565 :         this-&gt;value = v;</span>
+<span class="lineNum">     640 </span><span class="lineCov">       8565 :         this-&gt;post(tmp, v);</span>
+<span class="lineNum">     641 </span><span class="lineCov">       8565 :     }</span>
+<span class="lineNum">     642 </span>            : };
+<span class="lineNum">     643 </span>            : 
+<span class="lineNum">     644 </span>            : // A WeakRef pointer does not hold its target live and is automatically nulled
+<span class="lineNum">     645 </span>            : // out when the GC discovers that it is not reachable from any other path.
+<span class="lineNum">     646 </span>            : template &lt;typename T&gt;
+<span class="lineNum">     647 </span>            : using WeakRef = ReadBarriered&lt;T&gt;;
+<span class="lineNum">     648 </span>            : 
+<span class="lineNum">     649 </span>            : // A pre- and post-barriered Value that is specialized to be aware that it
+<span class="lineNum">     650 </span>            : // resides in a slots or elements vector. This allows it to be relocated in
+<span class="lineNum">     651 </span>            : // memory, but with substantially less overhead than a HeapPtr.
+<span class="lineNum">     652 </span>            : class HeapSlot : public WriteBarrieredBase&lt;Value&gt;
+<span class="lineNum">     653 </span>            : {
+<span class="lineNum">     654 </span>            :   public:
+<span class="lineNum">     655 </span>            :     enum Kind {
+<span class="lineNum">     656 </span>            :         Slot = 0,
+<span class="lineNum">     657 </span>            :         Element = 1
+<span class="lineNum">     658 </span>            :     };
+<span class="lineNum">     659 </span>            : 
+<span class="lineNum">     660 </span>            :     explicit HeapSlot() = delete;
+<span class="lineNum">     661 </span>            : 
+<span class="lineNum">     662 </span>            :     explicit HeapSlot(NativeObject* obj, Kind kind, uint32_t slot, const Value&amp; v)
+<span class="lineNum">     663 </span>            :       : WriteBarrieredBase&lt;Value&gt;(v)
+<span class="lineNum">     664 </span>            :     {
+<span class="lineNum">     665 </span>            :         post(obj, kind, slot, v);
+<span class="lineNum">     666 </span>            :     }
+<span class="lineNum">     667 </span>            : 
+<span class="lineNum">     668 </span>            :     explicit HeapSlot(NativeObject* obj, Kind kind, uint32_t slot, const HeapSlot&amp; s)
+<span class="lineNum">     669 </span>            :       : WriteBarrieredBase&lt;Value&gt;(s.value)
+<span class="lineNum">     670 </span>            :     {
+<span class="lineNum">     671 </span>            :         post(obj, kind, slot, s);
+<a name="672"><span class="lineNum">     672 </span>            :     }</a>
+<span class="lineNum">     673 </span>            : 
+<span class="lineNum">     674 </span><span class="lineCov">         52 :     ~HeapSlot() {</span>
+<span class="lineNum">     675 </span><span class="lineCov">         26 :         pre();</span>
+<a name="676"><span class="lineNum">     676 </span><span class="lineCov">         26 :     }</span></a>
+<span class="lineNum">     677 </span>            : 
+<span class="lineNum">     678 </span><span class="lineCov">     310272 :     void init(NativeObject* owner, Kind kind, uint32_t slot, const Value&amp; v) {</span>
+<span class="lineNum">     679 </span><span class="lineCov">     310272 :         value = v;</span>
+<span class="lineNum">     680 </span><span class="lineCov">     310272 :         post(owner, kind, slot, v);</span>
+<span class="lineNum">     681 </span><span class="lineCov">     310274 :     }</span>
+<span class="lineNum">     682 </span>            : 
+<span class="lineNum">     683 </span>            : #ifdef DEBUG
+<span class="lineNum">     684 </span>            :     bool preconditionForSet(NativeObject* owner, Kind kind, uint32_t slot) const;
+<span class="lineNum">     685 </span>            :     void assertPreconditionForWriteBarrierPost(NativeObject* obj, Kind kind, uint32_t slot,
+<span class="lineNum">     686 </span>            :                                                const Value&amp; target) const;
+<a name="687"><span class="lineNum">     687 </span>            : #endif</a>
+<span class="lineNum">     688 </span>            : 
+<span class="lineNum">     689 </span><span class="lineCov">     204002 :     MOZ_ALWAYS_INLINE void set(NativeObject* owner, Kind kind, uint32_t slot, const Value&amp; v) {</span>
+<span class="lineNum">     690 </span><span class="lineCov">     204002 :         MOZ_ASSERT(preconditionForSet(owner, kind, slot));</span>
+<span class="lineNum">     691 </span><span class="lineCov">     204002 :         pre();</span>
+<span class="lineNum">     692 </span><span class="lineCov">     204001 :         value = v;</span>
+<span class="lineNum">     693 </span><span class="lineCov">     204001 :         post(owner, kind, slot, v);</span>
+<span class="lineNum">     694 </span><span class="lineCov">     204003 :     }</span>
+<span class="lineNum">     695 </span>            : 
+<span class="lineNum">     696 </span>            :     /* For users who need to manually barrier the raw types. */
+<span class="lineNum">     697 </span>            :     static void writeBarrierPost(NativeObject* owner, Kind kind, uint32_t slot, const Value&amp; target) {
+<span class="lineNum">     698 </span>            :         reinterpret_cast&lt;HeapSlot*&gt;(const_cast&lt;Value*&gt;(&amp;target))-&gt;post(owner, kind, slot, target);
+<span class="lineNum">     699 </span>            :     }
+<a name="700"><span class="lineNum">     700 </span>            : </a>
+<span class="lineNum">     701 </span>            :   private:
+<span class="lineNum">     702 </span><span class="lineCov">     514266 :     void post(NativeObject* owner, Kind kind, uint32_t slot, const Value&amp; target) {</span>
+<span class="lineNum">     703 </span>            : #ifdef DEBUG
+<span class="lineNum">     704 </span><span class="lineCov">     514266 :         assertPreconditionForWriteBarrierPost(owner, kind, slot, target);</span>
+<span class="lineNum">     705 </span>            : #endif
+<span class="lineNum">     706 </span><span class="lineCov">     514277 :         if (this-&gt;value.isObject()) {</span>
+<span class="lineNum">     707 </span><span class="lineCov">     138432 :             gc::Cell* cell = reinterpret_cast&lt;gc::Cell*&gt;(&amp;this-&gt;value.toObject());</span>
+<span class="lineNum">     708 </span><span class="lineCov">     138432 :             if (cell-&gt;storeBuffer())</span>
+<span class="lineNum">     709 </span><span class="lineCov">      24230 :                 cell-&gt;storeBuffer()-&gt;putSlot(owner, kind, slot, 1);</span>
+<span class="lineNum">     710 </span>            :         }
+<span class="lineNum">     711 </span><span class="lineCov">     514276 :     }</span>
+<span class="lineNum">     712 </span>            : };
+<span class="lineNum">     713 </span>            : 
+<span class="lineNum">     714 </span>            : class HeapSlotArray
+<span class="lineNum">     715 </span>            : {
+<span class="lineNum">     716 </span>            :     HeapSlot* array;
+<span class="lineNum">     717 </span>            : 
+<span class="lineNum">     718 </span>            :     // Whether writes may be performed to the slots in this array. This helps
+<span class="lineNum">     719 </span>            :     // to control how object elements which may be copy on write are used.
+<span class="lineNum">     720 </span>            : #ifdef DEBUG
+<span class="lineNum">     721 </span>            :     bool allowWrite_;
+<span class="lineNum">     722 </span>            : #endif
+<a name="723"><span class="lineNum">     723 </span>            : </a>
+<span class="lineNum">     724 </span>            :   public:
+<span class="lineNum">     725 </span><span class="lineCov">      41300 :     explicit HeapSlotArray(HeapSlot* array, bool allowWrite)</span>
+<span class="lineNum">     726 </span><span class="lineCov">      41300 :       : array(array)</span>
+<span class="lineNum">     727 </span>            : #ifdef DEBUG
+<span class="lineNum">     728 </span><span class="lineCov">      41300 :       , allowWrite_(allowWrite)</span>
+<span class="lineNum">     729 </span>            : #endif
+<a name="730"><span class="lineNum">     730 </span><span class="lineCov">      41300 :     {}</span></a>
+<span class="lineNum">     731 </span>            : 
+<span class="lineNum">     732 </span><span class="lineCov">        676 :     operator const Value*() const {</span>
+<span class="lineNum">     733 </span>            :         JS_STATIC_ASSERT(sizeof(GCPtr&lt;Value&gt;) == sizeof(Value));
+<span class="lineNum">     734 </span>            :         JS_STATIC_ASSERT(sizeof(HeapSlot) == sizeof(Value));
+<a name="735"><span class="lineNum">     735 </span><span class="lineCov">        676 :         return reinterpret_cast&lt;const Value*&gt;(array);</span></a>
+<span class="lineNum">     736 </span>            :     }
+<a name="737"><span class="lineNum">     737 </span><span class="lineCov">      21315 :     operator HeapSlot*() const { MOZ_ASSERT(allowWrite()); return array; }</span></a>
+<a name="738"><span class="lineNum">     738 </span>            : </a>
+<span class="lineNum">     739 </span><span class="lineCov">         15 :     HeapSlotArray operator +(int offset) const { return HeapSlotArray(array + offset, allowWrite()); }</span>
+<span class="lineNum">     740 </span><span class="lineCov">      19294 :     HeapSlotArray operator +(uint32_t offset) const { return HeapSlotArray(array + offset, allowWrite()); }</span>
+<a name="741"><span class="lineNum">     741 </span>            : </a>
+<span class="lineNum">     742 </span>            :   private:
+<span class="lineNum">     743 </span><span class="lineCov">      40624 :     bool allowWrite() const {</span>
+<span class="lineNum">     744 </span>            : #ifdef DEBUG
+<span class="lineNum">     745 </span><span class="lineCov">      40624 :         return allowWrite_;</span>
+<span class="lineNum">     746 </span>            : #else
+<span class="lineNum">     747 </span>            :         return true;
+<span class="lineNum">     748 </span>            : #endif
+<span class="lineNum">     749 </span>            :     }
+<span class="lineNum">     750 </span>            : };
+<span class="lineNum">     751 </span>            : 
+<span class="lineNum">     752 </span>            : /*
+<span class="lineNum">     753 </span>            :  * This is a hack for RegExpStatics::updateFromMatch. It allows us to do two
+<span class="lineNum">     754 </span>            :  * barriers with only one branch to check if we're in an incremental GC.
+<span class="lineNum">     755 </span>            :  */
+<a name="756"><span class="lineNum">     756 </span>            : template &lt;class T1, class T2&gt;</a>
+<span class="lineNum">     757 </span>            : static inline void
+<span class="lineNum">     758 </span><span class="lineCov">        122 : BarrieredSetPair(Zone* zone,</span>
+<span class="lineNum">     759 </span>            :                  HeapPtr&lt;T1*&gt;&amp; v1, T1* val1,
+<span class="lineNum">     760 </span>            :                  HeapPtr&lt;T2*&gt;&amp; v2, T2* val2)
+<span class="lineNum">     761 </span>            : {
+<span class="lineNum">     762 </span><span class="lineCov">        122 :     if (T1::needWriteBarrierPre(zone)) {</span>
+<span class="lineNum">     763 </span><span class="lineNoCov">          0 :         v1.pre();</span>
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 :         v2.pre();</span>
+<span class="lineNum">     765 </span>            :     }
+<span class="lineNum">     766 </span><span class="lineCov">        122 :     v1.postBarrieredSet(val1);</span>
+<span class="lineNum">     767 </span><span class="lineCov">        122 :     v2.postBarrieredSet(val2);</span>
+<span class="lineNum">     768 </span><span class="lineCov">        122 : }</span>
+<span class="lineNum">     769 </span>            : 
+<span class="lineNum">     770 </span>            : /*
+<span class="lineNum">     771 </span>            :  * ImmutableTenuredPtr is designed for one very narrow case: replacing
+<span class="lineNum">     772 </span>            :  * immutable raw pointers to GC-managed things, implicitly converting to a
+<span class="lineNum">     773 </span>            :  * handle type for ease of use. Pointers encapsulated by this type must:
+<span class="lineNum">     774 </span>            :  *
+<span class="lineNum">     775 </span>            :  *   be immutable (no incremental write barriers),
+<span class="lineNum">     776 </span>            :  *   never point into the nursery (no generational write barriers), and
+<span class="lineNum">     777 </span>            :  *   be traced via MarkRuntime (we use fromMarkedLocation).
+<span class="lineNum">     778 </span>            :  *
+<span class="lineNum">     779 </span>            :  * In short: you *really* need to know what you're doing before you use this
+<span class="lineNum">     780 </span>            :  * class!
+<span class="lineNum">     781 </span>            :  */
+<span class="lineNum">     782 </span>            : template &lt;typename T&gt;
+<span class="lineNum">     783 </span>            : class ImmutableTenuredPtr
+<span class="lineNum">     784 </span>            : {
+<span class="lineNum">     785 </span>            :     T value;
+<a name="786"><span class="lineNum">     786 </span>            : </a>
+<span class="lineNum">     787 </span>            :   public:
+<span class="lineNum">     788 </span><span class="lineCov">     589113 :     operator T() const { return value; }</span>
+<a name="789"><span class="lineNum">     789 </span>            :     T operator-&gt;() const { return value; }</a>
+<span class="lineNum">     790 </span>            : 
+<span class="lineNum">     791 </span><span class="lineCov">    1220509 :     operator Handle&lt;T&gt;() const {</span>
+<span class="lineNum">     792 </span><span class="lineCov">    1220509 :         return Handle&lt;T&gt;::fromMarkedLocation(&amp;value);</span>
+<a name="793"><span class="lineNum">     793 </span>            :     }</a>
+<span class="lineNum">     794 </span>            : 
+<span class="lineNum">     795 </span><span class="lineCov">       1461 :     void init(T ptr) {</span>
+<span class="lineNum">     796 </span><span class="lineCov">       1461 :         MOZ_ASSERT(ptr-&gt;isTenured());</span>
+<span class="lineNum">     797 </span><span class="lineCov">       1461 :         value = ptr;</span>
+<a name="798"><span class="lineNum">     798 </span><span class="lineCov">       1461 :     }</span></a>
+<span class="lineNum">     799 </span>            : 
+<span class="lineNum">     800 </span><span class="lineCov">         12 :     T get() const { return value; }</span>
+<span class="lineNum">     801 </span>            :     const T* address() { return &amp;value; }
+<span class="lineNum">     802 </span>            : };
+<span class="lineNum">     803 </span>            : 
+<span class="lineNum">     804 </span>            : template &lt;typename T&gt;
+<span class="lineNum">     805 </span>            : struct MovableCellHasher&lt;PreBarriered&lt;T&gt;&gt;
+<span class="lineNum">     806 </span>            : {
+<span class="lineNum">     807 </span>            :     using Key = PreBarriered&lt;T&gt;;
+<span class="lineNum">     808 </span>            :     using Lookup = T;
+<span class="lineNum">     809 </span>            : 
+<a name="810"><span class="lineNum">     810 </span>            :     static bool hasHash(const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::hasHash(l); }</a>
+<a name="811"><span class="lineNum">     811 </span>            :     static bool ensureHash(const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::ensureHash(l); }</a>
+<span class="lineNum">     812 </span><span class="lineNoCov">          0 :     static HashNumber hash(const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::hash(l); }</span>
+<span class="lineNum">     813 </span><span class="lineNoCov">          0 :     static bool match(const Key&amp; k, const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::match(k, l); }</span>
+<span class="lineNum">     814 </span>            :     static void rekey(Key&amp; k, const Key&amp; newKey) { k.unsafeSet(newKey); }
+<span class="lineNum">     815 </span>            : };
+<span class="lineNum">     816 </span>            : 
+<span class="lineNum">     817 </span>            : template &lt;typename T&gt;
+<span class="lineNum">     818 </span>            : struct MovableCellHasher&lt;HeapPtr&lt;T&gt;&gt;
+<span class="lineNum">     819 </span>            : {
+<span class="lineNum">     820 </span>            :     using Key = HeapPtr&lt;T&gt;;
+<a name="821"><span class="lineNum">     821 </span>            :     using Lookup = T;</a>
+<a name="822"><span class="lineNum">     822 </span>            : </a>
+<a name="823"><span class="lineNum">     823 </span><span class="lineCov">        926 :     static bool hasHash(const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::hasHash(l); }</span></a>
+<a name="824"><span class="lineNum">     824 </span><span class="lineCov">        119 :     static bool ensureHash(const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::ensureHash(l); }</span></a>
+<a name="825"><span class="lineNum">     825 </span><span class="lineCov">        916 :     static HashNumber hash(const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::hash(l); }</span></a>
+<span class="lineNum">     826 </span><span class="lineCov">        764 :     static bool match(const Key&amp; k, const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::match(k, l); }</span>
+<span class="lineNum">     827 </span><span class="lineNoCov">          0 :     static void rekey(Key&amp; k, const Key&amp; newKey) { k.unsafeSet(newKey); }</span>
+<span class="lineNum">     828 </span>            : };
+<span class="lineNum">     829 </span>            : 
+<span class="lineNum">     830 </span>            : template &lt;typename T&gt;
+<span class="lineNum">     831 </span>            : struct MovableCellHasher&lt;ReadBarriered&lt;T&gt;&gt;
+<span class="lineNum">     832 </span>            : {
+<span class="lineNum">     833 </span>            :     using Key = ReadBarriered&lt;T&gt;;
+<a name="834"><span class="lineNum">     834 </span>            :     using Lookup = T;</a>
+<a name="835"><span class="lineNum">     835 </span>            : </a>
+<a name="836"><span class="lineNum">     836 </span><span class="lineNoCov">          0 :     static bool hasHash(const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::hasHash(l); }</span></a>
+<a name="837"><span class="lineNum">     837 </span><span class="lineNoCov">          0 :     static bool ensureHash(const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::ensureHash(l); }</span></a>
+<span class="lineNum">     838 </span><span class="lineNoCov">          0 :     static HashNumber hash(const Lookup&amp; l) { return MovableCellHasher&lt;T&gt;::hash(l); }</span>
+<span class="lineNum">     839 </span><span class="lineNoCov">          0 :     static bool match(const Key&amp; k, const Lookup&amp; l) {</span>
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :         return MovableCellHasher&lt;T&gt;::match(k.unbarrieredGet(), l);</span>
+<span class="lineNum">     841 </span>            :     }
+<span class="lineNum">     842 </span>            :     static void rekey(Key&amp; k, const Key&amp; newKey) { k.unsafeSet(newKey); }
+<span class="lineNum">     843 </span>            : };
+<span class="lineNum">     844 </span>            : 
+<span class="lineNum">     845 </span>            : /* Useful for hashtables with a GCPtr as key. */
+<span class="lineNum">     846 </span>            : template &lt;class T&gt;
+<span class="lineNum">     847 </span>            : struct GCPtrHasher
+<span class="lineNum">     848 </span>            : {
+<span class="lineNum">     849 </span>            :     typedef GCPtr&lt;T&gt; Key;
+<span class="lineNum">     850 </span>            :     typedef T Lookup;
+<span class="lineNum">     851 </span>            : 
+<span class="lineNum">     852 </span>            :     static HashNumber hash(Lookup obj) { return DefaultHasher&lt;T&gt;::hash(obj); }
+<span class="lineNum">     853 </span>            :     static bool match(const Key&amp; k, Lookup l) { return k.get() == l; }
+<span class="lineNum">     854 </span>            :     static void rekey(Key&amp; k, const Key&amp; newKey) { k.unsafeSet(newKey); }
+<span class="lineNum">     855 </span>            : };
+<span class="lineNum">     856 </span>            : 
+<span class="lineNum">     857 </span>            : /* Specialized hashing policy for GCPtrs. */
+<span class="lineNum">     858 </span>            : template &lt;class T&gt;
+<span class="lineNum">     859 </span>            : struct DefaultHasher&lt;GCPtr&lt;T&gt;&gt; : GCPtrHasher&lt;T&gt; {};
+<span class="lineNum">     860 </span>            : 
+<span class="lineNum">     861 </span>            : template &lt;class T&gt;
+<span class="lineNum">     862 </span>            : struct PreBarrieredHasher
+<span class="lineNum">     863 </span>            : {
+<span class="lineNum">     864 </span>            :     typedef PreBarriered&lt;T&gt; Key;
+<span class="lineNum">     865 </span>            :     typedef T Lookup;
+<a name="866"><span class="lineNum">     866 </span>            : </a>
+<span class="lineNum">     867 </span>            :     static HashNumber hash(Lookup obj) { return DefaultHasher&lt;T&gt;::hash(obj); }
+<span class="lineNum">     868 </span><span class="lineNoCov">          0 :     static bool match(const Key&amp; k, Lookup l) { return k.get() == l; }</span>
+<span class="lineNum">     869 </span>            :     static void rekey(Key&amp; k, const Key&amp; newKey) { k.unsafeSet(newKey); }
+<span class="lineNum">     870 </span>            : };
+<span class="lineNum">     871 </span>            : 
+<span class="lineNum">     872 </span>            : template &lt;class T&gt;
+<span class="lineNum">     873 </span>            : struct DefaultHasher&lt;PreBarriered&lt;T&gt;&gt; : PreBarrieredHasher&lt;T&gt; { };
+<span class="lineNum">     874 </span>            : 
+<a name="875"><span class="lineNum">     875 </span>            : /* Useful for hashtables with a ReadBarriered as key. */</a>
+<span class="lineNum">     876 </span>            : template &lt;class T&gt;
+<span class="lineNum">     877 </span><span class="lineCov">      22854 : struct ReadBarrieredHasher</span>
+<span class="lineNum">     878 </span>            : {
+<span class="lineNum">     879 </span>            :     typedef ReadBarriered&lt;T&gt; Key;
+<span class="lineNum">     880 </span>            :     typedef T Lookup;
+<span class="lineNum">     881 </span>            : 
+<span class="lineNum">     882 </span>            :     static HashNumber hash(Lookup obj) { return DefaultHasher&lt;T&gt;::hash(obj); }
+<span class="lineNum">     883 </span>            :     static bool match(const Key&amp; k, Lookup l) { return k.unbarrieredGet() == l; }
+<span class="lineNum">     884 </span>            :     static void rekey(Key&amp; k, const Key&amp; newKey) { k.set(newKey.unbarrieredGet()); }
+<span class="lineNum">     885 </span>            : };
+<span class="lineNum">     886 </span>            : 
+<a name="887"><span class="lineNum">     887 </span>            : /* Specialized hashing policy for ReadBarriereds. */</a>
+<span class="lineNum">     888 </span>            : template &lt;class T&gt;
+<span class="lineNum">     889 </span><span class="lineCov">      22854 : struct DefaultHasher&lt;ReadBarriered&lt;T&gt;&gt; : ReadBarrieredHasher&lt;T&gt; { };</span>
+<span class="lineNum">     890 </span>            : 
+<span class="lineNum">     891 </span>            : class ArrayObject;
+<span class="lineNum">     892 </span>            : class ArrayBufferObject;
+<span class="lineNum">     893 </span>            : class GlobalObject;
+<span class="lineNum">     894 </span>            : class Scope;
+<span class="lineNum">     895 </span>            : class ScriptSourceObject;
+<span class="lineNum">     896 </span>            : class Shape;
+<span class="lineNum">     897 </span>            : class BaseShape;
+<span class="lineNum">     898 </span>            : class UnownedBaseShape;
+<span class="lineNum">     899 </span>            : class WasmInstanceObject;
+<span class="lineNum">     900 </span>            : class WasmTableObject;
+<span class="lineNum">     901 </span>            : namespace jit {
+<span class="lineNum">     902 </span>            : class JitCode;
+<span class="lineNum">     903 </span>            : } // namespace jit
+<span class="lineNum">     904 </span>            : 
+<span class="lineNum">     905 </span>            : typedef PreBarriered&lt;JSObject*&gt; PreBarrieredObject;
+<span class="lineNum">     906 </span>            : typedef PreBarriered&lt;JSScript*&gt; PreBarrieredScript;
+<span class="lineNum">     907 </span>            : typedef PreBarriered&lt;jit::JitCode*&gt; PreBarrieredJitCode;
+<span class="lineNum">     908 </span>            : typedef PreBarriered&lt;JSString*&gt; PreBarrieredString;
+<span class="lineNum">     909 </span>            : typedef PreBarriered&lt;JSAtom*&gt; PreBarrieredAtom;
+<span class="lineNum">     910 </span>            : 
+<span class="lineNum">     911 </span>            : typedef GCPtr&lt;NativeObject*&gt; GCPtrNativeObject;
+<span class="lineNum">     912 </span>            : typedef GCPtr&lt;ArrayObject*&gt; GCPtrArrayObject;
+<span class="lineNum">     913 </span>            : typedef GCPtr&lt;ArrayBufferObjectMaybeShared*&gt; GCPtrArrayBufferObjectMaybeShared;
+<span class="lineNum">     914 </span>            : typedef GCPtr&lt;ArrayBufferObject*&gt; GCPtrArrayBufferObject;
+<span class="lineNum">     915 </span>            : typedef GCPtr&lt;BaseShape*&gt; GCPtrBaseShape;
+<span class="lineNum">     916 </span>            : typedef GCPtr&lt;JSAtom*&gt; GCPtrAtom;
+<span class="lineNum">     917 </span>            : typedef GCPtr&lt;JSFlatString*&gt; GCPtrFlatString;
+<span class="lineNum">     918 </span>            : typedef GCPtr&lt;JSFunction*&gt; GCPtrFunction;
+<span class="lineNum">     919 </span>            : typedef GCPtr&lt;JSLinearString*&gt; GCPtrLinearString;
+<span class="lineNum">     920 </span>            : typedef GCPtr&lt;JSObject*&gt; GCPtrObject;
+<span class="lineNum">     921 </span>            : typedef GCPtr&lt;JSScript*&gt; GCPtrScript;
+<span class="lineNum">     922 </span>            : typedef GCPtr&lt;JSString*&gt; GCPtrString;
+<span class="lineNum">     923 </span>            : typedef GCPtr&lt;ModuleObject*&gt; GCPtrModuleObject;
+<span class="lineNum">     924 </span>            : typedef GCPtr&lt;ModuleEnvironmentObject*&gt; GCPtrModuleEnvironmentObject;
+<span class="lineNum">     925 </span>            : typedef GCPtr&lt;ModuleNamespaceObject*&gt; GCPtrModuleNamespaceObject;
+<span class="lineNum">     926 </span>            : typedef GCPtr&lt;PlainObject*&gt; GCPtrPlainObject;
+<span class="lineNum">     927 </span>            : typedef GCPtr&lt;PropertyName*&gt; GCPtrPropertyName;
+<span class="lineNum">     928 </span>            : typedef GCPtr&lt;Shape*&gt; GCPtrShape;
+<span class="lineNum">     929 </span>            : typedef GCPtr&lt;UnownedBaseShape*&gt; GCPtrUnownedBaseShape;
+<span class="lineNum">     930 </span>            : typedef GCPtr&lt;jit::JitCode*&gt; GCPtrJitCode;
+<span class="lineNum">     931 </span>            : typedef GCPtr&lt;ObjectGroup*&gt; GCPtrObjectGroup;
+<span class="lineNum">     932 </span>            : typedef GCPtr&lt;Scope*&gt; GCPtrScope;
+<span class="lineNum">     933 </span>            : 
+<span class="lineNum">     934 </span>            : typedef PreBarriered&lt;Value&gt; PreBarrieredValue;
+<span class="lineNum">     935 </span>            : typedef GCPtr&lt;Value&gt; GCPtrValue;
+<span class="lineNum">     936 </span>            : 
+<span class="lineNum">     937 </span>            : typedef PreBarriered&lt;jsid&gt; PreBarrieredId;
+<span class="lineNum">     938 </span>            : typedef GCPtr&lt;jsid&gt; GCPtrId;
+<span class="lineNum">     939 </span>            : 
+<span class="lineNum">     940 </span>            : typedef ImmutableTenuredPtr&lt;PropertyName*&gt; ImmutablePropertyNamePtr;
+<span class="lineNum">     941 </span>            : typedef ImmutableTenuredPtr&lt;JS::Symbol*&gt; ImmutableSymbolPtr;
+<span class="lineNum">     942 </span>            : 
+<span class="lineNum">     943 </span>            : typedef ReadBarriered&lt;DebugEnvironmentProxy*&gt; ReadBarrieredDebugEnvironmentProxy;
+<span class="lineNum">     944 </span>            : typedef ReadBarriered&lt;GlobalObject*&gt; ReadBarrieredGlobalObject;
+<span class="lineNum">     945 </span>            : typedef ReadBarriered&lt;JSObject*&gt; ReadBarrieredObject;
+<span class="lineNum">     946 </span>            : typedef ReadBarriered&lt;JSFunction*&gt; ReadBarrieredFunction;
+<span class="lineNum">     947 </span>            : typedef ReadBarriered&lt;JSScript*&gt; ReadBarrieredScript;
+<span class="lineNum">     948 </span>            : typedef ReadBarriered&lt;ScriptSourceObject*&gt; ReadBarrieredScriptSourceObject;
+<span class="lineNum">     949 </span>            : typedef ReadBarriered&lt;Shape*&gt; ReadBarrieredShape;
+<span class="lineNum">     950 </span>            : typedef ReadBarriered&lt;jit::JitCode*&gt; ReadBarrieredJitCode;
+<span class="lineNum">     951 </span>            : typedef ReadBarriered&lt;ObjectGroup*&gt; ReadBarrieredObjectGroup;
+<span class="lineNum">     952 </span>            : typedef ReadBarriered&lt;JS::Symbol*&gt; ReadBarrieredSymbol;
+<span class="lineNum">     953 </span>            : typedef ReadBarriered&lt;WasmInstanceObject*&gt; ReadBarrieredWasmInstanceObject;
+<span class="lineNum">     954 </span>            : typedef ReadBarriered&lt;WasmTableObject*&gt; ReadBarrieredWasmTableObject;
+<span class="lineNum">     955 </span>            : 
+<span class="lineNum">     956 </span>            : typedef ReadBarriered&lt;Value&gt; ReadBarrieredValue;
+<span class="lineNum">     957 </span>            : 
+<span class="lineNum">     958 </span>            : namespace detail {
+<span class="lineNum">     959 </span>            : 
+<a name="960"><span class="lineNum">     960 </span>            : template &lt;typename T&gt;</a>
+<span class="lineNum">     961 </span>            : struct DefineComparisonOps&lt;PreBarriered&lt;T&gt;&gt; : mozilla::TrueType {
+<span class="lineNum">     962 </span><span class="lineCov">    6745468 :     static const T&amp; get(const PreBarriered&lt;T&gt;&amp; v) { return v.get(); }</span>
+<span class="lineNum">     963 </span>            : };
+<span class="lineNum">     964 </span>            : 
+<a name="965"><span class="lineNum">     965 </span>            : template &lt;typename T&gt;</a>
+<span class="lineNum">     966 </span>            : struct DefineComparisonOps&lt;GCPtr&lt;T&gt;&gt; : mozilla::TrueType {
+<span class="lineNum">     967 </span><span class="lineCov">     310539 :     static const T&amp; get(const GCPtr&lt;T&gt;&amp; v) { return v.get(); }</span>
+<span class="lineNum">     968 </span>            : };
+<span class="lineNum">     969 </span>            : 
+<a name="970"><span class="lineNum">     970 </span>            : template &lt;typename T&gt;</a>
+<span class="lineNum">     971 </span>            : struct DefineComparisonOps&lt;HeapPtr&lt;T&gt;&gt; : mozilla::TrueType {
+<span class="lineNum">     972 </span><span class="lineNoCov">          0 :     static const T&amp; get(const HeapPtr&lt;T&gt;&amp; v) { return v.get(); }</span>
+<span class="lineNum">     973 </span>            : };
+<span class="lineNum">     974 </span>            : 
+<a name="975"><span class="lineNum">     975 </span>            : template &lt;typename T&gt;</a>
+<span class="lineNum">     976 </span>            : struct DefineComparisonOps&lt;ReadBarriered&lt;T&gt;&gt; : mozilla::TrueType {
+<span class="lineNum">     977 </span><span class="lineCov">         80 :     static const T&amp; get(const ReadBarriered&lt;T&gt;&amp; v) { return v.unbarrieredGet(); }</span>
+<span class="lineNum">     978 </span>            : };
+<span class="lineNum">     979 </span>            : 
+<span class="lineNum">     980 </span>            : template &lt;&gt;
+<span class="lineNum">     981 </span>            : struct DefineComparisonOps&lt;HeapSlot&gt; : mozilla::TrueType {
+<span class="lineNum">     982 </span>            :     static const Value&amp; get(const HeapSlot&amp; v) { return v.get(); }
+<span class="lineNum">     983 </span>            : };
+<span class="lineNum">     984 </span>            : 
+<span class="lineNum">     985 </span>            : } /* namespace detail */
+<span class="lineNum">     986 </span>            : 
+<span class="lineNum">     987 </span>            : } /* namespace js */
+<span class="lineNum">     988 </span>            : 
+<span class="lineNum">     989 </span>            : #endif /* gc_Barrier_h */
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

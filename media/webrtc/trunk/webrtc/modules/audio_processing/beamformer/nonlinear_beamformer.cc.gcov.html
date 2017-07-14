@@ -1,0 +1,683 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/audio_processing/beamformer/nonlinear_beamformer.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/audio_processing/beamformer</a> - nonlinear_beamformer.cc<span style="font-size: 80%;"> (source / <a href="nonlinear_beamformer.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">2</td>
+            <td class="headerCovTableEntry">295</td>
+            <td class="headerCovTableEntryLo">0.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">2</td>
+            <td class="headerCovTableEntry">34</td>
+            <td class="headerCovTableEntryLo">5.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2014 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #ifndef _USE_MATH_DEFINES
+<span class="lineNum">      12 </span>            : #define _USE_MATH_DEFINES
+<span class="lineNum">      13 </span>            : #endif
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #include &quot;webrtc/modules/audio_processing/beamformer/nonlinear_beamformer.h&quot;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      18 </span>            : #include &lt;cmath&gt;
+<span class="lineNum">      19 </span>            : #include &lt;numeric&gt;
+<span class="lineNum">      20 </span>            : #include &lt;vector&gt;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : #include &quot;webrtc/base/arraysize.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;webrtc/common_audio/window_generator.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;webrtc/modules/audio_processing/beamformer/covariance_matrix_generator.h&quot;
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : namespace webrtc {
+<span class="lineNum">      27 </span>            : namespace {
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : // Alpha for the Kaiser Bessel Derived window.
+<span class="lineNum">      30 </span>            : const float kKbdAlpha = 1.5f;
+<span class="lineNum">      31 </span>            : 
+<span class="lineNum">      32 </span>            : const float kSpeedOfSoundMeterSeconds = 343;
+<span class="lineNum">      33 </span>            : 
+<span class="lineNum">      34 </span>            : // The minimum separation in radians between the target direction and an
+<span class="lineNum">      35 </span>            : // interferer scenario.
+<span class="lineNum">      36 </span>            : const float kMinAwayRadians = 0.2f;
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            : // The separation between the target direction and the closest interferer
+<span class="lineNum">      39 </span>            : // scenario is proportional to this constant.
+<span class="lineNum">      40 </span>            : const float kAwaySlope = 0.008f;
+<span class="lineNum">      41 </span>            : 
+<span class="lineNum">      42 </span>            : // When calculating the interference covariance matrix, this is the weight for
+<span class="lineNum">      43 </span>            : // the weighted average between the uniform covariance matrix and the angled
+<span class="lineNum">      44 </span>            : // covariance matrix.
+<span class="lineNum">      45 </span>            : // Rpsi = Rpsi_angled * kBalance + Rpsi_uniform * (1 - kBalance)
+<span class="lineNum">      46 </span>            : const float kBalance = 0.95f;
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span>            : // Alpha coefficients for mask smoothing.
+<span class="lineNum">      49 </span>            : const float kMaskTimeSmoothAlpha = 0.2f;
+<span class="lineNum">      50 </span>            : const float kMaskFrequencySmoothAlpha = 0.6f;
+<span class="lineNum">      51 </span>            : 
+<span class="lineNum">      52 </span>            : // The average mask is computed from masks in this mid-frequency range. If these
+<span class="lineNum">      53 </span>            : // ranges are changed |kMaskQuantile| might need to be adjusted.
+<span class="lineNum">      54 </span>            : const int kLowMeanStartHz = 200;
+<span class="lineNum">      55 </span>            : const int kLowMeanEndHz = 400;
+<span class="lineNum">      56 </span>            : 
+<span class="lineNum">      57 </span>            : // Range limiter for subtractive terms in the nominator and denominator of the
+<span class="lineNum">      58 </span>            : // postfilter expression. It handles the scenario mismatch between the true and
+<span class="lineNum">      59 </span>            : // model sources (target and interference).
+<span class="lineNum">      60 </span>            : const float kCutOffConstant = 0.9999f;
+<span class="lineNum">      61 </span>            : 
+<span class="lineNum">      62 </span>            : // Quantile of mask values which is used to estimate target presence.
+<span class="lineNum">      63 </span>            : const float kMaskQuantile = 0.7f;
+<span class="lineNum">      64 </span>            : // Mask threshold over which the data is considered signal and not interference.
+<span class="lineNum">      65 </span>            : // It has to be updated every time the postfilter calculation is changed
+<span class="lineNum">      66 </span>            : // significantly.
+<span class="lineNum">      67 </span>            : // TODO(aluebs): Write a tool to tune the target threshold automatically based
+<span class="lineNum">      68 </span>            : // on files annotated with target and interference ground truth.
+<span class="lineNum">      69 </span>            : const float kMaskTargetThreshold = 0.01f;
+<span class="lineNum">      70 </span>            : // Time in seconds after which the data is considered interference if the mask
+<span class="lineNum">      71 </span>            : // does not pass |kMaskTargetThreshold|.
+<span class="lineNum">      72 </span>            : const float kHoldTargetSeconds = 0.25f;
+<span class="lineNum">      73 </span>            : 
+<span class="lineNum">      74 </span>            : // To compensate for the attenuation this algorithm introduces to the target
+<span class="lineNum">      75 </span>            : // signal. It was estimated empirically from a low-noise low-reverberation
+<span class="lineNum">      76 </span>            : // recording from broadside.
+<span class="lineNum">      77 </span>            : const float kCompensationGain = 2.f;
+<span class="lineNum">      78 </span>            : 
+<span class="lineNum">      79 </span>            : // Does conjugate(|norm_mat|) * |mat| * transpose(|norm_mat|). No extra space is
+<a name="80"><span class="lineNum">      80 </span>            : // used; to accomplish this, we compute both multiplications in the same loop.</a>
+<span class="lineNum">      81 </span>            : // The returned norm is clamped to be non-negative.
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 : float Norm(const ComplexMatrix&lt;float&gt;&amp; mat,</span>
+<span class="lineNum">      83 </span>            :            const ComplexMatrix&lt;float&gt;&amp; norm_mat) {
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(1, norm_mat.num_rows());</span>
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(norm_mat.num_columns(), mat.num_rows());</span>
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(norm_mat.num_columns(), mat.num_columns());</span>
+<span class="lineNum">      87 </span>            : 
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :   complex&lt;float&gt; first_product = complex&lt;float&gt;(0.f, 0.f);</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :   complex&lt;float&gt; second_product = complex&lt;float&gt;(0.f, 0.f);</span>
+<span class="lineNum">      90 </span>            : 
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :   const complex&lt;float&gt;* const* mat_els = mat.elements();</span>
+<span class="lineNum">      92 </span><span class="lineNoCov">          0 :   const complex&lt;float&gt;* const* norm_mat_els = norm_mat.elements();</span>
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; norm_mat.num_columns(); ++i) {</span>
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :     for (size_t j = 0; j &lt; norm_mat.num_columns(); ++j) {</span>
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :       first_product += conj(norm_mat_els[0][j]) * mat_els[j][i];</span>
+<span class="lineNum">      97 </span>            :     }
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :     second_product += first_product * norm_mat_els[0][i];</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :     first_product = 0.f;</span>
+<span class="lineNum">     100 </span>            :   }
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :   return std::max(second_product.real(), 0.f);</span>
+<span class="lineNum">     102 </span>            : }
+<a name="103"><span class="lineNum">     103 </span>            : </a>
+<span class="lineNum">     104 </span>            : // Does conjugate(|lhs|) * |rhs| for row vectors |lhs| and |rhs|.
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 : complex&lt;float&gt; ConjugateDotProduct(const ComplexMatrix&lt;float&gt;&amp; lhs,</span>
+<span class="lineNum">     106 </span>            :                                    const ComplexMatrix&lt;float&gt;&amp; rhs) {
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(1, lhs.num_rows());</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(1, rhs.num_rows());</span>
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(lhs.num_columns(), rhs.num_columns());</span>
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :   const complex&lt;float&gt;* const* lhs_elements = lhs.elements();</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :   const complex&lt;float&gt;* const* rhs_elements = rhs.elements();</span>
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :   complex&lt;float&gt; result = complex&lt;float&gt;(0.f, 0.f);</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; lhs.num_columns(); ++i) {</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :     result += conj(lhs_elements[0][i]) * rhs_elements[0][i];</span>
+<span class="lineNum">     117 </span>            :   }
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :   return result;</span>
+<span class="lineNum">     120 </span>            : }
+<a name="121"><span class="lineNum">     121 </span>            : </a>
+<span class="lineNum">     122 </span>            : // Works for positive numbers only.
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 : size_t Round(float x) {</span>
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :   return static_cast&lt;size_t&gt;(std::floor(x + 0.5f));</span>
+<span class="lineNum">     125 </span>            : }
+<a name="126"><span class="lineNum">     126 </span>            : </a>
+<span class="lineNum">     127 </span>            : // Calculates the sum of squares of a complex matrix.
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 : float SumSquares(const ComplexMatrix&lt;float&gt;&amp; mat) {</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :   float sum_squares = 0.f;</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :   const complex&lt;float&gt;* const* mat_els = mat.elements();</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; mat.num_rows(); ++i) {</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :     for (size_t j = 0; j &lt; mat.num_columns(); ++j) {</span>
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :       float abs_value = std::abs(mat_els[i][j]);</span>
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :       sum_squares += abs_value * abs_value;</span>
+<span class="lineNum">     135 </span>            :     }
+<span class="lineNum">     136 </span>            :   }
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :   return sum_squares;</span>
+<span class="lineNum">     138 </span>            : }
+<a name="139"><span class="lineNum">     139 </span>            : </a>
+<span class="lineNum">     140 </span>            : // Does |out| = |in|.' * conj(|in|) for row vector |in|.
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 : void TransposedConjugatedProduct(const ComplexMatrix&lt;float&gt;&amp; in,</span>
+<span class="lineNum">     142 </span>            :                                  ComplexMatrix&lt;float&gt;* out) {
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(1, in.num_rows());</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(out-&gt;num_rows(), in.num_columns());</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(out-&gt;num_columns(), in.num_columns());</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :   const complex&lt;float&gt;* in_elements = in.elements()[0];</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :   complex&lt;float&gt;* const* out_elements = out-&gt;elements();</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; out-&gt;num_rows(); ++i) {</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     for (size_t j = 0; j &lt; out-&gt;num_columns(); ++j) {</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :       out_elements[i][j] = in_elements[i] * conj(in_elements[j]);</span>
+<span class="lineNum">     151 </span>            :     }
+<span class="lineNum">     152 </span>            :   }
+<a name="153"><span class="lineNum">     153 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     154 </span>            : 
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 : std::vector&lt;Point&gt; GetCenteredArray(std::vector&lt;Point&gt; array_geometry) {</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :   for (size_t dim = 0; dim &lt; 3; ++dim) {</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :     float center = 0.f;</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     for (size_t i = 0; i &lt; array_geometry.size(); ++i) {</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :       center += array_geometry[i].c[dim];</span>
+<span class="lineNum">     160 </span>            :     }
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :     center /= array_geometry.size();</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :     for (size_t i = 0; i &lt; array_geometry.size(); ++i) {</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :       array_geometry[i].c[dim] -= center;</span>
+<span class="lineNum">     164 </span>            :     }
+<span class="lineNum">     165 </span>            :   }
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :   return array_geometry;</span>
+<span class="lineNum">     167 </span>            : }
+<span class="lineNum">     168 </span>            : 
+<span class="lineNum">     169 </span>            : }  // namespace
+<span class="lineNum">     170 </span>            : 
+<span class="lineNum">     171 </span><span class="lineCov">          3 : const float NonlinearBeamformer::kHalfBeamWidthRadians = DegreesToRadians(20.f);</span>
+<span class="lineNum">     172 </span>            : 
+<span class="lineNum">     173 </span>            : // static
+<a name="174"><span class="lineNum">     174 </span>            : const size_t NonlinearBeamformer::kNumFreqBins;</a>
+<span class="lineNum">     175 </span>            : 
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 : PostFilterTransform::PostFilterTransform(size_t num_channels,</span>
+<span class="lineNum">     177 </span>            :                                          size_t chunk_length,
+<span class="lineNum">     178 </span>            :                                          float* window,
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :                                          size_t fft_size)</span>
+<span class="lineNum">     180 </span>            :     : transform_(num_channels,
+<span class="lineNum">     181 </span>            :                  num_channels,
+<span class="lineNum">     182 </span>            :                  chunk_length,
+<span class="lineNum">     183 </span>            :                  window,
+<span class="lineNum">     184 </span>            :                  fft_size,
+<span class="lineNum">     185 </span>            :                  fft_size / 2,
+<span class="lineNum">     186 </span>            :                  this),
+<a name="187"><span class="lineNum">     187 </span><span class="lineNoCov">          0 :       num_freq_bins_(fft_size / 2 + 1) {}</span></a>
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 : void PostFilterTransform::ProcessChunk(float* const* data, float* final_mask) {</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :   final_mask_ = final_mask;</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :   transform_.ProcessChunk(data, data);</span>
+<a name="192"><span class="lineNum">     192 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     193 </span>            : 
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 : void PostFilterTransform::ProcessAudioBlock(const complex&lt;float&gt;* const* input,</span>
+<span class="lineNum">     195 </span>            :                                             size_t num_input_channels,
+<span class="lineNum">     196 </span>            :                                             size_t num_freq_bins,
+<span class="lineNum">     197 </span>            :                                             size_t num_output_channels,
+<span class="lineNum">     198 </span>            :                                             complex&lt;float&gt;* const* output) {
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(num_freq_bins_, num_freq_bins);</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(num_input_channels, num_output_channels);</span>
+<span class="lineNum">     201 </span>            : 
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :   for (size_t ch = 0; ch &lt; num_input_channels; ++ch) {</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :     for (size_t f_ix = 0; f_ix &lt; num_freq_bins_; ++f_ix) {</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :       output[ch][f_ix] =</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :           kCompensationGain * final_mask_[f_ix] * input[ch][f_ix];</span>
+<span class="lineNum">     206 </span>            :     }
+<span class="lineNum">     207 </span>            :   }
+<a name="208"><span class="lineNum">     208 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     209 </span>            : 
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 : NonlinearBeamformer::NonlinearBeamformer(</span>
+<span class="lineNum">     211 </span>            :     const std::vector&lt;Point&gt;&amp; array_geometry,
+<span class="lineNum">     212 </span>            :     size_t num_postfilter_channels,
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     SphericalPointf target_direction)</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :     : num_input_channels_(array_geometry.size()),</span>
+<span class="lineNum">     215 </span>            :       num_postfilter_channels_(num_postfilter_channels),
+<span class="lineNum">     216 </span>            :       array_geometry_(GetCenteredArray(array_geometry)),
+<span class="lineNum">     217 </span>            :       array_normal_(GetArrayNormalIfExists(array_geometry)),
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :       min_mic_spacing_(GetMinimumSpacing(array_geometry)),</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :       target_angle_radians_(target_direction.azimuth()),</span>
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :       away_radians_(std::min(</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :           static_cast&lt;float&gt;(M_PI),</span>
+<span class="lineNum">     222 </span>            :           std::max(kMinAwayRadians,
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :                    kAwaySlope * static_cast&lt;float&gt;(M_PI) / min_mic_spacing_))) {</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :   WindowGenerator::KaiserBesselDerived(kKbdAlpha, kFftSize, window_);</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     226 </span>            : 
+<a name="227"><span class="lineNum">     227 </span>            : NonlinearBeamformer::~NonlinearBeamformer() = default;</a>
+<span class="lineNum">     228 </span>            : 
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::Initialize(int chunk_size_ms, int sample_rate_hz) {</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :   chunk_length_ =</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :       static_cast&lt;size_t&gt;(sample_rate_hz / (1000.f / chunk_size_ms));</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   sample_rate_hz_ = sample_rate_hz;</span>
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :   high_pass_postfilter_mask_ = 1.f;</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :   is_target_present_ = false;</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :   hold_target_blocks_ = kHoldTargetSeconds * 2 * sample_rate_hz / kFftSize;</span>
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :   interference_blocks_count_ = hold_target_blocks_;</span>
+<span class="lineNum">     238 </span>            : 
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :   process_transform_.reset(new LappedTransform(num_input_channels_,</span>
+<span class="lineNum">     240 </span>            :                                                0u,
+<span class="lineNum">     241 </span>            :                                                chunk_length_,
+<span class="lineNum">     242 </span>            :                                                window_,
+<span class="lineNum">     243 </span>            :                                                kFftSize,
+<span class="lineNum">     244 </span>            :                                                kFftSize / 2,
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :                                                this));</span>
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   postfilter_transform_.reset(new PostFilterTransform(</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :       num_postfilter_channels_, chunk_length_, window_, kFftSize));</span>
+<span class="lineNum">     248 </span>            :   const float wave_number_step =
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :       (2.f * M_PI * sample_rate_hz_) / (kFftSize * kSpeedOfSoundMeterSeconds);</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; kNumFreqBins; ++i) {</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     time_smooth_mask_[i] = 1.f;</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     final_mask_[i] = 1.f;</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :     wave_numbers_[i] = i * wave_number_step;</span>
+<span class="lineNum">     254 </span>            :   }
+<span class="lineNum">     255 </span>            : 
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   InitLowFrequencyCorrectionRanges();</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :   InitDiffuseCovMats();</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :   AimAt(SphericalPointf(target_angle_radians_, 0.f, 1.f));</span>
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     260 </span>            : 
+<span class="lineNum">     261 </span>            : // These bin indexes determine the regions over which a mean is taken. This is
+<span class="lineNum">     262 </span>            : // applied as a constant value over the adjacent end &quot;frequency correction&quot;
+<span class="lineNum">     263 </span>            : // regions.
+<span class="lineNum">     264 </span>            : //
+<span class="lineNum">     265 </span>            : //             low_mean_start_bin_     high_mean_start_bin_
+<span class="lineNum">     266 </span>            : //                   v                         v              constant
+<span class="lineNum">     267 </span>            : // |----------------|--------|----------------|-------|----------------|
+<span class="lineNum">     268 </span>            : //   constant               ^                        ^
+<a name="269"><span class="lineNum">     269 </span>            : //             low_mean_end_bin_       high_mean_end_bin_</a>
+<span class="lineNum">     270 </span>            : //
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::InitLowFrequencyCorrectionRanges() {</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :   low_mean_start_bin_ = Round(kLowMeanStartHz * kFftSize / sample_rate_hz_);</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :   low_mean_end_bin_ = Round(kLowMeanEndHz * kFftSize / sample_rate_hz_);</span>
+<span class="lineNum">     274 </span>            : 
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GT(low_mean_start_bin_, 0U);</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LT(low_mean_start_bin_, low_mean_end_bin_);</span>
+<a name="277"><span class="lineNum">     277 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::InitHighFrequencyCorrectionRanges() {</span>
+<span class="lineNum">     280 </span>            :   const float kAliasingFreqHz =
+<span class="lineNum">     281 </span>            :       kSpeedOfSoundMeterSeconds /
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :       (min_mic_spacing_ * (1.f + std::abs(std::cos(target_angle_radians_))));</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :   const float kHighMeanStartHz = std::min(0.5f *  kAliasingFreqHz,</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :                                           sample_rate_hz_ / 2.f);</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :   const float kHighMeanEndHz = std::min(0.75f *  kAliasingFreqHz,</span>
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :                                         sample_rate_hz_ / 2.f);</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   high_mean_start_bin_ = Round(kHighMeanStartHz * kFftSize / sample_rate_hz_);</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :   high_mean_end_bin_ = Round(kHighMeanEndHz * kFftSize / sample_rate_hz_);</span>
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LT(low_mean_end_bin_, high_mean_end_bin_);</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LT(high_mean_start_bin_, high_mean_end_bin_);</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LT(high_mean_end_bin_, kNumFreqBins - 1);</span>
+<a name="293"><span class="lineNum">     293 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     294 </span>            : 
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::InitInterfAngles() {</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :   interf_angles_radians_.clear();</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :   const Point target_direction = AzimuthToPoint(target_angle_radians_);</span>
+<span class="lineNum">     298 </span>            :   const Point clockwise_interf_direction =
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :       AzimuthToPoint(target_angle_radians_ - away_radians_);</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :   if (!array_normal_ ||</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :       DotProduct(*array_normal_, target_direction) *</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :               DotProduct(*array_normal_, clockwise_interf_direction) &gt;=</span>
+<span class="lineNum">     303 </span>            :           0.f) {
+<span class="lineNum">     304 </span>            :     // The target and clockwise interferer are in the same half-plane defined
+<span class="lineNum">     305 </span>            :     // by the array.
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :     interf_angles_radians_.push_back(target_angle_radians_ - away_radians_);</span>
+<span class="lineNum">     307 </span>            :   } else {
+<span class="lineNum">     308 </span>            :     // Otherwise, the interferer will begin reflecting back at the target.
+<span class="lineNum">     309 </span>            :     // Instead rotate it away 180 degrees.
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     interf_angles_radians_.push_back(target_angle_radians_ - away_radians_ +</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :                                      M_PI);</span>
+<span class="lineNum">     312 </span>            :   }
+<span class="lineNum">     313 </span>            :   const Point counterclock_interf_direction =
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :       AzimuthToPoint(target_angle_radians_ + away_radians_);</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :   if (!array_normal_ ||</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :       DotProduct(*array_normal_, target_direction) *</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :               DotProduct(*array_normal_, counterclock_interf_direction) &gt;=</span>
+<span class="lineNum">     318 </span>            :           0.f) {
+<span class="lineNum">     319 </span>            :     // The target and counter-clockwise interferer are in the same half-plane
+<span class="lineNum">     320 </span>            :     // defined by the array.
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     interf_angles_radians_.push_back(target_angle_radians_ + away_radians_);</span>
+<span class="lineNum">     322 </span>            :   } else {
+<span class="lineNum">     323 </span>            :     // Otherwise, the interferer will begin reflecting back at the target.
+<span class="lineNum">     324 </span>            :     // Instead rotate it away 180 degrees.
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :     interf_angles_radians_.push_back(target_angle_radians_ + away_radians_ -</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :                                      M_PI);</span>
+<span class="lineNum">     327 </span>            :   }
+<a name="328"><span class="lineNum">     328 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     329 </span>            : 
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::InitDelaySumMasks() {</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :   for (size_t f_ix = 0; f_ix &lt; kNumFreqBins; ++f_ix) {</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     delay_sum_masks_[f_ix].Resize(1, num_input_channels_);</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :     CovarianceMatrixGenerator::PhaseAlignmentMasks(</span>
+<span class="lineNum">     334 </span>            :         f_ix, kFftSize, sample_rate_hz_, kSpeedOfSoundMeterSeconds,
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :         array_geometry_, target_angle_radians_, &amp;delay_sum_masks_[f_ix]);</span>
+<span class="lineNum">     336 </span>            : 
+<span class="lineNum">     337 </span>            :     complex_f norm_factor = sqrt(
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :         ConjugateDotProduct(delay_sum_masks_[f_ix], delay_sum_masks_[f_ix]));</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     delay_sum_masks_[f_ix].Scale(1.f / norm_factor);</span>
+<span class="lineNum">     340 </span>            :   }
+<a name="341"><span class="lineNum">     341 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     342 </span>            : 
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::InitTargetCovMats() {</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; kNumFreqBins; ++i) {</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :     target_cov_mats_[i].Resize(num_input_channels_, num_input_channels_);</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :     TransposedConjugatedProduct(delay_sum_masks_[i], &amp;target_cov_mats_[i]);</span>
+<span class="lineNum">     347 </span>            :   }
+<a name="348"><span class="lineNum">     348 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     349 </span>            : 
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::InitDiffuseCovMats() {</span>
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; kNumFreqBins; ++i) {</span>
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :     uniform_cov_mat_[i].Resize(num_input_channels_, num_input_channels_);</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     CovarianceMatrixGenerator::UniformCovarianceMatrix(</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :         wave_numbers_[i], array_geometry_, &amp;uniform_cov_mat_[i]);</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :     complex_f normalization_factor = uniform_cov_mat_[i].elements()[0][0];</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :     uniform_cov_mat_[i].Scale(1.f / normalization_factor);</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :     uniform_cov_mat_[i].Scale(1 - kBalance);</span>
+<span class="lineNum">     358 </span>            :   }
+<a name="359"><span class="lineNum">     359 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     360 </span>            : 
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::InitInterfCovMats() {</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; kNumFreqBins; ++i) {</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :     interf_cov_mats_[i].clear();</span>
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :     for (size_t j = 0; j &lt; interf_angles_radians_.size(); ++j) {</span>
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :       interf_cov_mats_[i].push_back(std::unique_ptr&lt;ComplexMatrixF&gt;(</span>
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :           new ComplexMatrixF(num_input_channels_, num_input_channels_)));</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :       ComplexMatrixF angled_cov_mat(num_input_channels_, num_input_channels_);</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :       CovarianceMatrixGenerator::AngledCovarianceMatrix(</span>
+<span class="lineNum">     369 </span>            :           kSpeedOfSoundMeterSeconds,
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :           interf_angles_radians_[j],</span>
+<span class="lineNum">     371 </span>            :           i,
+<span class="lineNum">     372 </span>            :           kFftSize,
+<span class="lineNum">     373 </span>            :           kNumFreqBins,
+<span class="lineNum">     374 </span>            :           sample_rate_hz_,
+<span class="lineNum">     375 </span>            :           array_geometry_,
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :           &amp;angled_cov_mat);</span>
+<span class="lineNum">     377 </span>            :       // Normalize matrices before averaging them.
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :       complex_f normalization_factor = angled_cov_mat.elements()[0][0];</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :       angled_cov_mat.Scale(1.f / normalization_factor);</span>
+<span class="lineNum">     380 </span>            :       // Weighted average of matrices.
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :       angled_cov_mat.Scale(kBalance);</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :       interf_cov_mats_[i][j]-&gt;Add(uniform_cov_mat_[i], angled_cov_mat);</span>
+<span class="lineNum">     383 </span>            :     }
+<span class="lineNum">     384 </span>            :   }
+<a name="385"><span class="lineNum">     385 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::NormalizeCovMats() {</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; kNumFreqBins; ++i) {</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :     rxiws_[i] = Norm(target_cov_mats_[i], delay_sum_masks_[i]);</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :     rpsiws_[i].clear();</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :     for (size_t j = 0; j &lt; interf_angles_radians_.size(); ++j) {</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :       rpsiws_[i].push_back(Norm(*interf_cov_mats_[i][j], delay_sum_masks_[i]));</span>
+<span class="lineNum">     393 </span>            :     }
+<span class="lineNum">     394 </span>            :   }
+<a name="395"><span class="lineNum">     395 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     396 </span>            : 
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::AnalyzeChunk(const ChannelBuffer&lt;float&gt;&amp; data) {</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(data.num_channels(), num_input_channels_);</span>
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(data.num_frames_per_band(), chunk_length_);</span>
+<span class="lineNum">     400 </span>            : 
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :   old_high_pass_mask_ = high_pass_postfilter_mask_;</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :   process_transform_-&gt;ProcessChunk(data.channels(0), nullptr);</span>
+<a name="403"><span class="lineNum">     403 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     404 </span>            : 
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::PostFilter(ChannelBuffer&lt;float&gt;* data) {</span>
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :   RTC_DCHECK_EQ(data-&gt;num_frames_per_band(), chunk_length_);</span>
+<span class="lineNum">     407 </span>            :   // TODO(aluebs): Change to RTC_CHECK_EQ once the ChannelBuffer is updated.
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GE(data-&gt;num_channels(), num_postfilter_channels_);</span>
+<span class="lineNum">     409 </span>            : 
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :   postfilter_transform_-&gt;ProcessChunk(data-&gt;channels(0), final_mask_);</span>
+<span class="lineNum">     411 </span>            : 
+<span class="lineNum">     412 </span>            :   // Ramp up/down for smoothing is needed in order to avoid discontinuities in
+<span class="lineNum">     413 </span>            :   // the transitions between 10 ms frames.
+<span class="lineNum">     414 </span>            :   const float ramp_increment =
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :       (high_pass_postfilter_mask_ - old_high_pass_mask_) /</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :       data-&gt;num_frames_per_band();</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :   for (size_t i = 1; i &lt; data-&gt;num_bands(); ++i) {</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :     float smoothed_mask = old_high_pass_mask_;</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :     for (size_t j = 0; j &lt; data-&gt;num_frames_per_band(); ++j) {</span>
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :       smoothed_mask += ramp_increment;</span>
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :       for (size_t k = 0; k &lt; num_postfilter_channels_; ++k) {</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :         data-&gt;channels(i)[k][j] *= smoothed_mask;</span>
+<span class="lineNum">     423 </span>            :       }
+<span class="lineNum">     424 </span>            :     }
+<span class="lineNum">     425 </span>            :   }
+<a name="426"><span class="lineNum">     426 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     427 </span>            : 
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::AimAt(const SphericalPointf&amp; target_direction) {</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :   target_angle_radians_ = target_direction.azimuth();</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :   InitHighFrequencyCorrectionRanges();</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :   InitInterfAngles();</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :   InitDelaySumMasks();</span>
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :   InitTargetCovMats();</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :   InitInterfCovMats();</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :   NormalizeCovMats();</span>
+<a name="436"><span class="lineNum">     436 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     437 </span>            : 
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 : bool NonlinearBeamformer::IsInBeam(const SphericalPointf&amp; spherical_point) {</span>
+<span class="lineNum">     439 </span>            :   // If more than half-beamwidth degrees away from the beam's center,
+<span class="lineNum">     440 </span>            :   // you are out of the beam.
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :   return fabs(spherical_point.azimuth() - target_angle_radians_) &lt;</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :          kHalfBeamWidthRadians;</span>
+<a name="443"><span class="lineNum">     443 </span>            : }</a>
+<span class="lineNum">     444 </span>            : 
+<a name="445"><span class="lineNum">     445 </span><span class="lineNoCov">          0 : bool NonlinearBeamformer::is_target_present() { return is_target_present_; }</span></a>
+<span class="lineNum">     446 </span>            : 
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::ProcessAudioBlock(const complex_f* const* input,</span>
+<span class="lineNum">     448 </span>            :                                             size_t num_input_channels,
+<span class="lineNum">     449 </span>            :                                             size_t num_freq_bins,
+<span class="lineNum">     450 </span>            :                                             size_t num_output_channels,
+<span class="lineNum">     451 </span>            :                                             complex_f* const* output) {
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(kNumFreqBins, num_freq_bins);</span>
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(num_input_channels_, num_input_channels);</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :   RTC_CHECK_EQ(0, num_output_channels);</span>
+<span class="lineNum">     455 </span>            : 
+<span class="lineNum">     456 </span>            :   // Calculating the post-filter masks. Note that we need two for each
+<span class="lineNum">     457 </span>            :   // frequency bin to account for the positive and negative interferer
+<span class="lineNum">     458 </span>            :   // angle.
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :   for (size_t i = low_mean_start_bin_; i &lt;= high_mean_end_bin_; ++i) {</span>
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :     eig_m_.CopyFromColumn(input, i, num_input_channels_);</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :     float eig_m_norm_factor = std::sqrt(SumSquares(eig_m_));</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :     if (eig_m_norm_factor != 0.f) {</span>
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :       eig_m_.Scale(1.f / eig_m_norm_factor);</span>
+<span class="lineNum">     464 </span>            :     }
+<span class="lineNum">     465 </span>            : 
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :     float rxim = Norm(target_cov_mats_[i], eig_m_);</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :     float ratio_rxiw_rxim = 0.f;</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :     if (rxim &gt; 0.f) {</span>
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :       ratio_rxiw_rxim = rxiws_[i] / rxim;</span>
+<span class="lineNum">     470 </span>            :     }
+<span class="lineNum">     471 </span>            : 
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :     complex_f rmw = abs(ConjugateDotProduct(delay_sum_masks_[i], eig_m_));</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :     rmw *= rmw;</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :     float rmw_r = rmw.real();</span>
+<span class="lineNum">     475 </span>            : 
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :     new_mask_[i] = CalculatePostfilterMask(*interf_cov_mats_[i][0],</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :                                            rpsiws_[i][0],</span>
+<span class="lineNum">     478 </span>            :                                            ratio_rxiw_rxim,
+<span class="lineNum">     479 </span>            :                                            rmw_r);
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :     for (size_t j = 1; j &lt; interf_angles_radians_.size(); ++j) {</span>
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :       float tmp_mask = CalculatePostfilterMask(*interf_cov_mats_[i][j],</span>
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :                                                rpsiws_[i][j],</span>
+<span class="lineNum">     483 </span>            :                                                ratio_rxiw_rxim,
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :                                                rmw_r);</span>
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :       if (tmp_mask &lt; new_mask_[i]) {</span>
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :         new_mask_[i] = tmp_mask;</span>
+<span class="lineNum">     487 </span>            :       }
+<span class="lineNum">     488 </span>            :     }
+<span class="lineNum">     489 </span>            :   }
+<span class="lineNum">     490 </span>            : 
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :   ApplyMaskTimeSmoothing();</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :   EstimateTargetPresence();</span>
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :   ApplyLowFrequencyCorrection();</span>
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :   ApplyHighFrequencyCorrection();</span>
+<span class="lineNum">     495 </span><span class="lineNoCov">          0 :   ApplyMaskFrequencySmoothing();</span>
+<a name="496"><span class="lineNum">     496 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     497 </span>            : 
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 : float NonlinearBeamformer::CalculatePostfilterMask(</span>
+<span class="lineNum">     499 </span>            :     const ComplexMatrixF&amp; interf_cov_mat,
+<span class="lineNum">     500 </span>            :     float rpsiw,
+<span class="lineNum">     501 </span>            :     float ratio_rxiw_rxim,
+<span class="lineNum">     502 </span>            :     float rmw_r) {
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :   float rpsim = Norm(interf_cov_mat, eig_m_);</span>
+<span class="lineNum">     504 </span>            : 
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :   float ratio = 0.f;</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :   if (rpsim &gt; 0.f) {</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :     ratio = rpsiw / rpsim;</span>
+<span class="lineNum">     508 </span>            :   }
+<span class="lineNum">     509 </span>            : 
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :   float numerator = 1.f - kCutOffConstant;</span>
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :   if (rmw_r &gt; 0.f) {</span>
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :     numerator = 1.f - std::min(kCutOffConstant, ratio / rmw_r);</span>
+<span class="lineNum">     513 </span>            :   }
+<span class="lineNum">     514 </span>            : 
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :   float denominator = 1.f - kCutOffConstant;</span>
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :   if (ratio_rxiw_rxim &gt; 0.f) {</span>
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :     denominator = 1.f - std::min(kCutOffConstant, ratio / ratio_rxiw_rxim);</span>
+<span class="lineNum">     518 </span>            :   }
+<span class="lineNum">     519 </span>            : 
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :   return numerator / denominator;</span>
+<span class="lineNum">     521 </span>            : }
+<a name="522"><span class="lineNum">     522 </span>            : </a>
+<span class="lineNum">     523 </span>            : // Smooth new_mask_ into time_smooth_mask_.
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::ApplyMaskTimeSmoothing() {</span>
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :   for (size_t i = low_mean_start_bin_; i &lt;= high_mean_end_bin_; ++i) {</span>
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :     time_smooth_mask_[i] = kMaskTimeSmoothAlpha * new_mask_[i] +</span>
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :                            (1 - kMaskTimeSmoothAlpha) * time_smooth_mask_[i];</span>
+<span class="lineNum">     528 </span>            :   }
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 : }</span>
+<a name="530"><span class="lineNum">     530 </span>            : </a>
+<span class="lineNum">     531 </span>            : // Copy time_smooth_mask_ to final_mask_ and smooth over frequency.
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::ApplyMaskFrequencySmoothing() {</span>
+<span class="lineNum">     533 </span>            :   // Smooth over frequency in both directions. The &quot;frequency correction&quot;
+<span class="lineNum">     534 </span>            :   // regions have constant value, but we enter them to smooth over the jump
+<span class="lineNum">     535 </span>            :   // that exists at the boundary. However, this does mean when smoothing &quot;away&quot;
+<span class="lineNum">     536 </span>            :   // from the region that we only need to use the last element.
+<span class="lineNum">     537 </span>            :   //
+<span class="lineNum">     538 </span>            :   // Upward smoothing:
+<span class="lineNum">     539 </span>            :   //   low_mean_start_bin_
+<span class="lineNum">     540 </span>            :   //         v
+<span class="lineNum">     541 </span>            :   // |------|------------|------|
+<span class="lineNum">     542 </span>            :   //       ^------------------&gt;^
+<span class="lineNum">     543 </span>            :   //
+<span class="lineNum">     544 </span>            :   // Downward smoothing:
+<span class="lineNum">     545 </span>            :   //         high_mean_end_bin_
+<span class="lineNum">     546 </span>            :   //                    v
+<span class="lineNum">     547 </span>            :   // |------|------------|------|
+<span class="lineNum">     548 </span>            :   //  ^&lt;------------------^
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :   std::copy(time_smooth_mask_, time_smooth_mask_ + kNumFreqBins, final_mask_);</span>
+<span class="lineNum">     550 </span><span class="lineNoCov">          0 :   for (size_t i = low_mean_start_bin_; i &lt; kNumFreqBins; ++i) {</span>
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :     final_mask_[i] = kMaskFrequencySmoothAlpha * final_mask_[i] +</span>
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :                      (1 - kMaskFrequencySmoothAlpha) * final_mask_[i - 1];</span>
+<span class="lineNum">     553 </span>            :   }
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :   for (size_t i = high_mean_end_bin_ + 1; i &gt; 0; --i) {</span>
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :     final_mask_[i - 1] = kMaskFrequencySmoothAlpha * final_mask_[i - 1] +</span>
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :                          (1 - kMaskFrequencySmoothAlpha) * final_mask_[i];</span>
+<span class="lineNum">     557 </span>            :   }
+<span class="lineNum">     558 </span><span class="lineNoCov">          0 : }</span>
+<a name="559"><span class="lineNum">     559 </span>            : </a>
+<span class="lineNum">     560 </span>            : // Apply low frequency correction to time_smooth_mask_.
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::ApplyLowFrequencyCorrection() {</span>
+<span class="lineNum">     562 </span>            :   const float low_frequency_mask =
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :       MaskRangeMean(low_mean_start_bin_, low_mean_end_bin_ + 1);</span>
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :   std::fill(time_smooth_mask_, time_smooth_mask_ + low_mean_start_bin_,</span>
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :             low_frequency_mask);</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     567 </span>            : 
+<a name="568"><span class="lineNum">     568 </span>            : // Apply high frequency correction to time_smooth_mask_. Update</a>
+<span class="lineNum">     569 </span>            : // high_pass_postfilter_mask_ to use for the high frequency time-domain bands.
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::ApplyHighFrequencyCorrection() {</span>
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :   high_pass_postfilter_mask_ =</span>
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :       MaskRangeMean(high_mean_start_bin_, high_mean_end_bin_ + 1);</span>
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :   std::fill(time_smooth_mask_ + high_mean_end_bin_ + 1,</span>
+<span class="lineNum">     574 </span><span class="lineNoCov">          0 :             time_smooth_mask_ + kNumFreqBins, high_pass_postfilter_mask_);</span>
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 : }</span>
+<a name="576"><span class="lineNum">     576 </span>            : </a>
+<span class="lineNum">     577 </span>            : // Compute mean over the given range of time_smooth_mask_, [first, last).
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 : float NonlinearBeamformer::MaskRangeMean(size_t first, size_t last) {</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GT(last, first);</span>
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :   const float sum = std::accumulate(time_smooth_mask_ + first,</span>
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :                                     time_smooth_mask_ + last, 0.f);</span>
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :   return sum / (last - first);</span>
+<a name="583"><span class="lineNum">     583 </span>            : }</a>
+<span class="lineNum">     584 </span>            : 
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 : void NonlinearBeamformer::EstimateTargetPresence() {</span>
+<span class="lineNum">     586 </span>            :   const size_t quantile = static_cast&lt;size_t&gt;(
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :       (high_mean_end_bin_ - low_mean_start_bin_) * kMaskQuantile +</span>
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :       low_mean_start_bin_);</span>
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 :   std::nth_element(new_mask_ + low_mean_start_bin_, new_mask_ + quantile,</span>
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :                    new_mask_ + high_mean_end_bin_ + 1);</span>
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :   if (new_mask_[quantile] &gt; kMaskTargetThreshold) {</span>
+<span class="lineNum">     592 </span><span class="lineNoCov">          0 :     is_target_present_ = true;</span>
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :     interference_blocks_count_ = 0;</span>
+<span class="lineNum">     594 </span>            :   } else {
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :     is_target_present_ = interference_blocks_count_++ &lt; hold_target_blocks_;</span>
+<span class="lineNum">     596 </span>            :   }
+<a name="597"><span class="lineNum">     597 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     598 </span>            : 
+<span class="lineNum">     599 </span><span class="lineCov">          9 : }  // namespace webrtc</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

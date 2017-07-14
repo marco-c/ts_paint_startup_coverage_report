@@ -1,0 +1,1797 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - gfx/skia/skia/src/pathops/SkOpSegment.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../index.html">top level</a> - <a href="index.html">gfx/skia/skia/src/pathops</a> - SkOpSegment.cpp<span style="font-size: 80%;"> (source / <a href="SkOpSegment.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">1026</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">61</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * Copyright 2012 Google Inc.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * Use of this source code is governed by a BSD-style license that can be
+<span class="lineNum">       5 </span>            :  * found in the LICENSE file.
+<span class="lineNum">       6 </span>            :  */
+<span class="lineNum">       7 </span>            : #include &quot;SkOpCoincidence.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;SkOpContour.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;SkOpSegment.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;SkPathWriter.h&quot;
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : /*
+<span class="lineNum">      13 </span>            : After computing raw intersections, post process all segments to:
+<span class="lineNum">      14 </span>            : - find small collections of points that can be collapsed to a single point
+<span class="lineNum">      15 </span>            : - find missing intersections to resolve differences caused by different algorithms
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : Consider segments containing tiny or small intervals. Consider coincident segments
+<span class="lineNum">      18 </span>            : because coincidence finds intersections through distance measurement that non-coincident
+<span class="lineNum">      19 </span>            : intersection tests cannot.
+<span class="lineNum">      20 </span>            :  */
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : #define F (false)      // discard the edge
+<span class="lineNum">      23 </span>            : #define T (true)       // keep the edge
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : static const bool gUnaryActiveEdge[2][2] = {
+<span class="lineNum">      26 </span>            : //  from=0  from=1
+<span class="lineNum">      27 </span>            : //  to=0,1  to=0,1
+<span class="lineNum">      28 </span>            :     {F, T}, {T, F},
+<span class="lineNum">      29 </span>            : };
+<span class="lineNum">      30 </span>            : 
+<span class="lineNum">      31 </span>            : static const bool gActiveEdge[kXOR_SkPathOp + 1][2][2][2][2] = {
+<span class="lineNum">      32 </span>            : //                 miFrom=0                              miFrom=1
+<span class="lineNum">      33 </span>            : //         miTo=0             miTo=1             miTo=0             miTo=1
+<span class="lineNum">      34 </span>            : //     suFrom=0    1      suFrom=0    1      suFrom=0    1      suFrom=0    1
+<span class="lineNum">      35 </span>            : //   suTo=0,1 suTo=0,1  suTo=0,1 suTo=0,1  suTo=0,1 suTo=0,1  suTo=0,1 suTo=0,1
+<span class="lineNum">      36 </span>            :     {{{{F, F}, {F, F}}, {{T, F}, {T, F}}}, {{{T, T}, {F, F}}, {{F, T}, {T, F}}}},  // mi - su
+<span class="lineNum">      37 </span>            :     {{{{F, F}, {F, F}}, {{F, T}, {F, T}}}, {{{F, F}, {T, T}}, {{F, T}, {T, F}}}},  // mi &amp; su
+<span class="lineNum">      38 </span>            :     {{{{F, T}, {T, F}}, {{T, T}, {F, F}}}, {{{T, F}, {T, F}}, {{F, F}, {F, F}}}},  // mi | su
+<span class="lineNum">      39 </span>            :     {{{{F, T}, {T, F}}, {{T, F}, {F, T}}}, {{{T, F}, {F, T}}, {{F, T}, {T, F}}}},  // mi ^ su
+<span class="lineNum">      40 </span>            : };
+<span class="lineNum">      41 </span>            : 
+<span class="lineNum">      42 </span>            : #undef F
+<a name="43"><span class="lineNum">      43 </span>            : #undef T</a>
+<span class="lineNum">      44 </span>            : 
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 : SkOpAngle* SkOpSegment::activeAngle(SkOpSpanBase* start, SkOpSpanBase** startPtr,</span>
+<span class="lineNum">      46 </span>            :         SkOpSpanBase** endPtr, bool* done) {
+<span class="lineNum">      47 </span><span class="lineNoCov">          0 :     if (SkOpAngle* result = activeAngleInner(start, startPtr, endPtr, done)) {</span>
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 :         return result;</span>
+<span class="lineNum">      49 </span>            :     }
+<span class="lineNum">      50 </span><span class="lineNoCov">          0 :     if (SkOpAngle* result = activeAngleOther(start, startPtr, endPtr, done)) {</span>
+<span class="lineNum">      51 </span><span class="lineNoCov">          0 :         return result;</span>
+<span class="lineNum">      52 </span>            :     }
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<a name="54"><span class="lineNum">      54 </span>            : }</a>
+<span class="lineNum">      55 </span>            : 
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 : SkOpAngle* SkOpSegment::activeAngleInner(SkOpSpanBase* start, SkOpSpanBase** startPtr,</span>
+<span class="lineNum">      57 </span>            :         SkOpSpanBase** endPtr, bool* done) {
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 :     SkOpSpan* upSpan = start-&gt;upCastable();</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :     if (upSpan) {</span>
+<span class="lineNum">      60 </span><span class="lineNoCov">          0 :         if (upSpan-&gt;windValue() || upSpan-&gt;oppValue()) {</span>
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 :             SkOpSpanBase* next = upSpan-&gt;next();</span>
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :             if (!*endPtr) {</span>
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :                 *startPtr = start;</span>
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 :                 *endPtr = next;</span>
+<span class="lineNum">      65 </span>            :             }
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 :             if (!upSpan-&gt;done()) {</span>
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :                 if (upSpan-&gt;windSum() != SK_MinS32) {</span>
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :                     return spanToAngle(start, next);</span>
+<span class="lineNum">      69 </span>            :                 }
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :                 *done = false;</span>
+<span class="lineNum">      71 </span>            :             }
+<span class="lineNum">      72 </span>            :         } else {
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :             SkASSERT(upSpan-&gt;done());</span>
+<span class="lineNum">      74 </span>            :         }
+<span class="lineNum">      75 </span>            :     }
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :     SkOpSpan* downSpan = start-&gt;prev();</span>
+<span class="lineNum">      77 </span>            :     // edge leading into junction
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :     if (downSpan) {</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :         if (downSpan-&gt;windValue() || downSpan-&gt;oppValue()) {</span>
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :             if (!*endPtr) {</span>
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :                 *startPtr = start;</span>
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :                 *endPtr = downSpan;</span>
+<span class="lineNum">      83 </span>            :             }
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :             if (!downSpan-&gt;done()) {</span>
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :                 if (downSpan-&gt;windSum() != SK_MinS32) {</span>
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :                     return spanToAngle(start, downSpan);</span>
+<span class="lineNum">      87 </span>            :                 }
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :                 *done = false;</span>
+<span class="lineNum">      89 </span>            :             }
+<span class="lineNum">      90 </span>            :         } else {
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :             SkASSERT(downSpan-&gt;done());</span>
+<span class="lineNum">      92 </span>            :         }
+<span class="lineNum">      93 </span>            :     }
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<a name="95"><span class="lineNum">      95 </span>            : }</a>
+<span class="lineNum">      96 </span>            : 
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 : SkOpAngle* SkOpSegment::activeAngleOther(SkOpSpanBase* start, SkOpSpanBase** startPtr,</span>
+<span class="lineNum">      98 </span>            :         SkOpSpanBase** endPtr, bool* done) {
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :     SkOpPtT* oPtT = start-&gt;ptT()-&gt;next();</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :     SkOpSegment* other = oPtT-&gt;segment();</span>
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :     SkOpSpanBase* oSpan = oPtT-&gt;span();</span>
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :     return other-&gt;activeAngleInner(oSpan, startPtr, endPtr, done);</span>
+<a name="103"><span class="lineNum">     103 </span>            : }</a>
+<span class="lineNum">     104 </span>            : 
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 : bool SkOpSegment::activeOp(SkOpSpanBase* start, SkOpSpanBase* end, int xorMiMask, int xorSuMask,</span>
+<span class="lineNum">     106 </span>            :         SkPathOp op) {
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :     int sumMiWinding = this-&gt;updateWinding(end, start);</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :     int sumSuWinding = this-&gt;updateOppWinding(end, start);</span>
+<span class="lineNum">     109 </span>            : #if DEBUG_LIMIT_WIND_SUM
+<span class="lineNum">     110 </span>            :     SkASSERT(abs(sumMiWinding) &lt;= DEBUG_LIMIT_WIND_SUM);
+<span class="lineNum">     111 </span>            :     SkASSERT(abs(sumSuWinding) &lt;= DEBUG_LIMIT_WIND_SUM);
+<span class="lineNum">     112 </span>            : #endif
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :     if (this-&gt;operand()) {</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :         SkTSwap&lt;int&gt;(sumMiWinding, sumSuWinding);</span>
+<span class="lineNum">     115 </span>            :     }
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :     return this-&gt;activeOp(xorMiMask, xorSuMask, start, end, op, &amp;sumMiWinding, &amp;sumSuWinding);</span>
+<a name="117"><span class="lineNum">     117 </span>            : }</a>
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 : bool SkOpSegment::activeOp(int xorMiMask, int xorSuMask, SkOpSpanBase* start, SkOpSpanBase* end,</span>
+<span class="lineNum">     120 </span>            :         SkPathOp op, int* sumMiWinding, int* sumSuWinding) {
+<span class="lineNum">     121 </span>            :     int maxWinding, sumWinding, oppMaxWinding, oppSumWinding;
+<span class="lineNum">     122 </span>            :     this-&gt;setUpWindings(start, end, sumMiWinding, sumSuWinding,
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :             &amp;maxWinding, &amp;sumWinding, &amp;oppMaxWinding, &amp;oppSumWinding);</span>
+<span class="lineNum">     124 </span>            :     bool miFrom;
+<span class="lineNum">     125 </span>            :     bool miTo;
+<span class="lineNum">     126 </span>            :     bool suFrom;
+<span class="lineNum">     127 </span>            :     bool suTo;
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :     if (operand()) {</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :         miFrom = (oppMaxWinding &amp; xorMiMask) != 0;</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :         miTo = (oppSumWinding &amp; xorMiMask) != 0;</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :         suFrom = (maxWinding &amp; xorSuMask) != 0;</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :         suTo = (sumWinding &amp; xorSuMask) != 0;</span>
+<span class="lineNum">     133 </span>            :     } else {
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :         miFrom = (maxWinding &amp; xorMiMask) != 0;</span>
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :         miTo = (sumWinding &amp; xorMiMask) != 0;</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :         suFrom = (oppMaxWinding &amp; xorSuMask) != 0;</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :         suTo = (oppSumWinding &amp; xorSuMask) != 0;</span>
+<span class="lineNum">     138 </span>            :     }
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :     bool result = gActiveEdge[op][miFrom][miTo][suFrom][suTo];</span>
+<span class="lineNum">     140 </span>            : #if DEBUG_ACTIVE_OP
+<span class="lineNum">     141 </span>            :     SkDebugf(&quot;%s id=%d t=%1.9g tEnd=%1.9g op=%s miFrom=%d miTo=%d suFrom=%d suTo=%d result=%d\n&quot;,
+<span class="lineNum">     142 </span>            :             __FUNCTION__, debugID(), start-&gt;t(), end-&gt;t(),
+<span class="lineNum">     143 </span>            :             SkPathOpsDebug::kPathOpStr[op], miFrom, miTo, suFrom, suTo, result);
+<span class="lineNum">     144 </span>            : #endif
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :     return result;</span>
+<a name="146"><span class="lineNum">     146 </span>            : }</a>
+<span class="lineNum">     147 </span>            : 
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 : bool SkOpSegment::activeWinding(SkOpSpanBase* start, SkOpSpanBase* end) {</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     int sumWinding = updateWinding(end, start);</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :     return activeWinding(start, end, &amp;sumWinding);</span>
+<a name="151"><span class="lineNum">     151 </span>            : }</a>
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 : bool SkOpSegment::activeWinding(SkOpSpanBase* start, SkOpSpanBase* end, int* sumWinding) {</span>
+<span class="lineNum">     154 </span>            :     int maxWinding;
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :     setUpWinding(start, end, &amp;maxWinding, sumWinding);</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :     bool from = maxWinding != 0;</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :     bool to = *sumWinding  != 0;</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     bool result = gUnaryActiveEdge[from][to];</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :     return result;</span>
+<a name="160"><span class="lineNum">     160 </span>            : }</a>
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 : bool SkOpSegment::addCurveTo(const SkOpSpanBase* start, const SkOpSpanBase* end,</span>
+<span class="lineNum">     163 </span>            :         SkPathWriter* path) const {
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :     FAIL_IF(start-&gt;starter(end)-&gt;alreadyAdded());</span>
+<span class="lineNum">     165 </span>            :     SkDCurveSweep curvePart;
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     start-&gt;segment()-&gt;subDivide(start, end, &amp;curvePart.fCurve);</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :     curvePart.setCurveHullSweep(fVerb);</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :     SkPath::Verb verb = curvePart.isCurve() ? fVerb : SkPath::kLine_Verb;</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :     path-&gt;deferredMove(start-&gt;ptT());</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :     switch (verb) {</span>
+<span class="lineNum">     171 </span>            :         case SkPath::kLine_Verb:
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :             FAIL_IF(!path-&gt;deferredLine(end-&gt;ptT()));</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     174 </span>            :         case SkPath::kQuad_Verb:
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :             path-&gt;quadTo(curvePart.fCurve.fQuad[1].asSkPoint(), end-&gt;ptT());</span>
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     177 </span>            :         case SkPath::kConic_Verb:
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :             path-&gt;conicTo(curvePart.fCurve.fConic[1].asSkPoint(), end-&gt;ptT(),</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :                     curvePart.fCurve.fConic.fWeight);</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     181 </span>            :         case SkPath::kCubic_Verb:
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :             path-&gt;cubicTo(curvePart.fCurve.fCubic[1].asSkPoint(),</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :                     curvePart.fCurve.fCubic[2].asSkPoint(), end-&gt;ptT());</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     185 </span>            :         default:
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :             SkASSERT(0);</span>
+<span class="lineNum">     187 </span>            :     }
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="189"><span class="lineNum">     189 </span>            : }</a>
+<span class="lineNum">     190 </span>            : 
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 : const SkOpPtT* SkOpSegment::existing(double t, const SkOpSegment* opp) const {</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :     const SkOpSpanBase* test = &amp;fHead;</span>
+<span class="lineNum">     193 </span>            :     const SkOpPtT* testPtT;
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :     SkPoint pt = this-&gt;ptAtT(t);</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :         testPtT = test-&gt;ptT();</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :         if (testPtT-&gt;fT == t) {</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     199 </span>            :         }
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :         if (!this-&gt;match(testPtT, this, t, pt)) {</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :             if (t &lt; testPtT-&gt;fT) {</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :                 return nullptr;</span>
+<span class="lineNum">     203 </span>            :             }
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     205 </span>            :         }
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :         if (!opp) {</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :             return testPtT;</span>
+<span class="lineNum">     208 </span>            :         }
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :         const SkOpPtT* loop = testPtT-&gt;next();</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :         while (loop != testPtT) {</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :             if (loop-&gt;segment() == this &amp;&amp; loop-&gt;fT == t &amp;&amp; loop-&gt;fPt == pt) {</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :                 goto foundMatch;</span>
+<span class="lineNum">     213 </span>            :             }
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :             loop = loop-&gt;next();</span>
+<span class="lineNum">     215 </span>            :         }
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :     } while ((test = test-&gt;upCast()-&gt;next()));</span>
+<span class="lineNum">     218 </span>            : foundMatch:
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :     return opp &amp;&amp; !test-&gt;contains(opp) ? nullptr : testPtT;</span>
+<span class="lineNum">     220 </span>            : }
+<a name="221"><span class="lineNum">     221 </span>            : </a>
+<span class="lineNum">     222 </span>            : // break the span so that the coincident part does not change the angle of the remainder
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 : bool SkOpSegment::addExpanded(double newT, const SkOpSpanBase* test, bool* startOver) {</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     if (this-&gt;contains(newT)) {</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     226 </span>            :     }
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :     this-&gt;globalState()-&gt;resetAllocatedOpSpan();</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :     FAIL_IF(!between(0, newT, 1));</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     SkOpPtT* newPtT = this-&gt;addT(newT);</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :     *startOver |= this-&gt;globalState()-&gt;allocatedOpSpan();</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     if (!newPtT) {</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     233 </span>            :     }
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :     newPtT-&gt;fPt = this-&gt;ptAtT(newT);</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :     SkOpPtT* oppPrev = test-&gt;ptT()-&gt;oppPrev(newPtT);</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :     if (oppPrev) {</span>
+<span class="lineNum">     237 </span>            :         // const cast away to change linked list; pt/t values stays unchanged
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :         SkOpSpanBase* writableTest = const_cast&lt;SkOpSpanBase*&gt;(test);</span>
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :         writableTest-&gt;mergeMatches(newPtT-&gt;span());</span>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :         writableTest-&gt;ptT()-&gt;addOpp(newPtT, oppPrev);</span>
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :         writableTest-&gt;checkForCollapsedCoincidence();</span>
+<span class="lineNum">     242 </span>            :     }
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     244 </span>            : }
+<a name="245"><span class="lineNum">     245 </span>            : </a>
+<span class="lineNum">     246 </span>            : // Please keep this in sync with debugAddT()
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 : SkOpPtT* SkOpSegment::addT(double t) {</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :     debugValidate();</span>
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :     SkPoint pt = this-&gt;ptAtT(t);</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :     SkOpSpanBase* spanBase = &amp;fHead;</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :         SkOpPtT* result = spanBase-&gt;ptT();</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :         if (t == result-&gt;fT || (!zero_or_one(t) &amp;&amp; this-&gt;match(result, this, t, pt))) {</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :             spanBase-&gt;bumpSpanAdds();</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :             return result;</span>
+<span class="lineNum">     256 </span>            :         }
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :         if (t &lt; result-&gt;fT) {</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :             SkOpSpan* prev = result-&gt;span()-&gt;prev();</span>
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :             FAIL_WITH_NULL_IF(!prev);</span>
+<span class="lineNum">     260 </span>            :             // marks in global state that new op span has been allocated
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :             SkOpSpan* span = this-&gt;insert(prev);</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :             span-&gt;init(this, prev, t, pt);</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :             this-&gt;debugValidate();</span>
+<span class="lineNum">     264 </span>            : #if DEBUG_ADD_T
+<span class="lineNum">     265 </span>            :             SkDebugf(&quot;%s insert t=%1.9g segID=%d spanID=%d\n&quot;, __FUNCTION__, t,
+<span class="lineNum">     266 </span>            :                     span-&gt;segment()-&gt;debugID(), span-&gt;debugID());
+<span class="lineNum">     267 </span>            : #endif
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :             span-&gt;bumpSpanAdds();</span>
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :             return span-&gt;ptT();</span>
+<span class="lineNum">     270 </span>            :         }
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :         FAIL_WITH_NULL_IF(spanBase == &amp;fTail);</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :     } while ((spanBase = spanBase-&gt;upCast()-&gt;next()));</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     SkASSERT(0);</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     return nullptr;  // we never get here, but need this to satisfy compiler</span>
+<a name="275"><span class="lineNum">     275 </span>            : }</a>
+<span class="lineNum">     276 </span>            : 
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 : void SkOpSegment::calcAngles() {</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :     bool activePrior = !fHead.isCanceled();</span>
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :     if (activePrior &amp;&amp; !fHead.simple()) {</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :         addStartSpan();</span>
+<span class="lineNum">     281 </span>            :     }
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :     SkOpSpan* prior = &amp;fHead;</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :     SkOpSpanBase* spanBase = fHead.next();</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :     while (spanBase != &amp;fTail) {</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :         if (activePrior) {</span>
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :             SkOpAngle* priorAngle = SkOpTAllocator&lt;SkOpAngle&gt;::Allocate(</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :                     this-&gt;globalState()-&gt;allocator());</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :             priorAngle-&gt;set(spanBase, prior);</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :             spanBase-&gt;setFromAngle(priorAngle);</span>
+<span class="lineNum">     290 </span>            :         }
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :         SkOpSpan* span = spanBase-&gt;upCast();</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :         bool active = !span-&gt;isCanceled();</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :         SkOpSpanBase* next = span-&gt;next();</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :         if (active) {</span>
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :             SkOpAngle* angle = SkOpTAllocator&lt;SkOpAngle&gt;::Allocate(</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :                     this-&gt;globalState()-&gt;allocator());</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :             angle-&gt;set(span, next);</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :             span-&gt;setToAngle(angle);</span>
+<span class="lineNum">     299 </span>            :         }
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :         activePrior = active;</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :         prior = span;</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :         spanBase = next;</span>
+<span class="lineNum">     303 </span>            :     }
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :     if (activePrior &amp;&amp; !fTail.simple()) {</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :         addEndSpan();</span>
+<span class="lineNum">     306 </span>            :     }
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 : }</span>
+<a name="308"><span class="lineNum">     308 </span>            : </a>
+<span class="lineNum">     309 </span>            : // Please keep this in sync with debugClearAll()
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 : void SkOpSegment::clearAll() {</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :     SkOpSpan* span = &amp;fHead;</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :         this-&gt;clearOne(span);</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :     } while ((span = span-&gt;next()-&gt;upCastable()));</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :     this-&gt;globalState()-&gt;coincidence()-&gt;release(this);</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 : }</span>
+<a name="317"><span class="lineNum">     317 </span>            : </a>
+<span class="lineNum">     318 </span>            : // Please keep this in sync with debugClearOne()
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 : void SkOpSegment::clearOne(SkOpSpan* span) {</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     span-&gt;setWindValue(0);</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     span-&gt;setOppValue(0);</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :     this-&gt;markDone(span);</span>
+<a name="323"><span class="lineNum">     323 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     324 </span>            : 
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 : bool SkOpSegment::collapsed(double s, double e) const {</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :     const SkOpSpanBase* span = &amp;fHead;</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :         if (span-&gt;collapsed(s, e)) {</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">     330 </span>            :         }
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :     } while (span-&gt;upCastable() &amp;&amp; (span = span-&gt;upCast()-&gt;next()));</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     return false;</span>
+<a name="333"><span class="lineNum">     333 </span>            : }</a>
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 : void SkOpSegment::ComputeOneSum(const SkOpAngle* baseAngle, SkOpAngle* nextAngle,</span>
+<span class="lineNum">     336 </span>            :         SkOpAngle::IncludeType includeType) {
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :     SkOpSegment* baseSegment = baseAngle-&gt;segment();</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :     int sumMiWinding = baseSegment-&gt;updateWindingReverse(baseAngle);</span>
+<span class="lineNum">     339 </span>            :     int sumSuWinding;
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :     bool binary = includeType &gt;= SkOpAngle::kBinarySingle;</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :     if (binary) {</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :         sumSuWinding = baseSegment-&gt;updateOppWindingReverse(baseAngle);</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :         if (baseSegment-&gt;operand()) {</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :             SkTSwap&lt;int&gt;(sumMiWinding, sumSuWinding);</span>
+<span class="lineNum">     345 </span>            :         }
+<span class="lineNum">     346 </span>            :     }
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :     SkOpSegment* nextSegment = nextAngle-&gt;segment();</span>
+<span class="lineNum">     348 </span>            :     int maxWinding, sumWinding;
+<span class="lineNum">     349 </span>            :     SkOpSpanBase* last;
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :     if (binary) {</span>
+<span class="lineNum">     351 </span>            :         int oppMaxWinding, oppSumWinding;
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :         nextSegment-&gt;setUpWindings(nextAngle-&gt;start(), nextAngle-&gt;end(), &amp;sumMiWinding,</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :                 &amp;sumSuWinding, &amp;maxWinding, &amp;sumWinding, &amp;oppMaxWinding, &amp;oppSumWinding);</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :         last = nextSegment-&gt;markAngle(maxWinding, sumWinding, oppMaxWinding, oppSumWinding,</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :                 nextAngle);</span>
+<span class="lineNum">     356 </span>            :     } else {
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :         nextSegment-&gt;setUpWindings(nextAngle-&gt;start(), nextAngle-&gt;end(), &amp;sumMiWinding,</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :                 &amp;maxWinding, &amp;sumWinding);</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :         last = nextSegment-&gt;markAngle(maxWinding, sumWinding, nextAngle);</span>
+<span class="lineNum">     360 </span>            :     }
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :     nextAngle-&gt;setLastMarked(last);</span>
+<a name="362"><span class="lineNum">     362 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 : void SkOpSegment::ComputeOneSumReverse(SkOpAngle* baseAngle, SkOpAngle* nextAngle,</span>
+<span class="lineNum">     365 </span>            :         SkOpAngle::IncludeType includeType) {
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :     SkOpSegment* baseSegment = baseAngle-&gt;segment();</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :     int sumMiWinding = baseSegment-&gt;updateWinding(baseAngle);</span>
+<span class="lineNum">     368 </span>            :     int sumSuWinding;
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :     bool binary = includeType &gt;= SkOpAngle::kBinarySingle;</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :     if (binary) {</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :         sumSuWinding = baseSegment-&gt;updateOppWinding(baseAngle);</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :         if (baseSegment-&gt;operand()) {</span>
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :             SkTSwap&lt;int&gt;(sumMiWinding, sumSuWinding);</span>
+<span class="lineNum">     374 </span>            :         }
+<span class="lineNum">     375 </span>            :     }
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :     SkOpSegment* nextSegment = nextAngle-&gt;segment();</span>
+<span class="lineNum">     377 </span>            :     int maxWinding, sumWinding;
+<span class="lineNum">     378 </span>            :     SkOpSpanBase* last;
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :     if (binary) {</span>
+<span class="lineNum">     380 </span>            :         int oppMaxWinding, oppSumWinding;
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :         nextSegment-&gt;setUpWindings(nextAngle-&gt;end(), nextAngle-&gt;start(), &amp;sumMiWinding,</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :                 &amp;sumSuWinding, &amp;maxWinding, &amp;sumWinding, &amp;oppMaxWinding, &amp;oppSumWinding);</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :         last = nextSegment-&gt;markAngle(maxWinding, sumWinding, oppMaxWinding, oppSumWinding,</span>
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :                 nextAngle);</span>
+<span class="lineNum">     385 </span>            :     } else {
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :         nextSegment-&gt;setUpWindings(nextAngle-&gt;end(), nextAngle-&gt;start(), &amp;sumMiWinding,</span>
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :                 &amp;maxWinding, &amp;sumWinding);</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :         last = nextSegment-&gt;markAngle(maxWinding, sumWinding, nextAngle);</span>
+<span class="lineNum">     389 </span>            :     }
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :     nextAngle-&gt;setLastMarked(last);</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 : }</span>
+<a name="392"><span class="lineNum">     392 </span>            : </a>
+<span class="lineNum">     393 </span>            : // at this point, the span is already ordered, or unorderable
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 : int SkOpSegment::computeSum(SkOpSpanBase* start, SkOpSpanBase* end,</span>
+<span class="lineNum">     395 </span>            :         SkOpAngle::IncludeType includeType) {
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :     SkASSERT(includeType != SkOpAngle::kUnaryXor);</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :     SkOpAngle* firstAngle = this-&gt;spanToAngle(end, start);</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :     if (nullptr == firstAngle || nullptr == firstAngle-&gt;next()) {</span>
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :         return SK_NaN32;</span>
+<span class="lineNum">     400 </span>            :     }
+<span class="lineNum">     401 </span>            :     // if all angles have a computed winding,
+<span class="lineNum">     402 </span>            :     //  or if no adjacent angles are orderable,
+<span class="lineNum">     403 </span>            :     //  or if adjacent orderable angles have no computed winding,
+<span class="lineNum">     404 </span>            :     //  there's nothing to do
+<span class="lineNum">     405 </span>            :     // if two orderable angles are adjacent, and both are next to orderable angles,
+<span class="lineNum">     406 </span>            :     //  and one has winding computed, transfer to the other
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :     SkOpAngle* baseAngle = nullptr;</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :     bool tryReverse = false;</span>
+<span class="lineNum">     409 </span>            :     // look for counterclockwise transfers
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :     SkOpAngle* angle = firstAngle-&gt;previous();</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :     SkOpAngle* next = angle-&gt;next();</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :     firstAngle = next;</span>
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :         SkOpAngle* prior = angle;</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :         angle = next;</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :         next = angle-&gt;next();</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :         SkASSERT(prior-&gt;next() == angle);</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :         SkASSERT(angle-&gt;next() == next);</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :         if (prior-&gt;unorderable() || angle-&gt;unorderable() || next-&gt;unorderable()) {</span>
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :             baseAngle = nullptr;</span>
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     422 </span>            :         }
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :         int testWinding = angle-&gt;starter()-&gt;windSum();</span>
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :         if (SK_MinS32 != testWinding) {</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :             baseAngle = angle;</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :             tryReverse = true;</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     428 </span>            :         }
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :         if (baseAngle) {</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :             ComputeOneSum(baseAngle, angle, includeType);</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :             baseAngle = SK_MinS32 != angle-&gt;starter()-&gt;windSum() ? angle : nullptr;</span>
+<span class="lineNum">     432 </span>            :         }
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :     } while (next != firstAngle);</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :     if (baseAngle &amp;&amp; SK_MinS32 == firstAngle-&gt;starter()-&gt;windSum()) {</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :         firstAngle = baseAngle;</span>
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :         tryReverse = true;</span>
+<span class="lineNum">     437 </span>            :     }
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :     if (tryReverse) {</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :         baseAngle = nullptr;</span>
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :         SkOpAngle* prior = firstAngle;</span>
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :         do {</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :             angle = prior;</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :             prior = angle-&gt;previous();</span>
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :             SkASSERT(prior-&gt;next() == angle);</span>
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :             next = angle-&gt;next();</span>
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :             if (prior-&gt;unorderable() || angle-&gt;unorderable() || next-&gt;unorderable()) {</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :                 baseAngle = nullptr;</span>
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     449 </span>            :             }
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :             int testWinding = angle-&gt;starter()-&gt;windSum();</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :             if (SK_MinS32 != testWinding) {</span>
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :                 baseAngle = angle;</span>
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     454 </span>            :             }
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :             if (baseAngle) {</span>
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 :                 ComputeOneSumReverse(baseAngle, angle, includeType);</span>
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :                 baseAngle = SK_MinS32 != angle-&gt;starter()-&gt;windSum() ? angle : nullptr;</span>
+<span class="lineNum">     458 </span>            :             }
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :         } while (prior != firstAngle);</span>
+<span class="lineNum">     460 </span>            :     }
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :     return start-&gt;starter(end)-&gt;windSum();</span>
+<a name="462"><span class="lineNum">     462 </span>            : }</a>
+<span class="lineNum">     463 </span>            : 
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 : bool SkOpSegment::contains(double newT) const {</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :     const SkOpSpanBase* spanBase = &amp;fHead;</span>
+<span class="lineNum">     466 </span>            :     do {
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :         if (spanBase-&gt;ptT()-&gt;contains(this, newT)) {</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">     469 </span>            :         }
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :         if (spanBase == &amp;fTail) {</span>
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     472 </span>            :         }
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :         spanBase = spanBase-&gt;upCast()-&gt;next();</span>
+<span class="lineNum">     474 </span>            :     } while (true);
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :     return false;</span>
+<a name="476"><span class="lineNum">     476 </span>            : }</a>
+<span class="lineNum">     477 </span>            : 
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 : void SkOpSegment::release(const SkOpSpan* span) {</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :     if (span-&gt;done()) {</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :         --fDoneCount;</span>
+<span class="lineNum">     481 </span>            :     }
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :     --fCount;</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :     SkOPASSERT(fCount &gt;= fDoneCount);</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     485 </span>            : 
+<span class="lineNum">     486 </span>            : #if DEBUG_ANGLE
+<span class="lineNum">     487 </span>            : // called only by debugCheckNearCoincidence
+<span class="lineNum">     488 </span>            : double SkOpSegment::distSq(double t, const SkOpAngle* oppAngle) const {
+<span class="lineNum">     489 </span>            :     SkDPoint testPt = this-&gt;dPtAtT(t);
+<span class="lineNum">     490 </span>            :     SkDLine testPerp = {{ testPt, testPt }};
+<span class="lineNum">     491 </span>            :     SkDVector slope = this-&gt;dSlopeAtT(t);
+<span class="lineNum">     492 </span>            :     testPerp[1].fX += slope.fY;
+<span class="lineNum">     493 </span>            :     testPerp[1].fY -= slope.fX;
+<span class="lineNum">     494 </span>            :     SkIntersections i;
+<span class="lineNum">     495 </span>            :     const SkOpSegment* oppSegment = oppAngle-&gt;segment();
+<span class="lineNum">     496 </span>            :     (*CurveIntersectRay[oppSegment-&gt;verb()])(oppSegment-&gt;pts(), oppSegment-&gt;weight(), testPerp, &amp;i);
+<span class="lineNum">     497 </span>            :     double closestDistSq = SK_ScalarInfinity;
+<span class="lineNum">     498 </span>            :     for (int index = 0; index &lt; i.used(); ++index) {
+<span class="lineNum">     499 </span>            :         if (!between(oppAngle-&gt;start()-&gt;t(), i[0][index], oppAngle-&gt;end()-&gt;t())) {
+<span class="lineNum">     500 </span>            :             continue;
+<span class="lineNum">     501 </span>            :         }
+<span class="lineNum">     502 </span>            :         double testDistSq = testPt.distanceSquared(i.pt(index));
+<span class="lineNum">     503 </span>            :         if (closestDistSq &gt; testDistSq) {
+<span class="lineNum">     504 </span>            :             closestDistSq = testDistSq;
+<span class="lineNum">     505 </span>            :         }
+<span class="lineNum">     506 </span>            :     }
+<span class="lineNum">     507 </span>            :     return closestDistSq;
+<span class="lineNum">     508 </span>            : }
+<span class="lineNum">     509 </span>            : #endif
+<span class="lineNum">     510 </span>            : 
+<span class="lineNum">     511 </span>            : /*
+<span class="lineNum">     512 </span>            :  The M and S variable name parts stand for the operators.
+<span class="lineNum">     513 </span>            :    Mi stands for Minuend (see wiki subtraction, analogous to difference)
+<span class="lineNum">     514 </span>            :    Su stands for Subtrahend
+<span class="lineNum">     515 </span>            :  The Opp variable name part designates that the value is for the Opposite operator.
+<a name="516"><span class="lineNum">     516 </span>            :  Opposite values result from combining coincident spans.</a>
+<span class="lineNum">     517 </span>            :  */
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 : SkOpSegment* SkOpSegment::findNextOp(SkTDArray&lt;SkOpSpanBase*&gt;* chase, SkOpSpanBase** nextStart,</span>
+<span class="lineNum">     519 </span>            :         SkOpSpanBase** nextEnd, bool* unsortable, SkPathOp op, int xorMiMask, int xorSuMask) {
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :     SkOpSpanBase* start = *nextStart;</span>
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :     SkOpSpanBase* end = *nextEnd;</span>
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :     SkASSERT(start != end);</span>
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :     int step = start-&gt;step(end);</span>
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :     SkOpSegment* other = this-&gt;isSimple(nextStart, &amp;step);  // advances nextStart</span>
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :     if (other) {</span>
+<span class="lineNum">     526 </span>            :     // mark the smaller of startIndex, endIndex done, and all adjacent
+<span class="lineNum">     527 </span>            :     // spans with the same T value (but not 'other' spans)
+<span class="lineNum">     528 </span>            : #if DEBUG_WINDING
+<span class="lineNum">     529 </span>            :         SkDebugf(&quot;%s simple\n&quot;, __FUNCTION__);
+<span class="lineNum">     530 </span>            : #endif
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :         SkOpSpan* startSpan = start-&gt;starter(end);</span>
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :         if (startSpan-&gt;done()) {</span>
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     534 </span>            :         }
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :         markDone(startSpan);</span>
+<span class="lineNum">     536 </span><span class="lineNoCov">          0 :         *nextEnd = step &gt; 0 ? (*nextStart)-&gt;upCast()-&gt;next() : (*nextStart)-&gt;prev();</span>
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :         return other;</span>
+<span class="lineNum">     538 </span>            :     }
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :     SkOpSpanBase* endNear = step &gt; 0 ? (*nextStart)-&gt;upCast()-&gt;next() : (*nextStart)-&gt;prev();</span>
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :     SkASSERT(endNear == end);  // is this ever not end?</span>
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :     SkASSERT(endNear);</span>
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :     SkASSERT(start != endNear);</span>
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :     SkASSERT((start-&gt;t() &lt; endNear-&gt;t()) ^ (step &lt; 0));</span>
+<span class="lineNum">     544 </span>            :     // more than one viable candidate -- measure angles to find best
+<span class="lineNum">     545 </span><span class="lineNoCov">          0 :     int calcWinding = computeSum(start, endNear, SkOpAngle::kBinaryOpp);</span>
+<span class="lineNum">     546 </span><span class="lineNoCov">          0 :     bool sortable = calcWinding != SK_NaN32;</span>
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :     if (!sortable) {</span>
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :         *unsortable = true;</span>
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :         markDone(start-&gt;starter(end));</span>
+<span class="lineNum">     550 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     551 </span>            :     }
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     SkOpAngle* angle = this-&gt;spanToAngle(end, start);</span>
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :     if (angle-&gt;unorderable()) {</span>
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :         *unsortable = true;</span>
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :         markDone(start-&gt;starter(end));</span>
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     557 </span>            :     }
+<span class="lineNum">     558 </span>            : #if DEBUG_SORT
+<span class="lineNum">     559 </span>            :     SkDebugf(&quot;%s\n&quot;, __FUNCTION__);
+<span class="lineNum">     560 </span>            :     angle-&gt;debugLoop();
+<span class="lineNum">     561 </span>            : #endif
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :     int sumMiWinding = updateWinding(end, start);</span>
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :     if (sumMiWinding == SK_MinS32) {</span>
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :         *unsortable = true;</span>
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :         markDone(start-&gt;starter(end));</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     567 </span>            :     }
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :     int sumSuWinding = updateOppWinding(end, start);</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :     if (operand()) {</span>
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :         SkTSwap&lt;int&gt;(sumMiWinding, sumSuWinding);</span>
+<span class="lineNum">     571 </span>            :     }
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :     SkOpAngle* nextAngle = angle-&gt;next();</span>
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :     const SkOpAngle* foundAngle = nullptr;</span>
+<span class="lineNum">     574 </span><span class="lineNoCov">          0 :     bool foundDone = false;</span>
+<span class="lineNum">     575 </span>            :     // iterate through the angle, and compute everyone's winding
+<span class="lineNum">     576 </span>            :     SkOpSegment* nextSegment;
+<span class="lineNum">     577 </span><span class="lineNoCov">          0 :     int activeCount = 0;</span>
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :         nextSegment = nextAngle-&gt;segment();</span>
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :         bool activeAngle = nextSegment-&gt;activeOp(xorMiMask, xorSuMask, nextAngle-&gt;start(),</span>
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :                 nextAngle-&gt;end(), op, &amp;sumMiWinding, &amp;sumSuWinding);</span>
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :         if (activeAngle) {</span>
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 :             ++activeCount;</span>
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 :             if (!foundAngle || (foundDone &amp;&amp; activeCount &amp; 1)) {</span>
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :                 foundAngle = nextAngle;</span>
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :                 foundDone = nextSegment-&gt;done(nextAngle);</span>
+<span class="lineNum">     587 </span>            :             }
+<span class="lineNum">     588 </span>            :         }
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 :         if (nextSegment-&gt;done()) {</span>
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     591 </span>            :         }
+<span class="lineNum">     592 </span><span class="lineNoCov">          0 :         if (!activeAngle) {</span>
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :             (void) nextSegment-&gt;markAndChaseDone(nextAngle-&gt;start(), nextAngle-&gt;end());</span>
+<span class="lineNum">     594 </span>            :         }
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :         SkOpSpanBase* last = nextAngle-&gt;lastMarked();</span>
+<span class="lineNum">     596 </span><span class="lineNoCov">          0 :         if (last) {</span>
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 :             SkASSERT(!SkPathOpsDebug::ChaseContains(*chase, last));</span>
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :             *chase-&gt;append() = last;</span>
+<span class="lineNum">     599 </span>            : #if DEBUG_WINDING
+<span class="lineNum">     600 </span>            :             SkDebugf(&quot;%s chase.append segment=%d span=%d&quot;, __FUNCTION__,
+<span class="lineNum">     601 </span>            :                     last-&gt;segment()-&gt;debugID(), last-&gt;debugID());
+<span class="lineNum">     602 </span>            :             if (!last-&gt;final()) {
+<span class="lineNum">     603 </span>            :                 SkDebugf(&quot; windSum=%d&quot;, last-&gt;upCast()-&gt;windSum());
+<span class="lineNum">     604 </span>            :             }
+<span class="lineNum">     605 </span>            :             SkDebugf(&quot;\n&quot;);
+<span class="lineNum">     606 </span>            : #endif
+<span class="lineNum">     607 </span>            :         }
+<span class="lineNum">     608 </span>            :     } while ((nextAngle = nextAngle-&gt;next()) != angle);
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :     start-&gt;segment()-&gt;markDone(start-&gt;starter(end));</span>
+<span class="lineNum">     610 </span><span class="lineNoCov">          0 :     if (!foundAngle) {</span>
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     612 </span>            :     }
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 :     *nextStart = foundAngle-&gt;start();</span>
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :     *nextEnd = foundAngle-&gt;end();</span>
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :     nextSegment = foundAngle-&gt;segment();</span>
+<span class="lineNum">     616 </span>            : #if DEBUG_WINDING
+<span class="lineNum">     617 </span>            :     SkDebugf(&quot;%s from:[%d] to:[%d] start=%d end=%d\n&quot;,
+<span class="lineNum">     618 </span>            :             __FUNCTION__, debugID(), nextSegment-&gt;debugID(), *nextStart, *nextEnd);
+<span class="lineNum">     619 </span>            :  #endif
+<span class="lineNum">     620 </span><span class="lineNoCov">          0 :     return nextSegment;</span>
+<a name="621"><span class="lineNum">     621 </span>            : }</a>
+<span class="lineNum">     622 </span>            : 
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 : SkOpSegment* SkOpSegment::findNextWinding(SkTDArray&lt;SkOpSpanBase*&gt;* chase,</span>
+<span class="lineNum">     624 </span>            :         SkOpSpanBase** nextStart, SkOpSpanBase** nextEnd, bool* unsortable) {
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :     SkOpSpanBase* start = *nextStart;</span>
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :     SkOpSpanBase* end = *nextEnd;</span>
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :     SkASSERT(start != end);</span>
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :     int step = start-&gt;step(end);</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :     SkOpSegment* other = this-&gt;isSimple(nextStart, &amp;step);  // advances nextStart</span>
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 :     if (other) {</span>
+<span class="lineNum">     631 </span>            :     // mark the smaller of startIndex, endIndex done, and all adjacent
+<span class="lineNum">     632 </span>            :     // spans with the same T value (but not 'other' spans)
+<span class="lineNum">     633 </span>            : #if DEBUG_WINDING
+<span class="lineNum">     634 </span>            :         SkDebugf(&quot;%s simple\n&quot;, __FUNCTION__);
+<span class="lineNum">     635 </span>            : #endif
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :         SkOpSpan* startSpan = start-&gt;starter(end);</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :         if (startSpan-&gt;done()) {</span>
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     639 </span>            :         }
+<span class="lineNum">     640 </span><span class="lineNoCov">          0 :         markDone(startSpan);</span>
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :         *nextEnd = step &gt; 0 ? (*nextStart)-&gt;upCast()-&gt;next() : (*nextStart)-&gt;prev();</span>
+<span class="lineNum">     642 </span><span class="lineNoCov">          0 :         return other;</span>
+<span class="lineNum">     643 </span>            :     }
+<span class="lineNum">     644 </span><span class="lineNoCov">          0 :     SkOpSpanBase* endNear = step &gt; 0 ? (*nextStart)-&gt;upCast()-&gt;next() : (*nextStart)-&gt;prev();</span>
+<span class="lineNum">     645 </span><span class="lineNoCov">          0 :     SkASSERT(endNear == end);  // is this ever not end?</span>
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 :     SkASSERT(endNear);</span>
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :     SkASSERT(start != endNear);</span>
+<span class="lineNum">     648 </span><span class="lineNoCov">          0 :     SkASSERT((start-&gt;t() &lt; endNear-&gt;t()) ^ (step &lt; 0));</span>
+<span class="lineNum">     649 </span>            :     // more than one viable candidate -- measure angles to find best
+<span class="lineNum">     650 </span><span class="lineNoCov">          0 :     int calcWinding = computeSum(start, endNear, SkOpAngle::kUnaryWinding);</span>
+<span class="lineNum">     651 </span><span class="lineNoCov">          0 :     bool sortable = calcWinding != SK_NaN32;</span>
+<span class="lineNum">     652 </span><span class="lineNoCov">          0 :     if (!sortable) {</span>
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 :         *unsortable = true;</span>
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 :         markDone(start-&gt;starter(end));</span>
+<span class="lineNum">     655 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     656 </span>            :     }
+<span class="lineNum">     657 </span><span class="lineNoCov">          0 :     SkOpAngle* angle = this-&gt;spanToAngle(end, start);</span>
+<span class="lineNum">     658 </span><span class="lineNoCov">          0 :     if (angle-&gt;unorderable()) {</span>
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :         *unsortable = true;</span>
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :         markDone(start-&gt;starter(end));</span>
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     662 </span>            :     }
+<span class="lineNum">     663 </span>            : #if DEBUG_SORT
+<span class="lineNum">     664 </span>            :     SkDebugf(&quot;%s\n&quot;, __FUNCTION__);
+<span class="lineNum">     665 </span>            :     angle-&gt;debugLoop();
+<span class="lineNum">     666 </span>            : #endif
+<span class="lineNum">     667 </span><span class="lineNoCov">          0 :     int sumWinding = updateWinding(end, start);</span>
+<span class="lineNum">     668 </span><span class="lineNoCov">          0 :     SkOpAngle* nextAngle = angle-&gt;next();</span>
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :     const SkOpAngle* foundAngle = nullptr;</span>
+<span class="lineNum">     670 </span><span class="lineNoCov">          0 :     bool foundDone = false;</span>
+<span class="lineNum">     671 </span>            :     // iterate through the angle, and compute everyone's winding
+<span class="lineNum">     672 </span>            :     SkOpSegment* nextSegment;
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :     int activeCount = 0;</span>
+<span class="lineNum">     674 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     675 </span><span class="lineNoCov">          0 :         nextSegment = nextAngle-&gt;segment();</span>
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :         bool activeAngle = nextSegment-&gt;activeWinding(nextAngle-&gt;start(), nextAngle-&gt;end(),</span>
+<span class="lineNum">     677 </span><span class="lineNoCov">          0 :                 &amp;sumWinding);</span>
+<span class="lineNum">     678 </span><span class="lineNoCov">          0 :         if (activeAngle) {</span>
+<span class="lineNum">     679 </span><span class="lineNoCov">          0 :             ++activeCount;</span>
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 :             if (!foundAngle || (foundDone &amp;&amp; activeCount &amp; 1)) {</span>
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :                 foundAngle = nextAngle;</span>
+<span class="lineNum">     682 </span><span class="lineNoCov">          0 :                 foundDone = nextSegment-&gt;done(nextAngle);</span>
+<span class="lineNum">     683 </span>            :             }
+<span class="lineNum">     684 </span>            :         }
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :         if (nextSegment-&gt;done()) {</span>
+<span class="lineNum">     686 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     687 </span>            :         }
+<span class="lineNum">     688 </span><span class="lineNoCov">          0 :         if (!activeAngle) {</span>
+<span class="lineNum">     689 </span><span class="lineNoCov">          0 :             (void) nextSegment-&gt;markAndChaseDone(nextAngle-&gt;start(), nextAngle-&gt;end());</span>
+<span class="lineNum">     690 </span>            :         }
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :         SkOpSpanBase* last = nextAngle-&gt;lastMarked();</span>
+<span class="lineNum">     692 </span><span class="lineNoCov">          0 :         if (last) {</span>
+<span class="lineNum">     693 </span><span class="lineNoCov">          0 :             SkASSERT(!SkPathOpsDebug::ChaseContains(*chase, last));</span>
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :             *chase-&gt;append() = last;</span>
+<span class="lineNum">     695 </span>            : #if DEBUG_WINDING
+<span class="lineNum">     696 </span>            :             SkDebugf(&quot;%s chase.append segment=%d span=%d&quot;, __FUNCTION__,
+<span class="lineNum">     697 </span>            :                     last-&gt;segment()-&gt;debugID(), last-&gt;debugID());
+<span class="lineNum">     698 </span>            :             if (!last-&gt;final()) {
+<span class="lineNum">     699 </span>            :                 SkDebugf(&quot; windSum=%d&quot;, last-&gt;upCast()-&gt;windSum());
+<span class="lineNum">     700 </span>            :             }
+<span class="lineNum">     701 </span>            :             SkDebugf(&quot;\n&quot;);
+<span class="lineNum">     702 </span>            : #endif
+<span class="lineNum">     703 </span>            :         }
+<span class="lineNum">     704 </span>            :     } while ((nextAngle = nextAngle-&gt;next()) != angle);
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :     start-&gt;segment()-&gt;markDone(start-&gt;starter(end));</span>
+<span class="lineNum">     706 </span><span class="lineNoCov">          0 :     if (!foundAngle) {</span>
+<span class="lineNum">     707 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     708 </span>            :     }
+<span class="lineNum">     709 </span><span class="lineNoCov">          0 :     *nextStart = foundAngle-&gt;start();</span>
+<span class="lineNum">     710 </span><span class="lineNoCov">          0 :     *nextEnd = foundAngle-&gt;end();</span>
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :     nextSegment = foundAngle-&gt;segment();</span>
+<span class="lineNum">     712 </span>            : #if DEBUG_WINDING
+<span class="lineNum">     713 </span>            :     SkDebugf(&quot;%s from:[%d] to:[%d] start=%d end=%d\n&quot;,
+<span class="lineNum">     714 </span>            :             __FUNCTION__, debugID(), nextSegment-&gt;debugID(), *nextStart, *nextEnd);
+<span class="lineNum">     715 </span>            :  #endif
+<span class="lineNum">     716 </span><span class="lineNoCov">          0 :     return nextSegment;</span>
+<a name="717"><span class="lineNum">     717 </span>            : }</a>
+<span class="lineNum">     718 </span>            : 
+<span class="lineNum">     719 </span><span class="lineNoCov">          0 : SkOpSegment* SkOpSegment::findNextXor(SkOpSpanBase** nextStart, SkOpSpanBase** nextEnd,</span>
+<span class="lineNum">     720 </span>            :         bool* unsortable) {
+<span class="lineNum">     721 </span><span class="lineNoCov">          0 :     SkOpSpanBase* start = *nextStart;</span>
+<span class="lineNum">     722 </span><span class="lineNoCov">          0 :     SkOpSpanBase* end = *nextEnd;</span>
+<span class="lineNum">     723 </span><span class="lineNoCov">          0 :     SkASSERT(start != end);</span>
+<span class="lineNum">     724 </span><span class="lineNoCov">          0 :     int step = start-&gt;step(end);</span>
+<span class="lineNum">     725 </span><span class="lineNoCov">          0 :     SkOpSegment* other = this-&gt;isSimple(nextStart, &amp;step);  // advances nextStart</span>
+<span class="lineNum">     726 </span><span class="lineNoCov">          0 :     if (other) {</span>
+<span class="lineNum">     727 </span>            :     // mark the smaller of startIndex, endIndex done, and all adjacent
+<span class="lineNum">     728 </span>            :     // spans with the same T value (but not 'other' spans)
+<span class="lineNum">     729 </span>            : #if DEBUG_WINDING
+<span class="lineNum">     730 </span>            :         SkDebugf(&quot;%s simple\n&quot;, __FUNCTION__);
+<span class="lineNum">     731 </span>            : #endif
+<span class="lineNum">     732 </span><span class="lineNoCov">          0 :         SkOpSpan* startSpan = start-&gt;starter(end);</span>
+<span class="lineNum">     733 </span><span class="lineNoCov">          0 :         if (startSpan-&gt;done()) {</span>
+<span class="lineNum">     734 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     735 </span>            :         }
+<span class="lineNum">     736 </span><span class="lineNoCov">          0 :         markDone(startSpan);</span>
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :         *nextEnd = step &gt; 0 ? (*nextStart)-&gt;upCast()-&gt;next() : (*nextStart)-&gt;prev();</span>
+<span class="lineNum">     738 </span><span class="lineNoCov">          0 :         return other;</span>
+<span class="lineNum">     739 </span>            :     }
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :     SkDEBUGCODE(SkOpSpanBase* endNear = step &gt; 0 ? (*nextStart)-&gt;upCast()-&gt;next() \</span>
+<span class="lineNum">     741 </span>            :             : (*nextStart)-&gt;prev());
+<span class="lineNum">     742 </span><span class="lineNoCov">          0 :     SkASSERT(endNear == end);  // is this ever not end?</span>
+<span class="lineNum">     743 </span><span class="lineNoCov">          0 :     SkASSERT(endNear);</span>
+<span class="lineNum">     744 </span><span class="lineNoCov">          0 :     SkASSERT(start != endNear);</span>
+<span class="lineNum">     745 </span><span class="lineNoCov">          0 :     SkASSERT((start-&gt;t() &lt; endNear-&gt;t()) ^ (step &lt; 0));</span>
+<span class="lineNum">     746 </span><span class="lineNoCov">          0 :     SkOpAngle* angle = this-&gt;spanToAngle(end, start);</span>
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 :     if (!angle || angle-&gt;unorderable()) {</span>
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :         *unsortable = true;</span>
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :         markDone(start-&gt;starter(end));</span>
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     751 </span>            :     }
+<span class="lineNum">     752 </span>            : #if DEBUG_SORT
+<span class="lineNum">     753 </span>            :     SkDebugf(&quot;%s\n&quot;, __FUNCTION__);
+<span class="lineNum">     754 </span>            :     angle-&gt;debugLoop();
+<span class="lineNum">     755 </span>            : #endif
+<span class="lineNum">     756 </span><span class="lineNoCov">          0 :     SkOpAngle* nextAngle = angle-&gt;next();</span>
+<span class="lineNum">     757 </span><span class="lineNoCov">          0 :     const SkOpAngle* foundAngle = nullptr;</span>
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :     bool foundDone = false;</span>
+<span class="lineNum">     759 </span>            :     // iterate through the angle, and compute everyone's winding
+<span class="lineNum">     760 </span>            :     SkOpSegment* nextSegment;
+<span class="lineNum">     761 </span><span class="lineNoCov">          0 :     int activeCount = 0;</span>
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     763 </span><span class="lineNoCov">          0 :         nextSegment = nextAngle-&gt;segment();</span>
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 :         ++activeCount;</span>
+<span class="lineNum">     765 </span><span class="lineNoCov">          0 :         if (!foundAngle || (foundDone &amp;&amp; activeCount &amp; 1)) {</span>
+<span class="lineNum">     766 </span><span class="lineNoCov">          0 :             foundAngle = nextAngle;</span>
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 :             if (!(foundDone = nextSegment-&gt;done(nextAngle))) {</span>
+<span class="lineNum">     768 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     769 </span>            :             }
+<span class="lineNum">     770 </span>            :         }
+<span class="lineNum">     771 </span><span class="lineNoCov">          0 :         nextAngle = nextAngle-&gt;next();</span>
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 :     } while (nextAngle != angle);</span>
+<span class="lineNum">     773 </span><span class="lineNoCov">          0 :     start-&gt;segment()-&gt;markDone(start-&gt;starter(end));</span>
+<span class="lineNum">     774 </span><span class="lineNoCov">          0 :     if (!foundAngle) {</span>
+<span class="lineNum">     775 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     776 </span>            :     }
+<span class="lineNum">     777 </span><span class="lineNoCov">          0 :     *nextStart = foundAngle-&gt;start();</span>
+<span class="lineNum">     778 </span><span class="lineNoCov">          0 :     *nextEnd = foundAngle-&gt;end();</span>
+<span class="lineNum">     779 </span><span class="lineNoCov">          0 :     nextSegment = foundAngle-&gt;segment();</span>
+<span class="lineNum">     780 </span>            : #if DEBUG_WINDING
+<span class="lineNum">     781 </span>            :     SkDebugf(&quot;%s from:[%d] to:[%d] start=%d end=%d\n&quot;,
+<span class="lineNum">     782 </span>            :             __FUNCTION__, debugID(), nextSegment-&gt;debugID(), *nextStart, *nextEnd);
+<span class="lineNum">     783 </span>            :  #endif
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :     return nextSegment;</span>
+<a name="785"><span class="lineNum">     785 </span>            : }</a>
+<span class="lineNum">     786 </span>            : 
+<span class="lineNum">     787 </span><span class="lineNoCov">          0 : SkOpGlobalState* SkOpSegment::globalState() const {</span>
+<span class="lineNum">     788 </span><span class="lineNoCov">          0 :     return contour()-&gt;globalState();</span>
+<a name="789"><span class="lineNum">     789 </span>            : }</a>
+<span class="lineNum">     790 </span>            : 
+<span class="lineNum">     791 </span><span class="lineNoCov">          0 : void SkOpSegment::init(SkPoint pts[], SkScalar weight, SkOpContour* contour, SkPath::Verb verb) {</span>
+<span class="lineNum">     792 </span><span class="lineNoCov">          0 :     fContour = contour;</span>
+<span class="lineNum">     793 </span><span class="lineNoCov">          0 :     fNext = nullptr;</span>
+<span class="lineNum">     794 </span><span class="lineNoCov">          0 :     fPts = pts;</span>
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :     fWeight = weight;</span>
+<span class="lineNum">     796 </span><span class="lineNoCov">          0 :     fVerb = verb;</span>
+<span class="lineNum">     797 </span><span class="lineNoCov">          0 :     fCount = 0;</span>
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 :     fDoneCount = 0;</span>
+<span class="lineNum">     799 </span><span class="lineNoCov">          0 :     fVisited = false;</span>
+<span class="lineNum">     800 </span><span class="lineNoCov">          0 :     SkOpSpan* zeroSpan = &amp;fHead;</span>
+<span class="lineNum">     801 </span><span class="lineNoCov">          0 :     zeroSpan-&gt;init(this, nullptr, 0, fPts[0]);</span>
+<span class="lineNum">     802 </span><span class="lineNoCov">          0 :     SkOpSpanBase* oneSpan = &amp;fTail;</span>
+<span class="lineNum">     803 </span><span class="lineNoCov">          0 :     zeroSpan-&gt;setNext(oneSpan);</span>
+<span class="lineNum">     804 </span><span class="lineNoCov">          0 :     oneSpan-&gt;initBase(this, zeroSpan, 1, fPts[SkPathOpsVerbToPoints(fVerb)]);</span>
+<span class="lineNum">     805 </span><span class="lineNoCov">          0 :     SkDEBUGCODE(fID = globalState()-&gt;nextSegmentID());</span>
+<a name="806"><span class="lineNum">     806 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     807 </span>            : 
+<span class="lineNum">     808 </span><span class="lineNoCov">          0 : bool SkOpSegment::isClose(double t, const SkOpSegment* opp) const {</span>
+<span class="lineNum">     809 </span><span class="lineNoCov">          0 :     SkDPoint cPt = this-&gt;dPtAtT(t);</span>
+<span class="lineNum">     810 </span><span class="lineNoCov">          0 :     SkDVector dxdy = (*CurveDSlopeAtT[this-&gt;verb()])(this-&gt;pts(), this-&gt;weight(), t);</span>
+<span class="lineNum">     811 </span><span class="lineNoCov">          0 :     SkDLine perp = {{ cPt, {cPt.fX + dxdy.fY, cPt.fY - dxdy.fX} }};</span>
+<span class="lineNum">     812 </span><span class="lineNoCov">          0 :     SkIntersections i;</span>
+<span class="lineNum">     813 </span><span class="lineNoCov">          0 :     (*CurveIntersectRay[opp-&gt;verb()])(opp-&gt;pts(), opp-&gt;weight(), perp, &amp;i);</span>
+<span class="lineNum">     814 </span><span class="lineNoCov">          0 :     int used = i.used();</span>
+<span class="lineNum">     815 </span><span class="lineNoCov">          0 :     for (int index = 0; index &lt; used; ++index) {</span>
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 :         if (cPt.roughlyEqual(i.pt(index))) {</span>
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">     818 </span>            :         }
+<span class="lineNum">     819 </span>            :     }
+<span class="lineNum">     820 </span><span class="lineNoCov">          0 :     return false;</span>
+<a name="821"><span class="lineNum">     821 </span>            : }</a>
+<span class="lineNum">     822 </span>            : 
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 : bool SkOpSegment::isXor() const {</span>
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :     return fContour-&gt;isXor();</span>
+<a name="825"><span class="lineNum">     825 </span>            : }</a>
+<span class="lineNum">     826 </span>            : 
+<span class="lineNum">     827 </span><span class="lineNoCov">          0 : void SkOpSegment::markAllDone() {</span>
+<span class="lineNum">     828 </span><span class="lineNoCov">          0 :     SkOpSpan* span = this-&gt;head();</span>
+<span class="lineNum">     829 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     830 </span><span class="lineNoCov">          0 :         this-&gt;markDone(span);</span>
+<span class="lineNum">     831 </span><span class="lineNoCov">          0 :     } while ((span = span-&gt;next()-&gt;upCastable()));</span>
+<a name="832"><span class="lineNum">     832 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     833 </span>            : 
+<span class="lineNum">     834 </span><span class="lineNoCov">          0 : SkOpSpanBase* SkOpSegment::markAndChaseDone(SkOpSpanBase* start, SkOpSpanBase* end) {</span>
+<span class="lineNum">     835 </span><span class="lineNoCov">          0 :     int step = start-&gt;step(end);</span>
+<span class="lineNum">     836 </span><span class="lineNoCov">          0 :     SkOpSpan* minSpan = start-&gt;starter(end);</span>
+<span class="lineNum">     837 </span><span class="lineNoCov">          0 :     markDone(minSpan);</span>
+<span class="lineNum">     838 </span><span class="lineNoCov">          0 :     SkOpSpanBase* last = nullptr;</span>
+<span class="lineNum">     839 </span><span class="lineNoCov">          0 :     SkOpSegment* other = this;</span>
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :     SkOpSpan* priorDone = nullptr;</span>
+<span class="lineNum">     841 </span><span class="lineNoCov">          0 :     SkOpSpan* lastDone = nullptr;</span>
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :     while ((other = other-&gt;nextChase(&amp;start, &amp;step, &amp;minSpan, &amp;last))) {</span>
+<span class="lineNum">     843 </span><span class="lineNoCov">          0 :         if (other-&gt;done()) {</span>
+<span class="lineNum">     844 </span><span class="lineNoCov">          0 :             SkASSERT(!last);</span>
+<span class="lineNum">     845 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     846 </span>            :         }
+<span class="lineNum">     847 </span><span class="lineNoCov">          0 :         if (lastDone == minSpan || priorDone == minSpan) {</span>
+<span class="lineNum">     848 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     849 </span>            :         }
+<span class="lineNum">     850 </span><span class="lineNoCov">          0 :         other-&gt;markDone(minSpan);</span>
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :         priorDone = lastDone;</span>
+<span class="lineNum">     852 </span><span class="lineNoCov">          0 :         lastDone = minSpan;</span>
+<span class="lineNum">     853 </span>            :     }
+<span class="lineNum">     854 </span><span class="lineNoCov">          0 :     return last;</span>
+<a name="855"><span class="lineNum">     855 </span>            : }</a>
+<span class="lineNum">     856 </span>            : 
+<span class="lineNum">     857 </span><span class="lineNoCov">          0 : bool SkOpSegment::markAndChaseWinding(SkOpSpanBase* start, SkOpSpanBase* end, int winding,</span>
+<span class="lineNum">     858 </span>            :         SkOpSpanBase** lastPtr) {
+<span class="lineNum">     859 </span><span class="lineNoCov">          0 :     SkOpSpan* spanStart = start-&gt;starter(end);</span>
+<span class="lineNum">     860 </span><span class="lineNoCov">          0 :     int step = start-&gt;step(end);</span>
+<span class="lineNum">     861 </span><span class="lineNoCov">          0 :     bool success = markWinding(spanStart, winding);</span>
+<span class="lineNum">     862 </span><span class="lineNoCov">          0 :     SkOpSpanBase* last = nullptr;</span>
+<span class="lineNum">     863 </span><span class="lineNoCov">          0 :     SkOpSegment* other = this;</span>
+<span class="lineNum">     864 </span><span class="lineNoCov">          0 :     while ((other = other-&gt;nextChase(&amp;start, &amp;step, &amp;spanStart, &amp;last))) {</span>
+<span class="lineNum">     865 </span><span class="lineNoCov">          0 :         if (spanStart-&gt;windSum() != SK_MinS32) {</span>
+<span class="lineNum">     866 </span>            : //            SkASSERT(spanStart-&gt;windSum() == winding);   // FIXME: is this assert too aggressive?
+<span class="lineNum">     867 </span><span class="lineNoCov">          0 :             SkASSERT(!last);</span>
+<span class="lineNum">     868 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     869 </span>            :         }
+<span class="lineNum">     870 </span><span class="lineNoCov">          0 :         (void) other-&gt;markWinding(spanStart, winding);</span>
+<span class="lineNum">     871 </span>            :     }
+<span class="lineNum">     872 </span><span class="lineNoCov">          0 :     if (lastPtr) {</span>
+<span class="lineNum">     873 </span><span class="lineNoCov">          0 :         *lastPtr = last;</span>
+<span class="lineNum">     874 </span>            :     }
+<span class="lineNum">     875 </span><span class="lineNoCov">          0 :     return success;</span>
+<a name="876"><span class="lineNum">     876 </span>            : }</a>
+<span class="lineNum">     877 </span>            : 
+<span class="lineNum">     878 </span><span class="lineNoCov">          0 : bool SkOpSegment::markAndChaseWinding(SkOpSpanBase* start, SkOpSpanBase* end,</span>
+<span class="lineNum">     879 </span>            :         int winding, int oppWinding, SkOpSpanBase** lastPtr) {
+<span class="lineNum">     880 </span><span class="lineNoCov">          0 :     SkOpSpan* spanStart = start-&gt;starter(end);</span>
+<span class="lineNum">     881 </span><span class="lineNoCov">          0 :     int step = start-&gt;step(end);</span>
+<span class="lineNum">     882 </span><span class="lineNoCov">          0 :     bool success = markWinding(spanStart, winding, oppWinding);</span>
+<span class="lineNum">     883 </span><span class="lineNoCov">          0 :     SkOpSpanBase* last = nullptr;</span>
+<span class="lineNum">     884 </span><span class="lineNoCov">          0 :     SkOpSegment* other = this;</span>
+<span class="lineNum">     885 </span><span class="lineNoCov">          0 :     while ((other = other-&gt;nextChase(&amp;start, &amp;step, &amp;spanStart, &amp;last))) {</span>
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 :         if (spanStart-&gt;windSum() != SK_MinS32) {</span>
+<span class="lineNum">     887 </span><span class="lineNoCov">          0 :             if (this-&gt;operand() == other-&gt;operand()) {</span>
+<span class="lineNum">     888 </span><span class="lineNoCov">          0 :                 if (spanStart-&gt;windSum() != winding || spanStart-&gt;oppSum() != oppWinding) {</span>
+<span class="lineNum">     889 </span><span class="lineNoCov">          0 :                     this-&gt;globalState()-&gt;setWindingFailed();</span>
+<span class="lineNum">     890 </span><span class="lineNoCov">          0 :                     return false;</span>
+<span class="lineNum">     891 </span>            :                 }
+<span class="lineNum">     892 </span>            :             } else {
+<span class="lineNum">     893 </span><span class="lineNoCov">          0 :                 SkASSERT(spanStart-&gt;windSum() == oppWinding);</span>
+<span class="lineNum">     894 </span><span class="lineNoCov">          0 :                 SkASSERT(spanStart-&gt;oppSum() == winding);</span>
+<span class="lineNum">     895 </span>            :             }
+<span class="lineNum">     896 </span><span class="lineNoCov">          0 :             SkASSERT(!last);</span>
+<span class="lineNum">     897 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     898 </span>            :         }
+<span class="lineNum">     899 </span><span class="lineNoCov">          0 :         if (this-&gt;operand() == other-&gt;operand()) {</span>
+<span class="lineNum">     900 </span><span class="lineNoCov">          0 :             (void) other-&gt;markWinding(spanStart, winding, oppWinding);</span>
+<span class="lineNum">     901 </span>            :         } else {
+<span class="lineNum">     902 </span><span class="lineNoCov">          0 :             (void) other-&gt;markWinding(spanStart, oppWinding, winding);</span>
+<span class="lineNum">     903 </span>            :         }
+<span class="lineNum">     904 </span>            :     }
+<span class="lineNum">     905 </span><span class="lineNoCov">          0 :     if (lastPtr) {</span>
+<span class="lineNum">     906 </span><span class="lineNoCov">          0 :         *lastPtr = last;</span>
+<span class="lineNum">     907 </span>            :     }
+<span class="lineNum">     908 </span><span class="lineNoCov">          0 :     return success;</span>
+<a name="909"><span class="lineNum">     909 </span>            : }</a>
+<span class="lineNum">     910 </span>            : 
+<span class="lineNum">     911 </span><span class="lineNoCov">          0 : SkOpSpanBase* SkOpSegment::markAngle(int maxWinding, int sumWinding, const SkOpAngle* angle) {</span>
+<span class="lineNum">     912 </span><span class="lineNoCov">          0 :     SkASSERT(angle-&gt;segment() == this);</span>
+<span class="lineNum">     913 </span><span class="lineNoCov">          0 :     if (UseInnerWinding(maxWinding, sumWinding)) {</span>
+<span class="lineNum">     914 </span><span class="lineNoCov">          0 :         maxWinding = sumWinding;</span>
+<span class="lineNum">     915 </span>            :     }
+<span class="lineNum">     916 </span>            :     SkOpSpanBase* last;
+<span class="lineNum">     917 </span><span class="lineNoCov">          0 :     (void) markAndChaseWinding(angle-&gt;start(), angle-&gt;end(), maxWinding, &amp;last);</span>
+<span class="lineNum">     918 </span>            : #if DEBUG_WINDING
+<span class="lineNum">     919 </span>            :     if (last) {
+<span class="lineNum">     920 </span>            :         SkDebugf(&quot;%s last seg=%d span=%d&quot;, __FUNCTION__,
+<span class="lineNum">     921 </span>            :                 last-&gt;segment()-&gt;debugID(), last-&gt;debugID());
+<span class="lineNum">     922 </span>            :         if (!last-&gt;final()) {
+<span class="lineNum">     923 </span>            :             SkDebugf(&quot; windSum=&quot;);
+<span class="lineNum">     924 </span>            :             SkPathOpsDebug::WindingPrintf(last-&gt;upCast()-&gt;windSum());
+<span class="lineNum">     925 </span>            :         }
+<span class="lineNum">     926 </span>            :         SkDebugf(&quot;\n&quot;);
+<span class="lineNum">     927 </span>            :     }
+<span class="lineNum">     928 </span>            : #endif
+<span class="lineNum">     929 </span><span class="lineNoCov">          0 :     return last;</span>
+<a name="930"><span class="lineNum">     930 </span>            : }</a>
+<span class="lineNum">     931 </span>            : 
+<span class="lineNum">     932 </span><span class="lineNoCov">          0 : SkOpSpanBase* SkOpSegment::markAngle(int maxWinding, int sumWinding, int oppMaxWinding,</span>
+<span class="lineNum">     933 </span>            :                                    int oppSumWinding, const SkOpAngle* angle) {
+<span class="lineNum">     934 </span><span class="lineNoCov">          0 :     SkASSERT(angle-&gt;segment() == this);</span>
+<span class="lineNum">     935 </span><span class="lineNoCov">          0 :     if (UseInnerWinding(maxWinding, sumWinding)) {</span>
+<span class="lineNum">     936 </span><span class="lineNoCov">          0 :         maxWinding = sumWinding;</span>
+<span class="lineNum">     937 </span>            :     }
+<span class="lineNum">     938 </span><span class="lineNoCov">          0 :     if (oppMaxWinding != oppSumWinding &amp;&amp; UseInnerWinding(oppMaxWinding, oppSumWinding)) {</span>
+<span class="lineNum">     939 </span><span class="lineNoCov">          0 :         oppMaxWinding = oppSumWinding;</span>
+<span class="lineNum">     940 </span>            :     }
+<span class="lineNum">     941 </span><span class="lineNoCov">          0 :     SkOpSpanBase* last = nullptr;</span>
+<span class="lineNum">     942 </span>            :     // caller doesn't require that this marks anything
+<span class="lineNum">     943 </span><span class="lineNoCov">          0 :     (void) markAndChaseWinding(angle-&gt;start(), angle-&gt;end(), maxWinding, oppMaxWinding, &amp;last);</span>
+<span class="lineNum">     944 </span>            : #if DEBUG_WINDING
+<span class="lineNum">     945 </span>            :     if (last) {
+<span class="lineNum">     946 </span>            :         SkDebugf(&quot;%s last segment=%d span=%d&quot;, __FUNCTION__,
+<span class="lineNum">     947 </span>            :                 last-&gt;segment()-&gt;debugID(), last-&gt;debugID());
+<span class="lineNum">     948 </span>            :         if (!last-&gt;final()) {
+<span class="lineNum">     949 </span>            :             SkDebugf(&quot; windSum=&quot;);
+<span class="lineNum">     950 </span>            :             SkPathOpsDebug::WindingPrintf(last-&gt;upCast()-&gt;windSum());
+<span class="lineNum">     951 </span>            :         }
+<span class="lineNum">     952 </span>            :         SkDebugf(&quot; \n&quot;);
+<span class="lineNum">     953 </span>            :     }
+<span class="lineNum">     954 </span>            : #endif
+<span class="lineNum">     955 </span><span class="lineNoCov">          0 :     return last;</span>
+<a name="956"><span class="lineNum">     956 </span>            : }</a>
+<span class="lineNum">     957 </span>            : 
+<span class="lineNum">     958 </span><span class="lineNoCov">          0 : void SkOpSegment::markDone(SkOpSpan* span) {</span>
+<span class="lineNum">     959 </span><span class="lineNoCov">          0 :     SkASSERT(this == span-&gt;segment());</span>
+<span class="lineNum">     960 </span><span class="lineNoCov">          0 :     if (span-&gt;done()) {</span>
+<span class="lineNum">     961 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     962 </span>            :     }
+<span class="lineNum">     963 </span>            : #if DEBUG_MARK_DONE
+<span class="lineNum">     964 </span>            :     debugShowNewWinding(__FUNCTION__, span, span-&gt;windSum(), span-&gt;oppSum());
+<span class="lineNum">     965 </span>            : #endif
+<span class="lineNum">     966 </span><span class="lineNoCov">          0 :     span-&gt;setDone(true);</span>
+<span class="lineNum">     967 </span><span class="lineNoCov">          0 :     ++fDoneCount;</span>
+<span class="lineNum">     968 </span><span class="lineNoCov">          0 :     debugValidate();</span>
+<a name="969"><span class="lineNum">     969 </span>            : }</a>
+<span class="lineNum">     970 </span>            : 
+<span class="lineNum">     971 </span><span class="lineNoCov">          0 : bool SkOpSegment::markWinding(SkOpSpan* span, int winding) {</span>
+<span class="lineNum">     972 </span><span class="lineNoCov">          0 :     SkASSERT(this == span-&gt;segment());</span>
+<span class="lineNum">     973 </span><span class="lineNoCov">          0 :     SkASSERT(winding);</span>
+<span class="lineNum">     974 </span><span class="lineNoCov">          0 :     if (span-&gt;done()) {</span>
+<span class="lineNum">     975 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     976 </span>            :     }
+<span class="lineNum">     977 </span>            : #if DEBUG_MARK_DONE
+<span class="lineNum">     978 </span>            :     debugShowNewWinding(__FUNCTION__, span, winding);
+<span class="lineNum">     979 </span>            : #endif
+<span class="lineNum">     980 </span><span class="lineNoCov">          0 :     span-&gt;setWindSum(winding);</span>
+<span class="lineNum">     981 </span><span class="lineNoCov">          0 :     debugValidate();</span>
+<span class="lineNum">     982 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="983"><span class="lineNum">     983 </span>            : }</a>
+<span class="lineNum">     984 </span>            : 
+<span class="lineNum">     985 </span><span class="lineNoCov">          0 : bool SkOpSegment::markWinding(SkOpSpan* span, int winding, int oppWinding) {</span>
+<span class="lineNum">     986 </span><span class="lineNoCov">          0 :     SkASSERT(this == span-&gt;segment());</span>
+<span class="lineNum">     987 </span><span class="lineNoCov">          0 :     SkASSERT(winding || oppWinding);</span>
+<span class="lineNum">     988 </span><span class="lineNoCov">          0 :     if (span-&gt;done()) {</span>
+<span class="lineNum">     989 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     990 </span>            :     }
+<span class="lineNum">     991 </span>            : #if DEBUG_MARK_DONE
+<span class="lineNum">     992 </span>            :     debugShowNewWinding(__FUNCTION__, span, winding, oppWinding);
+<span class="lineNum">     993 </span>            : #endif
+<span class="lineNum">     994 </span><span class="lineNoCov">          0 :     span-&gt;setWindSum(winding);</span>
+<span class="lineNum">     995 </span><span class="lineNoCov">          0 :     span-&gt;setOppSum(oppWinding);</span>
+<span class="lineNum">     996 </span><span class="lineNoCov">          0 :     debugValidate();</span>
+<span class="lineNum">     997 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="998"><span class="lineNum">     998 </span>            : }</a>
+<span class="lineNum">     999 </span>            : 
+<span class="lineNum">    1000 </span><span class="lineNoCov">          0 : bool SkOpSegment::match(const SkOpPtT* base, const SkOpSegment* testParent, double testT,</span>
+<span class="lineNum">    1001 </span>            :         const SkPoint&amp; testPt) const {
+<span class="lineNum">    1002 </span><span class="lineNoCov">          0 :     SkASSERT(this == base-&gt;segment());</span>
+<span class="lineNum">    1003 </span><span class="lineNoCov">          0 :     if (this == testParent) {</span>
+<span class="lineNum">    1004 </span><span class="lineNoCov">          0 :         if (precisely_equal(base-&gt;fT, testT)) {</span>
+<span class="lineNum">    1005 </span><span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">    1006 </span>            :         }
+<span class="lineNum">    1007 </span>            :     }
+<span class="lineNum">    1008 </span><span class="lineNoCov">          0 :     if (!SkDPoint::ApproximatelyEqual(testPt, base-&gt;fPt)) {</span>
+<span class="lineNum">    1009 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1010 </span>            :     }
+<span class="lineNum">    1011 </span><span class="lineNoCov">          0 :     return this != testParent || !this-&gt;ptsDisjoint(base-&gt;fT, base-&gt;fPt, testT, testPt);</span>
+<a name="1012"><span class="lineNum">    1012 </span>            : }</a>
+<span class="lineNum">    1013 </span>            : 
+<span class="lineNum">    1014 </span><span class="lineNoCov">          0 : static SkOpSegment* set_last(SkOpSpanBase** last, SkOpSpanBase* endSpan) {</span>
+<span class="lineNum">    1015 </span><span class="lineNoCov">          0 :     if (last) {</span>
+<span class="lineNum">    1016 </span><span class="lineNoCov">          0 :         *last = endSpan;</span>
+<span class="lineNum">    1017 </span>            :     }
+<span class="lineNum">    1018 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<a name="1019"><span class="lineNum">    1019 </span>            : }</a>
+<span class="lineNum">    1020 </span>            : 
+<span class="lineNum">    1021 </span><span class="lineNoCov">          0 : SkOpSegment* SkOpSegment::nextChase(SkOpSpanBase** startPtr, int* stepPtr, SkOpSpan** minPtr,</span>
+<span class="lineNum">    1022 </span>            :         SkOpSpanBase** last) const {
+<span class="lineNum">    1023 </span><span class="lineNoCov">          0 :     SkOpSpanBase* origStart = *startPtr;</span>
+<span class="lineNum">    1024 </span><span class="lineNoCov">          0 :     int step = *stepPtr;</span>
+<span class="lineNum">    1025 </span><span class="lineNoCov">          0 :     SkOpSpanBase* endSpan = step &gt; 0 ? origStart-&gt;upCast()-&gt;next() : origStart-&gt;prev();</span>
+<span class="lineNum">    1026 </span><span class="lineNoCov">          0 :     SkASSERT(endSpan);</span>
+<span class="lineNum">    1027 </span><span class="lineNoCov">          0 :     SkOpAngle* angle = step &gt; 0 ? endSpan-&gt;fromAngle() : endSpan-&gt;upCast()-&gt;toAngle();</span>
+<span class="lineNum">    1028 </span>            :     SkOpSpanBase* foundSpan;
+<span class="lineNum">    1029 </span>            :     SkOpSpanBase* otherEnd;
+<span class="lineNum">    1030 </span>            :     SkOpSegment* other;
+<span class="lineNum">    1031 </span><span class="lineNoCov">          0 :     if (angle == nullptr) {</span>
+<span class="lineNum">    1032 </span><span class="lineNoCov">          0 :         if (endSpan-&gt;t() != 0 &amp;&amp; endSpan-&gt;t() != 1) {</span>
+<span class="lineNum">    1033 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">    1034 </span>            :         }
+<span class="lineNum">    1035 </span><span class="lineNoCov">          0 :         SkOpPtT* otherPtT = endSpan-&gt;ptT()-&gt;next();</span>
+<span class="lineNum">    1036 </span><span class="lineNoCov">          0 :         other = otherPtT-&gt;segment();</span>
+<span class="lineNum">    1037 </span><span class="lineNoCov">          0 :         foundSpan = otherPtT-&gt;span();</span>
+<span class="lineNum">    1038 </span><span class="lineNoCov">          0 :         otherEnd = step &gt; 0</span>
+<span class="lineNum">    1039 </span><span class="lineNoCov">          0 :                 ? foundSpan-&gt;upCastable() ? foundSpan-&gt;upCast()-&gt;next() : nullptr</span>
+<span class="lineNum">    1040 </span>            :                 : foundSpan-&gt;prev();
+<span class="lineNum">    1041 </span>            :     } else {
+<span class="lineNum">    1042 </span><span class="lineNoCov">          0 :         int loopCount = angle-&gt;loopCount();</span>
+<span class="lineNum">    1043 </span><span class="lineNoCov">          0 :         if (loopCount &gt; 2) {</span>
+<span class="lineNum">    1044 </span><span class="lineNoCov">          0 :             return set_last(last, endSpan);</span>
+<span class="lineNum">    1045 </span>            :         }
+<span class="lineNum">    1046 </span><span class="lineNoCov">          0 :         const SkOpAngle* next = angle-&gt;next();</span>
+<span class="lineNum">    1047 </span><span class="lineNoCov">          0 :         if (nullptr == next) {</span>
+<span class="lineNum">    1048 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">    1049 </span>            :         }
+<span class="lineNum">    1050 </span>            : #if DEBUG_WINDING
+<span class="lineNum">    1051 </span>            :         if (angle-&gt;debugSign() != next-&gt;debugSign() &amp;&amp; !angle-&gt;segment()-&gt;contour()-&gt;isXor()
+<span class="lineNum">    1052 </span>            :                 &amp;&amp; !next-&gt;segment()-&gt;contour()-&gt;isXor()) {
+<span class="lineNum">    1053 </span>            :             SkDebugf(&quot;%s mismatched signs\n&quot;, __FUNCTION__);
+<span class="lineNum">    1054 </span>            :         }
+<span class="lineNum">    1055 </span>            : #endif
+<span class="lineNum">    1056 </span><span class="lineNoCov">          0 :         other = next-&gt;segment();</span>
+<span class="lineNum">    1057 </span><span class="lineNoCov">          0 :         foundSpan = endSpan = next-&gt;start();</span>
+<span class="lineNum">    1058 </span><span class="lineNoCov">          0 :         otherEnd = next-&gt;end();</span>
+<span class="lineNum">    1059 </span>            :     }
+<span class="lineNum">    1060 </span><span class="lineNoCov">          0 :     if (!otherEnd) {</span>
+<span class="lineNum">    1061 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">    1062 </span>            :     }
+<span class="lineNum">    1063 </span><span class="lineNoCov">          0 :     int foundStep = foundSpan-&gt;step(otherEnd);</span>
+<span class="lineNum">    1064 </span><span class="lineNoCov">          0 :     if (*stepPtr != foundStep) {</span>
+<span class="lineNum">    1065 </span><span class="lineNoCov">          0 :         return set_last(last, endSpan);</span>
+<span class="lineNum">    1066 </span>            :     }
+<span class="lineNum">    1067 </span><span class="lineNoCov">          0 :     SkASSERT(*startPtr);</span>
+<span class="lineNum">    1068 </span>            : //    SkASSERT(otherEnd &gt;= 0);
+<span class="lineNum">    1069 </span><span class="lineNoCov">          0 :     SkOpSpan* origMin = step &lt; 0 ? origStart-&gt;prev() : origStart-&gt;upCast();</span>
+<span class="lineNum">    1070 </span><span class="lineNoCov">          0 :     SkOpSpan* foundMin = foundSpan-&gt;starter(otherEnd);</span>
+<span class="lineNum">    1071 </span><span class="lineNoCov">          0 :     if (foundMin-&gt;windValue() != origMin-&gt;windValue()</span>
+<span class="lineNum">    1072 </span><span class="lineNoCov">          0 :             || foundMin-&gt;oppValue() != origMin-&gt;oppValue()) {</span>
+<span class="lineNum">    1073 </span><span class="lineNoCov">          0 :           return set_last(last, endSpan);</span>
+<span class="lineNum">    1074 </span>            :     }
+<span class="lineNum">    1075 </span><span class="lineNoCov">          0 :     *startPtr = foundSpan;</span>
+<span class="lineNum">    1076 </span><span class="lineNoCov">          0 :     *stepPtr = foundStep;</span>
+<span class="lineNum">    1077 </span><span class="lineNoCov">          0 :     if (minPtr) {</span>
+<span class="lineNum">    1078 </span><span class="lineNoCov">          0 :         *minPtr = foundMin;</span>
+<span class="lineNum">    1079 </span>            :     }
+<span class="lineNum">    1080 </span><span class="lineNoCov">          0 :     return other;</span>
+<span class="lineNum">    1081 </span>            : }
+<a name="1082"><span class="lineNum">    1082 </span>            : </a>
+<span class="lineNum">    1083 </span>            : // Please keep this in sync with DebugClearVisited()
+<span class="lineNum">    1084 </span><span class="lineNoCov">          0 : void SkOpSegment::ClearVisited(SkOpSpanBase* span) {</span>
+<span class="lineNum">    1085 </span>            :     // reset visited flag back to false
+<span class="lineNum">    1086 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">    1087 </span><span class="lineNoCov">          0 :         SkOpPtT* ptT = span-&gt;ptT(), * stopPtT = ptT;</span>
+<span class="lineNum">    1088 </span><span class="lineNoCov">          0 :         while ((ptT = ptT-&gt;next()) != stopPtT) {</span>
+<span class="lineNum">    1089 </span><span class="lineNoCov">          0 :             SkOpSegment* opp = ptT-&gt;segment();</span>
+<span class="lineNum">    1090 </span><span class="lineNoCov">          0 :             opp-&gt;resetVisited();</span>
+<span class="lineNum">    1091 </span>            :         }
+<span class="lineNum">    1092 </span><span class="lineNoCov">          0 :     } while (!span-&gt;final() &amp;&amp; (span = span-&gt;upCast()-&gt;next()));</span>
+<span class="lineNum">    1093 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">    1094 </span>            : 
+<span class="lineNum">    1095 </span>            : // Please keep this in sync with debugMissingCoincidence()
+<span class="lineNum">    1096 </span>            : // look for pairs of undetected coincident curves
+<span class="lineNum">    1097 </span>            : // assumes that segments going in have visited flag clear
+<span class="lineNum">    1098 </span>            : // Even though pairs of curves correct detect coincident runs, a run may be missed
+<span class="lineNum">    1099 </span>            : // if the coincidence is a product of multiple intersections. For instance, given
+<span class="lineNum">    1100 </span>            : // curves A, B, and C:
+<span class="lineNum">    1101 </span>            : // A-B intersect at a point 1; A-C and B-C intersect at point 2, so near
+<span class="lineNum">    1102 </span>            : // the end of C that the intersection is replaced with the end of C.
+<a name="1103"><span class="lineNum">    1103 </span>            : // Even though A-B correctly do not detect an intersection at point 2,</a>
+<span class="lineNum">    1104 </span>            : // the resulting run from point 1 to point 2 is coincident on A and B.
+<span class="lineNum">    1105 </span><span class="lineNoCov">          0 : bool SkOpSegment::missingCoincidence() {</span>
+<span class="lineNum">    1106 </span><span class="lineNoCov">          0 :     if (this-&gt;done()) {</span>
+<span class="lineNum">    1107 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1108 </span>            :     }
+<span class="lineNum">    1109 </span><span class="lineNoCov">          0 :     SkOpSpan* prior = nullptr;</span>
+<span class="lineNum">    1110 </span><span class="lineNoCov">          0 :     SkOpSpanBase* spanBase = &amp;fHead;</span>
+<span class="lineNum">    1111 </span><span class="lineNoCov">          0 :     bool result = false;</span>
+<span class="lineNum">    1112 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">    1113 </span><span class="lineNoCov">          0 :         SkOpPtT* ptT = spanBase-&gt;ptT(), * spanStopPtT = ptT;</span>
+<span class="lineNum">    1114 </span><span class="lineNoCov">          0 :         SkOPASSERT(ptT-&gt;span() == spanBase);</span>
+<span class="lineNum">    1115 </span><span class="lineNoCov">          0 :         while ((ptT = ptT-&gt;next()) != spanStopPtT) {</span>
+<span class="lineNum">    1116 </span><span class="lineNoCov">          0 :             if (ptT-&gt;deleted()) {</span>
+<span class="lineNum">    1117 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1118 </span>            :             }
+<span class="lineNum">    1119 </span><span class="lineNoCov">          0 :             SkOpSegment* opp = ptT-&gt;span()-&gt;segment();</span>
+<span class="lineNum">    1120 </span><span class="lineNoCov">          0 :             if (opp-&gt;done()) {</span>
+<span class="lineNum">    1121 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1122 </span>            :             }
+<span class="lineNum">    1123 </span>            :             // when opp is encounted the 1st time, continue; on 2nd encounter, look for coincidence
+<span class="lineNum">    1124 </span><span class="lineNoCov">          0 :             if (!opp-&gt;visited()) {</span>
+<span class="lineNum">    1125 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1126 </span>            :             }
+<span class="lineNum">    1127 </span><span class="lineNoCov">          0 :             if (spanBase == &amp;fHead) {</span>
+<span class="lineNum">    1128 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1129 </span>            :             }
+<span class="lineNum">    1130 </span><span class="lineNoCov">          0 :             if (ptT-&gt;segment() == this) {</span>
+<span class="lineNum">    1131 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1132 </span>            :             }
+<span class="lineNum">    1133 </span><span class="lineNoCov">          0 :             SkOpSpan* span = spanBase-&gt;upCastable();</span>
+<span class="lineNum">    1134 </span>            :             // FIXME?: this assumes that if the opposite segment is coincident then no more
+<span class="lineNum">    1135 </span>            :             // coincidence needs to be detected. This may not be true.
+<span class="lineNum">    1136 </span><span class="lineNoCov">          0 :             if (span &amp;&amp; span-&gt;containsCoincidence(opp)) {</span>
+<span class="lineNum">    1137 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1138 </span>            :             }
+<span class="lineNum">    1139 </span><span class="lineNoCov">          0 :             if (spanBase-&gt;containsCoinEnd(opp)) {</span>
+<span class="lineNum">    1140 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1141 </span>            :             }
+<span class="lineNum">    1142 </span><span class="lineNoCov">          0 :             SkOpPtT* priorPtT = nullptr, * priorStopPtT;</span>
+<span class="lineNum">    1143 </span>            :             // find prior span containing opp segment
+<span class="lineNum">    1144 </span><span class="lineNoCov">          0 :             SkOpSegment* priorOpp = nullptr;</span>
+<span class="lineNum">    1145 </span><span class="lineNoCov">          0 :             SkOpSpan* priorTest = spanBase-&gt;prev();</span>
+<span class="lineNum">    1146 </span><span class="lineNoCov">          0 :             while (!priorOpp &amp;&amp; priorTest) {</span>
+<span class="lineNum">    1147 </span><span class="lineNoCov">          0 :                 priorStopPtT = priorPtT = priorTest-&gt;ptT();</span>
+<span class="lineNum">    1148 </span><span class="lineNoCov">          0 :                 while ((priorPtT = priorPtT-&gt;next()) != priorStopPtT) {</span>
+<span class="lineNum">    1149 </span><span class="lineNoCov">          0 :                     if (priorPtT-&gt;deleted()) {</span>
+<span class="lineNum">    1150 </span><span class="lineNoCov">          0 :                         continue;</span>
+<span class="lineNum">    1151 </span>            :                     }
+<span class="lineNum">    1152 </span><span class="lineNoCov">          0 :                     SkOpSegment* segment = priorPtT-&gt;span()-&gt;segment();</span>
+<span class="lineNum">    1153 </span><span class="lineNoCov">          0 :                     if (segment == opp) {</span>
+<span class="lineNum">    1154 </span><span class="lineNoCov">          0 :                         prior = priorTest;</span>
+<span class="lineNum">    1155 </span><span class="lineNoCov">          0 :                         priorOpp = opp;</span>
+<span class="lineNum">    1156 </span><span class="lineNoCov">          0 :                         break;</span>
+<span class="lineNum">    1157 </span>            :                     }
+<span class="lineNum">    1158 </span>            :                 }
+<span class="lineNum">    1159 </span><span class="lineNoCov">          0 :                 priorTest = priorTest-&gt;prev();</span>
+<span class="lineNum">    1160 </span>            :             }
+<span class="lineNum">    1161 </span><span class="lineNoCov">          0 :             if (!priorOpp) {</span>
+<span class="lineNum">    1162 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1163 </span>            :             }
+<span class="lineNum">    1164 </span><span class="lineNoCov">          0 :             if (priorPtT == ptT) {</span>
+<span class="lineNum">    1165 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1166 </span>            :             }
+<span class="lineNum">    1167 </span><span class="lineNoCov">          0 :             SkOpPtT* oppStart = prior-&gt;ptT();</span>
+<span class="lineNum">    1168 </span><span class="lineNoCov">          0 :             SkOpPtT* oppEnd = spanBase-&gt;ptT();</span>
+<span class="lineNum">    1169 </span><span class="lineNoCov">          0 :             bool swapped = priorPtT-&gt;fT &gt; ptT-&gt;fT;</span>
+<span class="lineNum">    1170 </span><span class="lineNoCov">          0 :             if (swapped) {</span>
+<span class="lineNum">    1171 </span><span class="lineNoCov">          0 :                 SkTSwap(priorPtT, ptT);</span>
+<span class="lineNum">    1172 </span><span class="lineNoCov">          0 :                 SkTSwap(oppStart, oppEnd);</span>
+<span class="lineNum">    1173 </span>            :             }
+<span class="lineNum">    1174 </span><span class="lineNoCov">          0 :             SkOpCoincidence* coincidences = this-&gt;globalState()-&gt;coincidence();</span>
+<span class="lineNum">    1175 </span><span class="lineNoCov">          0 :             SkOpPtT* rootPriorPtT = priorPtT-&gt;span()-&gt;ptT();</span>
+<span class="lineNum">    1176 </span><span class="lineNoCov">          0 :             SkOpPtT* rootPtT = ptT-&gt;span()-&gt;ptT();</span>
+<span class="lineNum">    1177 </span><span class="lineNoCov">          0 :             SkOpPtT* rootOppStart = oppStart-&gt;span()-&gt;ptT();</span>
+<span class="lineNum">    1178 </span><span class="lineNoCov">          0 :             SkOpPtT* rootOppEnd = oppEnd-&gt;span()-&gt;ptT();</span>
+<span class="lineNum">    1179 </span><span class="lineNoCov">          0 :             if (coincidences-&gt;contains(rootPriorPtT, rootPtT, rootOppStart, rootOppEnd)) {</span>
+<span class="lineNum">    1180 </span><span class="lineNoCov">          0 :                 goto swapBack;</span>
+<span class="lineNum">    1181 </span>            :             }
+<span class="lineNum">    1182 </span><span class="lineNoCov">          0 :             if (this-&gt;testForCoincidence(rootPriorPtT, rootPtT, prior, spanBase, opp)) {</span>
+<span class="lineNum">    1183 </span>            :             // mark coincidence
+<span class="lineNum">    1184 </span>            : #if DEBUG_COINCIDENCE_VERBOSE
+<span class="lineNum">    1185 </span>            :                 SkDebugf(&quot;%s coinSpan=%d endSpan=%d oppSpan=%d oppEndSpan=%d\n&quot;, __FUNCTION__,
+<span class="lineNum">    1186 </span>            :                         rootPriorPtT-&gt;debugID(), rootPtT-&gt;debugID(), rootOppStart-&gt;debugID(),
+<span class="lineNum">    1187 </span>            :                         rootOppEnd-&gt;debugID());
+<span class="lineNum">    1188 </span>            : #endif
+<span class="lineNum">    1189 </span><span class="lineNoCov">          0 :                 if (!coincidences-&gt;extend(rootPriorPtT, rootPtT, rootOppStart, rootOppEnd)) {</span>
+<span class="lineNum">    1190 </span><span class="lineNoCov">          0 :                     coincidences-&gt;add(rootPriorPtT, rootPtT, rootOppStart, rootOppEnd);</span>
+<span class="lineNum">    1191 </span>            :                 }
+<span class="lineNum">    1192 </span>            : #if DEBUG_COINCIDENCE
+<span class="lineNum">    1193 </span>            :                 SkASSERT(coincidences-&gt;contains(rootPriorPtT, rootPtT, rootOppStart, rootOppEnd));
+<span class="lineNum">    1194 </span>            : #endif
+<span class="lineNum">    1195 </span><span class="lineNoCov">          0 :                 result = true;</span>
+<span class="lineNum">    1196 </span>            :             }
+<span class="lineNum">    1197 </span>            :     swapBack:
+<span class="lineNum">    1198 </span><span class="lineNoCov">          0 :             if (swapped) {</span>
+<span class="lineNum">    1199 </span><span class="lineNoCov">          0 :                 SkTSwap(priorPtT, ptT);</span>
+<span class="lineNum">    1200 </span>            :             }
+<span class="lineNum">    1201 </span>            :         }
+<span class="lineNum">    1202 </span><span class="lineNoCov">          0 :     } while ((spanBase = spanBase-&gt;final() ? nullptr : spanBase-&gt;upCast()-&gt;next()));</span>
+<span class="lineNum">    1203 </span><span class="lineNoCov">          0 :     ClearVisited(&amp;fHead);</span>
+<span class="lineNum">    1204 </span><span class="lineNoCov">          0 :     return result;</span>
+<span class="lineNum">    1205 </span>            : }
+<span class="lineNum">    1206 </span>            : 
+<a name="1207"><span class="lineNum">    1207 </span>            : // please keep this in sync with debugMoveMultiples()</a>
+<span class="lineNum">    1208 </span>            : // if a span has more than one intersection, merge the other segments' span as needed
+<span class="lineNum">    1209 </span><span class="lineNoCov">          0 : bool SkOpSegment::moveMultiples() {</span>
+<span class="lineNum">    1210 </span><span class="lineNoCov">          0 :     debugValidate();</span>
+<span class="lineNum">    1211 </span><span class="lineNoCov">          0 :     SkOpSpanBase* test = &amp;fHead;</span>
+<span class="lineNum">    1212 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">    1213 </span><span class="lineNoCov">          0 :         int addCount = test-&gt;spanAddsCount();</span>
+<span class="lineNum">    1214 </span>            : //        FAIL_IF(addCount &lt; 1);
+<span class="lineNum">    1215 </span><span class="lineNoCov">          0 :         if (addCount &lt;= 1) {</span>
+<span class="lineNum">    1216 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">    1217 </span>            :         }
+<span class="lineNum">    1218 </span><span class="lineNoCov">          0 :         SkOpPtT* startPtT = test-&gt;ptT();</span>
+<span class="lineNum">    1219 </span><span class="lineNoCov">          0 :         SkOpPtT* testPtT = startPtT;</span>
+<span class="lineNum">    1220 </span><span class="lineNoCov">          0 :         do {  // iterate through all spans associated with start</span>
+<span class="lineNum">    1221 </span><span class="lineNoCov">          0 :             SkOpSpanBase* oppSpan = testPtT-&gt;span();</span>
+<span class="lineNum">    1222 </span><span class="lineNoCov">          0 :             if (oppSpan-&gt;spanAddsCount() == addCount) {</span>
+<span class="lineNum">    1223 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1224 </span>            :             }
+<span class="lineNum">    1225 </span><span class="lineNoCov">          0 :             if (oppSpan-&gt;deleted()) {</span>
+<span class="lineNum">    1226 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1227 </span>            :             }
+<span class="lineNum">    1228 </span><span class="lineNoCov">          0 :             SkOpSegment* oppSegment = oppSpan-&gt;segment();</span>
+<span class="lineNum">    1229 </span><span class="lineNoCov">          0 :             if (oppSegment == this) {</span>
+<span class="lineNum">    1230 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1231 </span>            :             }
+<span class="lineNum">    1232 </span>            :             // find range of spans to consider merging
+<span class="lineNum">    1233 </span><span class="lineNoCov">          0 :             SkOpSpanBase* oppPrev = oppSpan;</span>
+<span class="lineNum">    1234 </span><span class="lineNoCov">          0 :             SkOpSpanBase* oppFirst = oppSpan;</span>
+<span class="lineNum">    1235 </span><span class="lineNoCov">          0 :             while ((oppPrev = oppPrev-&gt;prev())) {</span>
+<span class="lineNum">    1236 </span><span class="lineNoCov">          0 :                 if (!roughly_equal(oppPrev-&gt;t(), oppSpan-&gt;t())) {</span>
+<span class="lineNum">    1237 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">    1238 </span>            :                 }
+<span class="lineNum">    1239 </span><span class="lineNoCov">          0 :                 if (oppPrev-&gt;spanAddsCount() == addCount) {</span>
+<span class="lineNum">    1240 </span><span class="lineNoCov">          0 :                     continue;</span>
+<span class="lineNum">    1241 </span>            :                 }
+<span class="lineNum">    1242 </span><span class="lineNoCov">          0 :                 if (oppPrev-&gt;deleted()) {</span>
+<span class="lineNum">    1243 </span><span class="lineNoCov">          0 :                     continue;</span>
+<span class="lineNum">    1244 </span>            :                 }
+<span class="lineNum">    1245 </span><span class="lineNoCov">          0 :                 oppFirst = oppPrev;</span>
+<span class="lineNum">    1246 </span>            :             }
+<span class="lineNum">    1247 </span><span class="lineNoCov">          0 :             SkOpSpanBase* oppNext = oppSpan;</span>
+<span class="lineNum">    1248 </span><span class="lineNoCov">          0 :             SkOpSpanBase* oppLast = oppSpan;</span>
+<span class="lineNum">    1249 </span><span class="lineNoCov">          0 :             while ((oppNext = oppNext-&gt;final() ? nullptr : oppNext-&gt;upCast()-&gt;next())) {</span>
+<span class="lineNum">    1250 </span><span class="lineNoCov">          0 :                 if (!roughly_equal(oppNext-&gt;t(), oppSpan-&gt;t())) {</span>
+<span class="lineNum">    1251 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">    1252 </span>            :                 }
+<span class="lineNum">    1253 </span><span class="lineNoCov">          0 :                 if (oppNext-&gt;spanAddsCount() == addCount) {</span>
+<span class="lineNum">    1254 </span><span class="lineNoCov">          0 :                     continue;</span>
+<span class="lineNum">    1255 </span>            :                 }
+<span class="lineNum">    1256 </span><span class="lineNoCov">          0 :                 if (oppNext-&gt;deleted()) {</span>
+<span class="lineNum">    1257 </span><span class="lineNoCov">          0 :                     continue;</span>
+<span class="lineNum">    1258 </span>            :                 }
+<span class="lineNum">    1259 </span><span class="lineNoCov">          0 :                 oppLast = oppNext;</span>
+<span class="lineNum">    1260 </span>            :             }
+<span class="lineNum">    1261 </span><span class="lineNoCov">          0 :             if (oppFirst == oppLast) {</span>
+<span class="lineNum">    1262 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1263 </span>            :             }
+<span class="lineNum">    1264 </span><span class="lineNoCov">          0 :             SkOpSpanBase* oppTest = oppFirst;</span>
+<span class="lineNum">    1265 </span><span class="lineNoCov">          0 :             do {</span>
+<span class="lineNum">    1266 </span><span class="lineNoCov">          0 :                 if (oppTest == oppSpan) {</span>
+<span class="lineNum">    1267 </span><span class="lineNoCov">          0 :                     continue;</span>
+<span class="lineNum">    1268 </span>            :                 }
+<span class="lineNum">    1269 </span>            :                 // check to see if the candidate meets specific criteria:
+<span class="lineNum">    1270 </span>            :                 // it contains spans of segments in test's loop but not including 'this'
+<span class="lineNum">    1271 </span><span class="lineNoCov">          0 :                 SkOpPtT* oppStartPtT = oppTest-&gt;ptT();</span>
+<span class="lineNum">    1272 </span><span class="lineNoCov">          0 :                 SkOpPtT* oppPtT = oppStartPtT;</span>
+<span class="lineNum">    1273 </span><span class="lineNoCov">          0 :                 while ((oppPtT = oppPtT-&gt;next()) != oppStartPtT) {</span>
+<span class="lineNum">    1274 </span><span class="lineNoCov">          0 :                     SkOpSegment* oppPtTSegment = oppPtT-&gt;segment();</span>
+<span class="lineNum">    1275 </span><span class="lineNoCov">          0 :                     if (oppPtTSegment == this) {</span>
+<span class="lineNum">    1276 </span><span class="lineNoCov">          0 :                         goto tryNextSpan;</span>
+<span class="lineNum">    1277 </span>            :                     }
+<span class="lineNum">    1278 </span><span class="lineNoCov">          0 :                     SkOpPtT* matchPtT = startPtT;</span>
+<span class="lineNum">    1279 </span><span class="lineNoCov">          0 :                     do {</span>
+<span class="lineNum">    1280 </span><span class="lineNoCov">          0 :                         if (matchPtT-&gt;segment() == oppPtTSegment) {</span>
+<span class="lineNum">    1281 </span><span class="lineNoCov">          0 :                             goto foundMatch;</span>
+<span class="lineNum">    1282 </span>            :                         }
+<span class="lineNum">    1283 </span>            :                     } while ((matchPtT = matchPtT-&gt;next()) != startPtT);
+<span class="lineNum">    1284 </span><span class="lineNoCov">          0 :                     goto tryNextSpan;</span>
+<span class="lineNum">    1285 </span>            :             foundMatch:  // merge oppTest and oppSpan
+<span class="lineNum">    1286 </span><span class="lineNoCov">          0 :                     oppSegment-&gt;debugValidate();</span>
+<span class="lineNum">    1287 </span><span class="lineNoCov">          0 :                     oppTest-&gt;mergeMatches(oppSpan);</span>
+<span class="lineNum">    1288 </span><span class="lineNoCov">          0 :                     oppTest-&gt;addOpp(oppSpan);</span>
+<span class="lineNum">    1289 </span><span class="lineNoCov">          0 :                     oppSegment-&gt;debugValidate();</span>
+<span class="lineNum">    1290 </span><span class="lineNoCov">          0 :                     goto checkNextSpan;</span>
+<span class="lineNum">    1291 </span>            :                 }
+<span class="lineNum">    1292 </span>            :         tryNextSpan:
+<span class="lineNum">    1293 </span>            :                 ;
+<span class="lineNum">    1294 </span><span class="lineNoCov">          0 :             } while (oppTest != oppLast &amp;&amp; (oppTest = oppTest-&gt;upCast()-&gt;next()));</span>
+<span class="lineNum">    1295 </span>            :         } while ((testPtT = testPtT-&gt;next()) != startPtT);
+<span class="lineNum">    1296 </span>            : checkNextSpan:
+<span class="lineNum">    1297 </span>            :         ;
+<span class="lineNum">    1298 </span><span class="lineNoCov">          0 :     } while ((test = test-&gt;final() ? nullptr : test-&gt;upCast()-&gt;next()));</span>
+<span class="lineNum">    1299 </span><span class="lineNoCov">          0 :     debugValidate();</span>
+<span class="lineNum">    1300 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">    1301 </span>            : }
+<a name="1302"><span class="lineNum">    1302 </span>            : </a>
+<span class="lineNum">    1303 </span>            : // adjacent spans may have points close by
+<span class="lineNum">    1304 </span><span class="lineNoCov">          0 : bool SkOpSegment::spansNearby(const SkOpSpanBase* refSpan, const SkOpSpanBase* checkSpan,</span>
+<span class="lineNum">    1305 </span>            :         bool* found) const {
+<span class="lineNum">    1306 </span><span class="lineNoCov">          0 :     const SkOpPtT* refHead = refSpan-&gt;ptT();</span>
+<span class="lineNum">    1307 </span><span class="lineNoCov">          0 :     const SkOpPtT* checkHead = checkSpan-&gt;ptT();</span>
+<span class="lineNum">    1308 </span>            : // if the first pt pair from adjacent spans are far apart, assume that all are far enough apart
+<span class="lineNum">    1309 </span><span class="lineNoCov">          0 :     if (!SkDPoint::WayRoughlyEqual(refHead-&gt;fPt, checkHead-&gt;fPt)) {</span>
+<span class="lineNum">    1310 </span>            : #if DEBUG_COINCIDENCE
+<span class="lineNum">    1311 </span>            :         // verify that no combination of points are close
+<span class="lineNum">    1312 </span>            :         const SkOpPtT* dBugRef = refHead;
+<span class="lineNum">    1313 </span>            :         do {
+<span class="lineNum">    1314 </span>            :             const SkOpPtT* dBugCheck = checkHead;
+<span class="lineNum">    1315 </span>            :             do {
+<span class="lineNum">    1316 </span>            :                 SkOPASSERT(!SkDPoint::ApproximatelyEqual(dBugRef-&gt;fPt, dBugCheck-&gt;fPt));
+<span class="lineNum">    1317 </span>            :                 dBugCheck = dBugCheck-&gt;next();
+<span class="lineNum">    1318 </span>            :             } while (dBugCheck != checkHead);
+<span class="lineNum">    1319 </span>            :             dBugRef = dBugRef-&gt;next();
+<span class="lineNum">    1320 </span>            :         } while (dBugRef != refHead);
+<span class="lineNum">    1321 </span>            : #endif
+<span class="lineNum">    1322 </span><span class="lineNoCov">          0 :         *found = false;</span>
+<span class="lineNum">    1323 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">    1324 </span>            :     }
+<span class="lineNum">    1325 </span>            :     // check only unique points
+<span class="lineNum">    1326 </span><span class="lineNoCov">          0 :     SkScalar distSqBest = SK_ScalarMax;</span>
+<span class="lineNum">    1327 </span><span class="lineNoCov">          0 :     const SkOpPtT* refBest = nullptr;</span>
+<span class="lineNum">    1328 </span><span class="lineNoCov">          0 :     const SkOpPtT* checkBest = nullptr;</span>
+<span class="lineNum">    1329 </span><span class="lineNoCov">          0 :     const SkOpPtT* ref = refHead;</span>
+<span class="lineNum">    1330 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">    1331 </span><span class="lineNoCov">          0 :         if (ref-&gt;deleted()) {</span>
+<span class="lineNum">    1332 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">    1333 </span>            :         }
+<span class="lineNum">    1334 </span><span class="lineNoCov">          0 :         while (ref-&gt;ptAlreadySeen(refHead)) {</span>
+<span class="lineNum">    1335 </span><span class="lineNoCov">          0 :             ref = ref-&gt;next();</span>
+<span class="lineNum">    1336 </span><span class="lineNoCov">          0 :             if (ref == refHead) {</span>
+<span class="lineNum">    1337 </span><span class="lineNoCov">          0 :                 goto doneCheckingDistance;</span>
+<span class="lineNum">    1338 </span>            :             }
+<span class="lineNum">    1339 </span>            :         }
+<span class="lineNum">    1340 </span><span class="lineNoCov">          0 :         const SkOpPtT* check = checkHead;</span>
+<span class="lineNum">    1341 </span><span class="lineNoCov">          0 :         const SkOpSegment* refSeg = ref-&gt;segment();</span>
+<span class="lineNum">    1342 </span><span class="lineNoCov">          0 :         int escapeHatch = 100000;  // defend against infinite loops</span>
+<span class="lineNum">    1343 </span><span class="lineNoCov">          0 :         do {</span>
+<span class="lineNum">    1344 </span><span class="lineNoCov">          0 :             if (check-&gt;deleted()) {</span>
+<span class="lineNum">    1345 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1346 </span>            :             }
+<span class="lineNum">    1347 </span><span class="lineNoCov">          0 :             while (check-&gt;ptAlreadySeen(checkHead)) {</span>
+<span class="lineNum">    1348 </span><span class="lineNoCov">          0 :                 check = check-&gt;next();</span>
+<span class="lineNum">    1349 </span><span class="lineNoCov">          0 :                 if (check == checkHead) {</span>
+<span class="lineNum">    1350 </span><span class="lineNoCov">          0 :                     goto nextRef;</span>
+<span class="lineNum">    1351 </span>            :                 }
+<span class="lineNum">    1352 </span>            :             }
+<span class="lineNum">    1353 </span><span class="lineNoCov">          0 :             SkScalar distSq = ref-&gt;fPt.distanceToSqd(check-&gt;fPt);</span>
+<span class="lineNum">    1354 </span><span class="lineNoCov">          0 :             if (distSqBest &gt; distSq &amp;&amp; (refSeg != check-&gt;segment()</span>
+<span class="lineNum">    1355 </span><span class="lineNoCov">          0 :                     || !refSeg-&gt;ptsDisjoint(*ref, *check))) {</span>
+<span class="lineNum">    1356 </span><span class="lineNoCov">          0 :                 distSqBest = distSq;</span>
+<span class="lineNum">    1357 </span><span class="lineNoCov">          0 :                 refBest = ref;</span>
+<span class="lineNum">    1358 </span><span class="lineNoCov">          0 :                 checkBest = check;</span>
+<span class="lineNum">    1359 </span>            :             }
+<span class="lineNum">    1360 </span><span class="lineNoCov">          0 :             if (--escapeHatch &lt;= 0) {</span>
+<span class="lineNum">    1361 </span><span class="lineNoCov">          0 :                 return false;</span>
+<span class="lineNum">    1362 </span>            :             }
+<span class="lineNum">    1363 </span>            :         } while ((check = check-&gt;next()) != checkHead);
+<span class="lineNum">    1364 </span>            :     nextRef:
+<span class="lineNum">    1365 </span>            :         ;
+<span class="lineNum">    1366 </span>            :    } while ((ref = ref-&gt;next()) != refHead);
+<span class="lineNum">    1367 </span>            : doneCheckingDistance:
+<span class="lineNum">    1368 </span><span class="lineNoCov">          0 :     *found = checkBest &amp;&amp; refBest-&gt;segment()-&gt;match(refBest, checkBest-&gt;segment(), checkBest-&gt;fT,</span>
+<span class="lineNum">    1369 </span>            :             checkBest-&gt;fPt);
+<span class="lineNum">    1370 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">    1371 </span>            : }
+<span class="lineNum">    1372 </span>            : 
+<a name="1373"><span class="lineNum">    1373 </span>            : // Please keep this function in sync with debugMoveNearby()</a>
+<span class="lineNum">    1374 </span>            : // Move nearby t values and pts so they all hang off the same span. Alignment happens later.
+<span class="lineNum">    1375 </span><span class="lineNoCov">          0 : bool SkOpSegment::moveNearby() {</span>
+<span class="lineNum">    1376 </span><span class="lineNoCov">          0 :     debugValidate();</span>
+<span class="lineNum">    1377 </span>            :     // release undeleted spans pointing to this seg that are linked to the primary span
+<span class="lineNum">    1378 </span><span class="lineNoCov">          0 :     SkOpSpanBase* spanBase = &amp;fHead;</span>
+<span class="lineNum">    1379 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">    1380 </span><span class="lineNoCov">          0 :         SkOpPtT* ptT = spanBase-&gt;ptT();</span>
+<span class="lineNum">    1381 </span><span class="lineNoCov">          0 :         const SkOpPtT* headPtT = ptT;</span>
+<span class="lineNum">    1382 </span><span class="lineNoCov">          0 :         while ((ptT = ptT-&gt;next()) != headPtT) {</span>
+<span class="lineNum">    1383 </span><span class="lineNoCov">          0 :             SkOpSpanBase* test = ptT-&gt;span();</span>
+<span class="lineNum">    1384 </span><span class="lineNoCov">          0 :             if (ptT-&gt;segment() == this &amp;&amp; !ptT-&gt;deleted() &amp;&amp; test != spanBase</span>
+<span class="lineNum">    1385 </span><span class="lineNoCov">          0 :                     &amp;&amp; test-&gt;ptT() == ptT) {</span>
+<span class="lineNum">    1386 </span><span class="lineNoCov">          0 :                 if (test-&gt;final()) {</span>
+<span class="lineNum">    1387 </span><span class="lineNoCov">          0 :                     if (spanBase == &amp;fHead) {</span>
+<span class="lineNum">    1388 </span><span class="lineNoCov">          0 :                         this-&gt;clearAll();</span>
+<span class="lineNum">    1389 </span><span class="lineNoCov">          0 :                         return true;</span>
+<span class="lineNum">    1390 </span>            :                     }
+<span class="lineNum">    1391 </span><span class="lineNoCov">          0 :                     spanBase-&gt;upCast()-&gt;release(ptT);</span>
+<span class="lineNum">    1392 </span><span class="lineNoCov">          0 :                 } else if (test-&gt;prev()) {</span>
+<span class="lineNum">    1393 </span><span class="lineNoCov">          0 :                     test-&gt;upCast()-&gt;release(headPtT);</span>
+<span class="lineNum">    1394 </span>            :                 }
+<span class="lineNum">    1395 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">    1396 </span>            :             }
+<span class="lineNum">    1397 </span>            :         }
+<span class="lineNum">    1398 </span><span class="lineNoCov">          0 :         spanBase = spanBase-&gt;upCast()-&gt;next();</span>
+<span class="lineNum">    1399 </span><span class="lineNoCov">          0 :     } while (!spanBase-&gt;final());</span>
+<span class="lineNum">    1400 </span>            : 
+<span class="lineNum">    1401 </span>            :     // This loop looks for adjacent spans which are near by
+<span class="lineNum">    1402 </span><span class="lineNoCov">          0 :     spanBase = &amp;fHead;</span>
+<span class="lineNum">    1403 </span><span class="lineNoCov">          0 :     do {  // iterate through all spans associated with start</span>
+<span class="lineNum">    1404 </span><span class="lineNoCov">          0 :         SkOpSpanBase* test = spanBase-&gt;upCast()-&gt;next();</span>
+<span class="lineNum">    1405 </span>            :         bool found;
+<span class="lineNum">    1406 </span><span class="lineNoCov">          0 :         if (!this-&gt;spansNearby(spanBase, test, &amp;found)) {</span>
+<span class="lineNum">    1407 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">    1408 </span>            :         }
+<span class="lineNum">    1409 </span><span class="lineNoCov">          0 :         if (found) {</span>
+<span class="lineNum">    1410 </span><span class="lineNoCov">          0 :             if (test-&gt;final()) {</span>
+<span class="lineNum">    1411 </span><span class="lineNoCov">          0 :                 if (spanBase-&gt;prev()) {</span>
+<span class="lineNum">    1412 </span><span class="lineNoCov">          0 :                     test-&gt;merge(spanBase-&gt;upCast());</span>
+<span class="lineNum">    1413 </span>            :                 } else {
+<span class="lineNum">    1414 </span><span class="lineNoCov">          0 :                     this-&gt;clearAll();</span>
+<span class="lineNum">    1415 </span><span class="lineNoCov">          0 :                     return true;</span>
+<span class="lineNum">    1416 </span>            :                 }
+<span class="lineNum">    1417 </span>            :             } else {
+<span class="lineNum">    1418 </span><span class="lineNoCov">          0 :                 spanBase-&gt;merge(test-&gt;upCast());</span>
+<span class="lineNum">    1419 </span>            :             }
+<span class="lineNum">    1420 </span>            :         }
+<span class="lineNum">    1421 </span><span class="lineNoCov">          0 :         spanBase = test;</span>
+<span class="lineNum">    1422 </span><span class="lineNoCov">          0 :     } while (!spanBase-&gt;final());</span>
+<span class="lineNum">    1423 </span><span class="lineNoCov">          0 :     debugValidate();</span>
+<span class="lineNum">    1424 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="1425"><span class="lineNum">    1425 </span>            : }</a>
+<span class="lineNum">    1426 </span>            : 
+<span class="lineNum">    1427 </span><span class="lineNoCov">          0 : bool SkOpSegment::operand() const {</span>
+<span class="lineNum">    1428 </span><span class="lineNoCov">          0 :     return fContour-&gt;operand();</span>
+<a name="1429"><span class="lineNum">    1429 </span>            : }</a>
+<span class="lineNum">    1430 </span>            : 
+<span class="lineNum">    1431 </span><span class="lineNoCov">          0 : bool SkOpSegment::oppXor() const {</span>
+<span class="lineNum">    1432 </span><span class="lineNoCov">          0 :     return fContour-&gt;oppXor();</span>
+<a name="1433"><span class="lineNum">    1433 </span>            : }</a>
+<span class="lineNum">    1434 </span>            : 
+<span class="lineNum">    1435 </span><span class="lineNoCov">          0 : bool SkOpSegment::ptsDisjoint(double t1, const SkPoint&amp; pt1, double t2, const SkPoint&amp; pt2) const {</span>
+<span class="lineNum">    1436 </span><span class="lineNoCov">          0 :     if (fVerb == SkPath::kLine_Verb) {</span>
+<span class="lineNum">    1437 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1438 </span>            :     }
+<span class="lineNum">    1439 </span>            :     // quads (and cubics) can loop back to nearly a line so that an opposite curve
+<span class="lineNum">    1440 </span>            :     // hits in two places with very different t values.
+<span class="lineNum">    1441 </span>            :     // OPTIMIZATION: curves could be preflighted so that, for example, something like
+<span class="lineNum">    1442 </span>            :     // 'controls contained by ends' could avoid this check for common curves
+<span class="lineNum">    1443 </span>            :     // 'ends are extremes in x or y' is cheaper to compute and real-world common
+<span class="lineNum">    1444 </span>            :     // on the other hand, the below check is relatively inexpensive
+<span class="lineNum">    1445 </span><span class="lineNoCov">          0 :     double midT = (t1 + t2) / 2;</span>
+<span class="lineNum">    1446 </span><span class="lineNoCov">          0 :     SkPoint midPt = this-&gt;ptAtT(midT);</span>
+<span class="lineNum">    1447 </span><span class="lineNoCov">          0 :     double seDistSq = SkTMax(pt1.distanceToSqd(pt2) * 2, FLT_EPSILON * 2);</span>
+<span class="lineNum">    1448 </span><span class="lineNoCov">          0 :     return midPt.distanceToSqd(pt1) &gt; seDistSq || midPt.distanceToSqd(pt2) &gt; seDistSq;</span>
+<a name="1449"><span class="lineNum">    1449 </span>            : }</a>
+<span class="lineNum">    1450 </span>            : 
+<span class="lineNum">    1451 </span><span class="lineNoCov">          0 : void SkOpSegment::setUpWindings(SkOpSpanBase* start, SkOpSpanBase* end, int* sumMiWinding,</span>
+<span class="lineNum">    1452 </span>            :         int* maxWinding, int* sumWinding) {
+<span class="lineNum">    1453 </span><span class="lineNoCov">          0 :     int deltaSum = SpanSign(start, end);</span>
+<span class="lineNum">    1454 </span><span class="lineNoCov">          0 :     *maxWinding = *sumMiWinding;</span>
+<span class="lineNum">    1455 </span><span class="lineNoCov">          0 :     *sumWinding = *sumMiWinding -= deltaSum;</span>
+<span class="lineNum">    1456 </span><span class="lineNoCov">          0 :     SkASSERT(!DEBUG_LIMIT_WIND_SUM || SkTAbs(*sumWinding) &lt;= DEBUG_LIMIT_WIND_SUM);</span>
+<a name="1457"><span class="lineNum">    1457 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">    1458 </span>            : 
+<span class="lineNum">    1459 </span><span class="lineNoCov">          0 : void SkOpSegment::setUpWindings(SkOpSpanBase* start, SkOpSpanBase* end, int* sumMiWinding,</span>
+<span class="lineNum">    1460 </span>            :         int* sumSuWinding, int* maxWinding, int* sumWinding, int* oppMaxWinding,
+<span class="lineNum">    1461 </span>            :         int* oppSumWinding) {
+<span class="lineNum">    1462 </span><span class="lineNoCov">          0 :     int deltaSum = SpanSign(start, end);</span>
+<span class="lineNum">    1463 </span><span class="lineNoCov">          0 :     int oppDeltaSum = OppSign(start, end);</span>
+<span class="lineNum">    1464 </span><span class="lineNoCov">          0 :     if (operand()) {</span>
+<span class="lineNum">    1465 </span><span class="lineNoCov">          0 :         *maxWinding = *sumSuWinding;</span>
+<span class="lineNum">    1466 </span><span class="lineNoCov">          0 :         *sumWinding = *sumSuWinding -= deltaSum;</span>
+<span class="lineNum">    1467 </span><span class="lineNoCov">          0 :         *oppMaxWinding = *sumMiWinding;</span>
+<span class="lineNum">    1468 </span><span class="lineNoCov">          0 :         *oppSumWinding = *sumMiWinding -= oppDeltaSum;</span>
+<span class="lineNum">    1469 </span>            :     } else {
+<span class="lineNum">    1470 </span><span class="lineNoCov">          0 :         *maxWinding = *sumMiWinding;</span>
+<span class="lineNum">    1471 </span><span class="lineNoCov">          0 :         *sumWinding = *sumMiWinding -= deltaSum;</span>
+<span class="lineNum">    1472 </span><span class="lineNoCov">          0 :         *oppMaxWinding = *sumSuWinding;</span>
+<span class="lineNum">    1473 </span><span class="lineNoCov">          0 :         *oppSumWinding = *sumSuWinding -= oppDeltaSum;</span>
+<span class="lineNum">    1474 </span>            :     }
+<span class="lineNum">    1475 </span><span class="lineNoCov">          0 :     SkASSERT(!DEBUG_LIMIT_WIND_SUM || SkTAbs(*sumWinding) &lt;= DEBUG_LIMIT_WIND_SUM);</span>
+<span class="lineNum">    1476 </span><span class="lineNoCov">          0 :     SkASSERT(!DEBUG_LIMIT_WIND_SUM || SkTAbs(*oppSumWinding) &lt;= DEBUG_LIMIT_WIND_SUM);</span>
+<a name="1477"><span class="lineNum">    1477 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">    1478 </span>            : 
+<span class="lineNum">    1479 </span><span class="lineNoCov">          0 : bool SkOpSegment::sortAngles() {</span>
+<span class="lineNum">    1480 </span><span class="lineNoCov">          0 :     SkOpSpanBase* span = &amp;this-&gt;fHead;</span>
+<span class="lineNum">    1481 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">    1482 </span><span class="lineNoCov">          0 :         SkOpAngle* fromAngle = span-&gt;fromAngle();</span>
+<span class="lineNum">    1483 </span><span class="lineNoCov">          0 :         SkOpAngle* toAngle = span-&gt;final() ? nullptr : span-&gt;upCast()-&gt;toAngle();</span>
+<span class="lineNum">    1484 </span><span class="lineNoCov">          0 :         if (!fromAngle &amp;&amp; !toAngle) {</span>
+<span class="lineNum">    1485 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">    1486 </span>            :         }
+<span class="lineNum">    1487 </span>            : #if DEBUG_ANGLE
+<span class="lineNum">    1488 </span>            :         bool wroteAfterHeader = false;
+<span class="lineNum">    1489 </span>            : #endif
+<span class="lineNum">    1490 </span><span class="lineNoCov">          0 :         SkOpAngle* baseAngle = fromAngle;</span>
+<span class="lineNum">    1491 </span><span class="lineNoCov">          0 :         if (fromAngle &amp;&amp; toAngle) {</span>
+<span class="lineNum">    1492 </span>            : #if DEBUG_ANGLE
+<span class="lineNum">    1493 </span>            :             SkDebugf(&quot;%s [%d] tStart=%1.9g [%d]\n&quot;, __FUNCTION__, debugID(), span-&gt;t(),
+<span class="lineNum">    1494 </span>            :                     span-&gt;debugID());
+<span class="lineNum">    1495 </span>            :             wroteAfterHeader = true;
+<span class="lineNum">    1496 </span>            : #endif
+<span class="lineNum">    1497 </span><span class="lineNoCov">          0 :             FAIL_IF(!fromAngle-&gt;insert(toAngle));</span>
+<span class="lineNum">    1498 </span><span class="lineNoCov">          0 :         } else if (!fromAngle) {</span>
+<span class="lineNum">    1499 </span><span class="lineNoCov">          0 :             baseAngle = toAngle;</span>
+<span class="lineNum">    1500 </span>            :         }
+<span class="lineNum">    1501 </span><span class="lineNoCov">          0 :         SkOpPtT* ptT = span-&gt;ptT(), * stopPtT = ptT;</span>
+<span class="lineNum">    1502 </span><span class="lineNoCov">          0 :         do {</span>
+<span class="lineNum">    1503 </span><span class="lineNoCov">          0 :             SkOpSpanBase* oSpan = ptT-&gt;span();</span>
+<span class="lineNum">    1504 </span><span class="lineNoCov">          0 :             if (oSpan == span) {</span>
+<span class="lineNum">    1505 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1506 </span>            :             }
+<span class="lineNum">    1507 </span><span class="lineNoCov">          0 :             SkOpAngle* oAngle = oSpan-&gt;fromAngle();</span>
+<span class="lineNum">    1508 </span><span class="lineNoCov">          0 :             if (oAngle) {</span>
+<span class="lineNum">    1509 </span>            : #if DEBUG_ANGLE
+<span class="lineNum">    1510 </span>            :                 if (!wroteAfterHeader) {
+<span class="lineNum">    1511 </span>            :                     SkDebugf(&quot;%s [%d] tStart=%1.9g [%d]\n&quot;, __FUNCTION__, debugID(),
+<span class="lineNum">    1512 </span>            :                             span-&gt;t(), span-&gt;debugID());
+<span class="lineNum">    1513 </span>            :                     wroteAfterHeader = true;
+<span class="lineNum">    1514 </span>            :                 }
+<span class="lineNum">    1515 </span>            : #endif
+<span class="lineNum">    1516 </span><span class="lineNoCov">          0 :                 if (!oAngle-&gt;loopContains(baseAngle)) {</span>
+<span class="lineNum">    1517 </span><span class="lineNoCov">          0 :                     baseAngle-&gt;insert(oAngle);</span>
+<span class="lineNum">    1518 </span>            :                 }
+<span class="lineNum">    1519 </span>            :             }
+<span class="lineNum">    1520 </span><span class="lineNoCov">          0 :             if (!oSpan-&gt;final()) {</span>
+<span class="lineNum">    1521 </span><span class="lineNoCov">          0 :                 oAngle = oSpan-&gt;upCast()-&gt;toAngle();</span>
+<span class="lineNum">    1522 </span><span class="lineNoCov">          0 :                 if (oAngle) {</span>
+<span class="lineNum">    1523 </span>            : #if DEBUG_ANGLE
+<span class="lineNum">    1524 </span>            :                     if (!wroteAfterHeader) {
+<span class="lineNum">    1525 </span>            :                         SkDebugf(&quot;%s [%d] tStart=%1.9g [%d]\n&quot;, __FUNCTION__, debugID(),
+<span class="lineNum">    1526 </span>            :                                 span-&gt;t(), span-&gt;debugID());
+<span class="lineNum">    1527 </span>            :                         wroteAfterHeader = true;
+<span class="lineNum">    1528 </span>            :                     }
+<span class="lineNum">    1529 </span>            : #endif
+<span class="lineNum">    1530 </span><span class="lineNoCov">          0 :                     if (!oAngle-&gt;loopContains(baseAngle)) {</span>
+<span class="lineNum">    1531 </span><span class="lineNoCov">          0 :                         baseAngle-&gt;insert(oAngle);</span>
+<span class="lineNum">    1532 </span>            :                     }
+<span class="lineNum">    1533 </span>            :                 }
+<span class="lineNum">    1534 </span>            :             }
+<span class="lineNum">    1535 </span>            :         } while ((ptT = ptT-&gt;next()) != stopPtT);
+<span class="lineNum">    1536 </span><span class="lineNoCov">          0 :         if (baseAngle-&gt;loopCount() == 1) {</span>
+<span class="lineNum">    1537 </span><span class="lineNoCov">          0 :             span-&gt;setFromAngle(nullptr);</span>
+<span class="lineNum">    1538 </span><span class="lineNoCov">          0 :             if (toAngle) {</span>
+<span class="lineNum">    1539 </span><span class="lineNoCov">          0 :                 span-&gt;upCast()-&gt;setToAngle(nullptr);</span>
+<span class="lineNum">    1540 </span>            :             }
+<span class="lineNum">    1541 </span><span class="lineNoCov">          0 :             baseAngle = nullptr;</span>
+<span class="lineNum">    1542 </span>            :         }
+<span class="lineNum">    1543 </span>            : #if DEBUG_SORT
+<span class="lineNum">    1544 </span>            :         SkASSERT(!baseAngle || baseAngle-&gt;loopCount() &gt; 1);
+<span class="lineNum">    1545 </span>            : #endif
+<span class="lineNum">    1546 </span><span class="lineNoCov">          0 :     } while (!span-&gt;final() &amp;&amp; (span = span-&gt;upCast()-&gt;next()));</span>
+<span class="lineNum">    1547 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="1548"><span class="lineNum">    1548 </span>            : }</a>
+<span class="lineNum">    1549 </span>            : 
+<span class="lineNum">    1550 </span><span class="lineNoCov">          0 : bool SkOpSegment::subDivide(const SkOpSpanBase* start, const SkOpSpanBase* end,</span>
+<span class="lineNum">    1551 </span>            :         SkDCurve* edge) const {
+<span class="lineNum">    1552 </span><span class="lineNoCov">          0 :     SkASSERT(start != end);</span>
+<span class="lineNum">    1553 </span><span class="lineNoCov">          0 :     const SkOpPtT&amp; startPtT = *start-&gt;ptT();</span>
+<span class="lineNum">    1554 </span><span class="lineNoCov">          0 :     const SkOpPtT&amp; endPtT = *end-&gt;ptT();</span>
+<span class="lineNum">    1555 </span><span class="lineNoCov">          0 :     SkDEBUGCODE(edge-&gt;fVerb = fVerb);</span>
+<span class="lineNum">    1556 </span><span class="lineNoCov">          0 :     edge-&gt;fCubic[0].set(startPtT.fPt);</span>
+<span class="lineNum">    1557 </span><span class="lineNoCov">          0 :     int points = SkPathOpsVerbToPoints(fVerb);</span>
+<span class="lineNum">    1558 </span><span class="lineNoCov">          0 :     edge-&gt;fCubic[points].set(endPtT.fPt);</span>
+<span class="lineNum">    1559 </span><span class="lineNoCov">          0 :     if (fVerb == SkPath::kLine_Verb) {</span>
+<span class="lineNum">    1560 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1561 </span>            :     }
+<span class="lineNum">    1562 </span><span class="lineNoCov">          0 :     double startT = startPtT.fT;</span>
+<span class="lineNum">    1563 </span><span class="lineNoCov">          0 :     double endT = endPtT.fT;</span>
+<span class="lineNum">    1564 </span><span class="lineNoCov">          0 :     if ((startT == 0 || endT == 0) &amp;&amp; (startT == 1 || endT == 1)) {</span>
+<span class="lineNum">    1565 </span>            :         // don't compute midpoints if we already have them
+<span class="lineNum">    1566 </span><span class="lineNoCov">          0 :         if (fVerb == SkPath::kQuad_Verb) {</span>
+<span class="lineNum">    1567 </span><span class="lineNoCov">          0 :             edge-&gt;fLine[1].set(fPts[1]);</span>
+<span class="lineNum">    1568 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">    1569 </span>            :         }
+<span class="lineNum">    1570 </span><span class="lineNoCov">          0 :         if (fVerb == SkPath::kConic_Verb) {</span>
+<span class="lineNum">    1571 </span><span class="lineNoCov">          0 :             edge-&gt;fConic[1].set(fPts[1]);</span>
+<span class="lineNum">    1572 </span><span class="lineNoCov">          0 :             edge-&gt;fConic.fWeight = fWeight;</span>
+<span class="lineNum">    1573 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">    1574 </span>            :         }
+<span class="lineNum">    1575 </span><span class="lineNoCov">          0 :         SkASSERT(fVerb == SkPath::kCubic_Verb);</span>
+<span class="lineNum">    1576 </span><span class="lineNoCov">          0 :         if (startT == 0) {</span>
+<span class="lineNum">    1577 </span><span class="lineNoCov">          0 :             edge-&gt;fCubic[1].set(fPts[1]);</span>
+<span class="lineNum">    1578 </span><span class="lineNoCov">          0 :             edge-&gt;fCubic[2].set(fPts[2]);</span>
+<span class="lineNum">    1579 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">    1580 </span>            :         }
+<span class="lineNum">    1581 </span><span class="lineNoCov">          0 :         edge-&gt;fCubic[1].set(fPts[2]);</span>
+<span class="lineNum">    1582 </span><span class="lineNoCov">          0 :         edge-&gt;fCubic[2].set(fPts[1]);</span>
+<span class="lineNum">    1583 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1584 </span>            :     }
+<span class="lineNum">    1585 </span><span class="lineNoCov">          0 :     if (fVerb == SkPath::kQuad_Verb) {</span>
+<span class="lineNum">    1586 </span><span class="lineNoCov">          0 :         edge-&gt;fQuad[1] = SkDQuad::SubDivide(fPts, edge-&gt;fQuad[0], edge-&gt;fQuad[2], startT, endT);</span>
+<span class="lineNum">    1587 </span><span class="lineNoCov">          0 :     } else if (fVerb == SkPath::kConic_Verb) {</span>
+<span class="lineNum">    1588 </span><span class="lineNoCov">          0 :         edge-&gt;fConic[1] = SkDConic::SubDivide(fPts, fWeight, edge-&gt;fQuad[0], edge-&gt;fQuad[2],</span>
+<span class="lineNum">    1589 </span><span class="lineNoCov">          0 :             startT, endT, &amp;edge-&gt;fConic.fWeight);</span>
+<span class="lineNum">    1590 </span>            :     } else {
+<span class="lineNum">    1591 </span><span class="lineNoCov">          0 :         SkASSERT(fVerb == SkPath::kCubic_Verb);</span>
+<span class="lineNum">    1592 </span><span class="lineNoCov">          0 :         SkDCubic::SubDivide(fPts, edge-&gt;fCubic[0], edge-&gt;fCubic[3], startT, endT, &amp;edge-&gt;fCubic[1]);</span>
+<span class="lineNum">    1593 </span>            :     }
+<span class="lineNum">    1594 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="1595"><span class="lineNum">    1595 </span>            : }</a>
+<span class="lineNum">    1596 </span>            : 
+<span class="lineNum">    1597 </span><span class="lineNoCov">          0 : bool SkOpSegment::testForCoincidence(const SkOpPtT* priorPtT, const SkOpPtT* ptT,</span>
+<span class="lineNum">    1598 </span>            :         const SkOpSpanBase* prior, const SkOpSpanBase* spanBase, const SkOpSegment* opp) const {
+<span class="lineNum">    1599 </span>            :     // average t, find mid pt
+<span class="lineNum">    1600 </span><span class="lineNoCov">          0 :     double midT = (prior-&gt;t() + spanBase-&gt;t()) / 2;</span>
+<span class="lineNum">    1601 </span><span class="lineNoCov">          0 :     SkPoint midPt = this-&gt;ptAtT(midT);</span>
+<span class="lineNum">    1602 </span><span class="lineNoCov">          0 :     bool coincident = true;</span>
+<span class="lineNum">    1603 </span>            :     // if the mid pt is not near either end pt, project perpendicular through opp seg
+<span class="lineNum">    1604 </span><span class="lineNoCov">          0 :     if (!SkDPoint::ApproximatelyEqual(priorPtT-&gt;fPt, midPt)</span>
+<span class="lineNum">    1605 </span><span class="lineNoCov">          0 :             &amp;&amp; !SkDPoint::ApproximatelyEqual(ptT-&gt;fPt, midPt)) {</span>
+<span class="lineNum">    1606 </span><span class="lineNoCov">          0 :         if (priorPtT-&gt;span() == ptT-&gt;span()) {</span>
+<span class="lineNum">    1607 </span><span class="lineNoCov">          0 :           return false;</span>
+<span class="lineNum">    1608 </span>            :         }
+<span class="lineNum">    1609 </span><span class="lineNoCov">          0 :         coincident = false;</span>
+<span class="lineNum">    1610 </span><span class="lineNoCov">          0 :         SkIntersections i;</span>
+<span class="lineNum">    1611 </span>            :         SkDCurve curvePart;
+<span class="lineNum">    1612 </span><span class="lineNoCov">          0 :         this-&gt;subDivide(prior, spanBase, &amp;curvePart);</span>
+<span class="lineNum">    1613 </span><span class="lineNoCov">          0 :         SkDVector dxdy = (*CurveDDSlopeAtT[fVerb])(curvePart, 0.5f);</span>
+<span class="lineNum">    1614 </span><span class="lineNoCov">          0 :         SkDPoint partMidPt = (*CurveDDPointAtT[fVerb])(curvePart, 0.5f);</span>
+<span class="lineNum">    1615 </span><span class="lineNoCov">          0 :         SkDLine ray = {{{midPt.fX, midPt.fY}, {partMidPt.fX + dxdy.fY, partMidPt.fY - dxdy.fX}}};</span>
+<span class="lineNum">    1616 </span>            :         SkDCurve oppPart;
+<span class="lineNum">    1617 </span><span class="lineNoCov">          0 :         opp-&gt;subDivide(priorPtT-&gt;span(), ptT-&gt;span(), &amp;oppPart);</span>
+<span class="lineNum">    1618 </span><span class="lineNoCov">          0 :         (*CurveDIntersectRay[opp-&gt;verb()])(oppPart, ray, &amp;i);</span>
+<span class="lineNum">    1619 </span>            :         // measure distance and see if it's small enough to denote coincidence
+<span class="lineNum">    1620 </span><span class="lineNoCov">          0 :         for (int index = 0; index &lt; i.used(); ++index) {</span>
+<span class="lineNum">    1621 </span><span class="lineNoCov">          0 :             if (!between(0, i[0][index], 1)) {</span>
+<span class="lineNum">    1622 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1623 </span>            :             }
+<span class="lineNum">    1624 </span><span class="lineNoCov">          0 :             SkDPoint oppPt = i.pt(index);</span>
+<span class="lineNum">    1625 </span><span class="lineNoCov">          0 :             if (oppPt.approximatelyDEqual(midPt)) {</span>
+<span class="lineNum">    1626 </span>            :                 // the coincidence can occur at almost any angle
+<span class="lineNum">    1627 </span><span class="lineNoCov">          0 :                 coincident = true;</span>
+<span class="lineNum">    1628 </span>            :             }
+<span class="lineNum">    1629 </span>            :         }
+<span class="lineNum">    1630 </span>            :     }
+<span class="lineNum">    1631 </span><span class="lineNoCov">          0 :     return coincident;</span>
+<a name="1632"><span class="lineNum">    1632 </span>            : }</a>
+<span class="lineNum">    1633 </span>            : 
+<span class="lineNum">    1634 </span><span class="lineNoCov">          0 : SkOpSpan* SkOpSegment::undoneSpan() {</span>
+<span class="lineNum">    1635 </span><span class="lineNoCov">          0 :     SkOpSpan* span = &amp;fHead;</span>
+<span class="lineNum">    1636 </span>            :     SkOpSpanBase* next;
+<span class="lineNum">    1637 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">    1638 </span><span class="lineNoCov">          0 :         next = span-&gt;next();</span>
+<span class="lineNum">    1639 </span><span class="lineNoCov">          0 :         if (!span-&gt;done()) {</span>
+<span class="lineNum">    1640 </span><span class="lineNoCov">          0 :             return span;</span>
+<span class="lineNum">    1641 </span>            :         }
+<span class="lineNum">    1642 </span><span class="lineNoCov">          0 :     } while (!next-&gt;final() &amp;&amp; (span = next-&gt;upCast()));</span>
+<span class="lineNum">    1643 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<a name="1644"><span class="lineNum">    1644 </span>            : }</a>
+<span class="lineNum">    1645 </span>            : 
+<span class="lineNum">    1646 </span><span class="lineNoCov">          0 : int SkOpSegment::updateOppWinding(const SkOpSpanBase* start, const SkOpSpanBase* end) const {</span>
+<span class="lineNum">    1647 </span><span class="lineNoCov">          0 :     const SkOpSpan* lesser = start-&gt;starter(end);</span>
+<span class="lineNum">    1648 </span><span class="lineNoCov">          0 :     int oppWinding = lesser-&gt;oppSum();</span>
+<span class="lineNum">    1649 </span><span class="lineNoCov">          0 :     int oppSpanWinding = SkOpSegment::OppSign(start, end);</span>
+<span class="lineNum">    1650 </span><span class="lineNoCov">          0 :     if (oppSpanWinding &amp;&amp; UseInnerWinding(oppWinding - oppSpanWinding, oppWinding)</span>
+<span class="lineNum">    1651 </span><span class="lineNoCov">          0 :             &amp;&amp; oppWinding != SK_MaxS32) {</span>
+<span class="lineNum">    1652 </span><span class="lineNoCov">          0 :         oppWinding -= oppSpanWinding;</span>
+<span class="lineNum">    1653 </span>            :     }
+<span class="lineNum">    1654 </span><span class="lineNoCov">          0 :     return oppWinding;</span>
+<a name="1655"><span class="lineNum">    1655 </span>            : }</a>
+<span class="lineNum">    1656 </span>            : 
+<span class="lineNum">    1657 </span><span class="lineNoCov">          0 : int SkOpSegment::updateOppWinding(const SkOpAngle* angle) const {</span>
+<span class="lineNum">    1658 </span><span class="lineNoCov">          0 :     const SkOpSpanBase* startSpan = angle-&gt;start();</span>
+<span class="lineNum">    1659 </span><span class="lineNoCov">          0 :     const SkOpSpanBase* endSpan = angle-&gt;end();</span>
+<span class="lineNum">    1660 </span><span class="lineNoCov">          0 :     return updateOppWinding(endSpan, startSpan);</span>
+<a name="1661"><span class="lineNum">    1661 </span>            : }</a>
+<span class="lineNum">    1662 </span>            : 
+<span class="lineNum">    1663 </span><span class="lineNoCov">          0 : int SkOpSegment::updateOppWindingReverse(const SkOpAngle* angle) const {</span>
+<span class="lineNum">    1664 </span><span class="lineNoCov">          0 :     const SkOpSpanBase* startSpan = angle-&gt;start();</span>
+<span class="lineNum">    1665 </span><span class="lineNoCov">          0 :     const SkOpSpanBase* endSpan = angle-&gt;end();</span>
+<span class="lineNum">    1666 </span><span class="lineNoCov">          0 :     return updateOppWinding(startSpan, endSpan);</span>
+<a name="1667"><span class="lineNum">    1667 </span>            : }</a>
+<span class="lineNum">    1668 </span>            : 
+<span class="lineNum">    1669 </span><span class="lineNoCov">          0 : int SkOpSegment::updateWinding(SkOpSpanBase* start, SkOpSpanBase* end) {</span>
+<span class="lineNum">    1670 </span><span class="lineNoCov">          0 :     SkOpSpan* lesser = start-&gt;starter(end);</span>
+<span class="lineNum">    1671 </span><span class="lineNoCov">          0 :     int winding = lesser-&gt;windSum();</span>
+<span class="lineNum">    1672 </span><span class="lineNoCov">          0 :     if (winding == SK_MinS32) {</span>
+<span class="lineNum">    1673 </span><span class="lineNoCov">          0 :         winding = lesser-&gt;computeWindSum();</span>
+<span class="lineNum">    1674 </span>            :     }
+<span class="lineNum">    1675 </span><span class="lineNoCov">          0 :     if (winding == SK_MinS32) {</span>
+<span class="lineNum">    1676 </span><span class="lineNoCov">          0 :         return winding;</span>
+<span class="lineNum">    1677 </span>            :     }
+<span class="lineNum">    1678 </span><span class="lineNoCov">          0 :     int spanWinding = SkOpSegment::SpanSign(start, end);</span>
+<span class="lineNum">    1679 </span><span class="lineNoCov">          0 :     if (winding &amp;&amp; UseInnerWinding(winding - spanWinding, winding)</span>
+<span class="lineNum">    1680 </span><span class="lineNoCov">          0 :             &amp;&amp; winding != SK_MaxS32) {</span>
+<span class="lineNum">    1681 </span><span class="lineNoCov">          0 :         winding -= spanWinding;</span>
+<span class="lineNum">    1682 </span>            :     }
+<span class="lineNum">    1683 </span><span class="lineNoCov">          0 :     return winding;</span>
+<a name="1684"><span class="lineNum">    1684 </span>            : }</a>
+<span class="lineNum">    1685 </span>            : 
+<span class="lineNum">    1686 </span><span class="lineNoCov">          0 : int SkOpSegment::updateWinding(SkOpAngle* angle) {</span>
+<span class="lineNum">    1687 </span><span class="lineNoCov">          0 :     SkOpSpanBase* startSpan = angle-&gt;start();</span>
+<span class="lineNum">    1688 </span><span class="lineNoCov">          0 :     SkOpSpanBase* endSpan = angle-&gt;end();</span>
+<span class="lineNum">    1689 </span><span class="lineNoCov">          0 :     return updateWinding(endSpan, startSpan);</span>
+<a name="1690"><span class="lineNum">    1690 </span>            : }</a>
+<span class="lineNum">    1691 </span>            : 
+<span class="lineNum">    1692 </span><span class="lineNoCov">          0 : int SkOpSegment::updateWindingReverse(const SkOpAngle* angle) {</span>
+<span class="lineNum">    1693 </span><span class="lineNoCov">          0 :     SkOpSpanBase* startSpan = angle-&gt;start();</span>
+<span class="lineNum">    1694 </span><span class="lineNoCov">          0 :     SkOpSpanBase* endSpan = angle-&gt;end();</span>
+<span class="lineNum">    1695 </span><span class="lineNoCov">          0 :     return updateWinding(startSpan, endSpan);</span>
+<span class="lineNum">    1696 </span>            : }
+<span class="lineNum">    1697 </span>            : 
+<span class="lineNum">    1698 </span>            : // OPTIMIZATION: does the following also work, and is it any faster?
+<a name="1699"><span class="lineNum">    1699 </span>            : // return outerWinding * innerWinding &gt; 0</a>
+<span class="lineNum">    1700 </span>            : //      || ((outerWinding + innerWinding &lt; 0) ^ ((outerWinding - innerWinding) &lt; 0)))
+<span class="lineNum">    1701 </span><span class="lineNoCov">          0 : bool SkOpSegment::UseInnerWinding(int outerWinding, int innerWinding) {</span>
+<span class="lineNum">    1702 </span><span class="lineNoCov">          0 :     SkASSERT(outerWinding != SK_MaxS32);</span>
+<span class="lineNum">    1703 </span><span class="lineNoCov">          0 :     SkASSERT(innerWinding != SK_MaxS32);</span>
+<span class="lineNum">    1704 </span><span class="lineNoCov">          0 :     int absOut = SkTAbs(outerWinding);</span>
+<span class="lineNum">    1705 </span><span class="lineNoCov">          0 :     int absIn = SkTAbs(innerWinding);</span>
+<span class="lineNum">    1706 </span><span class="lineNoCov">          0 :     bool result = absOut == absIn ? outerWinding &lt; 0 : absOut &lt; absIn;</span>
+<span class="lineNum">    1707 </span><span class="lineNoCov">          0 :     return result;</span>
+<a name="1708"><span class="lineNum">    1708 </span>            : }</a>
+<span class="lineNum">    1709 </span>            : 
+<span class="lineNum">    1710 </span><span class="lineNoCov">          0 : int SkOpSegment::windSum(const SkOpAngle* angle) const {</span>
+<span class="lineNum">    1711 </span><span class="lineNoCov">          0 :     const SkOpSpan* minSpan = angle-&gt;start()-&gt;starter(angle-&gt;end());</span>
+<span class="lineNum">    1712 </span><span class="lineNoCov">          0 :     return minSpan-&gt;windSum();</span>
+<span class="lineNum">    1713 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

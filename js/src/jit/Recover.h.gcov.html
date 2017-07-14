@@ -1,0 +1,805 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - js/src/jit/Recover.h</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">js/src/jit</a> - Recover.h<span style="font-size: 80%;"> (source / <a href="Recover.h.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntry">75</td>
+            <td class="headerCovTableEntryLo">12.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">8</td>
+            <td class="headerCovTableEntry">227</td>
+            <td class="headerCovTableEntryLo">3.5 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-</a>
+<span class="lineNum">       2 </span>            :  * vim: set ts=8 sts=4 et sw=4 tw=99:
+<span class="lineNum">       3 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #ifndef jit_Recover_h
+<span class="lineNum">       8 </span>            : #define jit_Recover_h
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/Attributes.h&quot;
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : #include &quot;jsarray.h&quot;
+<span class="lineNum">      13 </span>            : 
+<span class="lineNum">      14 </span>            : #include &quot;jit/MIR.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;jit/Snapshots.h&quot;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : struct JSContext;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : namespace js {
+<span class="lineNum">      20 </span>            : namespace jit {
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : // This file contains all recover instructions.
+<span class="lineNum">      23 </span>            : //
+<span class="lineNum">      24 </span>            : // A recover instruction is an equivalent of a MIR instruction which is executed
+<span class="lineNum">      25 </span>            : // before the reconstruction of a baseline frame. Recover instructions are used
+<span class="lineNum">      26 </span>            : // by resume points to fill the value which are not produced by the code
+<span class="lineNum">      27 </span>            : // compiled by IonMonkey. For example, if a value is optimized away by
+<span class="lineNum">      28 </span>            : // IonMonkey, but required by Baseline, then we should have a recover
+<span class="lineNum">      29 </span>            : // instruction to fill the missing baseline frame slot.
+<span class="lineNum">      30 </span>            : //
+<span class="lineNum">      31 </span>            : // Recover instructions are executed either during a bailout, or under a call
+<span class="lineNum">      32 </span>            : // when the stack frame is introspected. If the stack is introspected, then any
+<span class="lineNum">      33 </span>            : // use of recover instruction must lead to an invalidation of the code.
+<span class="lineNum">      34 </span>            : //
+<span class="lineNum">      35 </span>            : // For each MIR instruction where |canRecoverOnBailout| might return true, we
+<span class="lineNum">      36 </span>            : // have a RInstruction of the same name.
+<span class="lineNum">      37 </span>            : //
+<span class="lineNum">      38 </span>            : // Recover instructions are encoded by the code generator into a compact buffer
+<span class="lineNum">      39 </span>            : // (RecoverWriter). The MIR instruction method |writeRecoverData| should write a
+<span class="lineNum">      40 </span>            : // tag in the |CompactBufferWriter| which is used by
+<span class="lineNum">      41 </span>            : // |RInstruction::readRecoverData| to dispatch to the right Recover
+<span class="lineNum">      42 </span>            : // instruction. Then |writeRecoverData| writes any local fields which are
+<span class="lineNum">      43 </span>            : // necessary for the execution of the |recover| method. These fields are decoded
+<span class="lineNum">      44 </span>            : // by the Recover instruction constructor which has a |CompactBufferReader| as
+<span class="lineNum">      45 </span>            : // argument. The constructor of the Recover instruction should follow the same
+<span class="lineNum">      46 </span>            : // sequence as the |writeRecoverData| method of the MIR instruction.
+<span class="lineNum">      47 </span>            : //
+<span class="lineNum">      48 </span>            : // Recover instructions are decoded by the |SnapshotIterator| (RecoverReader),
+<span class="lineNum">      49 </span>            : // which is given as argument of the |recover| methods, in order to read the
+<span class="lineNum">      50 </span>            : // operands.  The number of operands read should be the same as the result of
+<span class="lineNum">      51 </span>            : // |numOperands|, which corresponds to the number of operands of the MIR
+<span class="lineNum">      52 </span>            : // instruction.  Operands should be decoded in the same order as the operands of
+<span class="lineNum">      53 </span>            : // the MIR instruction.
+<span class="lineNum">      54 </span>            : //
+<span class="lineNum">      55 </span>            : // The result of the |recover| method should either be a failure, or a value
+<span class="lineNum">      56 </span>            : // stored on the |SnapshotIterator|, by using the |storeInstructionResult|
+<span class="lineNum">      57 </span>            : // method.
+<span class="lineNum">      58 </span>            : 
+<span class="lineNum">      59 </span>            : #define RECOVER_OPCODE_LIST(_)                  \
+<span class="lineNum">      60 </span>            :     _(ResumePoint)                              \
+<span class="lineNum">      61 </span>            :     _(BitNot)                                   \
+<span class="lineNum">      62 </span>            :     _(BitAnd)                                   \
+<span class="lineNum">      63 </span>            :     _(BitOr)                                    \
+<span class="lineNum">      64 </span>            :     _(BitXor)                                   \
+<span class="lineNum">      65 </span>            :     _(Lsh)                                      \
+<span class="lineNum">      66 </span>            :     _(Rsh)                                      \
+<span class="lineNum">      67 </span>            :     _(Ursh)                                     \
+<span class="lineNum">      68 </span>            :     _(SignExtend)                               \
+<span class="lineNum">      69 </span>            :     _(Add)                                      \
+<span class="lineNum">      70 </span>            :     _(Sub)                                      \
+<span class="lineNum">      71 </span>            :     _(Mul)                                      \
+<span class="lineNum">      72 </span>            :     _(Div)                                      \
+<span class="lineNum">      73 </span>            :     _(Mod)                                      \
+<span class="lineNum">      74 </span>            :     _(Not)                                      \
+<span class="lineNum">      75 </span>            :     _(Concat)                                   \
+<span class="lineNum">      76 </span>            :     _(StringLength)                             \
+<span class="lineNum">      77 </span>            :     _(ArgumentsLength)                          \
+<span class="lineNum">      78 </span>            :     _(Floor)                                    \
+<span class="lineNum">      79 </span>            :     _(Ceil)                                     \
+<span class="lineNum">      80 </span>            :     _(Round)                                    \
+<span class="lineNum">      81 </span>            :     _(CharCodeAt)                               \
+<span class="lineNum">      82 </span>            :     _(FromCharCode)                             \
+<span class="lineNum">      83 </span>            :     _(Pow)                                      \
+<span class="lineNum">      84 </span>            :     _(PowHalf)                                  \
+<span class="lineNum">      85 </span>            :     _(MinMax)                                   \
+<span class="lineNum">      86 </span>            :     _(Abs)                                      \
+<span class="lineNum">      87 </span>            :     _(Sqrt)                                     \
+<span class="lineNum">      88 </span>            :     _(Atan2)                                    \
+<span class="lineNum">      89 </span>            :     _(Hypot)                                    \
+<span class="lineNum">      90 </span>            :     _(MathFunction)                             \
+<span class="lineNum">      91 </span>            :     _(Random)                                   \
+<span class="lineNum">      92 </span>            :     _(StringSplit)                              \
+<span class="lineNum">      93 </span>            :     _(NaNToZero)                                \
+<span class="lineNum">      94 </span>            :     _(RegExpMatcher)                            \
+<span class="lineNum">      95 </span>            :     _(RegExpSearcher)                           \
+<span class="lineNum">      96 </span>            :     _(RegExpTester)                             \
+<span class="lineNum">      97 </span>            :     _(StringReplace)                            \
+<span class="lineNum">      98 </span>            :     _(TypeOf)                                   \
+<span class="lineNum">      99 </span>            :     _(ToDouble)                                 \
+<span class="lineNum">     100 </span>            :     _(ToFloat32)                                \
+<span class="lineNum">     101 </span>            :     _(TruncateToInt32)                          \
+<span class="lineNum">     102 </span>            :     _(NewObject)                                \
+<span class="lineNum">     103 </span>            :     _(NewTypedArray)                            \
+<span class="lineNum">     104 </span>            :     _(NewArray)                                 \
+<span class="lineNum">     105 </span>            :     _(NewIterator)                              \
+<span class="lineNum">     106 </span>            :     _(NewDerivedTypedObject)                    \
+<span class="lineNum">     107 </span>            :     _(CreateThisWithTemplate)                   \
+<span class="lineNum">     108 </span>            :     _(Lambda)                                   \
+<span class="lineNum">     109 </span>            :     _(LambdaArrow)                              \
+<span class="lineNum">     110 </span>            :     _(SimdBox)                                  \
+<span class="lineNum">     111 </span>            :     _(ObjectState)                              \
+<span class="lineNum">     112 </span>            :     _(ArrayState)                               \
+<span class="lineNum">     113 </span>            :     _(AtomicIsLockFree)                         \
+<span class="lineNum">     114 </span>            :     _(AssertRecoveredOnBailout)
+<span class="lineNum">     115 </span>            : 
+<span class="lineNum">     116 </span>            : class RResumePoint;
+<a name="117"><span class="lineNum">     117 </span>            : class SnapshotIterator;</a>
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span><span class="lineCov">       2520 : class MOZ_NON_PARAM RInstruction</span>
+<span class="lineNum">     120 </span>            : {
+<span class="lineNum">     121 </span>            :   public:
+<span class="lineNum">     122 </span>            :     enum Opcode
+<span class="lineNum">     123 </span>            :     {
+<span class="lineNum">     124 </span>            : #   define DEFINE_OPCODES_(op) Recover_##op,
+<span class="lineNum">     125 </span>            :         RECOVER_OPCODE_LIST(DEFINE_OPCODES_)
+<span class="lineNum">     126 </span>            : #   undef DEFINE_OPCODES_
+<span class="lineNum">     127 </span>            :         Recover_Invalid
+<span class="lineNum">     128 </span>            :     };
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span>            :     virtual Opcode opcode() const = 0;
+<span class="lineNum">     131 </span>            : 
+<a name="132"><span class="lineNum">     132 </span>            :     // As opposed to the MIR, there is no need to add more methods as every</a>
+<span class="lineNum">     133 </span>            :     // other instruction is well abstracted under the &quot;recover&quot; method.
+<span class="lineNum">     134 </span><span class="lineCov">       1680 :     bool isResumePoint() const {</span>
+<span class="lineNum">     135 </span><span class="lineCov">       1680 :         return opcode() == Recover_ResumePoint;</span>
+<span class="lineNum">     136 </span>            :     }
+<span class="lineNum">     137 </span>            :     inline const RResumePoint* toResumePoint() const;
+<span class="lineNum">     138 </span>            : 
+<span class="lineNum">     139 </span>            :     // Call the copy constructor of a specific RInstruction, to do a copy of the
+<span class="lineNum">     140 </span>            :     // RInstruction content.
+<span class="lineNum">     141 </span>            :     virtual void cloneInto(RInstructionStorage* raw) const = 0;
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span>            :     // Number of allocations which are encoded in the Snapshot for recovering
+<span class="lineNum">     144 </span>            :     // the current instruction.
+<span class="lineNum">     145 </span>            :     virtual uint32_t numOperands() const = 0;
+<span class="lineNum">     146 </span>            : 
+<span class="lineNum">     147 </span>            :     // Function used to recover the value computed by this instruction. This
+<span class="lineNum">     148 </span>            :     // function reads its arguments from the allocations listed on the snapshot
+<span class="lineNum">     149 </span>            :     // iterator and stores its returned value on the snapshot iterator too.
+<span class="lineNum">     150 </span>            :     virtual MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const = 0;
+<span class="lineNum">     151 </span>            : 
+<span class="lineNum">     152 </span>            :     // Decode an RInstruction on top of the reserved storage space, based on the
+<span class="lineNum">     153 </span>            :     // tag written by the writeRecoverData function of the corresponding MIR
+<span class="lineNum">     154 </span>            :     // instruction.
+<span class="lineNum">     155 </span>            :     static void readRecoverData(CompactBufferReader&amp; reader, RInstructionStorage* raw);
+<span class="lineNum">     156 </span>            : };
+<span class="lineNum">     157 </span>            : 
+<span class="lineNum">     158 </span>            : #define RINSTRUCTION_HEADER_(op)                                        \
+<span class="lineNum">     159 </span>            :   private:                                                              \
+<span class="lineNum">     160 </span>            :     friend class RInstruction;                                          \
+<span class="lineNum">     161 </span>            :     explicit R##op(CompactBufferReader&amp; reader);                        \
+<span class="lineNum">     162 </span>            :     explicit R##op(const R##op&amp; src) = default;                         \
+<span class="lineNum">     163 </span>            :                                                                         \
+<span class="lineNum">     164 </span>            :   public:                                                               \
+<span class="lineNum">     165 </span>            :     Opcode opcode() const override {                                    \
+<span class="lineNum">     166 </span>            :         return RInstruction::Recover_##op;                              \
+<span class="lineNum">     167 </span>            :     }                                                                   \
+<span class="lineNum">     168 </span>            :     void cloneInto(RInstructionStorage* raw) const override {           \
+<span class="lineNum">     169 </span>            :         new (raw-&gt;addr()) R##op(*this);                                 \
+<span class="lineNum">     170 </span>            :     }
+<span class="lineNum">     171 </span>            : 
+<span class="lineNum">     172 </span>            : #define RINSTRUCTION_HEADER_NUM_OP_MAIN(op, numOp)                      \
+<span class="lineNum">     173 </span>            :     RINSTRUCTION_HEADER_(op)                                            \
+<span class="lineNum">     174 </span>            :     uint32_t numOperands() const override {                             \
+<span class="lineNum">     175 </span>            :         return numOp;                                                   \
+<span class="lineNum">     176 </span>            :     }
+<span class="lineNum">     177 </span>            : 
+<span class="lineNum">     178 </span>            : #ifdef DEBUG
+<span class="lineNum">     179 </span>            : # define RINSTRUCTION_HEADER_NUM_OP_(op, numOp)                         \
+<span class="lineNum">     180 </span>            :     RINSTRUCTION_HEADER_NUM_OP_MAIN(op, numOp)                          \
+<span class="lineNum">     181 </span>            :     static_assert(M##op::staticNumOperands == numOp, &quot;The recover instructions's numOperands should equal to the MIR's numOperands&quot;);
+<span class="lineNum">     182 </span>            : #else
+<span class="lineNum">     183 </span>            : # define RINSTRUCTION_HEADER_NUM_OP_(op, numOp)                         \
+<span class="lineNum">     184 </span>            :     RINSTRUCTION_HEADER_NUM_OP_MAIN(op, numOp)
+<span class="lineNum">     185 </span>            : #endif
+<span class="lineNum">     186 </span>            : 
+<span class="lineNum">     187 </span>            : class RResumePoint final : public RInstruction
+<span class="lineNum">     188 </span>            : {
+<span class="lineNum">     189 </span>            :   private:
+<span class="lineNum">     190 </span>            :     uint32_t pcOffset_;           // Offset from script-&gt;code.
+<span class="lineNum">     191 </span>            :     uint32_t numOperands_;        // Number of slots.
+<a name="192"><span class="lineNum">     192 </span>            : </a>
+<span class="lineNum">     193 </span>            :   public:
+<a name="194"><span class="lineNum">     194 </span><span class="lineCov">       5040 :     RINSTRUCTION_HEADER_(ResumePoint)</span></a>
+<span class="lineNum">     195 </span>            : 
+<span class="lineNum">     196 </span><span class="lineCov">        840 :     uint32_t pcOffset() const {</span>
+<a name="197"><span class="lineNum">     197 </span><span class="lineCov">        840 :         return pcOffset_;</span></a>
+<span class="lineNum">     198 </span>            :     }
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :     uint32_t numOperands() const override {</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :         return numOperands_;</span>
+<span class="lineNum">     201 </span>            :     }
+<span class="lineNum">     202 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     203 </span>            : };
+<span class="lineNum">     204 </span>            : 
+<span class="lineNum">     205 </span>            : class RBitNot final : public RInstruction
+<a name="206"><span class="lineNum">     206 </span>            : {</a>
+<span class="lineNum">     207 </span>            :   public:
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(BitNot, 1)</span>
+<span class="lineNum">     209 </span>            : 
+<span class="lineNum">     210 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     211 </span>            : };
+<span class="lineNum">     212 </span>            : 
+<span class="lineNum">     213 </span>            : class RBitAnd final : public RInstruction
+<a name="214"><span class="lineNum">     214 </span>            : {</a>
+<span class="lineNum">     215 </span>            :   public:
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(BitAnd, 2)</span>
+<span class="lineNum">     217 </span>            : 
+<span class="lineNum">     218 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     219 </span>            : };
+<span class="lineNum">     220 </span>            : 
+<span class="lineNum">     221 </span>            : class RBitOr final : public RInstruction
+<a name="222"><span class="lineNum">     222 </span>            : {</a>
+<span class="lineNum">     223 </span>            :   public:
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(BitOr, 2)</span>
+<span class="lineNum">     225 </span>            : 
+<span class="lineNum">     226 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     227 </span>            : };
+<span class="lineNum">     228 </span>            : 
+<span class="lineNum">     229 </span>            : class RBitXor final : public RInstruction
+<a name="230"><span class="lineNum">     230 </span>            : {</a>
+<span class="lineNum">     231 </span>            :   public:
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(BitXor, 2)</span>
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     235 </span>            : };
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span>            : class RLsh final : public RInstruction
+<a name="238"><span class="lineNum">     238 </span>            : {</a>
+<span class="lineNum">     239 </span>            :   public:
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Lsh, 2)</span>
+<span class="lineNum">     241 </span>            : 
+<span class="lineNum">     242 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     243 </span>            : };
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span>            : class RRsh final : public RInstruction
+<a name="246"><span class="lineNum">     246 </span>            : {</a>
+<span class="lineNum">     247 </span>            :   public:
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Rsh, 2)</span>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     251 </span>            : };
+<span class="lineNum">     252 </span>            : 
+<span class="lineNum">     253 </span>            : class RUrsh final : public RInstruction
+<a name="254"><span class="lineNum">     254 </span>            : {</a>
+<span class="lineNum">     255 </span>            :   public:
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Ursh, 2)</span>
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     259 </span>            : };
+<span class="lineNum">     260 </span>            : 
+<span class="lineNum">     261 </span>            : class RSignExtend final : public RInstruction
+<span class="lineNum">     262 </span>            : {
+<span class="lineNum">     263 </span>            :   private:
+<span class="lineNum">     264 </span>            :     uint8_t mode_;
+<a name="265"><span class="lineNum">     265 </span>            : </a>
+<span class="lineNum">     266 </span>            :   public:
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(SignExtend, 1)</span>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     270 </span>            : };
+<span class="lineNum">     271 </span>            : 
+<span class="lineNum">     272 </span>            : class RAdd final : public RInstruction
+<span class="lineNum">     273 </span>            : {
+<span class="lineNum">     274 </span>            :   private:
+<span class="lineNum">     275 </span>            :     bool isFloatOperation_;
+<a name="276"><span class="lineNum">     276 </span>            : </a>
+<span class="lineNum">     277 </span>            :   public:
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Add, 2)</span>
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     281 </span>            : };
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span>            : class RSub final : public RInstruction
+<span class="lineNum">     284 </span>            : {
+<span class="lineNum">     285 </span>            :   private:
+<span class="lineNum">     286 </span>            :     bool isFloatOperation_;
+<a name="287"><span class="lineNum">     287 </span>            : </a>
+<span class="lineNum">     288 </span>            :   public:
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Sub, 2)</span>
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     292 </span>            : };
+<span class="lineNum">     293 </span>            : 
+<span class="lineNum">     294 </span>            : class RMul final : public RInstruction
+<span class="lineNum">     295 </span>            : {
+<span class="lineNum">     296 </span>            :   private:
+<span class="lineNum">     297 </span>            :     bool isFloatOperation_;
+<span class="lineNum">     298 </span>            :     uint8_t mode_;
+<a name="299"><span class="lineNum">     299 </span>            : </a>
+<span class="lineNum">     300 </span>            :   public:
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Mul, 2)</span>
+<span class="lineNum">     302 </span>            : 
+<span class="lineNum">     303 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     304 </span>            : };
+<span class="lineNum">     305 </span>            : 
+<span class="lineNum">     306 </span>            : class RDiv final : public RInstruction
+<span class="lineNum">     307 </span>            : {
+<span class="lineNum">     308 </span>            :   private:
+<span class="lineNum">     309 </span>            :     bool isFloatOperation_;
+<a name="310"><span class="lineNum">     310 </span>            : </a>
+<span class="lineNum">     311 </span>            :   public:
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Div, 2)</span>
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     315 </span>            : };
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span>            : class RMod final : public RInstruction
+<a name="318"><span class="lineNum">     318 </span>            : {</a>
+<span class="lineNum">     319 </span>            :   public:
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Mod, 2)</span>
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     323 </span>            : };
+<span class="lineNum">     324 </span>            : 
+<span class="lineNum">     325 </span>            : class RNot final : public RInstruction
+<a name="326"><span class="lineNum">     326 </span>            : {</a>
+<span class="lineNum">     327 </span>            :   public:
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Not, 1)</span>
+<span class="lineNum">     329 </span>            : 
+<span class="lineNum">     330 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     331 </span>            : };
+<span class="lineNum">     332 </span>            : 
+<span class="lineNum">     333 </span>            : class RConcat final : public RInstruction
+<a name="334"><span class="lineNum">     334 </span>            : {</a>
+<span class="lineNum">     335 </span>            :   public:
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Concat, 2)</span>
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     339 </span>            : };
+<span class="lineNum">     340 </span>            : 
+<span class="lineNum">     341 </span>            : class RStringLength final : public RInstruction
+<a name="342"><span class="lineNum">     342 </span>            : {</a>
+<span class="lineNum">     343 </span>            :   public:
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(StringLength, 1)</span>
+<span class="lineNum">     345 </span>            : 
+<span class="lineNum">     346 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     347 </span>            : };
+<span class="lineNum">     348 </span>            : 
+<span class="lineNum">     349 </span>            : class RArgumentsLength final : public RInstruction
+<a name="350"><span class="lineNum">     350 </span>            : {</a>
+<span class="lineNum">     351 </span>            :   public:
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(ArgumentsLength, 0)</span>
+<span class="lineNum">     353 </span>            : 
+<span class="lineNum">     354 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     355 </span>            : };
+<span class="lineNum">     356 </span>            : 
+<span class="lineNum">     357 </span>            : 
+<span class="lineNum">     358 </span>            : class RFloor final : public RInstruction
+<a name="359"><span class="lineNum">     359 </span>            : {</a>
+<span class="lineNum">     360 </span>            :   public:
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Floor, 1)</span>
+<span class="lineNum">     362 </span>            : 
+<span class="lineNum">     363 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     364 </span>            : };
+<span class="lineNum">     365 </span>            : 
+<span class="lineNum">     366 </span>            : class RCeil final : public RInstruction
+<a name="367"><span class="lineNum">     367 </span>            : {</a>
+<span class="lineNum">     368 </span>            :   public:
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Ceil, 1)</span>
+<span class="lineNum">     370 </span>            : 
+<span class="lineNum">     371 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     372 </span>            : };
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span>            : class RRound final : public RInstruction
+<a name="375"><span class="lineNum">     375 </span>            : {</a>
+<span class="lineNum">     376 </span>            :   public:
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Round, 1)</span>
+<span class="lineNum">     378 </span>            : 
+<span class="lineNum">     379 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     380 </span>            : };
+<span class="lineNum">     381 </span>            : 
+<span class="lineNum">     382 </span>            : class RCharCodeAt final : public RInstruction
+<a name="383"><span class="lineNum">     383 </span>            : {</a>
+<span class="lineNum">     384 </span>            :   public:
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(CharCodeAt, 2)</span>
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     388 </span>            : };
+<span class="lineNum">     389 </span>            : 
+<span class="lineNum">     390 </span>            : class RFromCharCode final : public RInstruction
+<a name="391"><span class="lineNum">     391 </span>            : {</a>
+<span class="lineNum">     392 </span>            :   public:
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(FromCharCode, 1)</span>
+<span class="lineNum">     394 </span>            : 
+<span class="lineNum">     395 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     396 </span>            : };
+<span class="lineNum">     397 </span>            : 
+<span class="lineNum">     398 </span>            : class RPow final : public RInstruction
+<a name="399"><span class="lineNum">     399 </span>            : {</a>
+<span class="lineNum">     400 </span>            :   public:
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Pow, 2)</span>
+<span class="lineNum">     402 </span>            : 
+<span class="lineNum">     403 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     404 </span>            : };
+<span class="lineNum">     405 </span>            : 
+<span class="lineNum">     406 </span>            : class RPowHalf final : public RInstruction
+<a name="407"><span class="lineNum">     407 </span>            : {</a>
+<span class="lineNum">     408 </span>            :   public:
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(PowHalf, 1)</span>
+<span class="lineNum">     410 </span>            : 
+<span class="lineNum">     411 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     412 </span>            : };
+<span class="lineNum">     413 </span>            : 
+<span class="lineNum">     414 </span>            : class RMinMax final : public RInstruction
+<span class="lineNum">     415 </span>            : {
+<span class="lineNum">     416 </span>            :   private:
+<span class="lineNum">     417 </span>            :     bool isMax_;
+<a name="418"><span class="lineNum">     418 </span>            : </a>
+<span class="lineNum">     419 </span>            :   public:
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(MinMax, 2)</span>
+<span class="lineNum">     421 </span>            : 
+<span class="lineNum">     422 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     423 </span>            : };
+<span class="lineNum">     424 </span>            : 
+<span class="lineNum">     425 </span>            : class RAbs final : public RInstruction
+<a name="426"><span class="lineNum">     426 </span>            : {</a>
+<span class="lineNum">     427 </span>            :   public:
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Abs, 1)</span>
+<span class="lineNum">     429 </span>            : 
+<span class="lineNum">     430 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     431 </span>            : };
+<span class="lineNum">     432 </span>            : 
+<span class="lineNum">     433 </span>            : class RSqrt final : public RInstruction
+<span class="lineNum">     434 </span>            : {
+<span class="lineNum">     435 </span>            :   private:
+<span class="lineNum">     436 </span>            :     bool isFloatOperation_;
+<a name="437"><span class="lineNum">     437 </span>            : </a>
+<span class="lineNum">     438 </span>            :   public:
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Sqrt, 1)</span>
+<span class="lineNum">     440 </span>            : 
+<span class="lineNum">     441 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     442 </span>            : };
+<span class="lineNum">     443 </span>            : 
+<span class="lineNum">     444 </span>            : class RAtan2 final : public RInstruction
+<a name="445"><span class="lineNum">     445 </span>            : {</a>
+<span class="lineNum">     446 </span>            :   public:
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Atan2, 2)</span>
+<span class="lineNum">     448 </span>            : 
+<span class="lineNum">     449 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     450 </span>            : };
+<span class="lineNum">     451 </span>            : 
+<span class="lineNum">     452 </span>            : class RHypot final : public RInstruction
+<span class="lineNum">     453 </span>            : {
+<span class="lineNum">     454 </span>            :    private:
+<span class="lineNum">     455 </span>            :      uint32_t numOperands_;
+<a name="456"><span class="lineNum">     456 </span>            : </a>
+<span class="lineNum">     457 </span>            :    public:
+<a name="458"><span class="lineNum">     458 </span><span class="lineNoCov">          0 :      RINSTRUCTION_HEADER_(Hypot)</span></a>
+<span class="lineNum">     459 </span>            : 
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :      uint32_t numOperands() const override {</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :          return numOperands_;</span>
+<span class="lineNum">     462 </span>            :      }
+<span class="lineNum">     463 </span>            : 
+<span class="lineNum">     464 </span>            :      MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     465 </span>            : };
+<span class="lineNum">     466 </span>            : 
+<span class="lineNum">     467 </span>            : class RMathFunction final : public RInstruction
+<span class="lineNum">     468 </span>            : {
+<span class="lineNum">     469 </span>            :   private:
+<span class="lineNum">     470 </span>            :     uint8_t function_;
+<a name="471"><span class="lineNum">     471 </span>            : </a>
+<span class="lineNum">     472 </span>            :   public:
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(MathFunction, 1)</span>
+<span class="lineNum">     474 </span>            : 
+<span class="lineNum">     475 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     476 </span>            : };
+<span class="lineNum">     477 </span>            : 
+<a name="478"><span class="lineNum">     478 </span>            : class RRandom final : public RInstruction</a>
+<span class="lineNum">     479 </span>            : {
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Random, 0)</span>
+<span class="lineNum">     481 </span>            :   public:
+<span class="lineNum">     482 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     483 </span>            : };
+<span class="lineNum">     484 </span>            : 
+<span class="lineNum">     485 </span>            : class RStringSplit final : public RInstruction
+<a name="486"><span class="lineNum">     486 </span>            : {</a>
+<span class="lineNum">     487 </span>            :   public:
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(StringSplit, 2)</span>
+<span class="lineNum">     489 </span>            : 
+<span class="lineNum">     490 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     491 </span>            : };
+<span class="lineNum">     492 </span>            : 
+<span class="lineNum">     493 </span>            : class RNaNToZero final : public RInstruction
+<a name="494"><span class="lineNum">     494 </span>            : {</a>
+<span class="lineNum">     495 </span>            :   public:
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(NaNToZero, 1);</span>
+<span class="lineNum">     497 </span>            : 
+<span class="lineNum">     498 </span>            :     bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     499 </span>            : };
+<span class="lineNum">     500 </span>            : 
+<span class="lineNum">     501 </span>            : class RRegExpMatcher final : public RInstruction
+<a name="502"><span class="lineNum">     502 </span>            : {</a>
+<span class="lineNum">     503 </span>            :   public:
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(RegExpMatcher, 3)</span>
+<span class="lineNum">     505 </span>            : 
+<span class="lineNum">     506 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     507 </span>            : };
+<span class="lineNum">     508 </span>            : 
+<span class="lineNum">     509 </span>            : class RRegExpSearcher final : public RInstruction
+<a name="510"><span class="lineNum">     510 </span>            : {</a>
+<span class="lineNum">     511 </span>            :   public:
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(RegExpSearcher, 3)</span>
+<span class="lineNum">     513 </span>            : 
+<span class="lineNum">     514 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     515 </span>            : };
+<span class="lineNum">     516 </span>            : 
+<span class="lineNum">     517 </span>            : class RRegExpTester final : public RInstruction
+<a name="518"><span class="lineNum">     518 </span>            : {</a>
+<span class="lineNum">     519 </span>            :   public:
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(RegExpTester, 3)</span>
+<span class="lineNum">     521 </span>            : 
+<span class="lineNum">     522 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     523 </span>            : };
+<span class="lineNum">     524 </span>            : 
+<span class="lineNum">     525 </span>            : class RStringReplace final : public RInstruction
+<span class="lineNum">     526 </span>            : {
+<span class="lineNum">     527 </span>            :   private:
+<span class="lineNum">     528 </span>            :     bool isFlatReplacement_;
+<a name="529"><span class="lineNum">     529 </span>            : </a>
+<span class="lineNum">     530 </span>            :   public:
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(StringReplace, 3)</span>
+<span class="lineNum">     532 </span>            : 
+<span class="lineNum">     533 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     534 </span>            : };
+<span class="lineNum">     535 </span>            : 
+<span class="lineNum">     536 </span>            : class RTypeOf final : public RInstruction
+<a name="537"><span class="lineNum">     537 </span>            : {</a>
+<span class="lineNum">     538 </span>            :   public:
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(TypeOf, 1)</span>
+<span class="lineNum">     540 </span>            : 
+<span class="lineNum">     541 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     542 </span>            : };
+<span class="lineNum">     543 </span>            : 
+<span class="lineNum">     544 </span>            : class RToDouble final : public RInstruction
+<a name="545"><span class="lineNum">     545 </span>            : {</a>
+<span class="lineNum">     546 </span>            :   public:
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(ToDouble, 1)</span>
+<span class="lineNum">     548 </span>            : 
+<span class="lineNum">     549 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     550 </span>            : };
+<span class="lineNum">     551 </span>            : 
+<span class="lineNum">     552 </span>            : class RToFloat32 final : public RInstruction
+<a name="553"><span class="lineNum">     553 </span>            : {</a>
+<span class="lineNum">     554 </span>            :   public:
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(ToFloat32, 1)</span>
+<span class="lineNum">     556 </span>            : 
+<span class="lineNum">     557 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     558 </span>            : };
+<span class="lineNum">     559 </span>            : 
+<span class="lineNum">     560 </span>            : class RTruncateToInt32 final : public RInstruction
+<a name="561"><span class="lineNum">     561 </span>            : {</a>
+<span class="lineNum">     562 </span>            :   public:
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(TruncateToInt32, 1)</span>
+<span class="lineNum">     564 </span>            : 
+<span class="lineNum">     565 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     566 </span>            : };
+<span class="lineNum">     567 </span>            : 
+<span class="lineNum">     568 </span>            : class RNewObject final : public RInstruction
+<span class="lineNum">     569 </span>            : {
+<span class="lineNum">     570 </span>            :   private:
+<span class="lineNum">     571 </span>            :     MNewObject::Mode mode_;
+<a name="572"><span class="lineNum">     572 </span>            : </a>
+<span class="lineNum">     573 </span>            :   public:
+<span class="lineNum">     574 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(NewObject, 1)</span>
+<span class="lineNum">     575 </span>            : 
+<span class="lineNum">     576 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     577 </span>            : };
+<span class="lineNum">     578 </span>            : 
+<span class="lineNum">     579 </span>            : class RNewTypedArray final : public RInstruction
+<a name="580"><span class="lineNum">     580 </span>            : {</a>
+<span class="lineNum">     581 </span>            :   public:
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(NewTypedArray, 1)</span>
+<span class="lineNum">     583 </span>            : 
+<span class="lineNum">     584 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     585 </span>            : };
+<span class="lineNum">     586 </span>            : 
+<span class="lineNum">     587 </span>            : class RNewArray final : public RInstruction
+<span class="lineNum">     588 </span>            : {
+<span class="lineNum">     589 </span>            :   private:
+<span class="lineNum">     590 </span>            :     uint32_t count_;
+<a name="591"><span class="lineNum">     591 </span>            : </a>
+<span class="lineNum">     592 </span>            :   public:
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(NewArray, 1)</span>
+<span class="lineNum">     594 </span>            : 
+<span class="lineNum">     595 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     596 </span>            : };
+<span class="lineNum">     597 </span>            : 
+<span class="lineNum">     598 </span>            : class RNewIterator final : public RInstruction
+<span class="lineNum">     599 </span>            : {
+<span class="lineNum">     600 </span>            :   private:
+<span class="lineNum">     601 </span>            :     uint8_t type_;
+<a name="602"><span class="lineNum">     602 </span>            : </a>
+<span class="lineNum">     603 </span>            :   public:
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(NewIterator, 1)</span>
+<span class="lineNum">     605 </span>            : 
+<span class="lineNum">     606 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     607 </span>            : };
+<span class="lineNum">     608 </span>            : 
+<span class="lineNum">     609 </span>            : class RNewDerivedTypedObject final : public RInstruction
+<a name="610"><span class="lineNum">     610 </span>            : {</a>
+<span class="lineNum">     611 </span>            :   public:
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(NewDerivedTypedObject, 3)</span>
+<span class="lineNum">     613 </span>            : 
+<span class="lineNum">     614 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     615 </span>            : };
+<span class="lineNum">     616 </span>            : 
+<span class="lineNum">     617 </span>            : class RCreateThisWithTemplate final : public RInstruction
+<a name="618"><span class="lineNum">     618 </span>            : {</a>
+<span class="lineNum">     619 </span>            :   public:
+<span class="lineNum">     620 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(CreateThisWithTemplate, 1)</span>
+<span class="lineNum">     621 </span>            : 
+<span class="lineNum">     622 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     623 </span>            : };
+<span class="lineNum">     624 </span>            : 
+<span class="lineNum">     625 </span>            : class RLambda final : public RInstruction
+<a name="626"><span class="lineNum">     626 </span>            : {</a>
+<span class="lineNum">     627 </span>            :   public:
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(Lambda, 2)</span>
+<span class="lineNum">     629 </span>            : 
+<span class="lineNum">     630 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     631 </span>            : };
+<span class="lineNum">     632 </span>            : 
+<span class="lineNum">     633 </span>            : class RLambdaArrow final : public RInstruction
+<a name="634"><span class="lineNum">     634 </span>            : {</a>
+<span class="lineNum">     635 </span>            :   public:
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(LambdaArrow, 3)</span>
+<span class="lineNum">     637 </span>            : 
+<span class="lineNum">     638 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     639 </span>            : };
+<span class="lineNum">     640 </span>            : 
+<span class="lineNum">     641 </span>            : class RSimdBox final : public RInstruction
+<span class="lineNum">     642 </span>            : {
+<span class="lineNum">     643 </span>            :   private:
+<span class="lineNum">     644 </span>            :     uint8_t type_;
+<a name="645"><span class="lineNum">     645 </span>            : </a>
+<span class="lineNum">     646 </span>            :   public:
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(SimdBox, 1)</span>
+<span class="lineNum">     648 </span>            : 
+<span class="lineNum">     649 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     650 </span>            : };
+<span class="lineNum">     651 </span>            : 
+<span class="lineNum">     652 </span>            : class RObjectState final : public RInstruction
+<span class="lineNum">     653 </span>            : {
+<span class="lineNum">     654 </span>            :   private:
+<span class="lineNum">     655 </span>            :     uint32_t numSlots_;        // Number of slots.
+<a name="656"><span class="lineNum">     656 </span>            : </a>
+<span class="lineNum">     657 </span>            :   public:
+<a name="658"><span class="lineNum">     658 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_(ObjectState)</span></a>
+<span class="lineNum">     659 </span>            : 
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :     uint32_t numSlots() const {</span>
+<a name="661"><span class="lineNum">     661 </span><span class="lineNoCov">          0 :         return numSlots_;</span></a>
+<span class="lineNum">     662 </span>            :     }
+<span class="lineNum">     663 </span><span class="lineNoCov">          0 :     uint32_t numOperands() const override {</span>
+<span class="lineNum">     664 </span>            :         // +1 for the object.
+<span class="lineNum">     665 </span><span class="lineNoCov">          0 :         return numSlots() + 1;</span>
+<span class="lineNum">     666 </span>            :     }
+<span class="lineNum">     667 </span>            : 
+<span class="lineNum">     668 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     669 </span>            : };
+<span class="lineNum">     670 </span>            : 
+<span class="lineNum">     671 </span>            : class RArrayState final : public RInstruction
+<span class="lineNum">     672 </span>            : {
+<span class="lineNum">     673 </span>            :   private:
+<span class="lineNum">     674 </span>            :     uint32_t numElements_;
+<a name="675"><span class="lineNum">     675 </span>            : </a>
+<span class="lineNum">     676 </span>            :   public:
+<a name="677"><span class="lineNum">     677 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_(ArrayState)</span></a>
+<span class="lineNum">     678 </span>            : 
+<span class="lineNum">     679 </span><span class="lineNoCov">          0 :     uint32_t numElements() const {</span>
+<a name="680"><span class="lineNum">     680 </span><span class="lineNoCov">          0 :         return numElements_;</span></a>
+<span class="lineNum">     681 </span>            :     }
+<span class="lineNum">     682 </span><span class="lineNoCov">          0 :     uint32_t numOperands() const override {</span>
+<span class="lineNum">     683 </span>            :         // +1 for the array.
+<span class="lineNum">     684 </span>            :         // +1 for the initalized length.
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :         return numElements() + 2;</span>
+<span class="lineNum">     686 </span>            :     }
+<span class="lineNum">     687 </span>            : 
+<span class="lineNum">     688 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     689 </span>            : };
+<span class="lineNum">     690 </span>            : 
+<span class="lineNum">     691 </span>            : class RAtomicIsLockFree final : public RInstruction
+<a name="692"><span class="lineNum">     692 </span>            : {</a>
+<span class="lineNum">     693 </span>            :   public:
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(AtomicIsLockFree, 1)</span>
+<span class="lineNum">     695 </span>            : 
+<span class="lineNum">     696 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     697 </span>            : };
+<span class="lineNum">     698 </span>            : 
+<span class="lineNum">     699 </span>            : class RAssertRecoveredOnBailout final : public RInstruction
+<a name="700"><span class="lineNum">     700 </span>            : {</a>
+<span class="lineNum">     701 </span>            :   public:
+<span class="lineNum">     702 </span><span class="lineNoCov">          0 :     RINSTRUCTION_HEADER_NUM_OP_(AssertRecoveredOnBailout, 1)</span>
+<span class="lineNum">     703 </span>            : 
+<span class="lineNum">     704 </span>            :     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator&amp; iter) const override;
+<span class="lineNum">     705 </span>            : };
+<span class="lineNum">     706 </span>            : 
+<span class="lineNum">     707 </span>            : #undef RINSTRUCTION_HEADER_
+<span class="lineNum">     708 </span>            : #undef RINSTRUCTION_HEADER_NUM_OP_
+<span class="lineNum">     709 </span>            : #undef RINSTRUCTION_HEADER_NUM_OP_MAIN
+<a name="710"><span class="lineNum">     710 </span>            : </a>
+<span class="lineNum">     711 </span>            : const RResumePoint*
+<span class="lineNum">     712 </span><span class="lineCov">        840 : RInstruction::toResumePoint() const</span>
+<span class="lineNum">     713 </span>            : {
+<span class="lineNum">     714 </span><span class="lineCov">        840 :     MOZ_ASSERT(isResumePoint());</span>
+<span class="lineNum">     715 </span><span class="lineCov">        840 :     return static_cast&lt;const RResumePoint*&gt;(this);</span>
+<span class="lineNum">     716 </span>            : }
+<span class="lineNum">     717 </span>            : 
+<span class="lineNum">     718 </span>            : } // namespace jit
+<span class="lineNum">     719 </span>            : } // namespace js
+<span class="lineNum">     720 </span>            : 
+<span class="lineNum">     721 </span>            : #endif /* jit_Recover_h */
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

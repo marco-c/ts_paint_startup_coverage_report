@@ -1,0 +1,1646 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - gfx/skia/skia/src/core/SkStroke.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../index.html">top level</a> - <a href="index.html">gfx/skia/skia/src/core</a> - SkStroke.cpp<span style="font-size: 80%;"> (source / <a href="SkStroke.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">327</td>
+            <td class="headerCovTableEntry">812</td>
+            <td class="headerCovTableEntryLo">40.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">38</td>
+            <td class="headerCovTableEntry">69</td>
+            <td class="headerCovTableEntryLo">55.1 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * Copyright 2008 The Android Open Source Project
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * Use of this source code is governed by a BSD-style license that can be
+<span class="lineNum">       5 </span>            :  * found in the LICENSE file.
+<span class="lineNum">       6 </span>            :  */
+<span class="lineNum">       7 </span>            : 
+<span class="lineNum">       8 </span>            : #include &quot;SkStrokerPriv.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;SkGeometry.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;SkPathPriv.h&quot;
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : enum {
+<span class="lineNum">      13 </span>            :     kTangent_RecursiveLimit,
+<span class="lineNum">      14 </span>            :     kCubic_RecursiveLimit,
+<span class="lineNum">      15 </span>            :     kConic_RecursiveLimit,
+<span class="lineNum">      16 </span>            :     kQuad_RecursiveLimit
+<span class="lineNum">      17 </span>            : };
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : // quads with extreme widths (e.g. (0,1) (1,6) (0,3) width=5e7) recurse to point of failure
+<span class="lineNum">      20 </span>            : // largest seen for normal cubics : 5, 26
+<span class="lineNum">      21 </span>            : // largest seen for normal quads : 11
+<span class="lineNum">      22 </span>            : static const int kRecursiveLimits[] = { 5*3, 26*3, 11*3, 11*3 }; // 3x limits seen in practice
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : static_assert(0 == kTangent_RecursiveLimit, &quot;cubic_stroke_relies_on_tangent_equalling_zero&quot;);
+<span class="lineNum">      25 </span>            : static_assert(1 == kCubic_RecursiveLimit, &quot;cubic_stroke_relies_on_cubic_equalling_one&quot;);
+<span class="lineNum">      26 </span>            : static_assert(SK_ARRAY_COUNT(kRecursiveLimits) == kQuad_RecursiveLimit + 1,
+<span class="lineNum">      27 </span>            :               &quot;recursive_limits_mismatch&quot;);
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : #ifdef SK_DEBUG
+<span class="lineNum">      30 </span>            :     int gMaxRecursion[SK_ARRAY_COUNT(kRecursiveLimits)] = { 0 };
+<span class="lineNum">      31 </span>            : #endif
+<span class="lineNum">      32 </span>            : #ifndef DEBUG_QUAD_STROKER
+<span class="lineNum">      33 </span>            :     #define DEBUG_QUAD_STROKER 0
+<span class="lineNum">      34 </span>            : #endif
+<span class="lineNum">      35 </span>            : 
+<span class="lineNum">      36 </span>            : #if DEBUG_QUAD_STROKER
+<span class="lineNum">      37 </span>            :     /* Enable to show the decisions made in subdividing the curve -- helpful when the resulting
+<span class="lineNum">      38 </span>            :         stroke has more than the optimal number of quadratics and lines */
+<span class="lineNum">      39 </span>            :     #define STROKER_RESULT(resultType, depth, quadPts, format, ...) \
+<span class="lineNum">      40 </span>            :             SkDebugf(&quot;[%d] %s &quot; format &quot;\n&quot;, depth, __FUNCTION__, __VA_ARGS__), \
+<span class="lineNum">      41 </span>            :             SkDebugf(&quot;  &quot; #resultType &quot; t=(%g,%g)\n&quot;, quadPts-&gt;fStartT, quadPts-&gt;fEndT), \
+<span class="lineNum">      42 </span>            :             resultType
+<span class="lineNum">      43 </span>            :     #define STROKER_DEBUG_PARAMS(...) , __VA_ARGS__
+<span class="lineNum">      44 </span>            : #else
+<span class="lineNum">      45 </span>            :     #define STROKER_RESULT(resultType, depth, quadPts, format, ...) \
+<span class="lineNum">      46 </span>            :             resultType
+<span class="lineNum">      47 </span>            :     #define STROKER_DEBUG_PARAMS(...)
+<a name="48"><span class="lineNum">      48 </span>            : #endif</a>
+<span class="lineNum">      49 </span>            : 
+<span class="lineNum">      50 </span><span class="lineCov">         48 : static inline bool degenerate_vector(const SkVector&amp; v) {</span>
+<span class="lineNum">      51 </span><span class="lineCov">         48 :     return !SkPoint::CanNormalize(v.fX, v.fY);</span>
+<a name="52"><span class="lineNum">      52 </span>            : }</a>
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span><span class="lineCov">         29 : static bool set_normal_unitnormal(const SkPoint&amp; before, const SkPoint&amp; after, SkScalar scale,</span>
+<span class="lineNum">      55 </span>            :                                   SkScalar radius,
+<span class="lineNum">      56 </span>            :                                   SkVector* normal, SkVector* unitNormal) {
+<span class="lineNum">      57 </span><span class="lineCov">         29 :     if (!unitNormal-&gt;setNormalize((after.fX - before.fX) * scale,</span>
+<span class="lineNum">      58 </span><span class="lineCov">         29 :                                   (after.fY - before.fY) * scale)) {</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">      60 </span>            :     }
+<span class="lineNum">      61 </span><span class="lineCov">         29 :     unitNormal-&gt;rotateCCW();</span>
+<span class="lineNum">      62 </span><span class="lineCov">         29 :     unitNormal-&gt;scale(radius, normal);</span>
+<span class="lineNum">      63 </span><span class="lineCov">         29 :     return true;</span>
+<a name="64"><span class="lineNum">      64 </span>            : }</a>
+<span class="lineNum">      65 </span>            : 
+<span class="lineNum">      66 </span><span class="lineCov">          8 : static bool set_normal_unitnormal(const SkVector&amp; vec,</span>
+<span class="lineNum">      67 </span>            :                                   SkScalar radius,
+<span class="lineNum">      68 </span>            :                                   SkVector* normal, SkVector* unitNormal) {
+<span class="lineNum">      69 </span><span class="lineCov">          8 :     if (!unitNormal-&gt;setNormalize(vec.fX, vec.fY)) {</span>
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">      71 </span>            :     }
+<span class="lineNum">      72 </span><span class="lineCov">          8 :     unitNormal-&gt;rotateCCW();</span>
+<span class="lineNum">      73 </span><span class="lineCov">          8 :     unitNormal-&gt;scale(radius, normal);</span>
+<span class="lineNum">      74 </span><span class="lineCov">          8 :     return true;</span>
+<span class="lineNum">      75 </span>            : }
+<span class="lineNum">      76 </span>            : 
+<span class="lineNum">      77 </span>            : ///////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">      78 </span>            : 
+<span class="lineNum">      79 </span>            : struct SkQuadConstruct {    // The state of the quad stroke under construction.
+<span class="lineNum">      80 </span>            :     SkPoint fQuad[3];       // the stroked quad parallel to the original curve
+<span class="lineNum">      81 </span>            :     SkPoint fTangentStart;  // a point tangent to fQuad[0]
+<span class="lineNum">      82 </span>            :     SkPoint fTangentEnd;    // a point tangent to fQuad[2]
+<span class="lineNum">      83 </span>            :     SkScalar fStartT;       // a segment of the original curve
+<span class="lineNum">      84 </span>            :     SkScalar fMidT;         //              &quot;
+<span class="lineNum">      85 </span>            :     SkScalar fEndT;         //              &quot;
+<span class="lineNum">      86 </span>            :     bool fStartSet;         // state to share common points across structs
+<span class="lineNum">      87 </span>            :     bool fEndSet;           //                     &quot;
+<span class="lineNum">      88 </span>            :     bool fOppositeTangents; // set if coincident tangents have opposite directions
+<a name="89"><span class="lineNum">      89 </span>            : </a>
+<span class="lineNum">      90 </span>            :     // return false if start and end are too close to have a unique middle
+<span class="lineNum">      91 </span><span class="lineCov">         16 :     bool init(SkScalar start, SkScalar end) {</span>
+<span class="lineNum">      92 </span><span class="lineCov">         16 :         fStartT = start;</span>
+<span class="lineNum">      93 </span><span class="lineCov">         16 :         fMidT = (start + end) * SK_ScalarHalf;</span>
+<span class="lineNum">      94 </span><span class="lineCov">         16 :         fEndT = end;</span>
+<span class="lineNum">      95 </span><span class="lineCov">         16 :         fStartSet = fEndSet = false;</span>
+<span class="lineNum">      96 </span><span class="lineCov">         16 :         return fStartT &lt; fMidT &amp;&amp; fMidT &lt; fEndT;</span>
+<a name="97"><span class="lineNum">      97 </span>            :     }</a>
+<span class="lineNum">      98 </span>            : 
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :     bool initWithStart(SkQuadConstruct* parent) {</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :         if (!init(parent-&gt;fStartT, parent-&gt;fMidT)) {</span>
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     102 </span>            :         }
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :         fQuad[0] = parent-&gt;fQuad[0];</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :         fTangentStart = parent-&gt;fTangentStart;</span>
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :         fStartSet = true;</span>
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :         return true;</span>
+<a name="107"><span class="lineNum">     107 </span>            :     }</a>
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :     bool initWithEnd(SkQuadConstruct* parent) {</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :         if (!init(parent-&gt;fMidT, parent-&gt;fEndT)) {</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     112 </span>            :         }
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :         fQuad[2] = parent-&gt;fQuad[2];</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :         fTangentEnd = parent-&gt;fTangentEnd;</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :         fEndSet = true;</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     117 </span>            :    }
+<a name="118"><span class="lineNum">     118 </span>            : };</a>
+<span class="lineNum">     119 </span>            : 
+<span class="lineNum">     120 </span><span class="lineCov">         15 : class SkPathStroker {</span>
+<span class="lineNum">     121 </span>            : public:
+<span class="lineNum">     122 </span>            :     SkPathStroker(const SkPath&amp; src,
+<span class="lineNum">     123 </span>            :                   SkScalar radius, SkScalar miterLimit, SkPaint::Cap,
+<span class="lineNum">     124 </span>            :                   SkPaint::Join, SkScalar resScale,
+<a name="125"><span class="lineNum">     125 </span>            :                   bool canIgnoreCenter);</a>
+<a name="126"><span class="lineNum">     126 </span>            : </a>
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :     bool hasOnlyMoveTo() const { return 0 == fSegmentCount; }</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :     SkPoint moveToPt() const { return fFirstPt; }</span>
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span>            :     void moveTo(const SkPoint&amp;);
+<span class="lineNum">     131 </span>            :     void lineTo(const SkPoint&amp;, const SkPath::Iter* iter = nullptr);
+<span class="lineNum">     132 </span>            :     void quadTo(const SkPoint&amp;, const SkPoint&amp;);
+<a name="133"><span class="lineNum">     133 </span>            :     void conicTo(const SkPoint&amp;, const SkPoint&amp;, SkScalar weight);</a>
+<span class="lineNum">     134 </span>            :     void cubicTo(const SkPoint&amp;, const SkPoint&amp;, const SkPoint&amp;);
+<a name="135"><span class="lineNum">     135 </span><span class="lineCov">          2 :     void close(bool isLine) { this-&gt;finishContour(true, isLine); }</span></a>
+<span class="lineNum">     136 </span>            : 
+<span class="lineNum">     137 </span><span class="lineCov">         15 :     void done(SkPath* dst, bool isLine) {</span>
+<span class="lineNum">     138 </span><span class="lineCov">         15 :         this-&gt;finishContour(false, isLine);</span>
+<span class="lineNum">     139 </span><span class="lineCov">         15 :         fOuter.addPath(fExtra);</span>
+<span class="lineNum">     140 </span><span class="lineCov">         15 :         dst-&gt;swap(fOuter);</span>
+<span class="lineNum">     141 </span><span class="lineCov">         15 :     }</span>
+<span class="lineNum">     142 </span>            : 
+<a name="143"><span class="lineNum">     143 </span>            :     SkScalar getResScale() const { return fResScale; }</a>
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :     bool isZeroLength() const {</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :         return fInner.isZeroLength() &amp;&amp; fOuter.isZeroLength();</span>
+<span class="lineNum">     147 </span>            :     }
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span>            : private:
+<span class="lineNum">     150 </span>            :     SkScalar    fRadius;
+<span class="lineNum">     151 </span>            :     SkScalar    fInvMiterLimit;
+<span class="lineNum">     152 </span>            :     SkScalar    fResScale;
+<span class="lineNum">     153 </span>            :     SkScalar    fInvResScale;
+<span class="lineNum">     154 </span>            :     SkScalar    fInvResScaleSquared;
+<span class="lineNum">     155 </span>            : 
+<span class="lineNum">     156 </span>            :     SkVector    fFirstNormal, fPrevNormal, fFirstUnitNormal, fPrevUnitNormal;
+<span class="lineNum">     157 </span>            :     SkPoint     fFirstPt, fPrevPt;  // on original path
+<span class="lineNum">     158 </span>            :     SkPoint     fFirstOuterPt;
+<span class="lineNum">     159 </span>            :     int         fSegmentCount;
+<span class="lineNum">     160 </span>            :     bool        fPrevIsLine;
+<span class="lineNum">     161 </span>            :     bool        fCanIgnoreCenter;
+<span class="lineNum">     162 </span>            : 
+<span class="lineNum">     163 </span>            :     SkStrokerPriv::CapProc  fCapper;
+<span class="lineNum">     164 </span>            :     SkStrokerPriv::JoinProc fJoiner;
+<span class="lineNum">     165 </span>            : 
+<span class="lineNum">     166 </span>            :     SkPath  fInner, fOuter; // outer is our working answer, inner is temp
+<span class="lineNum">     167 </span>            :     SkPath  fExtra;         // added as extra complete contours
+<span class="lineNum">     168 </span>            : 
+<span class="lineNum">     169 </span>            :     enum StrokeType {
+<span class="lineNum">     170 </span>            :         kOuter_StrokeType = 1,      // use sign-opposite values later to flip perpendicular axis
+<span class="lineNum">     171 </span>            :         kInner_StrokeType = -1
+<span class="lineNum">     172 </span>            :     } fStrokeType;
+<span class="lineNum">     173 </span>            : 
+<span class="lineNum">     174 </span>            :     enum ResultType {
+<span class="lineNum">     175 </span>            :         kSplit_ResultType,          // the caller should split the quad stroke in two
+<span class="lineNum">     176 </span>            :         kDegenerate_ResultType,     // the caller should add a line
+<span class="lineNum">     177 </span>            :         kQuad_ResultType,           // the caller should (continue to try to) add a quad stroke
+<span class="lineNum">     178 </span>            :     };
+<span class="lineNum">     179 </span>            : 
+<span class="lineNum">     180 </span>            :     enum ReductionType {
+<span class="lineNum">     181 </span>            :         kPoint_ReductionType,       // all curve points are practically identical
+<span class="lineNum">     182 </span>            :         kLine_ReductionType,        // the control point is on the line between the ends
+<span class="lineNum">     183 </span>            :         kQuad_ReductionType,        // the control point is outside the line between the ends
+<span class="lineNum">     184 </span>            :         kDegenerate_ReductionType,  // the control point is on the line but outside the ends
+<span class="lineNum">     185 </span>            :         kDegenerate2_ReductionType, // two control points are on the line but outside ends (cubic)
+<span class="lineNum">     186 </span>            :         kDegenerate3_ReductionType, // three areas of max curvature found (for cubic)
+<span class="lineNum">     187 </span>            :     };
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span>            :     enum IntersectRayType {
+<span class="lineNum">     190 </span>            :         kCtrlPt_RayType,
+<span class="lineNum">     191 </span>            :         kResultType_RayType,
+<span class="lineNum">     192 </span>            :     };
+<span class="lineNum">     193 </span>            : 
+<span class="lineNum">     194 </span>            :     int fRecursionDepth;            // track stack depth to abort if numerics run amok
+<span class="lineNum">     195 </span>            :     bool fFoundTangents;            // do less work until tangents meet (cubic)
+<span class="lineNum">     196 </span>            :     bool fJoinCompleted;            // previous join was not degenerate
+<span class="lineNum">     197 </span>            : 
+<span class="lineNum">     198 </span>            :     void addDegenerateLine(const SkQuadConstruct* );
+<span class="lineNum">     199 </span>            :     static ReductionType CheckConicLinear(const SkConic&amp; , SkPoint* reduction);
+<span class="lineNum">     200 </span>            :     static ReductionType CheckCubicLinear(const SkPoint cubic[4], SkPoint reduction[3],
+<span class="lineNum">     201 </span>            :                                    const SkPoint** tanPtPtr);
+<span class="lineNum">     202 </span>            :     static ReductionType CheckQuadLinear(const SkPoint quad[3], SkPoint* reduction);
+<span class="lineNum">     203 </span>            :     ResultType compareQuadConic(const SkConic&amp; , SkQuadConstruct* ) const;
+<span class="lineNum">     204 </span>            :     ResultType compareQuadCubic(const SkPoint cubic[4], SkQuadConstruct* );
+<span class="lineNum">     205 </span>            :     ResultType compareQuadQuad(const SkPoint quad[3], SkQuadConstruct* );
+<span class="lineNum">     206 </span>            :     void conicPerpRay(const SkConic&amp; , SkScalar t, SkPoint* tPt, SkPoint* onPt,
+<span class="lineNum">     207 </span>            :                       SkPoint* tangent) const;
+<span class="lineNum">     208 </span>            :     void conicQuadEnds(const SkConic&amp; , SkQuadConstruct* ) const;
+<span class="lineNum">     209 </span>            :     bool conicStroke(const SkConic&amp; , SkQuadConstruct* );
+<span class="lineNum">     210 </span>            :     bool cubicMidOnLine(const SkPoint cubic[4], const SkQuadConstruct* ) const;
+<span class="lineNum">     211 </span>            :     void cubicPerpRay(const SkPoint cubic[4], SkScalar t, SkPoint* tPt, SkPoint* onPt,
+<span class="lineNum">     212 </span>            :                       SkPoint* tangent) const;
+<span class="lineNum">     213 </span>            :     void cubicQuadEnds(const SkPoint cubic[4], SkQuadConstruct* );
+<span class="lineNum">     214 </span>            :     void cubicQuadMid(const SkPoint cubic[4], const SkQuadConstruct* , SkPoint* mid) const;
+<span class="lineNum">     215 </span>            :     bool cubicStroke(const SkPoint cubic[4], SkQuadConstruct* );
+<span class="lineNum">     216 </span>            :     void init(StrokeType strokeType, SkQuadConstruct* , SkScalar tStart, SkScalar tEnd);
+<span class="lineNum">     217 </span>            :     ResultType intersectRay(SkQuadConstruct* , IntersectRayType  STROKER_DEBUG_PARAMS(int) ) const;
+<span class="lineNum">     218 </span>            :     bool ptInQuadBounds(const SkPoint quad[3], const SkPoint&amp; pt) const;
+<span class="lineNum">     219 </span>            :     void quadPerpRay(const SkPoint quad[3], SkScalar t, SkPoint* tPt, SkPoint* onPt,
+<span class="lineNum">     220 </span>            :                      SkPoint* tangent) const;
+<span class="lineNum">     221 </span>            :     bool quadStroke(const SkPoint quad[3], SkQuadConstruct* );
+<span class="lineNum">     222 </span>            :     void setConicEndNormal(const SkConic&amp; ,
+<span class="lineNum">     223 </span>            :                            const SkVector&amp; normalAB, const SkVector&amp; unitNormalAB,
+<span class="lineNum">     224 </span>            :                            SkVector* normalBC, SkVector* unitNormalBC);
+<span class="lineNum">     225 </span>            :     void setCubicEndNormal(const SkPoint cubic[4],
+<span class="lineNum">     226 </span>            :                            const SkVector&amp; normalAB, const SkVector&amp; unitNormalAB,
+<span class="lineNum">     227 </span>            :                            SkVector* normalCD, SkVector* unitNormalCD);
+<span class="lineNum">     228 </span>            :     void setQuadEndNormal(const SkPoint quad[3],
+<span class="lineNum">     229 </span>            :                           const SkVector&amp; normalAB, const SkVector&amp; unitNormalAB,
+<span class="lineNum">     230 </span>            :                           SkVector* normalBC, SkVector* unitNormalBC);
+<span class="lineNum">     231 </span>            :     void setRayPts(const SkPoint&amp; tPt, SkVector* dxy, SkPoint* onPt, SkPoint* tangent) const;
+<span class="lineNum">     232 </span>            :     static bool SlightAngle(SkQuadConstruct* );
+<span class="lineNum">     233 </span>            :     ResultType strokeCloseEnough(const SkPoint stroke[3], const SkPoint ray[2],
+<span class="lineNum">     234 </span>            :                                  SkQuadConstruct*  STROKER_DEBUG_PARAMS(int depth) ) const;
+<span class="lineNum">     235 </span>            :     ResultType tangentsMeet(const SkPoint cubic[4], SkQuadConstruct* );
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span>            :     void    finishContour(bool close, bool isLine);
+<span class="lineNum">     238 </span>            :     bool    preJoinTo(const SkPoint&amp;, SkVector* normal, SkVector* unitNormal,
+<span class="lineNum">     239 </span>            :                       bool isLine);
+<span class="lineNum">     240 </span>            :     void    postJoinTo(const SkPoint&amp;, const SkVector&amp; normal,
+<span class="lineNum">     241 </span>            :                        const SkVector&amp; unitNormal);
+<span class="lineNum">     242 </span>            : 
+<span class="lineNum">     243 </span>            :     void    line_to(const SkPoint&amp; currPt, const SkVector&amp; normal);
+<span class="lineNum">     244 </span>            : };
+<span class="lineNum">     245 </span>            : 
+<a name="246"><span class="lineNum">     246 </span>            : ///////////////////////////////////////////////////////////////////////////////</a>
+<span class="lineNum">     247 </span>            : 
+<span class="lineNum">     248 </span><span class="lineCov">         29 : bool SkPathStroker::preJoinTo(const SkPoint&amp; currPt, SkVector* normal,</span>
+<span class="lineNum">     249 </span>            :                               SkVector* unitNormal, bool currIsLine) {
+<span class="lineNum">     250 </span><span class="lineCov">         29 :     SkASSERT(fSegmentCount &gt;= 0);</span>
+<span class="lineNum">     251 </span>            : 
+<span class="lineNum">     252 </span><span class="lineCov">         29 :     SkScalar    prevX = fPrevPt.fX;</span>
+<span class="lineNum">     253 </span><span class="lineCov">         29 :     SkScalar    prevY = fPrevPt.fY;</span>
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span><span class="lineCov">         29 :     if (!set_normal_unitnormal(fPrevPt, currPt, fResScale, fRadius, normal, unitNormal)) {</span>
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :         if (SkStrokerPriv::CapFactory(SkPaint::kButt_Cap) == fCapper) {</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     258 </span>            :         }
+<span class="lineNum">     259 </span>            :         /* Square caps and round caps draw even if the segment length is zero.
+<span class="lineNum">     260 </span>            :            Since the zero length segment has no direction, set the orientation
+<span class="lineNum">     261 </span>            :            to upright as the default orientation */
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :         normal-&gt;set(fRadius, 0);</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :         unitNormal-&gt;set(1, 0);</span>
+<span class="lineNum">     264 </span>            :     }
+<span class="lineNum">     265 </span>            : 
+<span class="lineNum">     266 </span><span class="lineCov">         29 :     if (fSegmentCount == 0) {</span>
+<span class="lineNum">     267 </span><span class="lineCov">         15 :         fFirstNormal = *normal;</span>
+<span class="lineNum">     268 </span><span class="lineCov">         15 :         fFirstUnitNormal = *unitNormal;</span>
+<span class="lineNum">     269 </span><span class="lineCov">         15 :         fFirstOuterPt.set(prevX + normal-&gt;fX, prevY + normal-&gt;fY);</span>
+<span class="lineNum">     270 </span>            : 
+<span class="lineNum">     271 </span><span class="lineCov">         15 :         fOuter.moveTo(fFirstOuterPt.fX, fFirstOuterPt.fY);</span>
+<span class="lineNum">     272 </span><span class="lineCov">         15 :         fInner.moveTo(prevX - normal-&gt;fX, prevY - normal-&gt;fY);</span>
+<span class="lineNum">     273 </span>            :     } else {    // we have a previous segment
+<span class="lineNum">     274 </span><span class="lineCov">         28 :         fJoiner(&amp;fOuter, &amp;fInner, fPrevUnitNormal, fPrevPt, *unitNormal,</span>
+<span class="lineNum">     275 </span><span class="lineCov">         28 :                 fRadius, fInvMiterLimit, fPrevIsLine, currIsLine);</span>
+<span class="lineNum">     276 </span>            :     }
+<span class="lineNum">     277 </span><span class="lineCov">         29 :     fPrevIsLine = currIsLine;</span>
+<span class="lineNum">     278 </span><span class="lineCov">         29 :     return true;</span>
+<a name="279"><span class="lineNum">     279 </span>            : }</a>
+<span class="lineNum">     280 </span>            : 
+<span class="lineNum">     281 </span><span class="lineCov">         29 : void SkPathStroker::postJoinTo(const SkPoint&amp; currPt, const SkVector&amp; normal,</span>
+<span class="lineNum">     282 </span>            :                                const SkVector&amp; unitNormal) {
+<span class="lineNum">     283 </span><span class="lineCov">         29 :     fJoinCompleted = true;</span>
+<span class="lineNum">     284 </span><span class="lineCov">         29 :     fPrevPt = currPt;</span>
+<span class="lineNum">     285 </span><span class="lineCov">         29 :     fPrevUnitNormal = unitNormal;</span>
+<span class="lineNum">     286 </span><span class="lineCov">         29 :     fPrevNormal = normal;</span>
+<span class="lineNum">     287 </span><span class="lineCov">         29 :     fSegmentCount += 1;</span>
+<a name="288"><span class="lineNum">     288 </span><span class="lineCov">         29 : }</span></a>
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span><span class="lineCov">         17 : void SkPathStroker::finishContour(bool close, bool currIsLine) {</span>
+<span class="lineNum">     291 </span><span class="lineCov">         17 :     if (fSegmentCount &gt; 0) {</span>
+<span class="lineNum">     292 </span>            :         SkPoint pt;
+<span class="lineNum">     293 </span>            : 
+<span class="lineNum">     294 </span><span class="lineCov">         15 :         if (close) {</span>
+<span class="lineNum">     295 </span><span class="lineCov">          4 :             fJoiner(&amp;fOuter, &amp;fInner, fPrevUnitNormal, fPrevPt,</span>
+<span class="lineNum">     296 </span>            :                     fFirstUnitNormal, fRadius, fInvMiterLimit,
+<span class="lineNum">     297 </span><span class="lineCov">          4 :                     fPrevIsLine, currIsLine);</span>
+<span class="lineNum">     298 </span><span class="lineCov">          2 :             fOuter.close();</span>
+<span class="lineNum">     299 </span>            : 
+<span class="lineNum">     300 </span><span class="lineCov">          2 :             if (fCanIgnoreCenter) {</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :                 if (!fOuter.getBounds().contains(fInner.getBounds())) {</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :                     SkASSERT(fInner.getBounds().contains(fOuter.getBounds()));</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :                     fInner.swap(fOuter);</span>
+<span class="lineNum">     304 </span>            :                 }
+<span class="lineNum">     305 </span>            :             } else {
+<span class="lineNum">     306 </span>            :                 // now add fInner as its own contour
+<span class="lineNum">     307 </span><span class="lineCov">          2 :                 fInner.getLastPt(&amp;pt);</span>
+<span class="lineNum">     308 </span><span class="lineCov">          2 :                 fOuter.moveTo(pt.fX, pt.fY);</span>
+<span class="lineNum">     309 </span><span class="lineCov">          2 :                 fOuter.reversePathTo(fInner);</span>
+<span class="lineNum">     310 </span><span class="lineCov">          2 :                 fOuter.close();</span>
+<span class="lineNum">     311 </span>            :             }
+<span class="lineNum">     312 </span>            :         } else {    // add caps to start and end
+<span class="lineNum">     313 </span>            :             // cap the end
+<span class="lineNum">     314 </span><span class="lineCov">         13 :             fInner.getLastPt(&amp;pt);</span>
+<span class="lineNum">     315 </span><span class="lineCov">         13 :             fCapper(&amp;fOuter, fPrevPt, fPrevNormal, pt,</span>
+<span class="lineNum">     316 </span><span class="lineCov">         13 :                     currIsLine ? &amp;fInner : nullptr);</span>
+<span class="lineNum">     317 </span><span class="lineCov">         13 :             fOuter.reversePathTo(fInner);</span>
+<span class="lineNum">     318 </span>            :             // cap the start
+<span class="lineNum">     319 </span><span class="lineCov">         39 :             fCapper(&amp;fOuter, fFirstPt, -fFirstNormal, fFirstOuterPt,</span>
+<span class="lineNum">     320 </span><span class="lineCov">         26 :                     fPrevIsLine ? &amp;fInner : nullptr);</span>
+<span class="lineNum">     321 </span><span class="lineCov">         13 :             fOuter.close();</span>
+<span class="lineNum">     322 </span>            :         }
+<span class="lineNum">     323 </span>            :     }
+<span class="lineNum">     324 </span>            :     // since we may re-use fInner, we rewind instead of reset, to save on
+<span class="lineNum">     325 </span>            :     // reallocating its internal storage.
+<span class="lineNum">     326 </span><span class="lineCov">         17 :     fInner.rewind();</span>
+<span class="lineNum">     327 </span><span class="lineCov">         17 :     fSegmentCount = -1;</span>
+<span class="lineNum">     328 </span><span class="lineCov">         17 : }</span>
+<span class="lineNum">     329 </span>            : 
+<a name="330"><span class="lineNum">     330 </span>            : ///////////////////////////////////////////////////////////////////////////////</a>
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span><span class="lineCov">         15 : SkPathStroker::SkPathStroker(const SkPath&amp; src,</span>
+<span class="lineNum">     333 </span>            :                              SkScalar radius, SkScalar miterLimit,
+<span class="lineNum">     334 </span>            :                              SkPaint::Cap cap, SkPaint::Join join, SkScalar resScale,
+<span class="lineNum">     335 </span><span class="lineCov">         15 :                              bool canIgnoreCenter)</span>
+<span class="lineNum">     336 </span>            :         : fRadius(radius)
+<span class="lineNum">     337 </span>            :         , fResScale(resScale)
+<span class="lineNum">     338 </span><span class="lineCov">         15 :         , fCanIgnoreCenter(canIgnoreCenter) {</span>
+<span class="lineNum">     339 </span>            : 
+<span class="lineNum">     340 </span>            :     /*  This is only used when join is miter_join, but we initialize it here
+<span class="lineNum">     341 </span>            :         so that it is always defined, to fis valgrind warnings.
+<span class="lineNum">     342 </span>            :     */
+<span class="lineNum">     343 </span><span class="lineCov">         15 :     fInvMiterLimit = 0;</span>
+<span class="lineNum">     344 </span>            : 
+<span class="lineNum">     345 </span><span class="lineCov">         15 :     if (join == SkPaint::kMiter_Join) {</span>
+<span class="lineNum">     346 </span><span class="lineCov">         15 :         if (miterLimit &lt;= SK_Scalar1) {</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :             join = SkPaint::kBevel_Join;</span>
+<span class="lineNum">     348 </span>            :         } else {
+<span class="lineNum">     349 </span><span class="lineCov">         15 :             fInvMiterLimit = SkScalarInvert(miterLimit);</span>
+<span class="lineNum">     350 </span>            :         }
+<span class="lineNum">     351 </span>            :     }
+<span class="lineNum">     352 </span><span class="lineCov">         15 :     fCapper = SkStrokerPriv::CapFactory(cap);</span>
+<span class="lineNum">     353 </span><span class="lineCov">         15 :     fJoiner = SkStrokerPriv::JoinFactory(join);</span>
+<span class="lineNum">     354 </span><span class="lineCov">         15 :     fSegmentCount = -1;</span>
+<span class="lineNum">     355 </span><span class="lineCov">         15 :     fPrevIsLine = false;</span>
+<span class="lineNum">     356 </span>            : 
+<span class="lineNum">     357 </span>            :     // Need some estimate of how large our final result (fOuter)
+<span class="lineNum">     358 </span>            :     // and our per-contour temp (fInner) will be, so we don't spend
+<span class="lineNum">     359 </span>            :     // extra time repeatedly growing these arrays.
+<span class="lineNum">     360 </span>            :     //
+<span class="lineNum">     361 </span>            :     // 3x for result == inner + outer + join (swag)
+<span class="lineNum">     362 </span>            :     // 1x for inner == 'wag' (worst contour length would be better guess)
+<span class="lineNum">     363 </span><span class="lineCov">         15 :     fOuter.incReserve(src.countPoints() * 3);</span>
+<span class="lineNum">     364 </span><span class="lineCov">         15 :     fOuter.setIsVolatile(true);</span>
+<span class="lineNum">     365 </span><span class="lineCov">         15 :     fInner.incReserve(src.countPoints());</span>
+<span class="lineNum">     366 </span><span class="lineCov">         15 :     fInner.setIsVolatile(true);</span>
+<span class="lineNum">     367 </span>            :     // TODO : write a common error function used by stroking and filling
+<span class="lineNum">     368 </span>            :     // The '4' below matches the fill scan converter's error term
+<span class="lineNum">     369 </span><span class="lineCov">         15 :     fInvResScale = SkScalarInvert(resScale * 4);</span>
+<span class="lineNum">     370 </span><span class="lineCov">         15 :     fInvResScaleSquared = fInvResScale * fInvResScale;</span>
+<span class="lineNum">     371 </span><span class="lineCov">         15 :     fRecursionDepth = 0;</span>
+<a name="372"><span class="lineNum">     372 </span><span class="lineCov">         15 : }</span></a>
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span><span class="lineCov">         15 : void SkPathStroker::moveTo(const SkPoint&amp; pt) {</span>
+<span class="lineNum">     375 </span><span class="lineCov">         15 :     if (fSegmentCount &gt; 0) {</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :         this-&gt;finishContour(false, false);</span>
+<span class="lineNum">     377 </span>            :     }
+<span class="lineNum">     378 </span><span class="lineCov">         15 :     fSegmentCount = 0;</span>
+<span class="lineNum">     379 </span><span class="lineCov">         15 :     fFirstPt = fPrevPt = pt;</span>
+<span class="lineNum">     380 </span><span class="lineCov">         15 :     fJoinCompleted = false;</span>
+<a name="381"><span class="lineNum">     381 </span><span class="lineCov">         15 : }</span></a>
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span><span class="lineCov">         21 : void SkPathStroker::line_to(const SkPoint&amp; currPt, const SkVector&amp; normal) {</span>
+<span class="lineNum">     384 </span><span class="lineCov">         21 :     fOuter.lineTo(currPt.fX + normal.fX, currPt.fY + normal.fY);</span>
+<span class="lineNum">     385 </span><span class="lineCov">         21 :     fInner.lineTo(currPt.fX - normal.fX, currPt.fY - normal.fY);</span>
+<a name="386"><span class="lineNum">     386 </span><span class="lineCov">         21 : }</span></a>
+<span class="lineNum">     387 </span>            : 
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 : static bool has_valid_tangent(const SkPath::Iter* iter) {</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :     SkPath::Iter copy = *iter;</span>
+<span class="lineNum">     390 </span>            :     SkPath::Verb verb;
+<span class="lineNum">     391 </span>            :     SkPoint pts[4];
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :     while ((verb = copy.next(pts))) {</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :         switch (verb) {</span>
+<span class="lineNum">     394 </span>            :             case SkPath::kMove_Verb:
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :                 return false;</span>
+<span class="lineNum">     396 </span>            :             case SkPath::kLine_Verb:
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :                 if (pts[0] == pts[1]) {</span>
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :                     continue;</span>
+<span class="lineNum">     399 </span>            :                 }
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :                 return true;</span>
+<span class="lineNum">     401 </span>            :             case SkPath::kQuad_Verb:
+<span class="lineNum">     402 </span>            :             case SkPath::kConic_Verb:
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :                 if (pts[0] == pts[1] &amp;&amp; pts[0] == pts[2]) {</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :                     continue;</span>
+<span class="lineNum">     405 </span>            :                 }
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :                 return true;</span>
+<span class="lineNum">     407 </span>            :             case SkPath::kCubic_Verb:
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :                 if (pts[0] == pts[1] &amp;&amp; pts[0] == pts[2] &amp;&amp; pts[0] == pts[3]) {</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :                     continue;</span>
+<span class="lineNum">     410 </span>            :                 }
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :                 return true;</span>
+<span class="lineNum">     412 </span>            :             case SkPath::kClose_Verb:
+<span class="lineNum">     413 </span>            :             case SkPath::kDone_Verb:
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :                 return false;</span>
+<span class="lineNum">     415 </span>            :         }
+<span class="lineNum">     416 </span>            :     }
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :     return false;</span>
+<a name="418"><span class="lineNum">     418 </span>            : }</a>
+<span class="lineNum">     419 </span>            : 
+<span class="lineNum">     420 </span><span class="lineCov">         21 : void SkPathStroker::lineTo(const SkPoint&amp; currPt, const SkPath::Iter* iter) {</span>
+<span class="lineNum">     421 </span><span class="lineCov">         21 :     bool teenyLine = fPrevPt.equalsWithinTolerance(currPt, SK_ScalarNearlyZero * fInvResScale);</span>
+<span class="lineNum">     422 </span><span class="lineCov">         21 :     if (SkStrokerPriv::CapFactory(SkPaint::kButt_Cap) == fCapper &amp;&amp; teenyLine) {</span>
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     424 </span>            :     }
+<span class="lineNum">     425 </span><span class="lineCov">         21 :     if (teenyLine &amp;&amp; (fJoinCompleted || (iter &amp;&amp; has_valid_tangent(iter)))) {</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     427 </span>            :     }
+<span class="lineNum">     428 </span>            :     SkVector    normal, unitNormal;
+<span class="lineNum">     429 </span>            : 
+<span class="lineNum">     430 </span><span class="lineCov">         21 :     if (!this-&gt;preJoinTo(currPt, &amp;normal, &amp;unitNormal, true)) {</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     432 </span>            :     }
+<span class="lineNum">     433 </span><span class="lineCov">         21 :     this-&gt;line_to(currPt, normal);</span>
+<span class="lineNum">     434 </span><span class="lineCov">         21 :     this-&gt;postJoinTo(currPt, normal, unitNormal);</span>
+<a name="435"><span class="lineNum">     435 </span>            : }</a>
+<span class="lineNum">     436 </span>            : 
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 : void SkPathStroker::setQuadEndNormal(const SkPoint quad[3], const SkVector&amp; normalAB,</span>
+<span class="lineNum">     438 </span>            :         const SkVector&amp; unitNormalAB, SkVector* normalBC, SkVector* unitNormalBC) {
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :     if (!set_normal_unitnormal(quad[1], quad[2], fResScale, fRadius, normalBC, unitNormalBC)) {</span>
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :         *normalBC = normalAB;</span>
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :         *unitNormalBC = unitNormalAB;</span>
+<span class="lineNum">     442 </span>            :     }
+<a name="443"><span class="lineNum">     443 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     444 </span>            : 
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 : void SkPathStroker::setConicEndNormal(const SkConic&amp; conic, const SkVector&amp; normalAB,</span>
+<span class="lineNum">     446 </span>            :         const SkVector&amp; unitNormalAB, SkVector* normalBC, SkVector* unitNormalBC) {
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :     setQuadEndNormal(conic.fPts, normalAB, unitNormalAB, normalBC, unitNormalBC);</span>
+<a name="448"><span class="lineNum">     448 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     449 </span>            : 
+<span class="lineNum">     450 </span><span class="lineCov">          8 : void SkPathStroker::setCubicEndNormal(const SkPoint cubic[4], const SkVector&amp; normalAB,</span>
+<span class="lineNum">     451 </span>            :         const SkVector&amp; unitNormalAB, SkVector* normalCD, SkVector* unitNormalCD) {
+<span class="lineNum">     452 </span><span class="lineCov">          8 :     SkVector    ab = cubic[1] - cubic[0];</span>
+<span class="lineNum">     453 </span><span class="lineCov">          8 :     SkVector    cd = cubic[3] - cubic[2];</span>
+<span class="lineNum">     454 </span>            : 
+<span class="lineNum">     455 </span><span class="lineCov">          8 :     bool    degenerateAB = degenerate_vector(ab);</span>
+<span class="lineNum">     456 </span><span class="lineCov">          8 :     bool    degenerateCD = degenerate_vector(cd);</span>
+<span class="lineNum">     457 </span>            : 
+<span class="lineNum">     458 </span><span class="lineCov">          8 :     if (degenerateAB &amp;&amp; degenerateCD) {</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :         goto DEGENERATE_NORMAL;</span>
+<span class="lineNum">     460 </span>            :     }
+<span class="lineNum">     461 </span>            : 
+<span class="lineNum">     462 </span><span class="lineCov">          8 :     if (degenerateAB) {</span>
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :         ab = cubic[2] - cubic[0];</span>
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :         degenerateAB = degenerate_vector(ab);</span>
+<span class="lineNum">     465 </span>            :     }
+<span class="lineNum">     466 </span><span class="lineCov">          8 :     if (degenerateCD) {</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :         cd = cubic[3] - cubic[1];</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :         degenerateCD = degenerate_vector(cd);</span>
+<span class="lineNum">     469 </span>            :     }
+<span class="lineNum">     470 </span><span class="lineCov">          8 :     if (degenerateAB || degenerateCD) {</span>
+<span class="lineNum">     471 </span>            : DEGENERATE_NORMAL:
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :         *normalCD = normalAB;</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :         *unitNormalCD = unitNormalAB;</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     475 </span>            :     }
+<span class="lineNum">     476 </span><span class="lineCov">          8 :     SkAssertResult(set_normal_unitnormal(cd, fRadius, normalCD, unitNormalCD));</span>
+<a name="477"><span class="lineNum">     477 </span>            : }</a>
+<span class="lineNum">     478 </span>            : 
+<span class="lineNum">     479 </span><span class="lineCov">         16 : void SkPathStroker::init(StrokeType strokeType, SkQuadConstruct* quadPts, SkScalar tStart,</span>
+<span class="lineNum">     480 </span>            :         SkScalar tEnd) {
+<span class="lineNum">     481 </span><span class="lineCov">         16 :     fStrokeType = strokeType;</span>
+<span class="lineNum">     482 </span><span class="lineCov">         16 :     fFoundTangents = false;</span>
+<span class="lineNum">     483 </span><span class="lineCov">         16 :     quadPts-&gt;init(tStart, tEnd);</span>
+<span class="lineNum">     484 </span><span class="lineCov">         16 : }</span>
+<a name="485"><span class="lineNum">     485 </span>            : </a>
+<span class="lineNum">     486 </span>            : // returns the distance squared from the point to the line
+<span class="lineNum">     487 </span><span class="lineCov">          8 : static SkScalar pt_to_line(const SkPoint&amp; pt, const SkPoint&amp; lineStart, const SkPoint&amp; lineEnd) {</span>
+<span class="lineNum">     488 </span><span class="lineCov">          8 :     SkVector dxy = lineEnd - lineStart;</span>
+<span class="lineNum">     489 </span><span class="lineCov">          8 :     if (degenerate_vector(dxy)) {</span>
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :         return pt.distanceToSqd(lineStart);</span>
+<span class="lineNum">     491 </span>            :     }
+<span class="lineNum">     492 </span><span class="lineCov">          8 :     SkVector ab0 = pt - lineStart;</span>
+<span class="lineNum">     493 </span><span class="lineCov">          8 :     SkScalar numer = dxy.dot(ab0);</span>
+<span class="lineNum">     494 </span><span class="lineCov">          8 :     SkScalar denom = dxy.dot(dxy);</span>
+<span class="lineNum">     495 </span><span class="lineCov">          8 :     SkScalar t = numer / denom;</span>
+<span class="lineNum">     496 </span>            :     SkPoint hit;
+<span class="lineNum">     497 </span><span class="lineCov">          8 :     hit.fX = lineStart.fX * (1 - t) + lineEnd.fX * t;</span>
+<span class="lineNum">     498 </span><span class="lineCov">          8 :     hit.fY = lineStart.fY * (1 - t) + lineEnd.fY * t;</span>
+<span class="lineNum">     499 </span><span class="lineCov">          8 :     return hit.distanceToSqd(pt);</span>
+<span class="lineNum">     500 </span>            : }
+<span class="lineNum">     501 </span>            : 
+<span class="lineNum">     502 </span>            : /*  Given a cubic, determine if all four points are in a line.
+<span class="lineNum">     503 </span>            :     Return true if the inner points is close to a line connecting the outermost points.
+<span class="lineNum">     504 </span>            : 
+<span class="lineNum">     505 </span>            :     Find the outermost point by looking for the largest difference in X or Y.
+<span class="lineNum">     506 </span>            :     Given the indices of the outermost points, and that outer_1 is greater than outer_2,
+<span class="lineNum">     507 </span>            :     this table shows the index of the smaller of the remaining points:
+<span class="lineNum">     508 </span>            : 
+<span class="lineNum">     509 </span>            :                       outer_2
+<span class="lineNum">     510 </span>            :                   0    1    2    3
+<span class="lineNum">     511 </span>            :       outer_1     ----------------
+<span class="lineNum">     512 </span>            :          0     |  -    2    1    1
+<span class="lineNum">     513 </span>            :          1     |  -    -    0    0
+<span class="lineNum">     514 </span>            :          2     |  -    -    -    0
+<span class="lineNum">     515 </span>            :          3     |  -    -    -    -
+<span class="lineNum">     516 </span>            : 
+<span class="lineNum">     517 </span>            :     If outer_1 == 0 and outer_2 == 1, the smaller of the remaining indices (2 and 3) is 2.
+<span class="lineNum">     518 </span>            : 
+<span class="lineNum">     519 </span>            :     This table can be collapsed to: (1 + (2 &gt;&gt; outer_2)) &gt;&gt; outer_1
+<span class="lineNum">     520 </span>            : 
+<span class="lineNum">     521 </span>            :     Given three indices (outer_1 outer_2 mid_1) from 0..3, the remaining index is:
+<span class="lineNum">     522 </span>            : 
+<a name="523"><span class="lineNum">     523 </span>            :                mid_2 == (outer_1 ^ outer_2 ^ mid_1)</a>
+<span class="lineNum">     524 </span>            :  */
+<span class="lineNum">     525 </span><span class="lineCov">          8 : static bool cubic_in_line(const SkPoint cubic[4]) {</span>
+<span class="lineNum">     526 </span><span class="lineCov">          8 :     SkScalar ptMax = -1;</span>
+<span class="lineNum">     527 </span><span class="lineCov">          8 :     int outer1 SK_INIT_TO_AVOID_WARNING;</span>
+<span class="lineNum">     528 </span><span class="lineCov">          8 :     int outer2 SK_INIT_TO_AVOID_WARNING;</span>
+<span class="lineNum">     529 </span><span class="lineCov">         32 :     for (int index = 0; index &lt; 3; ++index) {</span>
+<span class="lineNum">     530 </span><span class="lineCov">         72 :         for (int inner = index + 1; inner &lt; 4; ++inner) {</span>
+<span class="lineNum">     531 </span><span class="lineCov">         48 :             SkVector testDiff = cubic[inner] - cubic[index];</span>
+<span class="lineNum">     532 </span><span class="lineCov">         48 :             SkScalar testMax = SkTMax(SkScalarAbs(testDiff.fX), SkScalarAbs(testDiff.fY));</span>
+<span class="lineNum">     533 </span><span class="lineCov">         48 :             if (ptMax &lt; testMax) {</span>
+<span class="lineNum">     534 </span><span class="lineCov">         16 :                 outer1 = index;</span>
+<span class="lineNum">     535 </span><span class="lineCov">         16 :                 outer2 = inner;</span>
+<span class="lineNum">     536 </span><span class="lineCov">         16 :                 ptMax = testMax;</span>
+<span class="lineNum">     537 </span>            :             }
+<span class="lineNum">     538 </span>            :         }
+<span class="lineNum">     539 </span>            :     }
+<span class="lineNum">     540 </span><span class="lineCov">          8 :     SkASSERT(outer1 &gt;= 0 &amp;&amp; outer1 &lt;= 2);</span>
+<span class="lineNum">     541 </span><span class="lineCov">          8 :     SkASSERT(outer2 &gt;= 1 &amp;&amp; outer2 &lt;= 3);</span>
+<span class="lineNum">     542 </span><span class="lineCov">          8 :     SkASSERT(outer1 &lt; outer2);</span>
+<span class="lineNum">     543 </span><span class="lineCov">          8 :     int mid1 = (1 + (2 &gt;&gt; outer2)) &gt;&gt; outer1;</span>
+<span class="lineNum">     544 </span><span class="lineCov">          8 :     SkASSERT(mid1 &gt;= 0 &amp;&amp; mid1 &lt;= 2);</span>
+<span class="lineNum">     545 </span><span class="lineCov">          8 :     SkASSERT(outer1 != mid1 &amp;&amp; outer2 != mid1);</span>
+<span class="lineNum">     546 </span><span class="lineCov">          8 :     int mid2 = outer1 ^ outer2 ^ mid1;</span>
+<span class="lineNum">     547 </span><span class="lineCov">          8 :     SkASSERT(mid2 &gt;= 1 &amp;&amp; mid2 &lt;= 3);</span>
+<span class="lineNum">     548 </span><span class="lineCov">          8 :     SkASSERT(mid2 != outer1 &amp;&amp; mid2 != outer2 &amp;&amp; mid2 != mid1);</span>
+<span class="lineNum">     549 </span><span class="lineCov">          8 :     SkASSERT(((1 &lt;&lt; outer1) | (1 &lt;&lt; outer2) | (1 &lt;&lt; mid1) | (1 &lt;&lt; mid2)) == 0x0f);</span>
+<span class="lineNum">     550 </span><span class="lineCov">          8 :     SkScalar lineSlop = ptMax * ptMax * 0.00001f;  // this multiplier is pulled out of the air</span>
+<span class="lineNum">     551 </span><span class="lineCov">          8 :     return pt_to_line(cubic[mid1], cubic[outer1], cubic[outer2]) &lt;= lineSlop</span>
+<span class="lineNum">     552 </span><span class="lineCov">          8 :             &amp;&amp; pt_to_line(cubic[mid2], cubic[outer1], cubic[outer2]) &lt;= lineSlop;</span>
+<span class="lineNum">     553 </span>            : }
+<span class="lineNum">     554 </span>            : 
+<span class="lineNum">     555 </span>            : /* Given quad, see if all there points are in a line.
+<span class="lineNum">     556 </span>            :    Return true if the inside point is close to a line connecting the outermost points.
+<span class="lineNum">     557 </span>            : 
+<span class="lineNum">     558 </span>            :    Find the outermost point by looking for the largest difference in X or Y.
+<span class="lineNum">     559 </span>            :    Since the XOR of the indices is 3  (0 ^ 1 ^ 2)
+<a name="560"><span class="lineNum">     560 </span>            :    the missing index equals: outer_1 ^ outer_2 ^ 3</a>
+<span class="lineNum">     561 </span>            :  */
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 : static bool quad_in_line(const SkPoint quad[3]) {</span>
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :     SkScalar ptMax = -1;</span>
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :     int outer1 SK_INIT_TO_AVOID_WARNING;</span>
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :     int outer2 SK_INIT_TO_AVOID_WARNING;</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :     for (int index = 0; index &lt; 2; ++index) {</span>
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :         for (int inner = index + 1; inner &lt; 3; ++inner) {</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :             SkVector testDiff = quad[inner] - quad[index];</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :             SkScalar testMax = SkTMax(SkScalarAbs(testDiff.fX), SkScalarAbs(testDiff.fY));</span>
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :             if (ptMax &lt; testMax) {</span>
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :                 outer1 = index;</span>
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :                 outer2 = inner;</span>
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :                 ptMax = testMax;</span>
+<span class="lineNum">     574 </span>            :             }
+<span class="lineNum">     575 </span>            :         }
+<span class="lineNum">     576 </span>            :     }
+<span class="lineNum">     577 </span><span class="lineNoCov">          0 :     SkASSERT(outer1 &gt;= 0 &amp;&amp; outer1 &lt;= 1);</span>
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :     SkASSERT(outer2 &gt;= 1 &amp;&amp; outer2 &lt;= 2);</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :     SkASSERT(outer1 &lt; outer2);</span>
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :     int mid = outer1 ^ outer2 ^ 3;</span>
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :     SkScalar lineSlop =  ptMax * ptMax * 0.00001f;  // this multiplier is pulled out of the air</span>
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :     return pt_to_line(quad[mid], quad[outer1], quad[outer2]) &lt;= lineSlop;</span>
+<a name="583"><span class="lineNum">     583 </span>            : }</a>
+<span class="lineNum">     584 </span>            : 
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 : static bool conic_in_line(const SkConic&amp; conic) {</span>
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :     return quad_in_line(conic.fPts);</span>
+<a name="587"><span class="lineNum">     587 </span>            : }</a>
+<span class="lineNum">     588 </span>            : 
+<span class="lineNum">     589 </span><span class="lineCov">          8 : SkPathStroker::ReductionType SkPathStroker::CheckCubicLinear(const SkPoint cubic[4],</span>
+<span class="lineNum">     590 </span>            :         SkPoint reduction[3], const SkPoint** tangentPtPtr) {
+<span class="lineNum">     591 </span><span class="lineCov">          8 :     bool degenerateAB = degenerate_vector(cubic[1] - cubic[0]);</span>
+<span class="lineNum">     592 </span><span class="lineCov">          8 :     bool degenerateBC = degenerate_vector(cubic[2] - cubic[1]);</span>
+<span class="lineNum">     593 </span><span class="lineCov">          8 :     bool degenerateCD = degenerate_vector(cubic[3] - cubic[2]);</span>
+<span class="lineNum">     594 </span><span class="lineCov">          8 :     if (degenerateAB &amp; degenerateBC &amp; degenerateCD) {</span>
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :         return kPoint_ReductionType;</span>
+<span class="lineNum">     596 </span>            :     }
+<span class="lineNum">     597 </span><span class="lineCov">          8 :     if (degenerateAB + degenerateBC + degenerateCD == 2) {</span>
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :         return kLine_ReductionType;</span>
+<span class="lineNum">     599 </span>            :     }
+<span class="lineNum">     600 </span><span class="lineCov">          8 :     if (!cubic_in_line(cubic)) {</span>
+<span class="lineNum">     601 </span><span class="lineCov">          8 :         *tangentPtPtr = degenerateAB ? &amp;cubic[2] : &amp;cubic[1];</span>
+<span class="lineNum">     602 </span><span class="lineCov">          8 :         return kQuad_ReductionType;</span>
+<span class="lineNum">     603 </span>            :     }
+<span class="lineNum">     604 </span>            :     SkScalar tValues[3];
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :     int count = SkFindCubicMaxCurvature(cubic, tValues);</span>
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :     if (count == 0) {</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :         return kLine_ReductionType;</span>
+<span class="lineNum">     608 </span>            :     }
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :     int rCount = 0;</span>
+<span class="lineNum">     610 </span>            :     // Now loop over the t-values, and reject any that evaluate to either end-point
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :     for (int index = 0; index &lt; count; ++index) {</span>
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :         SkScalar t = tValues[index];</span>
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 :         SkEvalCubicAt(cubic, t, &amp;reduction[rCount], nullptr, nullptr);</span>
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :         if (reduction[rCount] != cubic[0] &amp;&amp; reduction[rCount] != cubic[3]) {</span>
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :             ++rCount;</span>
+<span class="lineNum">     616 </span>            :         }
+<span class="lineNum">     617 </span>            :     }
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 :     if (rCount == 0) {</span>
+<span class="lineNum">     619 </span><span class="lineNoCov">          0 :         return kLine_ReductionType;</span>
+<span class="lineNum">     620 </span>            :     }
+<span class="lineNum">     621 </span>            :     static_assert(kQuad_ReductionType + 1 == kDegenerate_ReductionType, &quot;enum_out_of_whack&quot;);
+<span class="lineNum">     622 </span>            :     static_assert(kQuad_ReductionType + 2 == kDegenerate2_ReductionType, &quot;enum_out_of_whack&quot;);
+<span class="lineNum">     623 </span>            :     static_assert(kQuad_ReductionType + 3 == kDegenerate3_ReductionType, &quot;enum_out_of_whack&quot;);
+<span class="lineNum">     624 </span>            : 
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :     return (ReductionType) (kQuad_ReductionType + rCount);</span>
+<a name="626"><span class="lineNum">     626 </span>            : }</a>
+<span class="lineNum">     627 </span>            : 
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 : SkPathStroker::ReductionType SkPathStroker::CheckConicLinear(const SkConic&amp; conic,</span>
+<span class="lineNum">     629 </span>            :         SkPoint* reduction) {
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 :     bool degenerateAB = degenerate_vector(conic.fPts[1] - conic.fPts[0]);</span>
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :     bool degenerateBC = degenerate_vector(conic.fPts[2] - conic.fPts[1]);</span>
+<span class="lineNum">     632 </span><span class="lineNoCov">          0 :     if (degenerateAB &amp; degenerateBC) {</span>
+<span class="lineNum">     633 </span><span class="lineNoCov">          0 :         return kPoint_ReductionType;</span>
+<span class="lineNum">     634 </span>            :     }
+<span class="lineNum">     635 </span><span class="lineNoCov">          0 :     if (degenerateAB | degenerateBC) {</span>
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :         return kLine_ReductionType;</span>
+<span class="lineNum">     637 </span>            :     }
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 :     if (!conic_in_line(conic)) {</span>
+<span class="lineNum">     639 </span><span class="lineNoCov">          0 :         return kQuad_ReductionType;</span>
+<span class="lineNum">     640 </span>            :     }
+<span class="lineNum">     641 </span>            : #if 0   // once findMaxCurvature is implemented, this will be a better solution
+<span class="lineNum">     642 </span>            :     SkScalar t;
+<span class="lineNum">     643 </span>            :     if (!conic.findMaxCurvature(&amp;t) || 0 == t) {
+<span class="lineNum">     644 </span>            :         return kLine_ReductionType;
+<span class="lineNum">     645 </span>            :     }
+<span class="lineNum">     646 </span>            : #else  // but for now, use extrema instead
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :     SkScalar xT = 0, yT = 0;</span>
+<span class="lineNum">     648 </span><span class="lineNoCov">          0 :     (void) conic.findXExtrema(&amp;xT);</span>
+<span class="lineNum">     649 </span><span class="lineNoCov">          0 :     (void) conic.findYExtrema(&amp;yT);</span>
+<span class="lineNum">     650 </span><span class="lineNoCov">          0 :     SkScalar t = SkTMax(xT, yT);</span>
+<span class="lineNum">     651 </span><span class="lineNoCov">          0 :     if (0 == t) {</span>
+<span class="lineNum">     652 </span><span class="lineNoCov">          0 :         return kLine_ReductionType;</span>
+<span class="lineNum">     653 </span>            :     }
+<span class="lineNum">     654 </span>            : #endif
+<span class="lineNum">     655 </span><span class="lineNoCov">          0 :     conic.evalAt(t, reduction, nullptr);</span>
+<span class="lineNum">     656 </span><span class="lineNoCov">          0 :     return kDegenerate_ReductionType;</span>
+<a name="657"><span class="lineNum">     657 </span>            : }</a>
+<span class="lineNum">     658 </span>            : 
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 : SkPathStroker::ReductionType SkPathStroker::CheckQuadLinear(const SkPoint quad[3],</span>
+<span class="lineNum">     660 </span>            :         SkPoint* reduction) {
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :     bool degenerateAB = degenerate_vector(quad[1] - quad[0]);</span>
+<span class="lineNum">     662 </span><span class="lineNoCov">          0 :     bool degenerateBC = degenerate_vector(quad[2] - quad[1]);</span>
+<span class="lineNum">     663 </span><span class="lineNoCov">          0 :     if (degenerateAB &amp; degenerateBC) {</span>
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :         return kPoint_ReductionType;</span>
+<span class="lineNum">     665 </span>            :     }
+<span class="lineNum">     666 </span><span class="lineNoCov">          0 :     if (degenerateAB | degenerateBC) {</span>
+<span class="lineNum">     667 </span><span class="lineNoCov">          0 :         return kLine_ReductionType;</span>
+<span class="lineNum">     668 </span>            :     }
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :     if (!quad_in_line(quad)) {</span>
+<span class="lineNum">     670 </span><span class="lineNoCov">          0 :         return kQuad_ReductionType;</span>
+<span class="lineNum">     671 </span>            :     }
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :     SkScalar t = SkFindQuadMaxCurvature(quad);</span>
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :     if (0 == t) {</span>
+<span class="lineNum">     674 </span><span class="lineNoCov">          0 :         return kLine_ReductionType;</span>
+<span class="lineNum">     675 </span>            :     }
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :     *reduction = SkEvalQuadAt(quad, t);</span>
+<span class="lineNum">     677 </span><span class="lineNoCov">          0 :     return kDegenerate_ReductionType;</span>
+<a name="678"><span class="lineNum">     678 </span>            : }</a>
+<span class="lineNum">     679 </span>            : 
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 : void SkPathStroker::conicTo(const SkPoint&amp; pt1, const SkPoint&amp; pt2, SkScalar weight) {</span>
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :     const SkConic conic(fPrevPt, pt1, pt2, weight);</span>
+<span class="lineNum">     682 </span>            :     SkPoint reduction;
+<span class="lineNum">     683 </span><span class="lineNoCov">          0 :     ReductionType reductionType = CheckConicLinear(conic, &amp;reduction);</span>
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :     if (kPoint_ReductionType == reductionType) {</span>
+<span class="lineNum">     685 </span>            :         /* If the stroke consists of a moveTo followed by a degenerate curve, treat it
+<span class="lineNum">     686 </span>            :             as if it were followed by a zero-length line. Lines without length
+<span class="lineNum">     687 </span>            :             can have square and round end caps. */
+<span class="lineNum">     688 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt2);</span>
+<span class="lineNum">     689 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     690 </span>            :     }
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :     if (kLine_ReductionType == reductionType) {</span>
+<span class="lineNum">     692 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt2);</span>
+<span class="lineNum">     693 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     694 </span>            :     }
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :     if (kDegenerate_ReductionType == reductionType) {</span>
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(reduction);</span>
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :         SkStrokerPriv::JoinProc saveJoiner = fJoiner;</span>
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :         fJoiner = SkStrokerPriv::JoinFactory(SkPaint::kRound_Join);</span>
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt2);</span>
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :         fJoiner = saveJoiner;</span>
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     702 </span>            :     }
+<span class="lineNum">     703 </span><span class="lineNoCov">          0 :     SkASSERT(kQuad_ReductionType == reductionType);</span>
+<span class="lineNum">     704 </span>            :     SkVector normalAB, unitAB, normalBC, unitBC;
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :     if (!this-&gt;preJoinTo(pt1, &amp;normalAB, &amp;unitAB, false)) {</span>
+<span class="lineNum">     706 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt2);</span>
+<span class="lineNum">     707 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     708 </span>            :     }
+<span class="lineNum">     709 </span>            :     SkQuadConstruct quadPts;
+<span class="lineNum">     710 </span><span class="lineNoCov">          0 :     this-&gt;init(kOuter_StrokeType, &amp;quadPts, 0, 1);</span>
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :     (void) this-&gt;conicStroke(conic, &amp;quadPts);</span>
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :     this-&gt;init(kInner_StrokeType, &amp;quadPts, 0, 1);</span>
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :     (void) this-&gt;conicStroke(conic, &amp;quadPts);</span>
+<span class="lineNum">     714 </span><span class="lineNoCov">          0 :     this-&gt;setConicEndNormal(conic, normalAB, unitAB, &amp;normalBC, &amp;unitBC);</span>
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :     this-&gt;postJoinTo(pt2, normalBC, unitBC);</span>
+<a name="716"><span class="lineNum">     716 </span>            : }</a>
+<span class="lineNum">     717 </span>            : 
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 : void SkPathStroker::quadTo(const SkPoint&amp; pt1, const SkPoint&amp; pt2) {</span>
+<span class="lineNum">     719 </span><span class="lineNoCov">          0 :     const SkPoint quad[3] = { fPrevPt, pt1, pt2 };</span>
+<span class="lineNum">     720 </span>            :     SkPoint reduction;
+<span class="lineNum">     721 </span><span class="lineNoCov">          0 :     ReductionType reductionType = CheckQuadLinear(quad, &amp;reduction);</span>
+<span class="lineNum">     722 </span><span class="lineNoCov">          0 :     if (kPoint_ReductionType == reductionType) {</span>
+<span class="lineNum">     723 </span>            :         /* If the stroke consists of a moveTo followed by a degenerate curve, treat it
+<span class="lineNum">     724 </span>            :             as if it were followed by a zero-length line. Lines without length
+<span class="lineNum">     725 </span>            :             can have square and round end caps. */
+<span class="lineNum">     726 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt2);</span>
+<span class="lineNum">     727 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     728 </span>            :     }
+<span class="lineNum">     729 </span><span class="lineNoCov">          0 :     if (kLine_ReductionType == reductionType) {</span>
+<span class="lineNum">     730 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt2);</span>
+<span class="lineNum">     731 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     732 </span>            :     }
+<span class="lineNum">     733 </span><span class="lineNoCov">          0 :     if (kDegenerate_ReductionType == reductionType) {</span>
+<span class="lineNum">     734 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(reduction);</span>
+<span class="lineNum">     735 </span><span class="lineNoCov">          0 :         SkStrokerPriv::JoinProc saveJoiner = fJoiner;</span>
+<span class="lineNum">     736 </span><span class="lineNoCov">          0 :         fJoiner = SkStrokerPriv::JoinFactory(SkPaint::kRound_Join);</span>
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt2);</span>
+<span class="lineNum">     738 </span><span class="lineNoCov">          0 :         fJoiner = saveJoiner;</span>
+<span class="lineNum">     739 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     740 </span>            :     }
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 :     SkASSERT(kQuad_ReductionType == reductionType);</span>
+<span class="lineNum">     742 </span>            :     SkVector normalAB, unitAB, normalBC, unitBC;
+<span class="lineNum">     743 </span><span class="lineNoCov">          0 :     if (!this-&gt;preJoinTo(pt1, &amp;normalAB, &amp;unitAB, false)) {</span>
+<span class="lineNum">     744 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt2);</span>
+<span class="lineNum">     745 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     746 </span>            :     }
+<span class="lineNum">     747 </span>            :     SkQuadConstruct quadPts;
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :     this-&gt;init(kOuter_StrokeType, &amp;quadPts, 0, 1);</span>
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :     (void) this-&gt;quadStroke(quad, &amp;quadPts);</span>
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :     this-&gt;init(kInner_StrokeType, &amp;quadPts, 0, 1);</span>
+<span class="lineNum">     751 </span><span class="lineNoCov">          0 :     (void) this-&gt;quadStroke(quad, &amp;quadPts);</span>
+<span class="lineNum">     752 </span><span class="lineNoCov">          0 :     this-&gt;setQuadEndNormal(quad, normalAB, unitAB, &amp;normalBC, &amp;unitBC);</span>
+<span class="lineNum">     753 </span>            : 
+<span class="lineNum">     754 </span><span class="lineNoCov">          0 :     this-&gt;postJoinTo(pt2, normalBC, unitBC);</span>
+<span class="lineNum">     755 </span>            : }
+<span class="lineNum">     756 </span>            : 
+<a name="757"><span class="lineNum">     757 </span>            : // Given a point on the curve and its derivative, scale the derivative by the radius, and</a>
+<span class="lineNum">     758 </span>            : // compute the perpendicular point and its tangent.
+<span class="lineNum">     759 </span><span class="lineCov">         48 : void SkPathStroker::setRayPts(const SkPoint&amp; tPt, SkVector* dxy, SkPoint* onPt,</span>
+<span class="lineNum">     760 </span>            :         SkPoint* tangent) const {
+<span class="lineNum">     761 </span><span class="lineCov">         48 :     SkPoint oldDxy = *dxy;</span>
+<span class="lineNum">     762 </span><span class="lineCov">         48 :     if (!dxy-&gt;setLength(fRadius)) {  // consider moving double logic into SkPoint::setLength</span>
+<span class="lineNum">     763 </span><span class="lineNoCov">          0 :         double xx = oldDxy.fX;</span>
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 :         double yy = oldDxy.fY;</span>
+<span class="lineNum">     765 </span><span class="lineNoCov">          0 :         double dscale = fRadius / sqrt(xx * xx + yy * yy);</span>
+<span class="lineNum">     766 </span><span class="lineNoCov">          0 :         dxy-&gt;fX = SkDoubleToScalar(xx * dscale);</span>
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 :         dxy-&gt;fY = SkDoubleToScalar(yy * dscale);</span>
+<span class="lineNum">     768 </span>            :     }
+<span class="lineNum">     769 </span><span class="lineCov">         48 :     SkScalar axisFlip = SkIntToScalar(fStrokeType);  // go opposite ways for outer, inner</span>
+<span class="lineNum">     770 </span><span class="lineCov">         48 :     onPt-&gt;fX = tPt.fX + axisFlip * dxy-&gt;fY;</span>
+<span class="lineNum">     771 </span><span class="lineCov">         48 :     onPt-&gt;fY = tPt.fY - axisFlip * dxy-&gt;fX;</span>
+<span class="lineNum">     772 </span><span class="lineCov">         48 :     if (tangent) {</span>
+<span class="lineNum">     773 </span><span class="lineCov">         32 :         tangent-&gt;fX = onPt-&gt;fX + dxy-&gt;fX;</span>
+<span class="lineNum">     774 </span><span class="lineCov">         32 :         tangent-&gt;fY = onPt-&gt;fY + dxy-&gt;fY;</span>
+<span class="lineNum">     775 </span>            :     }
+<span class="lineNum">     776 </span><span class="lineCov">         48 : }</span>
+<span class="lineNum">     777 </span>            : 
+<a name="778"><span class="lineNum">     778 </span>            : // Given a conic and t, return the point on curve, its perpendicular, and the perpendicular tangent.</a>
+<span class="lineNum">     779 </span>            : // Returns false if the perpendicular could not be computed (because the derivative collapsed to 0)
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 : void SkPathStroker::conicPerpRay(const SkConic&amp; conic, SkScalar t, SkPoint* tPt, SkPoint* onPt,</span>
+<span class="lineNum">     781 </span>            :         SkPoint* tangent) const {
+<span class="lineNum">     782 </span>            :     SkVector dxy;
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :     conic.evalAt(t, tPt, &amp;dxy);</span>
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :     if (dxy.fX == 0 &amp;&amp; dxy.fY == 0) {</span>
+<span class="lineNum">     785 </span><span class="lineNoCov">          0 :         dxy = conic.fPts[2] - conic.fPts[0];</span>
+<span class="lineNum">     786 </span>            :     }
+<span class="lineNum">     787 </span><span class="lineNoCov">          0 :     this-&gt;setRayPts(*tPt, &amp;dxy, onPt, tangent);</span>
+<span class="lineNum">     788 </span><span class="lineNoCov">          0 : }</span>
+<a name="789"><span class="lineNum">     789 </span>            : </a>
+<span class="lineNum">     790 </span>            : // Given a conic and a t range, find the start and end if they haven't been found already.
+<span class="lineNum">     791 </span><span class="lineNoCov">          0 : void SkPathStroker::conicQuadEnds(const SkConic&amp; conic, SkQuadConstruct* quadPts) const {</span>
+<span class="lineNum">     792 </span><span class="lineNoCov">          0 :     if (!quadPts-&gt;fStartSet) {</span>
+<span class="lineNum">     793 </span>            :         SkPoint conicStartPt;
+<span class="lineNum">     794 </span><span class="lineNoCov">          0 :         this-&gt;conicPerpRay(conic, quadPts-&gt;fStartT, &amp;conicStartPt, &amp;quadPts-&gt;fQuad[0],</span>
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :                 &amp;quadPts-&gt;fTangentStart);</span>
+<span class="lineNum">     796 </span><span class="lineNoCov">          0 :         quadPts-&gt;fStartSet = true;</span>
+<span class="lineNum">     797 </span>            :     }
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 :     if (!quadPts-&gt;fEndSet) {</span>
+<span class="lineNum">     799 </span>            :         SkPoint conicEndPt;
+<span class="lineNum">     800 </span><span class="lineNoCov">          0 :         this-&gt;conicPerpRay(conic, quadPts-&gt;fEndT, &amp;conicEndPt, &amp;quadPts-&gt;fQuad[2],</span>
+<span class="lineNum">     801 </span><span class="lineNoCov">          0 :                 &amp;quadPts-&gt;fTangentEnd);</span>
+<span class="lineNum">     802 </span><span class="lineNoCov">          0 :         quadPts-&gt;fEndSet = true;</span>
+<span class="lineNum">     803 </span>            :     }
+<span class="lineNum">     804 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     805 </span>            : 
+<a name="806"><span class="lineNum">     806 </span>            : </a>
+<span class="lineNum">     807 </span>            : // Given a cubic and t, return the point on curve, its perpendicular, and the perpendicular tangent.
+<span class="lineNum">     808 </span><span class="lineCov">         48 : void SkPathStroker::cubicPerpRay(const SkPoint cubic[4], SkScalar t, SkPoint* tPt, SkPoint* onPt,</span>
+<span class="lineNum">     809 </span>            :         SkPoint* tangent) const {
+<span class="lineNum">     810 </span>            :     SkVector dxy;
+<span class="lineNum">     811 </span>            :     SkPoint chopped[7];
+<span class="lineNum">     812 </span><span class="lineCov">         48 :     SkEvalCubicAt(cubic, t, tPt, &amp;dxy, nullptr);</span>
+<span class="lineNum">     813 </span><span class="lineCov">         48 :     if (dxy.fX == 0 &amp;&amp; dxy.fY == 0) {</span>
+<span class="lineNum">     814 </span><span class="lineNoCov">          0 :         const SkPoint* cPts = cubic;</span>
+<span class="lineNum">     815 </span><span class="lineNoCov">          0 :         if (SkScalarNearlyZero(t)) {</span>
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 :             dxy = cubic[2] - cubic[0];</span>
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :         } else if (SkScalarNearlyZero(1 - t)) {</span>
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 :             dxy = cubic[3] - cubic[1];</span>
+<span class="lineNum">     819 </span>            :         } else {
+<span class="lineNum">     820 </span>            :             // If the cubic inflection falls on the cusp, subdivide the cubic
+<span class="lineNum">     821 </span>            :             // to find the tangent at that point.
+<span class="lineNum">     822 </span><span class="lineNoCov">          0 :             SkChopCubicAt(cubic, chopped, t);</span>
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 :             dxy = chopped[3] - chopped[2];</span>
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :             if (dxy.fX == 0 &amp;&amp; dxy.fY == 0) {</span>
+<span class="lineNum">     825 </span><span class="lineNoCov">          0 :                 dxy = chopped[3] - chopped[1];</span>
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 :                 cPts = chopped;</span>
+<span class="lineNum">     827 </span>            :             }
+<span class="lineNum">     828 </span>            :         }
+<span class="lineNum">     829 </span><span class="lineNoCov">          0 :         if (dxy.fX == 0 &amp;&amp; dxy.fY == 0) {</span>
+<span class="lineNum">     830 </span><span class="lineNoCov">          0 :             dxy = cPts[3] - cPts[0];</span>
+<span class="lineNum">     831 </span>            :         }
+<span class="lineNum">     832 </span>            :     }
+<span class="lineNum">     833 </span><span class="lineCov">         48 :     setRayPts(*tPt, &amp;dxy, onPt, tangent);</span>
+<span class="lineNum">     834 </span><span class="lineCov">         48 : }</span>
+<a name="835"><span class="lineNum">     835 </span>            : </a>
+<span class="lineNum">     836 </span>            : // Given a cubic and a t range, find the start and end if they haven't been found already.
+<span class="lineNum">     837 </span><span class="lineCov">         32 : void SkPathStroker::cubicQuadEnds(const SkPoint cubic[4], SkQuadConstruct* quadPts) {</span>
+<span class="lineNum">     838 </span><span class="lineCov">         32 :     if (!quadPts-&gt;fStartSet) {</span>
+<span class="lineNum">     839 </span>            :         SkPoint cubicStartPt;
+<span class="lineNum">     840 </span><span class="lineCov">         16 :         this-&gt;cubicPerpRay(cubic, quadPts-&gt;fStartT, &amp;cubicStartPt, &amp;quadPts-&gt;fQuad[0],</span>
+<span class="lineNum">     841 </span><span class="lineCov">         16 :                 &amp;quadPts-&gt;fTangentStart);</span>
+<span class="lineNum">     842 </span><span class="lineCov">         16 :         quadPts-&gt;fStartSet = true;</span>
+<span class="lineNum">     843 </span>            :     }
+<span class="lineNum">     844 </span><span class="lineCov">         32 :     if (!quadPts-&gt;fEndSet) {</span>
+<span class="lineNum">     845 </span>            :         SkPoint cubicEndPt;
+<span class="lineNum">     846 </span><span class="lineCov">         16 :         this-&gt;cubicPerpRay(cubic, quadPts-&gt;fEndT, &amp;cubicEndPt, &amp;quadPts-&gt;fQuad[2],</span>
+<span class="lineNum">     847 </span><span class="lineCov">         16 :                 &amp;quadPts-&gt;fTangentEnd);</span>
+<span class="lineNum">     848 </span><span class="lineCov">         16 :         quadPts-&gt;fEndSet = true;</span>
+<span class="lineNum">     849 </span>            :     }
+<a name="850"><span class="lineNum">     850 </span><span class="lineCov">         32 : }</span></a>
+<span class="lineNum">     851 </span>            : 
+<span class="lineNum">     852 </span><span class="lineNoCov">          0 : void SkPathStroker::cubicQuadMid(const SkPoint cubic[4], const SkQuadConstruct* quadPts,</span>
+<span class="lineNum">     853 </span>            :         SkPoint* mid) const {
+<span class="lineNum">     854 </span>            :     SkPoint cubicMidPt;
+<span class="lineNum">     855 </span><span class="lineNoCov">          0 :     this-&gt;cubicPerpRay(cubic, quadPts-&gt;fMidT, &amp;cubicMidPt, mid, nullptr);</span>
+<span class="lineNum">     856 </span><span class="lineNoCov">          0 : }</span>
+<a name="857"><span class="lineNum">     857 </span>            : </a>
+<span class="lineNum">     858 </span>            : // Given a quad and t, return the point on curve, its perpendicular, and the perpendicular tangent.
+<span class="lineNum">     859 </span><span class="lineNoCov">          0 : void SkPathStroker::quadPerpRay(const SkPoint quad[3], SkScalar t, SkPoint* tPt, SkPoint* onPt,</span>
+<span class="lineNum">     860 </span>            :         SkPoint* tangent) const {
+<span class="lineNum">     861 </span>            :     SkVector dxy;
+<span class="lineNum">     862 </span><span class="lineNoCov">          0 :     SkEvalQuadAt(quad, t, tPt, &amp;dxy);</span>
+<span class="lineNum">     863 </span><span class="lineNoCov">          0 :     if (dxy.fX == 0 &amp;&amp; dxy.fY == 0) {</span>
+<span class="lineNum">     864 </span><span class="lineNoCov">          0 :         dxy = quad[2] - quad[0];</span>
+<span class="lineNum">     865 </span>            :     }
+<span class="lineNum">     866 </span><span class="lineNoCov">          0 :     setRayPts(*tPt, &amp;dxy, onPt, tangent);</span>
+<span class="lineNum">     867 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     868 </span>            : 
+<span class="lineNum">     869 </span>            : // Find the intersection of the stroke tangents to construct a stroke quad.
+<a name="870"><span class="lineNum">     870 </span>            : // Return whether the stroke is a degenerate (a line), a quad, or must be split.</a>
+<span class="lineNum">     871 </span>            : // Optionally compute the quad's control point.
+<span class="lineNum">     872 </span><span class="lineCov">         32 : SkPathStroker::ResultType SkPathStroker::intersectRay(SkQuadConstruct* quadPts,</span>
+<span class="lineNum">     873 </span>            :         IntersectRayType intersectRayType  STROKER_DEBUG_PARAMS(int depth)) const {
+<span class="lineNum">     874 </span><span class="lineCov">         32 :     const SkPoint&amp; start = quadPts-&gt;fQuad[0];</span>
+<span class="lineNum">     875 </span><span class="lineCov">         32 :     const SkPoint&amp; end = quadPts-&gt;fQuad[2];</span>
+<span class="lineNum">     876 </span><span class="lineCov">         32 :     SkVector aLen = quadPts-&gt;fTangentStart - start;</span>
+<span class="lineNum">     877 </span><span class="lineCov">         32 :     SkVector bLen = quadPts-&gt;fTangentEnd - end;</span>
+<span class="lineNum">     878 </span>            :     /* Slopes match when denom goes to zero:
+<span class="lineNum">     879 </span>            :                       axLen / ayLen ==                   bxLen / byLen
+<span class="lineNum">     880 </span>            :     (ayLen * byLen) * axLen / ayLen == (ayLen * byLen) * bxLen / byLen
+<span class="lineNum">     881 </span>            :              byLen  * axLen         ==  ayLen          * bxLen
+<span class="lineNum">     882 </span>            :              byLen  * axLen         -   ayLen          * bxLen         ( == denom )
+<span class="lineNum">     883 </span>            :      */
+<span class="lineNum">     884 </span><span class="lineCov">         32 :     SkScalar denom = aLen.cross(bLen);</span>
+<span class="lineNum">     885 </span><span class="lineCov">         32 :     if (denom == 0 || !SkScalarIsFinite(denom)) {</span>
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 :         quadPts-&gt;fOppositeTangents = aLen.dot(bLen) &lt; 0;</span>
+<span class="lineNum">     887 </span><span class="lineNoCov">          0 :         return STROKER_RESULT(kDegenerate_ResultType, depth, quadPts, &quot;denom == 0&quot;);</span>
+<span class="lineNum">     888 </span>            :     }
+<span class="lineNum">     889 </span><span class="lineCov">         32 :     quadPts-&gt;fOppositeTangents = false;</span>
+<span class="lineNum">     890 </span><span class="lineCov">         32 :     SkVector ab0 = start - end;</span>
+<span class="lineNum">     891 </span><span class="lineCov">         32 :     SkScalar numerA = bLen.cross(ab0);</span>
+<span class="lineNum">     892 </span><span class="lineCov">         32 :     SkScalar numerB = aLen.cross(ab0);</span>
+<span class="lineNum">     893 </span><span class="lineCov">         32 :     if ((numerA &gt;= 0) == (numerB &gt;= 0)) { // if the control point is outside the quad ends</span>
+<span class="lineNum">     894 </span>            :         // if the perpendicular distances from the quad points to the opposite tangent line
+<span class="lineNum">     895 </span>            :         // are small, a straight line is good enough
+<span class="lineNum">     896 </span><span class="lineNoCov">          0 :         SkScalar dist1 = pt_to_line(start, end, quadPts-&gt;fTangentEnd);</span>
+<span class="lineNum">     897 </span><span class="lineNoCov">          0 :         SkScalar dist2 = pt_to_line(end, start, quadPts-&gt;fTangentStart);</span>
+<span class="lineNum">     898 </span><span class="lineNoCov">          0 :         if (SkTMax(dist1, dist2) &lt;= fInvResScaleSquared) {</span>
+<span class="lineNum">     899 </span><span class="lineNoCov">          0 :             return STROKER_RESULT(kDegenerate_ResultType, depth, quadPts,</span>
+<span class="lineNum">     900 </span>            :                     &quot;SkTMax(dist1=%g, dist2=%g) &lt;= fInvResScaleSquared&quot;, dist1, dist2);
+<span class="lineNum">     901 </span>            :         }
+<span class="lineNum">     902 </span><span class="lineNoCov">          0 :         return STROKER_RESULT(kSplit_ResultType, depth, quadPts,</span>
+<span class="lineNum">     903 </span>            :                 &quot;(numerA=%g &gt;= 0) == (numerB=%g &gt;= 0)&quot;, numerA, numerB);
+<span class="lineNum">     904 </span>            :     }
+<span class="lineNum">     905 </span>            :     // check to see if the denominator is teeny relative to the numerator
+<span class="lineNum">     906 </span>            :     // if the offset by one will be lost, the ratio is too large
+<span class="lineNum">     907 </span><span class="lineCov">         32 :     numerA /= denom;</span>
+<span class="lineNum">     908 </span><span class="lineCov">         32 :     bool validDivide = numerA &gt; numerA - 1;</span>
+<span class="lineNum">     909 </span><span class="lineCov">         32 :     if (validDivide) {</span>
+<span class="lineNum">     910 </span><span class="lineCov">         32 :         if (kCtrlPt_RayType == intersectRayType) {</span>
+<span class="lineNum">     911 </span><span class="lineCov">         16 :             SkPoint* ctrlPt = &amp;quadPts-&gt;fQuad[1];</span>
+<span class="lineNum">     912 </span>            :             // the intersection of the tangents need not be on the tangent segment
+<span class="lineNum">     913 </span>            :             // so 0 &lt;= numerA &lt;= 1 is not necessarily true
+<span class="lineNum">     914 </span><span class="lineCov">         16 :             ctrlPt-&gt;fX = start.fX * (1 - numerA) + quadPts-&gt;fTangentStart.fX * numerA;</span>
+<span class="lineNum">     915 </span><span class="lineCov">         16 :             ctrlPt-&gt;fY = start.fY * (1 - numerA) + quadPts-&gt;fTangentStart.fY * numerA;</span>
+<span class="lineNum">     916 </span>            :         }
+<span class="lineNum">     917 </span><span class="lineCov">         32 :         return STROKER_RESULT(kQuad_ResultType, depth, quadPts,</span>
+<span class="lineNum">     918 </span>            :                 &quot;(numerA=%g &gt;= 0) != (numerB=%g &gt;= 0)&quot;, numerA, numerB);
+<span class="lineNum">     919 </span>            :     }
+<span class="lineNum">     920 </span><span class="lineNoCov">          0 :     quadPts-&gt;fOppositeTangents = aLen.dot(bLen) &lt; 0;</span>
+<span class="lineNum">     921 </span>            :     // if the lines are parallel, straight line is good enough
+<span class="lineNum">     922 </span><span class="lineNoCov">          0 :     return STROKER_RESULT(kDegenerate_ResultType, depth, quadPts,</span>
+<span class="lineNum">     923 </span>            :             &quot;SkScalarNearlyZero(denom=%g)&quot;, denom);
+<span class="lineNum">     924 </span>            : }
+<a name="925"><span class="lineNum">     925 </span>            : </a>
+<span class="lineNum">     926 </span>            : // Given a cubic and a t-range, determine if the stroke can be described by a quadratic.
+<span class="lineNum">     927 </span><span class="lineCov">         16 : SkPathStroker::ResultType SkPathStroker::tangentsMeet(const SkPoint cubic[4],</span>
+<span class="lineNum">     928 </span>            :         SkQuadConstruct* quadPts) {
+<span class="lineNum">     929 </span><span class="lineCov">         16 :     this-&gt;cubicQuadEnds(cubic, quadPts);</span>
+<span class="lineNum">     930 </span><span class="lineCov">         16 :     return this-&gt;intersectRay(quadPts, kResultType_RayType  STROKER_DEBUG_PARAMS(fRecursionDepth));</span>
+<span class="lineNum">     931 </span>            : }
+<a name="932"><span class="lineNum">     932 </span>            : </a>
+<span class="lineNum">     933 </span>            : // Intersect the line with the quad and return the t values on the quad where the line crosses.
+<span class="lineNum">     934 </span><span class="lineNoCov">          0 : static int intersect_quad_ray(const SkPoint line[2], const SkPoint quad[3], SkScalar roots[2]) {</span>
+<span class="lineNum">     935 </span><span class="lineNoCov">          0 :     SkVector vec = line[1] - line[0];</span>
+<span class="lineNum">     936 </span>            :     SkScalar r[3];
+<span class="lineNum">     937 </span><span class="lineNoCov">          0 :     for (int n = 0; n &lt; 3; ++n) {</span>
+<span class="lineNum">     938 </span><span class="lineNoCov">          0 :         r[n] = (quad[n].fY - line[0].fY) * vec.fX - (quad[n].fX - line[0].fX) * vec.fY;</span>
+<span class="lineNum">     939 </span>            :     }
+<span class="lineNum">     940 </span><span class="lineNoCov">          0 :     SkScalar A = r[2];</span>
+<span class="lineNum">     941 </span><span class="lineNoCov">          0 :     SkScalar B = r[1];</span>
+<span class="lineNum">     942 </span><span class="lineNoCov">          0 :     SkScalar C = r[0];</span>
+<span class="lineNum">     943 </span><span class="lineNoCov">          0 :     A += C - 2 * B;  // A = a - 2*b + c</span>
+<span class="lineNum">     944 </span><span class="lineNoCov">          0 :     B -= C;  // B = -(b - c)</span>
+<span class="lineNum">     945 </span><span class="lineNoCov">          0 :     return SkFindUnitQuadRoots(A, 2 * B, C, roots);</span>
+<span class="lineNum">     946 </span>            : }
+<a name="947"><span class="lineNum">     947 </span>            : </a>
+<span class="lineNum">     948 </span>            : // Return true if the point is close to the bounds of the quad. This is used as a quick reject.
+<span class="lineNum">     949 </span><span class="lineNoCov">          0 : bool SkPathStroker::ptInQuadBounds(const SkPoint quad[3], const SkPoint&amp; pt) const {</span>
+<span class="lineNum">     950 </span><span class="lineNoCov">          0 :     SkScalar xMin = SkTMin(SkTMin(quad[0].fX, quad[1].fX), quad[2].fX);</span>
+<span class="lineNum">     951 </span><span class="lineNoCov">          0 :     if (pt.fX + fInvResScale &lt; xMin) {</span>
+<span class="lineNum">     952 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     953 </span>            :     }
+<span class="lineNum">     954 </span><span class="lineNoCov">          0 :     SkScalar xMax = SkTMax(SkTMax(quad[0].fX, quad[1].fX), quad[2].fX);</span>
+<span class="lineNum">     955 </span><span class="lineNoCov">          0 :     if (pt.fX - fInvResScale &gt; xMax) {</span>
+<span class="lineNum">     956 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     957 </span>            :     }
+<span class="lineNum">     958 </span><span class="lineNoCov">          0 :     SkScalar yMin = SkTMin(SkTMin(quad[0].fY, quad[1].fY), quad[2].fY);</span>
+<span class="lineNum">     959 </span><span class="lineNoCov">          0 :     if (pt.fY + fInvResScale &lt; yMin) {</span>
+<span class="lineNum">     960 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     961 </span>            :     }
+<span class="lineNum">     962 </span><span class="lineNoCov">          0 :     SkScalar yMax = SkTMax(SkTMax(quad[0].fY, quad[1].fY), quad[2].fY);</span>
+<span class="lineNum">     963 </span><span class="lineNoCov">          0 :     if (pt.fY - fInvResScale &gt; yMax) {</span>
+<span class="lineNum">     964 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     965 </span>            :     }
+<span class="lineNum">     966 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="967"><span class="lineNum">     967 </span>            : }</a>
+<span class="lineNum">     968 </span>            : 
+<span class="lineNum">     969 </span><span class="lineCov">         16 : static bool points_within_dist(const SkPoint&amp; nearPt, const SkPoint&amp; farPt, SkScalar limit) {</span>
+<span class="lineNum">     970 </span><span class="lineCov">         16 :     return nearPt.distanceToSqd(farPt) &lt;= limit * limit;</span>
+<a name="971"><span class="lineNum">     971 </span>            : }</a>
+<span class="lineNum">     972 </span>            : 
+<span class="lineNum">     973 </span><span class="lineCov">         16 : static bool sharp_angle(const SkPoint quad[3]) {</span>
+<span class="lineNum">     974 </span><span class="lineCov">         16 :     SkVector smaller = quad[1] - quad[0];</span>
+<span class="lineNum">     975 </span><span class="lineCov">         16 :     SkVector larger = quad[1] - quad[2];</span>
+<span class="lineNum">     976 </span><span class="lineCov">         16 :     SkScalar smallerLen = smaller.lengthSqd();</span>
+<span class="lineNum">     977 </span><span class="lineCov">         16 :     SkScalar largerLen = larger.lengthSqd();</span>
+<span class="lineNum">     978 </span><span class="lineCov">         16 :     if (smallerLen &gt; largerLen) {</span>
+<span class="lineNum">     979 </span><span class="lineNoCov">          0 :         SkTSwap(smaller, larger);</span>
+<span class="lineNum">     980 </span><span class="lineNoCov">          0 :         largerLen = smallerLen;</span>
+<span class="lineNum">     981 </span>            :     }
+<span class="lineNum">     982 </span><span class="lineCov">         16 :     if (!smaller.setLength(largerLen)) {</span>
+<span class="lineNum">     983 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     984 </span>            :     }
+<span class="lineNum">     985 </span><span class="lineCov">         16 :     SkScalar dot = smaller.dot(larger);</span>
+<span class="lineNum">     986 </span><span class="lineCov">         16 :     return dot &gt; 0;</span>
+<a name="987"><span class="lineNum">     987 </span>            : }</a>
+<span class="lineNum">     988 </span>            : 
+<span class="lineNum">     989 </span><span class="lineCov">         16 : SkPathStroker::ResultType SkPathStroker::strokeCloseEnough(const SkPoint stroke[3],</span>
+<span class="lineNum">     990 </span>            :         const SkPoint ray[2], SkQuadConstruct* quadPts  STROKER_DEBUG_PARAMS(int depth)) const {
+<span class="lineNum">     991 </span><span class="lineCov">         16 :     SkPoint strokeMid = SkEvalQuadAt(stroke, SK_ScalarHalf);</span>
+<span class="lineNum">     992 </span>            :     // measure the distance from the curve to the quad-stroke midpoint, compare to radius
+<span class="lineNum">     993 </span><span class="lineCov">         16 :     if (points_within_dist(ray[0], strokeMid, fInvResScale)) {  // if the difference is small</span>
+<span class="lineNum">     994 </span><span class="lineCov">         16 :         if (sharp_angle(quadPts-&gt;fQuad)) {</span>
+<span class="lineNum">     995 </span><span class="lineNoCov">          0 :             return STROKER_RESULT(kSplit_ResultType, depth, quadPts,</span>
+<span class="lineNum">     996 </span>            :                     &quot;sharp_angle (1) =%g,%g, %g,%g, %g,%g&quot;,
+<span class="lineNum">     997 </span>            :                     quadPts-&gt;fQuad[0].fX, quadPts-&gt;fQuad[0].fY,
+<span class="lineNum">     998 </span>            :                     quadPts-&gt;fQuad[1].fX, quadPts-&gt;fQuad[1].fY,
+<span class="lineNum">     999 </span>            :                     quadPts-&gt;fQuad[2].fX, quadPts-&gt;fQuad[2].fY);
+<span class="lineNum">    1000 </span>            :         }
+<span class="lineNum">    1001 </span><span class="lineCov">         16 :         return STROKER_RESULT(kQuad_ResultType, depth, quadPts,</span>
+<span class="lineNum">    1002 </span>            :                 &quot;points_within_dist(ray[0]=%g,%g, strokeMid=%g,%g, fInvResScale=%g)&quot;,
+<span class="lineNum">    1003 </span>            :                 ray[0].fX, ray[0].fY, strokeMid.fX, strokeMid.fY, fInvResScale);
+<span class="lineNum">    1004 </span>            :     }
+<span class="lineNum">    1005 </span>            :     // measure the distance to quad's bounds (quick reject)
+<span class="lineNum">    1006 </span>            :         // an alternative : look for point in triangle
+<span class="lineNum">    1007 </span><span class="lineNoCov">          0 :     if (!ptInQuadBounds(stroke, ray[0])) {  // if far, subdivide</span>
+<span class="lineNum">    1008 </span><span class="lineNoCov">          0 :         return STROKER_RESULT(kSplit_ResultType, depth, quadPts,</span>
+<span class="lineNum">    1009 </span>            :                 &quot;!pt_in_quad_bounds(stroke=(%g,%g %g,%g %g,%g), ray[0]=%g,%g)&quot;,
+<span class="lineNum">    1010 </span>            :                 stroke[0].fX, stroke[0].fY, stroke[1].fX, stroke[1].fY, stroke[2].fX, stroke[2].fY,
+<span class="lineNum">    1011 </span>            :                 ray[0].fX, ray[0].fY);
+<span class="lineNum">    1012 </span>            :     }
+<span class="lineNum">    1013 </span>            :     // measure the curve ray distance to the quad-stroke
+<span class="lineNum">    1014 </span>            :     SkScalar roots[2];
+<span class="lineNum">    1015 </span><span class="lineNoCov">          0 :     int rootCount = intersect_quad_ray(ray, stroke, roots);</span>
+<span class="lineNum">    1016 </span><span class="lineNoCov">          0 :     if (rootCount != 1) {</span>
+<span class="lineNum">    1017 </span><span class="lineNoCov">          0 :         return STROKER_RESULT(kSplit_ResultType, depth, quadPts,</span>
+<span class="lineNum">    1018 </span>            :                 &quot;rootCount=%d != 1&quot;, rootCount);
+<span class="lineNum">    1019 </span>            :     }
+<span class="lineNum">    1020 </span><span class="lineNoCov">          0 :     SkPoint quadPt = SkEvalQuadAt(stroke, roots[0]);</span>
+<span class="lineNum">    1021 </span><span class="lineNoCov">          0 :     SkScalar error = fInvResScale * (SK_Scalar1 - SkScalarAbs(roots[0] - 0.5f) * 2);</span>
+<span class="lineNum">    1022 </span><span class="lineNoCov">          0 :     if (points_within_dist(ray[0], quadPt, error)) {  // if the difference is small, we're done</span>
+<span class="lineNum">    1023 </span><span class="lineNoCov">          0 :         if (sharp_angle(quadPts-&gt;fQuad)) {</span>
+<span class="lineNum">    1024 </span><span class="lineNoCov">          0 :             return STROKER_RESULT(kSplit_ResultType, depth, quadPts,</span>
+<span class="lineNum">    1025 </span>            :                     &quot;sharp_angle (2) =%g,%g, %g,%g, %g,%g&quot;,
+<span class="lineNum">    1026 </span>            :                     quadPts-&gt;fQuad[0].fX, quadPts-&gt;fQuad[0].fY,
+<span class="lineNum">    1027 </span>            :                     quadPts-&gt;fQuad[1].fX, quadPts-&gt;fQuad[1].fY,
+<span class="lineNum">    1028 </span>            :                     quadPts-&gt;fQuad[2].fX, quadPts-&gt;fQuad[2].fY);
+<span class="lineNum">    1029 </span>            :         }
+<span class="lineNum">    1030 </span><span class="lineNoCov">          0 :         return STROKER_RESULT(kQuad_ResultType, depth, quadPts,</span>
+<span class="lineNum">    1031 </span>            :                 &quot;points_within_dist(ray[0]=%g,%g, quadPt=%g,%g, error=%g)&quot;,
+<span class="lineNum">    1032 </span>            :                 ray[0].fX, ray[0].fY, quadPt.fX, quadPt.fY, error);
+<span class="lineNum">    1033 </span>            :     }
+<span class="lineNum">    1034 </span>            :     // otherwise, subdivide
+<span class="lineNum">    1035 </span><span class="lineNoCov">          0 :     return STROKER_RESULT(kSplit_ResultType, depth, quadPts, &quot;%s&quot;, &quot;fall through&quot;);</span>
+<a name="1036"><span class="lineNum">    1036 </span>            : }</a>
+<span class="lineNum">    1037 </span>            : 
+<span class="lineNum">    1038 </span><span class="lineCov">         16 : SkPathStroker::ResultType SkPathStroker::compareQuadCubic(const SkPoint cubic[4],</span>
+<span class="lineNum">    1039 </span>            :         SkQuadConstruct* quadPts) {
+<span class="lineNum">    1040 </span>            :     // get the quadratic approximation of the stroke
+<span class="lineNum">    1041 </span><span class="lineCov">         16 :     this-&gt;cubicQuadEnds(cubic, quadPts);</span>
+<span class="lineNum">    1042 </span>            :     ResultType resultType = this-&gt;intersectRay(quadPts, kCtrlPt_RayType
+<span class="lineNum">    1043 </span><span class="lineCov">         16 :             STROKER_DEBUG_PARAMS(fRecursionDepth) );</span>
+<span class="lineNum">    1044 </span><span class="lineCov">         16 :     if (resultType != kQuad_ResultType) {</span>
+<span class="lineNum">    1045 </span><span class="lineNoCov">          0 :         return resultType;</span>
+<span class="lineNum">    1046 </span>            :     }
+<span class="lineNum">    1047 </span>            :     // project a ray from the curve to the stroke
+<span class="lineNum">    1048 </span>            :     SkPoint ray[2];  // points near midpoint on quad, midpoint on cubic
+<span class="lineNum">    1049 </span><span class="lineCov">         16 :     this-&gt;cubicPerpRay(cubic, quadPts-&gt;fMidT, &amp;ray[1], &amp;ray[0], nullptr);</span>
+<span class="lineNum">    1050 </span><span class="lineCov">         16 :     return this-&gt;strokeCloseEnough(quadPts-&gt;fQuad, ray, quadPts</span>
+<span class="lineNum">    1051 </span><span class="lineCov">         16 :             STROKER_DEBUG_PARAMS(fRecursionDepth));</span>
+<a name="1052"><span class="lineNum">    1052 </span>            : }</a>
+<span class="lineNum">    1053 </span>            : 
+<span class="lineNum">    1054 </span><span class="lineNoCov">          0 : SkPathStroker::ResultType SkPathStroker::compareQuadConic(const SkConic&amp; conic,</span>
+<span class="lineNum">    1055 </span>            :         SkQuadConstruct* quadPts) const {
+<span class="lineNum">    1056 </span>            :     // get the quadratic approximation of the stroke
+<span class="lineNum">    1057 </span><span class="lineNoCov">          0 :     this-&gt;conicQuadEnds(conic, quadPts);</span>
+<span class="lineNum">    1058 </span>            :     ResultType resultType = this-&gt;intersectRay(quadPts, kCtrlPt_RayType
+<span class="lineNum">    1059 </span><span class="lineNoCov">          0 :             STROKER_DEBUG_PARAMS(fRecursionDepth) );</span>
+<span class="lineNum">    1060 </span><span class="lineNoCov">          0 :     if (resultType != kQuad_ResultType) {</span>
+<span class="lineNum">    1061 </span><span class="lineNoCov">          0 :         return resultType;</span>
+<span class="lineNum">    1062 </span>            :     }
+<span class="lineNum">    1063 </span>            :     // project a ray from the curve to the stroke
+<span class="lineNum">    1064 </span>            :     SkPoint ray[2];  // points near midpoint on quad, midpoint on conic
+<span class="lineNum">    1065 </span><span class="lineNoCov">          0 :     this-&gt;conicPerpRay(conic, quadPts-&gt;fMidT, &amp;ray[1], &amp;ray[0], nullptr);</span>
+<span class="lineNum">    1066 </span><span class="lineNoCov">          0 :     return this-&gt;strokeCloseEnough(quadPts-&gt;fQuad, ray, quadPts</span>
+<span class="lineNum">    1067 </span><span class="lineNoCov">          0 :             STROKER_DEBUG_PARAMS(fRecursionDepth));</span>
+<a name="1068"><span class="lineNum">    1068 </span>            : }</a>
+<span class="lineNum">    1069 </span>            : 
+<span class="lineNum">    1070 </span><span class="lineNoCov">          0 : SkPathStroker::ResultType SkPathStroker::compareQuadQuad(const SkPoint quad[3],</span>
+<span class="lineNum">    1071 </span>            :         SkQuadConstruct* quadPts) {
+<span class="lineNum">    1072 </span>            :     // get the quadratic approximation of the stroke
+<span class="lineNum">    1073 </span><span class="lineNoCov">          0 :     if (!quadPts-&gt;fStartSet) {</span>
+<span class="lineNum">    1074 </span>            :         SkPoint quadStartPt;
+<span class="lineNum">    1075 </span><span class="lineNoCov">          0 :         this-&gt;quadPerpRay(quad, quadPts-&gt;fStartT, &amp;quadStartPt, &amp;quadPts-&gt;fQuad[0],</span>
+<span class="lineNum">    1076 </span><span class="lineNoCov">          0 :                 &amp;quadPts-&gt;fTangentStart);</span>
+<span class="lineNum">    1077 </span><span class="lineNoCov">          0 :         quadPts-&gt;fStartSet = true;</span>
+<span class="lineNum">    1078 </span>            :     }
+<span class="lineNum">    1079 </span><span class="lineNoCov">          0 :     if (!quadPts-&gt;fEndSet) {</span>
+<span class="lineNum">    1080 </span>            :         SkPoint quadEndPt;
+<span class="lineNum">    1081 </span><span class="lineNoCov">          0 :         this-&gt;quadPerpRay(quad, quadPts-&gt;fEndT, &amp;quadEndPt, &amp;quadPts-&gt;fQuad[2],</span>
+<span class="lineNum">    1082 </span><span class="lineNoCov">          0 :                 &amp;quadPts-&gt;fTangentEnd);</span>
+<span class="lineNum">    1083 </span><span class="lineNoCov">          0 :         quadPts-&gt;fEndSet = true;</span>
+<span class="lineNum">    1084 </span>            :     }
+<span class="lineNum">    1085 </span>            :     ResultType resultType = this-&gt;intersectRay(quadPts, kCtrlPt_RayType
+<span class="lineNum">    1086 </span><span class="lineNoCov">          0 :             STROKER_DEBUG_PARAMS(fRecursionDepth));</span>
+<span class="lineNum">    1087 </span><span class="lineNoCov">          0 :     if (resultType != kQuad_ResultType) {</span>
+<span class="lineNum">    1088 </span><span class="lineNoCov">          0 :         return resultType;</span>
+<span class="lineNum">    1089 </span>            :     }
+<span class="lineNum">    1090 </span>            :     // project a ray from the curve to the stroke
+<span class="lineNum">    1091 </span>            :     SkPoint ray[2];
+<span class="lineNum">    1092 </span><span class="lineNoCov">          0 :     this-&gt;quadPerpRay(quad, quadPts-&gt;fMidT, &amp;ray[1], &amp;ray[0], nullptr);</span>
+<span class="lineNum">    1093 </span><span class="lineNoCov">          0 :     return this-&gt;strokeCloseEnough(quadPts-&gt;fQuad, ray, quadPts</span>
+<span class="lineNum">    1094 </span><span class="lineNoCov">          0 :             STROKER_DEBUG_PARAMS(fRecursionDepth));</span>
+<a name="1095"><span class="lineNum">    1095 </span>            : }</a>
+<span class="lineNum">    1096 </span>            : 
+<span class="lineNum">    1097 </span><span class="lineNoCov">          0 : void SkPathStroker::addDegenerateLine(const SkQuadConstruct* quadPts) {</span>
+<span class="lineNum">    1098 </span><span class="lineNoCov">          0 :     const SkPoint* quad = quadPts-&gt;fQuad;</span>
+<span class="lineNum">    1099 </span><span class="lineNoCov">          0 :     SkPath* path = fStrokeType == kOuter_StrokeType ? &amp;fOuter : &amp;fInner;</span>
+<span class="lineNum">    1100 </span><span class="lineNoCov">          0 :     path-&gt;lineTo(quad[2].fX, quad[2].fY);</span>
+<a name="1101"><span class="lineNum">    1101 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">    1102 </span>            : 
+<span class="lineNum">    1103 </span><span class="lineNoCov">          0 : bool SkPathStroker::cubicMidOnLine(const SkPoint cubic[4], const SkQuadConstruct* quadPts) const {</span>
+<span class="lineNum">    1104 </span>            :     SkPoint strokeMid;
+<span class="lineNum">    1105 </span><span class="lineNoCov">          0 :     this-&gt;cubicQuadMid(cubic, quadPts, &amp;strokeMid);</span>
+<span class="lineNum">    1106 </span><span class="lineNoCov">          0 :     SkScalar dist = pt_to_line(strokeMid, quadPts-&gt;fQuad[0], quadPts-&gt;fQuad[2]);</span>
+<span class="lineNum">    1107 </span><span class="lineNoCov">          0 :     return dist &lt; fInvResScaleSquared;</span>
+<a name="1108"><span class="lineNum">    1108 </span>            : }</a>
+<span class="lineNum">    1109 </span>            : 
+<span class="lineNum">    1110 </span><span class="lineCov">         16 : bool SkPathStroker::cubicStroke(const SkPoint cubic[4], SkQuadConstruct* quadPts) {</span>
+<span class="lineNum">    1111 </span><span class="lineCov">         16 :     if (!fFoundTangents) {</span>
+<span class="lineNum">    1112 </span><span class="lineCov">         16 :         ResultType resultType = this-&gt;tangentsMeet(cubic, quadPts);</span>
+<span class="lineNum">    1113 </span><span class="lineCov">         16 :         if (kQuad_ResultType != resultType) {</span>
+<span class="lineNum">    1114 </span><span class="lineNoCov">          0 :             if ((kDegenerate_ResultType == resultType</span>
+<span class="lineNum">    1115 </span><span class="lineNoCov">          0 :                     || points_within_dist(quadPts-&gt;fQuad[0], quadPts-&gt;fQuad[2],</span>
+<span class="lineNum">    1116 </span><span class="lineNoCov">          0 :                     fInvResScale)) &amp;&amp; cubicMidOnLine(cubic, quadPts)) {</span>
+<span class="lineNum">    1117 </span><span class="lineNoCov">          0 :                 addDegenerateLine(quadPts);</span>
+<span class="lineNum">    1118 </span><span class="lineNoCov">          0 :                 return true;</span>
+<span class="lineNum">    1119 </span>            :             }
+<span class="lineNum">    1120 </span>            :         } else {
+<span class="lineNum">    1121 </span><span class="lineCov">         16 :             fFoundTangents = true;</span>
+<span class="lineNum">    1122 </span>            :         }
+<span class="lineNum">    1123 </span>            :     }
+<span class="lineNum">    1124 </span><span class="lineCov">         16 :     if (fFoundTangents) {</span>
+<span class="lineNum">    1125 </span><span class="lineCov">         16 :         ResultType resultType = this-&gt;compareQuadCubic(cubic, quadPts);</span>
+<span class="lineNum">    1126 </span><span class="lineCov">         16 :         if (kQuad_ResultType == resultType) {</span>
+<span class="lineNum">    1127 </span><span class="lineCov">         16 :             SkPath* path = fStrokeType == kOuter_StrokeType ? &amp;fOuter : &amp;fInner;</span>
+<span class="lineNum">    1128 </span><span class="lineCov">         16 :             const SkPoint* stroke = quadPts-&gt;fQuad;</span>
+<span class="lineNum">    1129 </span><span class="lineCov">         16 :             path-&gt;quadTo(stroke[1].fX, stroke[1].fY, stroke[2].fX, stroke[2].fY);</span>
+<span class="lineNum">    1130 </span><span class="lineCov">         16 :             return true;</span>
+<span class="lineNum">    1131 </span>            :         }
+<span class="lineNum">    1132 </span><span class="lineNoCov">          0 :         if (kDegenerate_ResultType == resultType) {</span>
+<span class="lineNum">    1133 </span><span class="lineNoCov">          0 :             if (!quadPts-&gt;fOppositeTangents) {</span>
+<span class="lineNum">    1134 </span><span class="lineNoCov">          0 :               addDegenerateLine(quadPts);</span>
+<span class="lineNum">    1135 </span><span class="lineNoCov">          0 :               return true;</span>
+<span class="lineNum">    1136 </span>            :             }
+<span class="lineNum">    1137 </span>            :         }
+<span class="lineNum">    1138 </span>            :     }
+<span class="lineNum">    1139 </span><span class="lineNoCov">          0 :     if (!SkScalarIsFinite(quadPts-&gt;fQuad[2].fX) || !SkScalarIsFinite(quadPts-&gt;fQuad[2].fY)) {</span>
+<span class="lineNum">    1140 </span><span class="lineNoCov">          0 :         return false;  // just abort if projected quad isn't representable</span>
+<span class="lineNum">    1141 </span>            :     }
+<span class="lineNum">    1142 </span><span class="lineNoCov">          0 :     SkDEBUGCODE(gMaxRecursion[fFoundTangents] = SkTMax(gMaxRecursion[fFoundTangents],</span>
+<span class="lineNum">    1143 </span>            :             fRecursionDepth + 1));
+<span class="lineNum">    1144 </span><span class="lineNoCov">          0 :     if (++fRecursionDepth &gt; kRecursiveLimits[fFoundTangents]) {</span>
+<span class="lineNum">    1145 </span><span class="lineNoCov">          0 :         return false;  // just abort if projected quad isn't representable</span>
+<span class="lineNum">    1146 </span>            :     }
+<span class="lineNum">    1147 </span>            :     SkQuadConstruct half;
+<span class="lineNum">    1148 </span><span class="lineNoCov">          0 :     if (!half.initWithStart(quadPts)) {</span>
+<span class="lineNum">    1149 </span><span class="lineNoCov">          0 :         addDegenerateLine(quadPts);</span>
+<span class="lineNum">    1150 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">    1151 </span>            :     }
+<span class="lineNum">    1152 </span><span class="lineNoCov">          0 :     if (!this-&gt;cubicStroke(cubic, &amp;half)) {</span>
+<span class="lineNum">    1153 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1154 </span>            :     }
+<span class="lineNum">    1155 </span><span class="lineNoCov">          0 :     if (!half.initWithEnd(quadPts)) {</span>
+<span class="lineNum">    1156 </span><span class="lineNoCov">          0 :         addDegenerateLine(quadPts);</span>
+<span class="lineNum">    1157 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">    1158 </span>            :     }
+<span class="lineNum">    1159 </span><span class="lineNoCov">          0 :     if (!this-&gt;cubicStroke(cubic, &amp;half)) {</span>
+<span class="lineNum">    1160 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1161 </span>            :     }
+<span class="lineNum">    1162 </span><span class="lineNoCov">          0 :     --fRecursionDepth;</span>
+<span class="lineNum">    1163 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="1164"><span class="lineNum">    1164 </span>            : }</a>
+<span class="lineNum">    1165 </span>            : 
+<span class="lineNum">    1166 </span><span class="lineNoCov">          0 : bool SkPathStroker::conicStroke(const SkConic&amp; conic, SkQuadConstruct* quadPts) {</span>
+<span class="lineNum">    1167 </span><span class="lineNoCov">          0 :     ResultType resultType = this-&gt;compareQuadConic(conic, quadPts);</span>
+<span class="lineNum">    1168 </span><span class="lineNoCov">          0 :     if (kQuad_ResultType == resultType) {</span>
+<span class="lineNum">    1169 </span><span class="lineNoCov">          0 :         const SkPoint* stroke = quadPts-&gt;fQuad;</span>
+<span class="lineNum">    1170 </span><span class="lineNoCov">          0 :         SkPath* path = fStrokeType == kOuter_StrokeType ? &amp;fOuter : &amp;fInner;</span>
+<span class="lineNum">    1171 </span><span class="lineNoCov">          0 :         path-&gt;quadTo(stroke[1].fX, stroke[1].fY, stroke[2].fX, stroke[2].fY);</span>
+<span class="lineNum">    1172 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">    1173 </span>            :     }
+<span class="lineNum">    1174 </span><span class="lineNoCov">          0 :     if (kDegenerate_ResultType == resultType) {</span>
+<span class="lineNum">    1175 </span><span class="lineNoCov">          0 :         addDegenerateLine(quadPts);</span>
+<span class="lineNum">    1176 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">    1177 </span>            :     }
+<span class="lineNum">    1178 </span><span class="lineNoCov">          0 :     SkDEBUGCODE(gMaxRecursion[kConic_RecursiveLimit] = SkTMax(gMaxRecursion[kConic_RecursiveLimit],</span>
+<span class="lineNum">    1179 </span>            :             fRecursionDepth + 1));
+<span class="lineNum">    1180 </span><span class="lineNoCov">          0 :     if (++fRecursionDepth &gt; kRecursiveLimits[kConic_RecursiveLimit]) {</span>
+<span class="lineNum">    1181 </span><span class="lineNoCov">          0 :         return false;  // just abort if projected quad isn't representable</span>
+<span class="lineNum">    1182 </span>            :     }
+<span class="lineNum">    1183 </span>            :     SkQuadConstruct half;
+<span class="lineNum">    1184 </span><span class="lineNoCov">          0 :     (void) half.initWithStart(quadPts);</span>
+<span class="lineNum">    1185 </span><span class="lineNoCov">          0 :     if (!this-&gt;conicStroke(conic, &amp;half)) {</span>
+<span class="lineNum">    1186 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1187 </span>            :     }
+<span class="lineNum">    1188 </span><span class="lineNoCov">          0 :     (void) half.initWithEnd(quadPts);</span>
+<span class="lineNum">    1189 </span><span class="lineNoCov">          0 :     if (!this-&gt;conicStroke(conic, &amp;half)) {</span>
+<span class="lineNum">    1190 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1191 </span>            :     }
+<span class="lineNum">    1192 </span><span class="lineNoCov">          0 :     --fRecursionDepth;</span>
+<span class="lineNum">    1193 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="1194"><span class="lineNum">    1194 </span>            : }</a>
+<span class="lineNum">    1195 </span>            : 
+<span class="lineNum">    1196 </span><span class="lineNoCov">          0 : bool SkPathStroker::quadStroke(const SkPoint quad[3], SkQuadConstruct* quadPts) {</span>
+<span class="lineNum">    1197 </span><span class="lineNoCov">          0 :     ResultType resultType = this-&gt;compareQuadQuad(quad, quadPts);</span>
+<span class="lineNum">    1198 </span><span class="lineNoCov">          0 :     if (kQuad_ResultType == resultType) {</span>
+<span class="lineNum">    1199 </span><span class="lineNoCov">          0 :         const SkPoint* stroke = quadPts-&gt;fQuad;</span>
+<span class="lineNum">    1200 </span><span class="lineNoCov">          0 :         SkPath* path = fStrokeType == kOuter_StrokeType ? &amp;fOuter : &amp;fInner;</span>
+<span class="lineNum">    1201 </span><span class="lineNoCov">          0 :         path-&gt;quadTo(stroke[1].fX, stroke[1].fY, stroke[2].fX, stroke[2].fY);</span>
+<span class="lineNum">    1202 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">    1203 </span>            :     }
+<span class="lineNum">    1204 </span><span class="lineNoCov">          0 :     if (kDegenerate_ResultType == resultType) {</span>
+<span class="lineNum">    1205 </span><span class="lineNoCov">          0 :         addDegenerateLine(quadPts);</span>
+<span class="lineNum">    1206 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">    1207 </span>            :     }
+<span class="lineNum">    1208 </span><span class="lineNoCov">          0 :     SkDEBUGCODE(gMaxRecursion[kQuad_RecursiveLimit] = SkTMax(gMaxRecursion[kQuad_RecursiveLimit],</span>
+<span class="lineNum">    1209 </span>            :             fRecursionDepth + 1));
+<span class="lineNum">    1210 </span><span class="lineNoCov">          0 :     if (++fRecursionDepth &gt; kRecursiveLimits[kQuad_RecursiveLimit]) {</span>
+<span class="lineNum">    1211 </span><span class="lineNoCov">          0 :         return false;  // just abort if projected quad isn't representable</span>
+<span class="lineNum">    1212 </span>            :     }
+<span class="lineNum">    1213 </span>            :     SkQuadConstruct half;
+<span class="lineNum">    1214 </span><span class="lineNoCov">          0 :     (void) half.initWithStart(quadPts);</span>
+<span class="lineNum">    1215 </span><span class="lineNoCov">          0 :     if (!this-&gt;quadStroke(quad, &amp;half)) {</span>
+<span class="lineNum">    1216 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1217 </span>            :     }
+<span class="lineNum">    1218 </span><span class="lineNoCov">          0 :     (void) half.initWithEnd(quadPts);</span>
+<span class="lineNum">    1219 </span><span class="lineNoCov">          0 :     if (!this-&gt;quadStroke(quad, &amp;half)) {</span>
+<span class="lineNum">    1220 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1221 </span>            :     }
+<span class="lineNum">    1222 </span><span class="lineNoCov">          0 :     --fRecursionDepth;</span>
+<span class="lineNum">    1223 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="1224"><span class="lineNum">    1224 </span>            : }</a>
+<span class="lineNum">    1225 </span>            : 
+<span class="lineNum">    1226 </span><span class="lineCov">          8 : void SkPathStroker::cubicTo(const SkPoint&amp; pt1, const SkPoint&amp; pt2,</span>
+<span class="lineNum">    1227 </span>            :                             const SkPoint&amp; pt3) {
+<span class="lineNum">    1228 </span><span class="lineCov">          8 :     const SkPoint cubic[4] = { fPrevPt, pt1, pt2, pt3 };</span>
+<span class="lineNum">    1229 </span>            :     SkPoint reduction[3];
+<span class="lineNum">    1230 </span>            :     const SkPoint* tangentPt;
+<span class="lineNum">    1231 </span><span class="lineCov">          8 :     ReductionType reductionType = CheckCubicLinear(cubic, reduction, &amp;tangentPt);</span>
+<span class="lineNum">    1232 </span><span class="lineCov">          8 :     if (kPoint_ReductionType == reductionType) {</span>
+<span class="lineNum">    1233 </span>            :         /* If the stroke consists of a moveTo followed by a degenerate curve, treat it
+<span class="lineNum">    1234 </span>            :             as if it were followed by a zero-length line. Lines without length
+<span class="lineNum">    1235 </span>            :             can have square and round end caps. */
+<span class="lineNum">    1236 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt3);</span>
+<span class="lineNum">    1237 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">    1238 </span>            :     }
+<span class="lineNum">    1239 </span><span class="lineCov">          8 :     if (kLine_ReductionType == reductionType) {</span>
+<span class="lineNum">    1240 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt3);</span>
+<span class="lineNum">    1241 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">    1242 </span>            :     }
+<span class="lineNum">    1243 </span><span class="lineCov">          8 :     if (kDegenerate_ReductionType &lt;= reductionType &amp;&amp; kDegenerate3_ReductionType &gt;= reductionType) {</span>
+<span class="lineNum">    1244 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(reduction[0]);</span>
+<span class="lineNum">    1245 </span><span class="lineNoCov">          0 :         SkStrokerPriv::JoinProc saveJoiner = fJoiner;</span>
+<span class="lineNum">    1246 </span><span class="lineNoCov">          0 :         fJoiner = SkStrokerPriv::JoinFactory(SkPaint::kRound_Join);</span>
+<span class="lineNum">    1247 </span><span class="lineNoCov">          0 :         if (kDegenerate2_ReductionType &lt;= reductionType) {</span>
+<span class="lineNum">    1248 </span><span class="lineNoCov">          0 :             this-&gt;lineTo(reduction[1]);</span>
+<span class="lineNum">    1249 </span>            :         }
+<span class="lineNum">    1250 </span><span class="lineNoCov">          0 :         if (kDegenerate3_ReductionType == reductionType) {</span>
+<span class="lineNum">    1251 </span><span class="lineNoCov">          0 :             this-&gt;lineTo(reduction[2]);</span>
+<span class="lineNum">    1252 </span>            :         }
+<span class="lineNum">    1253 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt3);</span>
+<span class="lineNum">    1254 </span><span class="lineNoCov">          0 :         fJoiner = saveJoiner;</span>
+<span class="lineNum">    1255 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">    1256 </span>            :     }
+<span class="lineNum">    1257 </span><span class="lineCov">          8 :     SkASSERT(kQuad_ReductionType == reductionType);</span>
+<span class="lineNum">    1258 </span>            :     SkVector normalAB, unitAB, normalCD, unitCD;
+<span class="lineNum">    1259 </span><span class="lineCov">          8 :     if (!this-&gt;preJoinTo(*tangentPt, &amp;normalAB, &amp;unitAB, false)) {</span>
+<span class="lineNum">    1260 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(pt3);</span>
+<span class="lineNum">    1261 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">    1262 </span>            :     }
+<span class="lineNum">    1263 </span>            :     SkScalar tValues[2];
+<span class="lineNum">    1264 </span><span class="lineCov">          8 :     int count = SkFindCubicInflections(cubic, tValues);</span>
+<span class="lineNum">    1265 </span><span class="lineCov">          8 :     SkScalar lastT = 0;</span>
+<span class="lineNum">    1266 </span><span class="lineCov">         16 :     for (int index = 0; index &lt;= count; ++index) {</span>
+<span class="lineNum">    1267 </span><span class="lineCov">          8 :         SkScalar nextT = index &lt; count ? tValues[index] : 1;</span>
+<span class="lineNum">    1268 </span>            :         SkQuadConstruct quadPts;
+<span class="lineNum">    1269 </span><span class="lineCov">          8 :         this-&gt;init(kOuter_StrokeType, &amp;quadPts, lastT, nextT);</span>
+<span class="lineNum">    1270 </span><span class="lineCov">          8 :         (void) this-&gt;cubicStroke(cubic, &amp;quadPts);</span>
+<span class="lineNum">    1271 </span><span class="lineCov">          8 :         this-&gt;init(kInner_StrokeType, &amp;quadPts, lastT, nextT);</span>
+<span class="lineNum">    1272 </span><span class="lineCov">          8 :         (void) this-&gt;cubicStroke(cubic, &amp;quadPts);</span>
+<span class="lineNum">    1273 </span><span class="lineCov">          8 :         lastT = nextT;</span>
+<span class="lineNum">    1274 </span>            :     }
+<span class="lineNum">    1275 </span>            :     // emit the join even if one stroke succeeded but the last one failed
+<span class="lineNum">    1276 </span>            :     // this avoids reversing an inner stroke with a partial path followed by another moveto
+<span class="lineNum">    1277 </span><span class="lineCov">          8 :     this-&gt;setCubicEndNormal(cubic, normalAB, unitAB, &amp;normalCD, &amp;unitCD);</span>
+<span class="lineNum">    1278 </span>            : 
+<span class="lineNum">    1279 </span><span class="lineCov">          8 :     this-&gt;postJoinTo(pt3, normalCD, unitCD);</span>
+<span class="lineNum">    1280 </span>            : }
+<span class="lineNum">    1281 </span>            : 
+<span class="lineNum">    1282 </span>            : ///////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">    1283 </span>            : ///////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">    1284 </span>            : 
+<a name="1285"><span class="lineNum">    1285 </span>            : #include &quot;SkPaintDefaults.h&quot;</a>
+<span class="lineNum">    1286 </span>            : 
+<span class="lineNum">    1287 </span><span class="lineCov">         15 : SkStroke::SkStroke() {</span>
+<span class="lineNum">    1288 </span><span class="lineCov">         15 :     fWidth      = SK_Scalar1;</span>
+<span class="lineNum">    1289 </span><span class="lineCov">         15 :     fMiterLimit = SkPaintDefaults_MiterLimit;</span>
+<span class="lineNum">    1290 </span><span class="lineCov">         15 :     fResScale   = 1;</span>
+<span class="lineNum">    1291 </span><span class="lineCov">         15 :     fCap        = SkPaint::kDefault_Cap;</span>
+<span class="lineNum">    1292 </span><span class="lineCov">         15 :     fJoin       = SkPaint::kDefault_Join;</span>
+<span class="lineNum">    1293 </span><span class="lineCov">         15 :     fDoFill     = false;</span>
+<a name="1294"><span class="lineNum">    1294 </span><span class="lineCov">         15 : }</span></a>
+<span class="lineNum">    1295 </span>            : 
+<span class="lineNum">    1296 </span><span class="lineNoCov">          0 : SkStroke::SkStroke(const SkPaint&amp; p) {</span>
+<span class="lineNum">    1297 </span><span class="lineNoCov">          0 :     fWidth      = p.getStrokeWidth();</span>
+<span class="lineNum">    1298 </span><span class="lineNoCov">          0 :     fMiterLimit = p.getStrokeMiter();</span>
+<span class="lineNum">    1299 </span><span class="lineNoCov">          0 :     fResScale   = 1;</span>
+<span class="lineNum">    1300 </span><span class="lineNoCov">          0 :     fCap        = (uint8_t)p.getStrokeCap();</span>
+<span class="lineNum">    1301 </span><span class="lineNoCov">          0 :     fJoin       = (uint8_t)p.getStrokeJoin();</span>
+<span class="lineNum">    1302 </span><span class="lineNoCov">          0 :     fDoFill     = SkToU8(p.getStyle() == SkPaint::kStrokeAndFill_Style);</span>
+<a name="1303"><span class="lineNum">    1303 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">    1304 </span>            : 
+<span class="lineNum">    1305 </span><span class="lineNoCov">          0 : SkStroke::SkStroke(const SkPaint&amp; p, SkScalar width) {</span>
+<span class="lineNum">    1306 </span><span class="lineNoCov">          0 :     fWidth      = width;</span>
+<span class="lineNum">    1307 </span><span class="lineNoCov">          0 :     fMiterLimit = p.getStrokeMiter();</span>
+<span class="lineNum">    1308 </span><span class="lineNoCov">          0 :     fResScale   = 1;</span>
+<span class="lineNum">    1309 </span><span class="lineNoCov">          0 :     fCap        = (uint8_t)p.getStrokeCap();</span>
+<span class="lineNum">    1310 </span><span class="lineNoCov">          0 :     fJoin       = (uint8_t)p.getStrokeJoin();</span>
+<span class="lineNum">    1311 </span><span class="lineNoCov">          0 :     fDoFill     = SkToU8(p.getStyle() == SkPaint::kStrokeAndFill_Style);</span>
+<a name="1312"><span class="lineNum">    1312 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">    1313 </span>            : 
+<span class="lineNum">    1314 </span><span class="lineCov">         15 : void SkStroke::setWidth(SkScalar width) {</span>
+<span class="lineNum">    1315 </span><span class="lineCov">         15 :     SkASSERT(width &gt;= 0);</span>
+<span class="lineNum">    1316 </span><span class="lineCov">         15 :     fWidth = width;</span>
+<a name="1317"><span class="lineNum">    1317 </span><span class="lineCov">         15 : }</span></a>
+<span class="lineNum">    1318 </span>            : 
+<span class="lineNum">    1319 </span><span class="lineCov">         15 : void SkStroke::setMiterLimit(SkScalar miterLimit) {</span>
+<span class="lineNum">    1320 </span><span class="lineCov">         15 :     SkASSERT(miterLimit &gt;= 0);</span>
+<span class="lineNum">    1321 </span><span class="lineCov">         15 :     fMiterLimit = miterLimit;</span>
+<a name="1322"><span class="lineNum">    1322 </span><span class="lineCov">         15 : }</span></a>
+<span class="lineNum">    1323 </span>            : 
+<span class="lineNum">    1324 </span><span class="lineCov">         15 : void SkStroke::setCap(SkPaint::Cap cap) {</span>
+<span class="lineNum">    1325 </span><span class="lineCov">         15 :     SkASSERT((unsigned)cap &lt; SkPaint::kCapCount);</span>
+<span class="lineNum">    1326 </span><span class="lineCov">         15 :     fCap = SkToU8(cap);</span>
+<a name="1327"><span class="lineNum">    1327 </span><span class="lineCov">         15 : }</span></a>
+<span class="lineNum">    1328 </span>            : 
+<span class="lineNum">    1329 </span><span class="lineCov">         15 : void SkStroke::setJoin(SkPaint::Join join) {</span>
+<span class="lineNum">    1330 </span><span class="lineCov">         15 :     SkASSERT((unsigned)join &lt; SkPaint::kJoinCount);</span>
+<span class="lineNum">    1331 </span><span class="lineCov">         15 :     fJoin = SkToU8(join);</span>
+<span class="lineNum">    1332 </span><span class="lineCov">         15 : }</span>
+<span class="lineNum">    1333 </span>            : 
+<span class="lineNum">    1334 </span>            : ///////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">    1335 </span>            : 
+<span class="lineNum">    1336 </span>            : // If src==dst, then we use a tmp path to record the stroke, and then swap
+<span class="lineNum">    1337 </span>            : // its contents with src when we're done.
+<a name="1338"><span class="lineNum">    1338 </span>            : class AutoTmpPath {</a>
+<span class="lineNum">    1339 </span>            : public:
+<span class="lineNum">    1340 </span><span class="lineCov">         15 :     AutoTmpPath(const SkPath&amp; src, SkPath** dst) : fSrc(src) {</span>
+<span class="lineNum">    1341 </span><span class="lineCov">         15 :         if (&amp;src == *dst) {</span>
+<span class="lineNum">    1342 </span><span class="lineNoCov">          0 :             *dst = &amp;fTmpDst;</span>
+<span class="lineNum">    1343 </span><span class="lineNoCov">          0 :             fSwapWithSrc = true;</span>
+<span class="lineNum">    1344 </span>            :         } else {
+<span class="lineNum">    1345 </span><span class="lineCov">         15 :             (*dst)-&gt;reset();</span>
+<span class="lineNum">    1346 </span><span class="lineCov">         15 :             fSwapWithSrc = false;</span>
+<span class="lineNum">    1347 </span>            :         }
+<a name="1348"><span class="lineNum">    1348 </span><span class="lineCov">         15 :     }</span></a>
+<span class="lineNum">    1349 </span>            : 
+<span class="lineNum">    1350 </span><span class="lineCov">         30 :     ~AutoTmpPath() {</span>
+<span class="lineNum">    1351 </span><span class="lineCov">         15 :         if (fSwapWithSrc) {</span>
+<span class="lineNum">    1352 </span><span class="lineNoCov">          0 :             fTmpDst.swap(*const_cast&lt;SkPath*&gt;(&amp;fSrc));</span>
+<span class="lineNum">    1353 </span>            :         }
+<span class="lineNum">    1354 </span><span class="lineCov">         15 :     }</span>
+<span class="lineNum">    1355 </span>            : 
+<span class="lineNum">    1356 </span>            : private:
+<span class="lineNum">    1357 </span>            :     SkPath          fTmpDst;
+<span class="lineNum">    1358 </span>            :     const SkPath&amp;   fSrc;
+<span class="lineNum">    1359 </span>            :     bool            fSwapWithSrc;
+<a name="1360"><span class="lineNum">    1360 </span>            : };</a>
+<span class="lineNum">    1361 </span>            : 
+<span class="lineNum">    1362 </span><span class="lineCov">         15 : void SkStroke::strokePath(const SkPath&amp; src, SkPath* dst) const {</span>
+<span class="lineNum">    1363 </span><span class="lineCov">         15 :     SkASSERT(dst);</span>
+<span class="lineNum">    1364 </span>            : 
+<span class="lineNum">    1365 </span><span class="lineCov">         15 :     SkScalar radius = SkScalarHalf(fWidth);</span>
+<span class="lineNum">    1366 </span>            : 
+<span class="lineNum">    1367 </span><span class="lineCov">         30 :     AutoTmpPath tmp(src, &amp;dst);</span>
+<span class="lineNum">    1368 </span>            : 
+<span class="lineNum">    1369 </span><span class="lineCov">         15 :     if (radius &lt;= 0) {</span>
+<span class="lineNum">    1370 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">    1371 </span>            :     }
+<span class="lineNum">    1372 </span>            : 
+<span class="lineNum">    1373 </span>            :     // If src is really a rect, call our specialty strokeRect() method
+<span class="lineNum">    1374 </span>            :     {
+<span class="lineNum">    1375 </span>            :         SkRect rect;
+<span class="lineNum">    1376 </span>            :         bool isClosed;
+<span class="lineNum">    1377 </span>            :         SkPath::Direction dir;
+<span class="lineNum">    1378 </span><span class="lineCov">         15 :         if (src.isRect(&amp;rect, &amp;isClosed, &amp;dir) &amp;&amp; isClosed) {</span>
+<span class="lineNum">    1379 </span><span class="lineNoCov">          0 :             this-&gt;strokeRect(rect, dst, dir);</span>
+<span class="lineNum">    1380 </span>            :             // our answer should preserve the inverseness of the src
+<span class="lineNum">    1381 </span><span class="lineNoCov">          0 :             if (src.isInverseFillType()) {</span>
+<span class="lineNum">    1382 </span><span class="lineNoCov">          0 :                 SkASSERT(!dst-&gt;isInverseFillType());</span>
+<span class="lineNum">    1383 </span><span class="lineNoCov">          0 :                 dst-&gt;toggleInverseFillType();</span>
+<span class="lineNum">    1384 </span>            :             }
+<span class="lineNum">    1385 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">    1386 </span>            :         }
+<span class="lineNum">    1387 </span>            :     }
+<span class="lineNum">    1388 </span>            : 
+<span class="lineNum">    1389 </span>            :     // We can always ignore centers for stroke and fill convex line-only paths
+<span class="lineNum">    1390 </span>            :     // TODO: remove the line-only restriction
+<span class="lineNum">    1391 </span><span class="lineCov">         15 :     bool ignoreCenter = fDoFill &amp;&amp; (src.getSegmentMasks() == SkPath::kLine_SegmentMask) &amp;&amp; </span>
+<span class="lineNum">    1392 </span><span class="lineCov">         15 :                         src.isLastContourClosed() &amp;&amp; src.isConvex();</span>
+<span class="lineNum">    1393 </span>            : 
+<span class="lineNum">    1394 </span><span class="lineCov">         15 :     SkPathStroker   stroker(src, radius, fMiterLimit, this-&gt;getCap(), this-&gt;getJoin(),</span>
+<span class="lineNum">    1395 </span><span class="lineCov">         45 :                             fResScale, ignoreCenter);</span>
+<span class="lineNum">    1396 </span><span class="lineCov">         15 :     SkPath::Iter    iter(src, false);</span>
+<span class="lineNum">    1397 </span><span class="lineCov">         15 :     SkPath::Verb    lastSegment = SkPath::kMove_Verb;</span>
+<span class="lineNum">    1398 </span>            : 
+<span class="lineNum">    1399 </span>            :     for (;;) {
+<span class="lineNum">    1400 </span>            :         SkPoint  pts[4];
+<span class="lineNum">    1401 </span><span class="lineCov">         61 :         switch (iter.next(pts, false)) {</span>
+<span class="lineNum">    1402 </span>            :             case SkPath::kMove_Verb:
+<span class="lineNum">    1403 </span><span class="lineCov">         15 :                 stroker.moveTo(pts[0]);</span>
+<span class="lineNum">    1404 </span><span class="lineCov">         15 :                 break;</span>
+<span class="lineNum">    1405 </span>            :             case SkPath::kLine_Verb:
+<span class="lineNum">    1406 </span><span class="lineCov">         21 :                 stroker.lineTo(pts[1], &amp;iter);</span>
+<span class="lineNum">    1407 </span><span class="lineCov">         21 :                 lastSegment = SkPath::kLine_Verb;</span>
+<span class="lineNum">    1408 </span><span class="lineCov">         21 :                 break;</span>
+<span class="lineNum">    1409 </span>            :             case SkPath::kQuad_Verb:
+<span class="lineNum">    1410 </span><span class="lineNoCov">          0 :                 stroker.quadTo(pts[1], pts[2]);</span>
+<span class="lineNum">    1411 </span><span class="lineNoCov">          0 :                 lastSegment = SkPath::kQuad_Verb;</span>
+<span class="lineNum">    1412 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">    1413 </span>            :             case SkPath::kConic_Verb: {
+<span class="lineNum">    1414 </span><span class="lineNoCov">          0 :                 stroker.conicTo(pts[1], pts[2], iter.conicWeight());</span>
+<span class="lineNum">    1415 </span><span class="lineNoCov">          0 :                 lastSegment = SkPath::kConic_Verb;</span>
+<span class="lineNum">    1416 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">    1417 </span>            :             } break;
+<span class="lineNum">    1418 </span>            :             case SkPath::kCubic_Verb:
+<span class="lineNum">    1419 </span><span class="lineCov">          8 :                 stroker.cubicTo(pts[1], pts[2], pts[3]);</span>
+<span class="lineNum">    1420 </span><span class="lineCov">          8 :                 lastSegment = SkPath::kCubic_Verb;</span>
+<span class="lineNum">    1421 </span><span class="lineCov">          8 :                 break;</span>
+<span class="lineNum">    1422 </span>            :             case SkPath::kClose_Verb:
+<span class="lineNum">    1423 </span><span class="lineCov">          2 :                 if (SkPaint::kButt_Cap != this-&gt;getCap()) {</span>
+<span class="lineNum">    1424 </span>            :                     /* If the stroke consists of a moveTo followed by a close, treat it
+<span class="lineNum">    1425 </span>            :                        as if it were followed by a zero-length line. Lines without length
+<span class="lineNum">    1426 </span>            :                        can have square and round end caps. */
+<span class="lineNum">    1427 </span><span class="lineNoCov">          0 :                     if (stroker.hasOnlyMoveTo()) {</span>
+<span class="lineNum">    1428 </span><span class="lineNoCov">          0 :                         stroker.lineTo(stroker.moveToPt());</span>
+<span class="lineNum">    1429 </span><span class="lineNoCov">          0 :                         goto ZERO_LENGTH;</span>
+<span class="lineNum">    1430 </span>            :                     }
+<span class="lineNum">    1431 </span>            :                     /* If the stroke consists of a moveTo followed by one or more zero-length
+<span class="lineNum">    1432 </span>            :                        verbs, then followed by a close, treat is as if it were followed by a
+<span class="lineNum">    1433 </span>            :                        zero-length line. Lines without length can have square &amp; round end caps. */
+<span class="lineNum">    1434 </span><span class="lineNoCov">          0 :                     if (stroker.isZeroLength()) {</span>
+<span class="lineNum">    1435 </span>            :                 ZERO_LENGTH:
+<span class="lineNum">    1436 </span><span class="lineNoCov">          0 :                         lastSegment = SkPath::kLine_Verb;</span>
+<span class="lineNum">    1437 </span><span class="lineNoCov">          0 :                         break;</span>
+<span class="lineNum">    1438 </span>            :                     }
+<span class="lineNum">    1439 </span>            :                 }
+<span class="lineNum">    1440 </span><span class="lineCov">          2 :                 stroker.close(lastSegment == SkPath::kLine_Verb);</span>
+<span class="lineNum">    1441 </span><span class="lineCov">          2 :                 break;</span>
+<span class="lineNum">    1442 </span>            :             case SkPath::kDone_Verb:
+<span class="lineNum">    1443 </span><span class="lineCov">         15 :                 goto DONE;</span>
+<span class="lineNum">    1444 </span>            :         }
+<span class="lineNum">    1445 </span><span class="lineCov">         46 :     }</span>
+<span class="lineNum">    1446 </span>            : DONE:
+<span class="lineNum">    1447 </span><span class="lineCov">         15 :     stroker.done(dst, lastSegment == SkPath::kLine_Verb);</span>
+<span class="lineNum">    1448 </span>            : 
+<span class="lineNum">    1449 </span><span class="lineCov">         15 :     if (fDoFill &amp;&amp; !ignoreCenter) {</span>
+<span class="lineNum">    1450 </span><span class="lineNoCov">          0 :         if (SkPathPriv::CheapIsFirstDirection(src, SkPathPriv::kCCW_FirstDirection)) {</span>
+<span class="lineNum">    1451 </span><span class="lineNoCov">          0 :             dst-&gt;reverseAddPath(src);</span>
+<span class="lineNum">    1452 </span>            :         } else {
+<span class="lineNum">    1453 </span><span class="lineNoCov">          0 :             dst-&gt;addPath(src);</span>
+<span class="lineNum">    1454 </span>            :         }
+<span class="lineNum">    1455 </span>            :     } else {
+<span class="lineNum">    1456 </span>            :         //  Seems like we can assume that a 2-point src would always result in
+<span class="lineNum">    1457 </span>            :         //  a convex stroke, but testing has proved otherwise.
+<span class="lineNum">    1458 </span>            :         //  TODO: fix the stroker to make this assumption true (without making
+<span class="lineNum">    1459 </span>            :         //  it slower that the work that will be done in computeConvexity())
+<span class="lineNum">    1460 </span>            : #if 0
+<span class="lineNum">    1461 </span>            :         // this test results in a non-convex stroke :(
+<span class="lineNum">    1462 </span>            :         static void test(SkCanvas* canvas) {
+<span class="lineNum">    1463 </span>            :             SkPoint pts[] = { 146.333328,  192.333328, 300.333344, 293.333344 };
+<span class="lineNum">    1464 </span>            :             SkPaint paint;
+<span class="lineNum">    1465 </span>            :             paint.setStrokeWidth(7);
+<span class="lineNum">    1466 </span>            :             paint.setStrokeCap(SkPaint::kRound_Cap);
+<span class="lineNum">    1467 </span>            :             canvas-&gt;drawLine(pts[0].fX, pts[0].fY, pts[1].fX, pts[1].fY, paint);
+<span class="lineNum">    1468 </span>            :         }
+<span class="lineNum">    1469 </span>            : #endif
+<span class="lineNum">    1470 </span>            : #if 0
+<span class="lineNum">    1471 </span>            :         if (2 == src.countPoints()) {
+<span class="lineNum">    1472 </span>            :             dst-&gt;setIsConvex(true);
+<span class="lineNum">    1473 </span>            :         }
+<span class="lineNum">    1474 </span>            : #endif
+<span class="lineNum">    1475 </span>            :     }
+<span class="lineNum">    1476 </span>            : 
+<span class="lineNum">    1477 </span>            :     // our answer should preserve the inverseness of the src
+<span class="lineNum">    1478 </span><span class="lineCov">         15 :     if (src.isInverseFillType()) {</span>
+<span class="lineNum">    1479 </span><span class="lineNoCov">          0 :         SkASSERT(!dst-&gt;isInverseFillType());</span>
+<span class="lineNum">    1480 </span><span class="lineNoCov">          0 :         dst-&gt;toggleInverseFillType();</span>
+<span class="lineNum">    1481 </span>            :     }
+<a name="1482"><span class="lineNum">    1482 </span>            : }</a>
+<span class="lineNum">    1483 </span>            : 
+<span class="lineNum">    1484 </span><span class="lineNoCov">          0 : static SkPath::Direction reverse_direction(SkPath::Direction dir) {</span>
+<span class="lineNum">    1485 </span>            :     static const SkPath::Direction gOpposite[] = { SkPath::kCCW_Direction, SkPath::kCW_Direction };
+<span class="lineNum">    1486 </span><span class="lineNoCov">          0 :     return gOpposite[dir];</span>
+<a name="1487"><span class="lineNum">    1487 </span>            : }</a>
+<span class="lineNum">    1488 </span>            : 
+<span class="lineNum">    1489 </span><span class="lineNoCov">          0 : static void addBevel(SkPath* path, const SkRect&amp; r, const SkRect&amp; outer, SkPath::Direction dir) {</span>
+<span class="lineNum">    1490 </span>            :     SkPoint pts[8];
+<span class="lineNum">    1491 </span>            : 
+<span class="lineNum">    1492 </span><span class="lineNoCov">          0 :     if (SkPath::kCW_Direction == dir) {</span>
+<span class="lineNum">    1493 </span><span class="lineNoCov">          0 :         pts[0].set(r.fLeft, outer.fTop);</span>
+<span class="lineNum">    1494 </span><span class="lineNoCov">          0 :         pts[1].set(r.fRight, outer.fTop);</span>
+<span class="lineNum">    1495 </span><span class="lineNoCov">          0 :         pts[2].set(outer.fRight, r.fTop);</span>
+<span class="lineNum">    1496 </span><span class="lineNoCov">          0 :         pts[3].set(outer.fRight, r.fBottom);</span>
+<span class="lineNum">    1497 </span><span class="lineNoCov">          0 :         pts[4].set(r.fRight, outer.fBottom);</span>
+<span class="lineNum">    1498 </span><span class="lineNoCov">          0 :         pts[5].set(r.fLeft, outer.fBottom);</span>
+<span class="lineNum">    1499 </span><span class="lineNoCov">          0 :         pts[6].set(outer.fLeft, r.fBottom);</span>
+<span class="lineNum">    1500 </span><span class="lineNoCov">          0 :         pts[7].set(outer.fLeft, r.fTop);</span>
+<span class="lineNum">    1501 </span>            :     } else {
+<span class="lineNum">    1502 </span><span class="lineNoCov">          0 :         pts[7].set(r.fLeft, outer.fTop);</span>
+<span class="lineNum">    1503 </span><span class="lineNoCov">          0 :         pts[6].set(r.fRight, outer.fTop);</span>
+<span class="lineNum">    1504 </span><span class="lineNoCov">          0 :         pts[5].set(outer.fRight, r.fTop);</span>
+<span class="lineNum">    1505 </span><span class="lineNoCov">          0 :         pts[4].set(outer.fRight, r.fBottom);</span>
+<span class="lineNum">    1506 </span><span class="lineNoCov">          0 :         pts[3].set(r.fRight, outer.fBottom);</span>
+<span class="lineNum">    1507 </span><span class="lineNoCov">          0 :         pts[2].set(r.fLeft, outer.fBottom);</span>
+<span class="lineNum">    1508 </span><span class="lineNoCov">          0 :         pts[1].set(outer.fLeft, r.fBottom);</span>
+<span class="lineNum">    1509 </span><span class="lineNoCov">          0 :         pts[0].set(outer.fLeft, r.fTop);</span>
+<span class="lineNum">    1510 </span>            :     }
+<span class="lineNum">    1511 </span><span class="lineNoCov">          0 :     path-&gt;addPoly(pts, 8, true);</span>
+<a name="1512"><span class="lineNum">    1512 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">    1513 </span>            : 
+<span class="lineNum">    1514 </span><span class="lineNoCov">          0 : void SkStroke::strokeRect(const SkRect&amp; origRect, SkPath* dst,</span>
+<span class="lineNum">    1515 </span>            :                           SkPath::Direction dir) const {
+<span class="lineNum">    1516 </span><span class="lineNoCov">          0 :     SkASSERT(dst != nullptr);</span>
+<span class="lineNum">    1517 </span><span class="lineNoCov">          0 :     dst-&gt;reset();</span>
+<span class="lineNum">    1518 </span>            : 
+<span class="lineNum">    1519 </span><span class="lineNoCov">          0 :     SkScalar radius = SkScalarHalf(fWidth);</span>
+<span class="lineNum">    1520 </span><span class="lineNoCov">          0 :     if (radius &lt;= 0) {</span>
+<span class="lineNum">    1521 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">    1522 </span>            :     }
+<span class="lineNum">    1523 </span>            : 
+<span class="lineNum">    1524 </span><span class="lineNoCov">          0 :     SkScalar rw = origRect.width();</span>
+<span class="lineNum">    1525 </span><span class="lineNoCov">          0 :     SkScalar rh = origRect.height();</span>
+<span class="lineNum">    1526 </span><span class="lineNoCov">          0 :     if ((rw &lt; 0) ^ (rh &lt; 0)) {</span>
+<span class="lineNum">    1527 </span><span class="lineNoCov">          0 :         dir = reverse_direction(dir);</span>
+<span class="lineNum">    1528 </span>            :     }
+<span class="lineNum">    1529 </span><span class="lineNoCov">          0 :     SkRect rect(origRect);</span>
+<span class="lineNum">    1530 </span><span class="lineNoCov">          0 :     rect.sort();</span>
+<span class="lineNum">    1531 </span>            :     // reassign these, now that we know they'll be &gt;= 0
+<span class="lineNum">    1532 </span><span class="lineNoCov">          0 :     rw = rect.width();</span>
+<span class="lineNum">    1533 </span><span class="lineNoCov">          0 :     rh = rect.height();</span>
+<span class="lineNum">    1534 </span>            : 
+<span class="lineNum">    1535 </span><span class="lineNoCov">          0 :     SkRect r(rect);</span>
+<span class="lineNum">    1536 </span><span class="lineNoCov">          0 :     r.outset(radius, radius);</span>
+<span class="lineNum">    1537 </span>            : 
+<span class="lineNum">    1538 </span><span class="lineNoCov">          0 :     SkPaint::Join join = (SkPaint::Join)fJoin;</span>
+<span class="lineNum">    1539 </span><span class="lineNoCov">          0 :     if (SkPaint::kMiter_Join == join &amp;&amp; fMiterLimit &lt; SK_ScalarSqrt2) {</span>
+<span class="lineNum">    1540 </span><span class="lineNoCov">          0 :         join = SkPaint::kBevel_Join;</span>
+<span class="lineNum">    1541 </span>            :     }
+<span class="lineNum">    1542 </span>            : 
+<span class="lineNum">    1543 </span><span class="lineNoCov">          0 :     switch (join) {</span>
+<span class="lineNum">    1544 </span>            :         case SkPaint::kMiter_Join:
+<span class="lineNum">    1545 </span><span class="lineNoCov">          0 :             dst-&gt;addRect(r, dir);</span>
+<span class="lineNum">    1546 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">    1547 </span>            :         case SkPaint::kBevel_Join:
+<span class="lineNum">    1548 </span><span class="lineNoCov">          0 :             addBevel(dst, rect, r, dir);</span>
+<span class="lineNum">    1549 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">    1550 </span>            :         case SkPaint::kRound_Join:
+<span class="lineNum">    1551 </span><span class="lineNoCov">          0 :             dst-&gt;addRoundRect(r, radius, radius, dir);</span>
+<span class="lineNum">    1552 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">    1553 </span>            :         default:
+<span class="lineNum">    1554 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">    1555 </span>            :     }
+<span class="lineNum">    1556 </span>            : 
+<span class="lineNum">    1557 </span><span class="lineNoCov">          0 :     if (fWidth &lt; SkMinScalar(rw, rh) &amp;&amp; !fDoFill) {</span>
+<span class="lineNum">    1558 </span><span class="lineNoCov">          0 :         r = rect;</span>
+<span class="lineNum">    1559 </span><span class="lineNoCov">          0 :         r.inset(radius, radius);</span>
+<span class="lineNum">    1560 </span><span class="lineNoCov">          0 :         dst-&gt;addRect(r, reverse_direction(dir));</span>
+<span class="lineNum">    1561 </span>            :     }
+<span class="lineNum">    1562 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

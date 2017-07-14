@@ -1,0 +1,632 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - dom/media/mediasink/AudioSink.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">dom/media/mediasink</a> - AudioSink.cpp<span style="font-size: 80%;"> (source / <a href="AudioSink.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">249</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">32</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim:set ts=2 sw=2 sts=2 et cindent: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;nsPrintfCString.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;MediaQueue.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;AudioSink.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;VideoUtils.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;AudioConverter.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/CheckedInt.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/DebugOnly.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;mozilla/IntegerPrintfMacros.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;MediaPrefs.h&quot;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : namespace mozilla {
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : extern LazyLogModule gMediaDecoderLog;
+<span class="lineNum">      21 </span>            : #define SINK_LOG(msg, ...) \
+<span class="lineNum">      22 </span>            :   MOZ_LOG(gMediaDecoderLog, LogLevel::Debug, (&quot;AudioSink=%p &quot; msg, this, ##__VA_ARGS__))
+<span class="lineNum">      23 </span>            : #define SINK_LOG_V(msg, ...) \
+<span class="lineNum">      24 </span>            :   MOZ_LOG(gMediaDecoderLog, LogLevel::Verbose, (&quot;AudioSink=%p &quot; msg, this, ##__VA_ARGS__))
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : namespace media {
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : // The amount of audio frames that is used to fuzz rounding errors.
+<span class="lineNum">      29 </span>            : static const int64_t AUDIO_FUZZ_FRAMES = 1;
+<span class="lineNum">      30 </span>            : 
+<span class="lineNum">      31 </span>            : // Amount of audio frames we will be processing ahead of use
+<a name="32"><span class="lineNum">      32 </span>            : static const int32_t LOW_AUDIO_USECS = 300000;</a>
+<span class="lineNum">      33 </span>            : 
+<span class="lineNum">      34 </span><span class="lineNoCov">          0 : AudioSink::AudioSink(AbstractThread* aThread,</span>
+<span class="lineNum">      35 </span>            :                      MediaQueue&lt;AudioData&gt;&amp; aAudioQueue,
+<span class="lineNum">      36 </span>            :                      const TimeUnit&amp; aStartTime,
+<span class="lineNum">      37 </span>            :                      const AudioInfo&amp; aInfo,
+<span class="lineNum">      38 </span><span class="lineNoCov">          0 :                      dom::AudioChannel aChannel)</span>
+<span class="lineNum">      39 </span>            :   : mStartTime(aStartTime)
+<span class="lineNum">      40 </span>            :   , mInfo(aInfo)
+<span class="lineNum">      41 </span>            :   , mChannel(aChannel)
+<span class="lineNum">      42 </span>            :   , mPlaying(true)
+<span class="lineNum">      43 </span>            :   , mMonitor(&quot;AudioSink&quot;)
+<span class="lineNum">      44 </span>            :   , mWritten(0)
+<span class="lineNum">      45 </span>            :   , mErrored(false)
+<span class="lineNum">      46 </span>            :   , mPlaybackComplete(false)
+<span class="lineNum">      47 </span>            :   , mOwnerThread(aThread)
+<span class="lineNum">      48 </span>            :   , mProcessedQueueLength(0)
+<span class="lineNum">      49 </span>            :   , mFramesParsed(0)
+<span class="lineNum">      50 </span>            :   , mIsAudioDataAudible(false)
+<span class="lineNum">      51 </span><span class="lineNoCov">          0 :   , mAudioQueue(aAudioQueue)</span>
+<span class="lineNum">      52 </span>            : {
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 :   bool resampling = MediaPrefs::AudioSinkResampling();</span>
+<span class="lineNum">      54 </span>            : 
+<span class="lineNum">      55 </span><span class="lineNoCov">          0 :   if (resampling) {</span>
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :     mOutputRate = MediaPrefs::AudioSinkResampleRate();</span>
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :   } else if (mInfo.mRate == 44100 || mInfo.mRate == 48000) {</span>
+<span class="lineNum">      58 </span>            :     // The original rate is of good quality and we want to minimize unecessary
+<span class="lineNum">      59 </span>            :     // resampling. The common scenario being that the sampling rate is one or
+<span class="lineNum">      60 </span>            :     // the other, this allows to minimize audio quality regression and hoping
+<span class="lineNum">      61 </span>            :     // content provider want change from those rates mid-stream.
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :     mOutputRate = mInfo.mRate;</span>
+<span class="lineNum">      63 </span>            :   } else {
+<span class="lineNum">      64 </span>            :     // We will resample all data to match cubeb's preferred sampling rate.
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :     mOutputRate = AudioStream::GetPreferredRate();</span>
+<span class="lineNum">      66 </span>            :   }
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :   MOZ_DIAGNOSTIC_ASSERT(mOutputRate, &quot;output rate can't be 0.&quot;);</span>
+<span class="lineNum">      68 </span>            : 
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :   bool monoAudioEnabled = MediaPrefs::MonoAudio();</span>
+<span class="lineNum">      70 </span>            : 
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :   mOutputChannels =</span>
+<span class="lineNum">      72 </span>            :     monoAudioEnabled
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :     ? 1</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :     : (MediaPrefs::AudioSinkForceStereo() ? 2 : mInfo.mChannels);</span>
+<a name="75"><span class="lineNum">      75 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      76 </span>            : 
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 : AudioSink::~AudioSink()</span>
+<span class="lineNum">      78 </span>            : {
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 : }</span>
+<a name="80"><span class="lineNum">      80 </span>            : </a>
+<span class="lineNum">      81 </span>            : RefPtr&lt;GenericPromise&gt;
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 : AudioSink::Init(const PlaybackParams&amp; aParams)</span>
+<span class="lineNum">      83 </span>            : {
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mOwnerThread-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">      85 </span>            : 
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :   mAudioQueueListener = mAudioQueue.PushEvent().Connect(</span>
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :     mOwnerThread, this, &amp;AudioSink::OnAudioPushed);</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :   mAudioQueueFinishListener = mAudioQueue.FinishEvent().Connect(</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :     mOwnerThread, this, &amp;AudioSink::NotifyAudioNeeded);</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :   mProcessedQueueListener = mProcessedQueue.PopEvent().Connect(</span>
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :     mOwnerThread, this, &amp;AudioSink::OnAudioPopped);</span>
+<span class="lineNum">      92 </span>            : 
+<span class="lineNum">      93 </span>            :   // To ensure at least one audio packet will be popped from AudioQueue and
+<span class="lineNum">      94 </span>            :   // ready to be played.
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :   NotifyAudioNeeded();</span>
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :   RefPtr&lt;GenericPromise&gt; p = mEndPromise.Ensure(__func__);</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   nsresult rv = InitializeAudioStream(aParams);</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :     mEndPromise.Reject(rv, __func__);</span>
+<span class="lineNum">     100 </span>            :   }
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :   return p;</span>
+<span class="lineNum">     102 </span>            : }
+<a name="103"><span class="lineNum">     103 </span>            : </a>
+<span class="lineNum">     104 </span>            : TimeUnit
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 : AudioSink::GetPosition()</span>
+<span class="lineNum">     106 </span>            : {
+<span class="lineNum">     107 </span>            :   int64_t tmp;
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :   if (mAudioStream &amp;&amp;</span>
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :       (tmp = mAudioStream-&gt;GetPosition()) &gt;= 0) {</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :     TimeUnit pos = TimeUnit::FromMicroseconds(tmp);</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :     NS_ASSERTION(pos &gt;= mLastGoodPosition,</span>
+<span class="lineNum">     112 </span>            :                  &quot;AudioStream position shouldn't go backward&quot;);
+<span class="lineNum">     113 </span>            :     // Update the last good position when we got a good one.
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :     if (pos &gt;= mLastGoodPosition) {</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :       mLastGoodPosition = pos;</span>
+<span class="lineNum">     116 </span>            :     }
+<span class="lineNum">     117 </span>            :   }
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :   return mStartTime + mLastGoodPosition;</span>
+<span class="lineNum">     120 </span>            : }
+<a name="121"><span class="lineNum">     121 </span>            : </a>
+<span class="lineNum">     122 </span>            : bool
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 : AudioSink::HasUnplayedFrames()</span>
+<span class="lineNum">     124 </span>            : {
+<span class="lineNum">     125 </span>            :   // Experimentation suggests that GetPositionInFrames() is zero-indexed,
+<span class="lineNum">     126 </span>            :   // so we need to add 1 here before comparing it to mWritten.
+<span class="lineNum">     127 </span>            :   int64_t total;
+<span class="lineNum">     128 </span>            :   {
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :     MonitorAutoLock mon(mMonitor);</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :     total = mWritten + (mCursor.get() ? mCursor-&gt;Available() : 0);</span>
+<span class="lineNum">     131 </span>            :   }
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :   return mProcessedQueue.GetSize() ||</span>
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :          (mAudioStream &amp;&amp; mAudioStream-&gt;GetPositionInFrames() + 1 &lt; total);</span>
+<span class="lineNum">     134 </span>            : }
+<a name="135"><span class="lineNum">     135 </span>            : </a>
+<span class="lineNum">     136 </span>            : void
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 : AudioSink::Shutdown()</span>
+<span class="lineNum">     138 </span>            : {
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mOwnerThread-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     140 </span>            : 
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :   mAudioQueueListener.Disconnect();</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   mAudioQueueFinishListener.Disconnect();</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :   mProcessedQueueListener.Disconnect();</span>
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :   if (mAudioStream) {</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :     mAudioStream-&gt;Shutdown();</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :     mAudioStream = nullptr;</span>
+<span class="lineNum">     148 </span>            :   }
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :   mProcessedQueue.Reset();</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :   mProcessedQueue.Finish();</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :   mEndPromise.ResolveIfExists(true, __func__);</span>
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 : }</span>
+<a name="153"><span class="lineNum">     153 </span>            : </a>
+<span class="lineNum">     154 </span>            : void
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 : AudioSink::SetVolume(double aVolume)</span>
+<span class="lineNum">     156 </span>            : {
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :   if (mAudioStream) {</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     mAudioStream-&gt;SetVolume(aVolume);</span>
+<span class="lineNum">     159 </span>            :   }
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 : }</span>
+<a name="161"><span class="lineNum">     161 </span>            : </a>
+<span class="lineNum">     162 </span>            : void
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 : AudioSink::SetPlaybackRate(double aPlaybackRate)</span>
+<span class="lineNum">     164 </span>            : {
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aPlaybackRate != 0, &quot;Don't set the playbackRate to 0 on AudioStream&quot;);</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :   if (mAudioStream) {</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :     mAudioStream-&gt;SetPlaybackRate(aPlaybackRate);</span>
+<span class="lineNum">     168 </span>            :   }
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 : }</span>
+<a name="170"><span class="lineNum">     170 </span>            : </a>
+<span class="lineNum">     171 </span>            : void
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 : AudioSink::SetPreservesPitch(bool aPreservesPitch)</span>
+<span class="lineNum">     173 </span>            : {
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :   if (mAudioStream) {</span>
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :     mAudioStream-&gt;SetPreservesPitch(aPreservesPitch);</span>
+<span class="lineNum">     176 </span>            :   }
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 : }</span>
+<a name="178"><span class="lineNum">     178 </span>            : </a>
+<span class="lineNum">     179 </span>            : void
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 : AudioSink::SetPlaying(bool aPlaying)</span>
+<span class="lineNum">     181 </span>            : {
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :   if (!mAudioStream || mPlaying == aPlaying || mPlaybackComplete) {</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     184 </span>            :   }
+<span class="lineNum">     185 </span>            :   // pause/resume AudioStream as necessary.
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :   if (!aPlaying) {</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :     mAudioStream-&gt;Pause();</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   } else if (aPlaying) {</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :     mAudioStream-&gt;Resume();</span>
+<span class="lineNum">     190 </span>            :   }
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :   mPlaying = aPlaying;</span>
+<span class="lineNum">     192 </span>            : }
+<a name="193"><span class="lineNum">     193 </span>            : </a>
+<span class="lineNum">     194 </span>            : nsresult
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 : AudioSink::InitializeAudioStream(const PlaybackParams&amp; aParams)</span>
+<span class="lineNum">     196 </span>            : {
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   mAudioStream = new AudioStream(*this);</span>
+<span class="lineNum">     198 </span>            :   // When AudioQueue is empty, there is no way to know the channel layout of
+<span class="lineNum">     199 </span>            :   // the coming audio data, so we use the predefined channel map instead.
+<span class="lineNum">     200 </span>            :   uint32_t channelMap = mConverter
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :                         ? mConverter-&gt;OutputConfig().Layout().Map()</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :                         : AudioStream::GetPreferredChannelMap(mOutputChannels);</span>
+<span class="lineNum">     203 </span>            :   // The layout map used here is already processed by mConverter with
+<span class="lineNum">     204 </span>            :   // mOutputChannels into SMPTE format, so there is no need to worry if
+<span class="lineNum">     205 </span>            :   // MediaPrefs::MonoAudio() or MediaPrefs::AudioSinkForceStereo() is applied.
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :   nsresult rv = mAudioStream-&gt;Init(mOutputChannels, channelMap, mOutputRate, mChannel);</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :     mAudioStream-&gt;Shutdown();</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :     mAudioStream = nullptr;</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     211 </span>            :   }
+<span class="lineNum">     212 </span>            : 
+<span class="lineNum">     213 </span>            :   // Set playback params before calling Start() so they can take effect
+<span class="lineNum">     214 </span>            :   // as soon as the 1st DataCallback of the AudioStream fires.
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :   mAudioStream-&gt;SetVolume(aParams.mVolume);</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :   mAudioStream-&gt;SetPlaybackRate(aParams.mPlaybackRate);</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :   mAudioStream-&gt;SetPreservesPitch(aParams.mPreservesPitch);</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :   mAudioStream-&gt;Start();</span>
+<span class="lineNum">     219 </span>            : 
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     221 </span>            : }
+<a name="222"><span class="lineNum">     222 </span>            : </a>
+<span class="lineNum">     223 </span>            : TimeUnit
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 : AudioSink::GetEndTime() const</span>
+<span class="lineNum">     225 </span>            : {
+<span class="lineNum">     226 </span>            :   int64_t written;
+<span class="lineNum">     227 </span>            :   {
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :     MonitorAutoLock mon(mMonitor);</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     written = mWritten;</span>
+<span class="lineNum">     230 </span>            :   }
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :   TimeUnit played = FramesToTimeUnit(written, mOutputRate) + mStartTime;</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   if (!played.IsValid()) {</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Int overflow calculating audio end time&quot;);</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :     return TimeUnit::Zero();</span>
+<span class="lineNum">     235 </span>            :   }
+<span class="lineNum">     236 </span>            :   // As we may be resampling, rounding errors may occur. Ensure we never get
+<span class="lineNum">     237 </span>            :   // past the original end time.
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :   return std::min(mLastEndTime, played);</span>
+<span class="lineNum">     239 </span>            : }
+<a name="240"><span class="lineNum">     240 </span>            : </a>
+<span class="lineNum">     241 </span>            : UniquePtr&lt;AudioStream::Chunk&gt;
+<a name="242"><span class="lineNum">     242 </span><span class="lineNoCov">          0 : AudioSink::PopFrames(uint32_t aFrames)</span></a>
+<span class="lineNum">     243 </span>            : {
+<a name="244"><span class="lineNum">     244 </span><span class="lineNoCov">          0 :   class Chunk : public AudioStream::Chunk {</span></a>
+<span class="lineNum">     245 </span>            :   public:
+<a name="246"><span class="lineNum">     246 </span><span class="lineNoCov">          0 :     Chunk(AudioData* aBuffer, uint32_t aFrames, AudioDataValue* aData)</span></a>
+<a name="247"><span class="lineNum">     247 </span><span class="lineNoCov">          0 :       : mBuffer(aBuffer), mFrames(aFrames), mData(aData) {}</span></a>
+<a name="248"><span class="lineNum">     248 </span><span class="lineNoCov">          0 :     Chunk() : mFrames(0), mData(nullptr) {}</span></a>
+<a name="249"><span class="lineNum">     249 </span><span class="lineNoCov">          0 :     const AudioDataValue* Data() const { return mData; }</span></a>
+<a name="250"><span class="lineNum">     250 </span><span class="lineNoCov">          0 :     uint32_t Frames() const { return mFrames; }</span></a>
+<a name="251"><span class="lineNum">     251 </span><span class="lineNoCov">          0 :     uint32_t Channels() const { return mBuffer ? mBuffer-&gt;mChannels: 0; }</span></a>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     uint32_t Rate() const { return mBuffer ? mBuffer-&gt;mRate : 0; }</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :     AudioDataValue* GetWritable() const { return mData; }</span>
+<span class="lineNum">     254 </span>            :   private:
+<span class="lineNum">     255 </span>            :     const RefPtr&lt;AudioData&gt; mBuffer;
+<span class="lineNum">     256 </span>            :     const uint32_t mFrames;
+<span class="lineNum">     257 </span>            :     AudioDataValue* const mData;
+<span class="lineNum">     258 </span>            :   };
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :   bool needPopping = false;</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :   if (!mCurrentData) {</span>
+<span class="lineNum">     262 </span>            :     // No data in the queue. Return an empty chunk.
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :     if (!mProcessedQueue.GetSize()) {</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :       return MakeUnique&lt;Chunk&gt;();</span>
+<span class="lineNum">     265 </span>            :     }
+<span class="lineNum">     266 </span>            : 
+<span class="lineNum">     267 </span>            :     // We need to update our values prior popping the processed queue in
+<span class="lineNum">     268 </span>            :     // order to prevent the pop event to fire too early (prior
+<span class="lineNum">     269 </span>            :     // mProcessedQueueLength being updated) or prevent HasUnplayedFrames
+<span class="lineNum">     270 </span>            :     // to incorrectly return true during the time interval betweeen the
+<span class="lineNum">     271 </span>            :     // when mProcessedQueue is read and mWritten is updated.
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :     needPopping = true;</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     mCurrentData = mProcessedQueue.PeekFront();</span>
+<span class="lineNum">     274 </span>            :     {
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :       MonitorAutoLock mon(mMonitor);</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :       mCursor = MakeUnique&lt;AudioBufferCursor&gt;(mCurrentData-&gt;mAudioData.get(),</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :                                               mCurrentData-&gt;mChannels,</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :                                               mCurrentData-&gt;mFrames);</span>
+<span class="lineNum">     279 </span>            :     }
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mCurrentData-&gt;mFrames &gt; 0);</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     mProcessedQueueLength -=</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :       FramesToUsecs(mCurrentData-&gt;mFrames, mOutputRate).value();</span>
+<span class="lineNum">     283 </span>            :   }
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :   auto framesToPop = std::min(aFrames, mCursor-&gt;Available());</span>
+<span class="lineNum">     286 </span>            : 
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   SINK_LOG_V(&quot;playing audio at time=%&quot; PRId64 &quot; offset=%u length=%u&quot;,</span>
+<span class="lineNum">     288 </span>            :              mCurrentData-&gt;mTime.ToMicroseconds(),
+<span class="lineNum">     289 </span>            :              mCurrentData-&gt;mFrames - mCursor-&gt;Available(), framesToPop);
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span>            :   UniquePtr&lt;AudioStream::Chunk&gt; chunk =
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :     MakeUnique&lt;Chunk&gt;(mCurrentData, framesToPop, mCursor-&gt;Ptr());</span>
+<span class="lineNum">     293 </span>            : 
+<span class="lineNum">     294 </span>            :   {
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :     MonitorAutoLock mon(mMonitor);</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :     mWritten += framesToPop;</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :     mCursor-&gt;Advance(framesToPop);</span>
+<span class="lineNum">     298 </span>            :   }
+<span class="lineNum">     299 </span>            : 
+<span class="lineNum">     300 </span>            :   // All frames are popped. Reset mCurrentData so we can pop new elements from
+<span class="lineNum">     301 </span>            :   // the audio queue in next calls to PopFrames().
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :   if (!mCursor-&gt;Available()) {</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :     mCurrentData = nullptr;</span>
+<span class="lineNum">     304 </span>            :   }
+<span class="lineNum">     305 </span>            : 
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   if (needPopping) {</span>
+<span class="lineNum">     307 </span>            :     // We can now safely pop the audio packet from the processed queue.
+<span class="lineNum">     308 </span>            :     // This will fire the popped event, triggering a call to NotifyAudioNeeded.
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     RefPtr&lt;AudioData&gt; releaseMe = mProcessedQueue.PopFront();</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     CheckIsAudible(releaseMe);</span>
+<span class="lineNum">     311 </span>            :   }
+<span class="lineNum">     312 </span>            : 
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :   return chunk;</span>
+<span class="lineNum">     314 </span>            : }
+<a name="315"><span class="lineNum">     315 </span>            : </a>
+<span class="lineNum">     316 </span>            : bool
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 : AudioSink::Ended() const</span>
+<span class="lineNum">     318 </span>            : {
+<span class="lineNum">     319 </span>            :   // Return true when error encountered so AudioStream can start draining.
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :   return mProcessedQueue.IsFinished() || mErrored;</span>
+<span class="lineNum">     321 </span>            : }
+<a name="322"><span class="lineNum">     322 </span>            : </a>
+<span class="lineNum">     323 </span>            : void
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 : AudioSink::Drained()</span>
+<span class="lineNum">     325 </span>            : {
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :   SINK_LOG(&quot;Drained&quot;);</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :   mPlaybackComplete = true;</span>
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :   mEndPromise.ResolveIfExists(true, __func__);</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 : }</span>
+<a name="330"><span class="lineNum">     330 </span>            : </a>
+<span class="lineNum">     331 </span>            : void
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 : AudioSink::CheckIsAudible(const AudioData* aData)</span>
+<span class="lineNum">     333 </span>            : {
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aData);</span>
+<span class="lineNum">     335 </span>            : 
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :   bool isAudible = aData-&gt;IsAudible();</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :   if (isAudible != mIsAudioDataAudible) {</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :     mIsAudioDataAudible = isAudible;</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     mAudibleEvent.Notify(mIsAudioDataAudible);</span>
+<span class="lineNum">     340 </span>            :   }
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 : }</span>
+<a name="342"><span class="lineNum">     342 </span>            : </a>
+<span class="lineNum">     343 </span>            : void
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 : AudioSink::OnAudioPopped(const RefPtr&lt;AudioData&gt;&amp; aSample)</span>
+<span class="lineNum">     345 </span>            : {
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :   SINK_LOG_V(&quot;AudioStream has used an audio packet.&quot;);</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :   NotifyAudioNeeded();</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 : }</span>
+<a name="349"><span class="lineNum">     349 </span>            : </a>
+<span class="lineNum">     350 </span>            : void
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 : AudioSink::OnAudioPushed(const RefPtr&lt;AudioData&gt;&amp; aSample)</span>
+<span class="lineNum">     352 </span>            : {
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :   SINK_LOG_V(&quot;One new audio packet available.&quot;);</span>
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :   NotifyAudioNeeded();</span>
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 : }</span>
+<a name="356"><span class="lineNum">     356 </span>            : </a>
+<span class="lineNum">     357 </span>            : void
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 : AudioSink::NotifyAudioNeeded()</span>
+<span class="lineNum">     359 </span>            : {
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mOwnerThread-&gt;IsCurrentThreadIn(),</span>
+<span class="lineNum">     361 </span>            :              &quot;Not called from the owner's thread&quot;);
+<span class="lineNum">     362 </span>            : 
+<span class="lineNum">     363 </span>            :   // Always ensure we have two processed frames pending to allow for processing
+<span class="lineNum">     364 </span>            :   // latency.
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :   while (mAudioQueue.GetSize() &amp;&amp; (mAudioQueue.IsFinished() ||</span>
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :                                     mProcessedQueueLength &lt; LOW_AUDIO_USECS ||</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :                                     mProcessedQueue.GetSize() &lt; 2)) {</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :     RefPtr&lt;AudioData&gt; data = mAudioQueue.PopFront();</span>
+<span class="lineNum">     369 </span>            : 
+<span class="lineNum">     370 </span>            :     // Ignore the element with 0 frames and try next.
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :     if (!data-&gt;mFrames) {</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     373 </span>            :     }
+<span class="lineNum">     374 </span>            : 
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :     if (!mConverter ||</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :         (data-&gt;mRate != mConverter-&gt;InputConfig().Rate() ||</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :          data-&gt;mChannels != mConverter-&gt;InputConfig().Channels())) {</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :       SINK_LOG_V(&quot;Audio format changed from %u@%uHz to %u@%uHz&quot;,</span>
+<span class="lineNum">     379 </span>            :                  mConverter? mConverter-&gt;InputConfig().Channels() : 0,
+<span class="lineNum">     380 </span>            :                  mConverter ? mConverter-&gt;InputConfig().Rate() : 0,
+<span class="lineNum">     381 </span>            :                  data-&gt;mChannels, data-&gt;mRate);
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :       DrainConverter();</span>
+<span class="lineNum">     384 </span>            : 
+<span class="lineNum">     385 </span>            :       // mFramesParsed indicates the current playtime in frames at the current
+<span class="lineNum">     386 </span>            :       // input sampling rate. Recalculate it per the new sampling rate.
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :       if (mFramesParsed) {</span>
+<span class="lineNum">     388 </span>            :         // We minimize overflow.
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :         uint32_t oldRate = mConverter-&gt;InputConfig().Rate();</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :         uint32_t newRate = data-&gt;mRate;</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :         CheckedInt64 result = SaferMultDiv(mFramesParsed, newRate, oldRate);</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :         if (!result.isValid()) {</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :           NS_WARNING(&quot;Int overflow in AudioSink&quot;);</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :           mErrored = true;</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :           return;</span>
+<span class="lineNum">     396 </span>            :         }
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :         mFramesParsed = result.value();</span>
+<span class="lineNum">     398 </span>            :       }
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span>            :       mConverter =
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :         MakeUnique&lt;AudioConverter&gt;(</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :           AudioConfig(data-&gt;mChannels, data-&gt;mRate),</span>
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :           AudioConfig(mOutputChannels, mOutputRate));</span>
+<span class="lineNum">     404 </span>            :     }
+<span class="lineNum">     405 </span>            : 
+<span class="lineNum">     406 </span>            :     // See if there's a gap in the audio. If there is, push silence into the
+<span class="lineNum">     407 </span>            :     // audio hardware, so we can play across the gap.
+<span class="lineNum">     408 </span>            :     // Calculate the timestamp of the next chunk of audio in numbers of
+<span class="lineNum">     409 </span>            :     // samples.
+<span class="lineNum">     410 </span>            :     CheckedInt64 sampleTime =
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :       TimeUnitToFrames(data-&gt;mTime - mStartTime, data-&gt;mRate);</span>
+<span class="lineNum">     412 </span>            :     // Calculate the number of frames that have been pushed onto the audio hardware.
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :     CheckedInt64 missingFrames = sampleTime - mFramesParsed;</span>
+<span class="lineNum">     414 </span>            : 
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :     if (!missingFrames.isValid()) {</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :       NS_WARNING(&quot;Int overflow in AudioSink&quot;);</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :       mErrored = true;</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">     419 </span>            :     }
+<span class="lineNum">     420 </span>            : 
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :     if (missingFrames.value() &gt; AUDIO_FUZZ_FRAMES) {</span>
+<span class="lineNum">     422 </span>            :       // The next audio packet begins some time after the end of the last packet
+<span class="lineNum">     423 </span>            :       // we pushed to the audio hardware. We must push silence into the audio
+<span class="lineNum">     424 </span>            :       // hardware so that the next audio packet begins playback at the correct
+<span class="lineNum">     425 </span>            :       // time.
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :       missingFrames = std::min&lt;int64_t&gt;(INT32_MAX, missingFrames.value());</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :       mFramesParsed += missingFrames.value();</span>
+<span class="lineNum">     428 </span>            : 
+<span class="lineNum">     429 </span>            :       // We need to calculate how many frames are missing at the output rate.
+<span class="lineNum">     430 </span>            :       missingFrames =
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :         SaferMultDiv(missingFrames.value(), mOutputRate, data-&gt;mRate);</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :       if (!missingFrames.isValid()) {</span>
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :         NS_WARNING(&quot;Int overflow in AudioSink&quot;);</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :         mErrored = true;</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     436 </span>            :       }
+<span class="lineNum">     437 </span>            : 
+<span class="lineNum">     438 </span>            :       // We need to insert silence, first use drained frames if any.
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :       missingFrames -= DrainConverter(missingFrames.value());</span>
+<span class="lineNum">     440 </span>            :       // Insert silence if still needed.
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :       if (missingFrames.value()) {</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :         AlignedAudioBuffer silenceData(missingFrames.value() * mOutputChannels);</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :         if (!silenceData) {</span>
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :           NS_WARNING(&quot;OOM in AudioSink&quot;);</span>
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :           mErrored = true;</span>
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :           return;</span>
+<span class="lineNum">     447 </span>            :         }
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :         RefPtr&lt;AudioData&gt; silence = CreateAudioFromBuffer(Move(silenceData), data);</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :         PushProcessedAudio(silence);</span>
+<span class="lineNum">     450 </span>            :       }
+<span class="lineNum">     451 </span>            :     }
+<span class="lineNum">     452 </span>            : 
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :     mLastEndTime = data-&gt;GetEndTime();</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :     mFramesParsed += data-&gt;mFrames;</span>
+<span class="lineNum">     455 </span>            : 
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 :     if (mConverter-&gt;InputConfig() != mConverter-&gt;OutputConfig()) {</span>
+<span class="lineNum">     457 </span>            :       // We must ensure that the size in the buffer contains exactly the number
+<span class="lineNum">     458 </span>            :       // of frames, in case one of the audio producer over allocated the buffer.
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :       AlignedAudioBuffer buffer(Move(data-&gt;mAudioData));</span>
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :       buffer.SetLength(size_t(data-&gt;mFrames) * data-&gt;mChannels);</span>
+<span class="lineNum">     461 </span>            : 
+<span class="lineNum">     462 </span>            :       AlignedAudioBuffer convertedData =
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :         mConverter-&gt;Process(AudioSampleBuffer(Move(buffer))).Forget();</span>
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :       data = CreateAudioFromBuffer(Move(convertedData), data);</span>
+<span class="lineNum">     465 </span>            :     }
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :     if (PushProcessedAudio(data)) {</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :       mLastProcessedPacket = Some(data);</span>
+<span class="lineNum">     468 </span>            :     }
+<span class="lineNum">     469 </span>            :   }
+<span class="lineNum">     470 </span>            : 
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :   if (mAudioQueue.IsFinished()) {</span>
+<span class="lineNum">     472 </span>            :     // We have reached the end of the data, drain the resampler.
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :     DrainConverter();</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :     mProcessedQueue.Finish();</span>
+<span class="lineNum">     475 </span>            :   }
+<span class="lineNum">     476 </span>            : }
+<a name="477"><span class="lineNum">     477 </span>            : </a>
+<span class="lineNum">     478 </span>            : uint32_t
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 : AudioSink::PushProcessedAudio(AudioData* aData)</span>
+<span class="lineNum">     480 </span>            : {
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :   if (!aData || !aData-&gt;mFrames) {</span>
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     483 </span>            :   }
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :   mProcessedQueue.Push(aData);</span>
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :   mProcessedQueueLength += FramesToUsecs(aData-&gt;mFrames, mOutputRate).value();</span>
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :   return aData-&gt;mFrames;</span>
+<span class="lineNum">     487 </span>            : }
+<a name="488"><span class="lineNum">     488 </span>            : </a>
+<span class="lineNum">     489 </span>            : already_AddRefed&lt;AudioData&gt;
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 : AudioSink::CreateAudioFromBuffer(AlignedAudioBuffer&amp;&amp; aBuffer,</span>
+<span class="lineNum">     491 </span>            :                                             AudioData* aReference)
+<span class="lineNum">     492 </span>            : {
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :   uint32_t frames = aBuffer.Length() / mOutputChannels;</span>
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :   if (!frames) {</span>
+<span class="lineNum">     495 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     496 </span>            :   }
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 :   auto duration = FramesToTimeUnit(frames, mOutputRate);</span>
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :   if (!duration.IsValid()) {</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Int overflow in AudioSink&quot;);</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :     mErrored = true;</span>
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     502 </span>            :   }
+<span class="lineNum">     503 </span>            :   RefPtr&lt;AudioData&gt; data =
+<span class="lineNum">     504 </span>            :     new AudioData(aReference-&gt;mOffset,
+<span class="lineNum">     505 </span>            :                   aReference-&gt;mTime,
+<span class="lineNum">     506 </span>            :                   duration,
+<span class="lineNum">     507 </span>            :                   frames,
+<span class="lineNum">     508 </span>            :                   Move(aBuffer),
+<span class="lineNum">     509 </span>            :                   mOutputChannels,
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :                   mOutputRate);</span>
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :   return data.forget();</span>
+<span class="lineNum">     512 </span>            : }
+<a name="513"><span class="lineNum">     513 </span>            : </a>
+<span class="lineNum">     514 </span>            : uint32_t
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 : AudioSink::DrainConverter(uint32_t aMaxFrames)</span>
+<span class="lineNum">     516 </span>            : {
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mOwnerThread-&gt;IsCurrentThreadIn());</span>
+<span class="lineNum">     518 </span>            : 
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :   if (!mConverter || !mLastProcessedPacket || !aMaxFrames) {</span>
+<span class="lineNum">     520 </span>            :     // nothing to drain.
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     522 </span>            :   }
+<span class="lineNum">     523 </span>            : 
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :   RefPtr&lt;AudioData&gt; lastPacket = mLastProcessedPacket.ref();</span>
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :   mLastProcessedPacket.reset();</span>
+<span class="lineNum">     526 </span>            : 
+<span class="lineNum">     527 </span>            :   // To drain we simply provide an empty packet to the audio converter.
+<span class="lineNum">     528 </span>            :   AlignedAudioBuffer convertedData =
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :     mConverter-&gt;Process(AudioSampleBuffer(AlignedAudioBuffer())).Forget();</span>
+<span class="lineNum">     530 </span>            : 
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :   uint32_t frames = convertedData.Length() / mOutputChannels;</span>
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :   if (!convertedData.SetLength(std::min(frames, aMaxFrames) * mOutputChannels)) {</span>
+<span class="lineNum">     533 </span>            :     // This can never happen as we were reducing the length of convertData.
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :     mErrored = true;</span>
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     536 </span>            :   }
+<span class="lineNum">     537 </span>            : 
+<span class="lineNum">     538 </span>            :   RefPtr&lt;AudioData&gt; data =
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :     CreateAudioFromBuffer(Move(convertedData), lastPacket);</span>
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :   if (!data) {</span>
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     542 </span>            :   }
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :   mProcessedQueue.Push(data);</span>
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :   return data-&gt;mFrames;</span>
+<span class="lineNum">     545 </span>            : }
+<span class="lineNum">     546 </span>            : 
+<span class="lineNum">     547 </span>            : } // namespace media
+<span class="lineNum">     548 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

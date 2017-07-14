@@ -1,0 +1,662 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - storage/mozStorageAsyncStatementExecution.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">storage</a> - mozStorageAsyncStatementExecution.cpp<span style="font-size: 80%;"> (source / <a href="mozStorageAsyncStatementExecution.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">140</td>
+            <td class="headerCovTableEntry">221</td>
+            <td class="headerCovTableEntryLo">63.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">17</td>
+            <td class="headerCovTableEntry">21</td>
+            <td class="headerCovTableEntryMed">81.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-</a>
+<span class="lineNum">       2 </span>            :  * vim: sw=2 ts=2 et lcs=trail\:.,tab\:&gt;~ :
+<span class="lineNum">       3 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;nsAutoPtr.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;sqlite3.h&quot;
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;mozIStorageStatementCallback.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozStorageBindingParams.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozStorageHelper.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozStorageResultSet.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;mozStorageRow.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;mozStorageConnection.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;mozStorageError.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;mozStoragePrivateHelpers.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;mozStorageStatementData.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;mozStorageAsyncStatementExecution.h&quot;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : #include &quot;mozilla/DebugOnly.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;mozilla/Telemetry.h&quot;
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : namespace mozilla {
+<span class="lineNum">      26 </span>            : namespace storage {
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : /**
+<span class="lineNum">      29 </span>            :  * The following constants help batch rows into result sets.
+<span class="lineNum">      30 </span>            :  * MAX_MILLISECONDS_BETWEEN_RESULTS was chosen because any user-based task that
+<span class="lineNum">      31 </span>            :  * takes less than 200 milliseconds is considered to feel instantaneous to end
+<span class="lineNum">      32 </span>            :  * users.  MAX_ROWS_PER_RESULT was arbitrarily chosen to reduce the number of
+<span class="lineNum">      33 </span>            :  * dispatches to calling thread, while also providing reasonably-sized sets of
+<span class="lineNum">      34 </span>            :  * data for consumers.  Both of these constants are used because we assume that
+<span class="lineNum">      35 </span>            :  * consumers are trying to avoid blocking their execution thread for long
+<span class="lineNum">      36 </span>            :  * periods of time, and dispatching many small events to the calling thread will
+<span class="lineNum">      37 </span>            :  * end up blocking it.
+<span class="lineNum">      38 </span>            :  */
+<span class="lineNum">      39 </span>            : #define MAX_MILLISECONDS_BETWEEN_RESULTS 75
+<span class="lineNum">      40 </span>            : #define MAX_ROWS_PER_RESULT 15
+<span class="lineNum">      41 </span>            : 
+<span class="lineNum">      42 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">      43 </span>            : //// AsyncExecuteStatements
+<span class="lineNum">      44 </span>            : 
+<a name="45"><span class="lineNum">      45 </span>            : /* static */</a>
+<span class="lineNum">      46 </span>            : nsresult
+<span class="lineNum">      47 </span><span class="lineCov">         11 : AsyncExecuteStatements::execute(StatementDataArray &amp;aStatements,</span>
+<span class="lineNum">      48 </span>            :                                 Connection *aConnection,
+<span class="lineNum">      49 </span>            :                                 sqlite3 *aNativeConnection,
+<span class="lineNum">      50 </span>            :                                 mozIStorageStatementCallback *aCallback,
+<span class="lineNum">      51 </span>            :                                 mozIStoragePendingStatement **_stmt)
+<span class="lineNum">      52 </span>            : {
+<span class="lineNum">      53 </span>            :   // Create our event to run in the background
+<span class="lineNum">      54 </span>            :   RefPtr&lt;AsyncExecuteStatements&gt; event =
+<span class="lineNum">      55 </span>            :     new AsyncExecuteStatements(aStatements, aConnection, aNativeConnection,
+<span class="lineNum">      56 </span><span class="lineCov">         22 :                                aCallback);</span>
+<span class="lineNum">      57 </span><span class="lineCov">         11 :   NS_ENSURE_TRUE(event, NS_ERROR_OUT_OF_MEMORY);</span>
+<span class="lineNum">      58 </span>            : 
+<span class="lineNum">      59 </span>            :   // Dispatch it to the background
+<span class="lineNum">      60 </span><span class="lineCov">         11 :   nsIEventTarget *target = aConnection-&gt;getAsyncExecutionTarget();</span>
+<span class="lineNum">      61 </span>            : 
+<span class="lineNum">      62 </span>            :   // If we don't have a valid target, this is a bug somewhere else. In the past,
+<span class="lineNum">      63 </span>            :   // this assert found cases where a Run method would schedule a new statement
+<span class="lineNum">      64 </span>            :   // without checking if asyncClose had been called. The caller must prevent
+<span class="lineNum">      65 </span>            :   // that from happening or, if the work is not critical, just avoid creating
+<span class="lineNum">      66 </span>            :   // the new statement during shutdown. See bug 718449 for an example.
+<span class="lineNum">      67 </span><span class="lineCov">         11 :   MOZ_ASSERT(target);</span>
+<span class="lineNum">      68 </span><span class="lineCov">         11 :   if (!target) {</span>
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_AVAILABLE;</span>
+<span class="lineNum">      70 </span>            :   }
+<span class="lineNum">      71 </span>            : 
+<span class="lineNum">      72 </span><span class="lineCov">         11 :   nsresult rv = target-&gt;Dispatch(event, NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">      73 </span><span class="lineCov">         11 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span>            :   // Return it as the pending statement object and track it.
+<span class="lineNum">      76 </span><span class="lineCov">         11 :   event.forget(_stmt);</span>
+<span class="lineNum">      77 </span><span class="lineCov">         11 :   return NS_OK;</span>
+<a name="78"><span class="lineNum">      78 </span>            : }</a>
+<span class="lineNum">      79 </span>            : 
+<span class="lineNum">      80 </span><span class="lineCov">         11 : AsyncExecuteStatements::AsyncExecuteStatements(StatementDataArray &amp;aStatements,</span>
+<span class="lineNum">      81 </span>            :                                                Connection *aConnection,
+<span class="lineNum">      82 </span>            :                                                sqlite3 *aNativeConnection,
+<span class="lineNum">      83 </span><span class="lineCov">         11 :                                                mozIStorageStatementCallback *aCallback)</span>
+<span class="lineNum">      84 </span>            : : mConnection(aConnection)
+<span class="lineNum">      85 </span>            : , mNativeConnection(aNativeConnection)
+<span class="lineNum">      86 </span>            : , mHasTransaction(false)
+<span class="lineNum">      87 </span>            : , mCallback(aCallback)
+<span class="lineNum">      88 </span><span class="lineCov">         22 : , mCallingThread(::do_GetCurrentThread())</span>
+<span class="lineNum">      89 </span>            : , mMaxWait(TimeDuration::FromMilliseconds(MAX_MILLISECONDS_BETWEEN_RESULTS))
+<span class="lineNum">      90 </span>            : , mIntervalStart(TimeStamp::Now())
+<span class="lineNum">      91 </span>            : , mState(PENDING)
+<span class="lineNum">      92 </span>            : , mCancelRequested(false)
+<span class="lineNum">      93 </span>            : , mMutex(aConnection-&gt;sharedAsyncExecutionMutex)
+<span class="lineNum">      94 </span>            : , mDBMutex(aConnection-&gt;sharedDBMutex)
+<span class="lineNum">      95 </span><span class="lineCov">         33 : , mRequestStartDate(TimeStamp::Now())</span>
+<span class="lineNum">      96 </span>            : {
+<span class="lineNum">      97 </span><span class="lineCov">         11 :   (void)mStatements.SwapElements(aStatements);</span>
+<span class="lineNum">      98 </span><span class="lineCov">         11 :   NS_ASSERTION(mStatements.Length(), &quot;We weren't given any statements!&quot;);</span>
+<a name="99"><span class="lineNum">      99 </span><span class="lineCov">         11 : }</span></a>
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span><span class="lineCov">          6 : AsyncExecuteStatements::~AsyncExecuteStatements()</span>
+<span class="lineNum">     102 </span>            : {
+<span class="lineNum">     103 </span><span class="lineCov">          3 :   MOZ_ASSERT(!mCallback, &quot;Never called the Completion callback!&quot;);</span>
+<span class="lineNum">     104 </span><span class="lineCov">          3 :   MOZ_ASSERT(!mHasTransaction, &quot;There should be no transaction at this point&quot;);</span>
+<span class="lineNum">     105 </span><span class="lineCov">          3 :   if (mCallback) {</span>
+<span class="lineNum">     106 </span>            :     NS_ProxyRelease(&quot;AsyncExecuteStatements::mCallback&quot;, mCallingThread,
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :                     mCallback.forget());</span>
+<span class="lineNum">     108 </span>            :   }
+<span class="lineNum">     109 </span><span class="lineCov">          3 : }</span>
+<a name="110"><span class="lineNum">     110 </span>            : </a>
+<span class="lineNum">     111 </span>            : bool
+<span class="lineNum">     112 </span><span class="lineCov">          3 : AsyncExecuteStatements::shouldNotify()</span>
+<span class="lineNum">     113 </span>            : {
+<span class="lineNum">     114 </span>            : #ifdef DEBUG
+<span class="lineNum">     115 </span><span class="lineCov">          3 :   mMutex.AssertNotCurrentThreadOwns();</span>
+<span class="lineNum">     116 </span>            : 
+<span class="lineNum">     117 </span><span class="lineCov">          3 :   bool onCallingThread = false;</span>
+<span class="lineNum">     118 </span><span class="lineCov">          3 :   (void)mCallingThread-&gt;IsOnCurrentThread(&amp;onCallingThread);</span>
+<span class="lineNum">     119 </span><span class="lineCov">          3 :   NS_ASSERTION(onCallingThread, &quot;runEvent not running on the calling thread!&quot;);</span>
+<span class="lineNum">     120 </span>            : #endif
+<span class="lineNum">     121 </span>            : 
+<span class="lineNum">     122 </span>            :   // We do not need to acquire mMutex here because it can only ever be written
+<span class="lineNum">     123 </span>            :   // to on the calling thread, and the only thread that can call us is the
+<span class="lineNum">     124 </span>            :   // calling thread, so we know that our access is serialized.
+<span class="lineNum">     125 </span><span class="lineCov">          3 :   return !mCancelRequested;</span>
+<span class="lineNum">     126 </span>            : }
+<a name="127"><span class="lineNum">     127 </span>            : </a>
+<span class="lineNum">     128 </span>            : bool
+<span class="lineNum">     129 </span><span class="lineCov">          6 : AsyncExecuteStatements::bindExecuteAndProcessStatement(StatementData &amp;aData,</span>
+<span class="lineNum">     130 </span>            :                                                        bool aLastStatement)
+<span class="lineNum">     131 </span>            : {
+<span class="lineNum">     132 </span><span class="lineCov">          6 :   mMutex.AssertNotCurrentThreadOwns();</span>
+<span class="lineNum">     133 </span>            : 
+<span class="lineNum">     134 </span><span class="lineCov">          6 :   sqlite3_stmt *aStatement = nullptr;</span>
+<span class="lineNum">     135 </span>            :   // This cannot fail; we are only called if it's available.
+<span class="lineNum">     136 </span><span class="lineCov">          6 :   (void)aData.getSqliteStatement(&amp;aStatement);</span>
+<span class="lineNum">     137 </span><span class="lineCov">          6 :   NS_ASSERTION(aStatement, &quot;You broke the code; do not call here like that!&quot;);</span>
+<span class="lineNum">     138 </span><span class="lineCov">          6 :   BindingParamsArray *paramsArray(aData);</span>
+<span class="lineNum">     139 </span>            : 
+<span class="lineNum">     140 </span>            :   // Iterate through all of our parameters, bind them, and execute.
+<span class="lineNum">     141 </span><span class="lineCov">          6 :   bool continueProcessing = true;</span>
+<span class="lineNum">     142 </span><span class="lineCov">          6 :   BindingParamsArray::iterator itr = paramsArray-&gt;begin();</span>
+<span class="lineNum">     143 </span><span class="lineCov">          6 :   BindingParamsArray::iterator end = paramsArray-&gt;end();</span>
+<span class="lineNum">     144 </span><span class="lineCov">         18 :   while (itr != end &amp;&amp; continueProcessing) {</span>
+<span class="lineNum">     145 </span>            :     // Bind the data to our statement.
+<span class="lineNum">     146 </span>            :     nsCOMPtr&lt;IStorageBindingParamsInternal&gt; bindingInternal =
+<span class="lineNum">     147 </span><span class="lineCov">         12 :       do_QueryInterface(*itr);</span>
+<span class="lineNum">     148 </span><span class="lineCov">         12 :     nsCOMPtr&lt;mozIStorageError&gt; error = bindingInternal-&gt;bind(aStatement);</span>
+<span class="lineNum">     149 </span><span class="lineCov">          6 :     if (error) {</span>
+<span class="lineNum">     150 </span>            :       // Set our error state.
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :       mState = ERROR;</span>
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span>            :       // And notify.
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :       (void)notifyError(error);</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     156 </span>            :     }
+<span class="lineNum">     157 </span>            : 
+<span class="lineNum">     158 </span>            :     // Advance our iterator, execute, and then process the statement.
+<span class="lineNum">     159 </span><span class="lineCov">          6 :     itr++;</span>
+<span class="lineNum">     160 </span><span class="lineCov">          6 :     bool lastStatement = aLastStatement &amp;&amp; itr == end;</span>
+<span class="lineNum">     161 </span><span class="lineCov">          6 :     continueProcessing = executeAndProcessStatement(aStatement, lastStatement);</span>
+<span class="lineNum">     162 </span>            : 
+<span class="lineNum">     163 </span>            :     // Always reset our statement.
+<span class="lineNum">     164 </span><span class="lineCov">          6 :     (void)::sqlite3_reset(aStatement);</span>
+<span class="lineNum">     165 </span>            :   }
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span><span class="lineCov">          6 :   return continueProcessing;</span>
+<span class="lineNum">     168 </span>            : }
+<a name="169"><span class="lineNum">     169 </span>            : </a>
+<span class="lineNum">     170 </span>            : bool
+<span class="lineNum">     171 </span><span class="lineCov">         11 : AsyncExecuteStatements::executeAndProcessStatement(sqlite3_stmt *aStatement,</span>
+<span class="lineNum">     172 </span>            :                                                    bool aLastStatement)
+<span class="lineNum">     173 </span>            : {
+<span class="lineNum">     174 </span><span class="lineCov">         11 :   mMutex.AssertNotCurrentThreadOwns();</span>
+<span class="lineNum">     175 </span>            : 
+<span class="lineNum">     176 </span>            :   // Execute our statement
+<span class="lineNum">     177 </span>            :   bool hasResults;
+<span class="lineNum">     178 </span><span class="lineCov">         15 :   do {</span>
+<span class="lineNum">     179 </span><span class="lineCov">         15 :     hasResults = executeStatement(aStatement);</span>
+<span class="lineNum">     180 </span>            : 
+<span class="lineNum">     181 </span>            :     // If we had an error, bail.
+<span class="lineNum">     182 </span><span class="lineCov">         15 :     if (mState == ERROR)</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     184 </span>            : 
+<span class="lineNum">     185 </span>            :     // If we have been canceled, there is no point in going on...
+<span class="lineNum">     186 </span>            :     {
+<span class="lineNum">     187 </span><span class="lineCov">         30 :       MutexAutoLock lockedScope(mMutex);</span>
+<span class="lineNum">     188 </span><span class="lineCov">         15 :       if (mCancelRequested) {</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :         mState = CANCELED;</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     191 </span>            :       }
+<span class="lineNum">     192 </span>            :     }
+<span class="lineNum">     193 </span>            : 
+<span class="lineNum">     194 </span>            :     // Build our result set and notify if we got anything back and have a
+<span class="lineNum">     195 </span>            :     // callback to notify.
+<span class="lineNum">     196 </span><span class="lineCov">         19 :     if (mCallback &amp;&amp; hasResults &amp;&amp;</span>
+<span class="lineNum">     197 </span><span class="lineCov">          4 :         NS_FAILED(buildAndNotifyResults(aStatement))) {</span>
+<span class="lineNum">     198 </span>            :       // We had an error notifying, so we notify on error and stop processing.
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :       mState = ERROR;</span>
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span>            :       // Notify, and stop processing statements.
+<span class="lineNum">     202 </span>            :       (void)notifyError(mozIStorageError::ERROR,
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :                         &quot;An error occurred while notifying about results&quot;);</span>
+<span class="lineNum">     204 </span>            : 
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     206 </span>            :     }
+<span class="lineNum">     207 </span>            :   } while (hasResults);
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span>            : #ifndef MOZ_STORAGE_SORTWARNING_SQL_DUMP
+<span class="lineNum">     210 </span><span class="lineCov">         11 :   if (MOZ_LOG_TEST(gStorageLog, LogLevel::Warning))</span>
+<span class="lineNum">     211 </span>            : #endif
+<span class="lineNum">     212 </span>            :   {
+<span class="lineNum">     213 </span>            :     // Check to make sure that this statement was smart about what it did.
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :     checkAndLogStatementPerformance(aStatement);</span>
+<span class="lineNum">     215 </span>            :   }
+<span class="lineNum">     216 </span>            : 
+<span class="lineNum">     217 </span>            :   // If we are done, we need to set our state accordingly while we still hold
+<span class="lineNum">     218 </span>            :   // our mutex.  We would have already returned if we were canceled or had
+<span class="lineNum">     219 </span>            :   // an error at this point.
+<span class="lineNum">     220 </span><span class="lineCov">         11 :   if (aLastStatement)</span>
+<span class="lineNum">     221 </span><span class="lineCov">         11 :     mState = COMPLETED;</span>
+<span class="lineNum">     222 </span>            : 
+<span class="lineNum">     223 </span><span class="lineCov">         11 :   return true;</span>
+<span class="lineNum">     224 </span>            : }
+<a name="225"><span class="lineNum">     225 </span>            : </a>
+<span class="lineNum">     226 </span>            : bool
+<span class="lineNum">     227 </span><span class="lineCov">         15 : AsyncExecuteStatements::executeStatement(sqlite3_stmt *aStatement)</span>
+<span class="lineNum">     228 </span>            : {
+<span class="lineNum">     229 </span><span class="lineCov">         15 :   mMutex.AssertNotCurrentThreadOwns();</span>
+<span class="lineNum">     230 </span><span class="lineCov">         30 :   Telemetry::AutoTimer&lt;Telemetry::MOZ_STORAGE_ASYNC_REQUESTS_MS&gt; finallySendExecutionDuration(mRequestStartDate);</span>
+<span class="lineNum">     231 </span>            :   while (true) {
+<span class="lineNum">     232 </span>            :     // lock the sqlite mutex so sqlite3_errmsg cannot change
+<span class="lineNum">     233 </span><span class="lineCov">         15 :     SQLiteMutexAutoLock lockedScope(mDBMutex);</span>
+<span class="lineNum">     234 </span>            : 
+<span class="lineNum">     235 </span><span class="lineCov">         15 :     int rc = mConnection-&gt;stepStatement(mNativeConnection, aStatement);</span>
+<span class="lineNum">     236 </span>            :     // Stop if we have no more results.
+<span class="lineNum">     237 </span><span class="lineCov">         15 :     if (rc == SQLITE_DONE)</span>
+<span class="lineNum">     238 </span>            :     {
+<span class="lineNum">     239 </span><span class="lineCov">         11 :       Telemetry::Accumulate(Telemetry::MOZ_STORAGE_ASYNC_REQUESTS_SUCCESS, true);</span>
+<span class="lineNum">     240 </span><span class="lineCov">         11 :       return false;</span>
+<span class="lineNum">     241 </span>            :     }
+<span class="lineNum">     242 </span>            : 
+<span class="lineNum">     243 </span>            :     // If we got results, we can return now.
+<span class="lineNum">     244 </span><span class="lineCov">          4 :     if (rc == SQLITE_ROW)</span>
+<span class="lineNum">     245 </span>            :     {
+<span class="lineNum">     246 </span><span class="lineCov">          4 :       Telemetry::Accumulate(Telemetry::MOZ_STORAGE_ASYNC_REQUESTS_SUCCESS, true);</span>
+<span class="lineNum">     247 </span><span class="lineCov">          4 :       return true;</span>
+<span class="lineNum">     248 </span>            :     }
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span>            :     // Some errors are not fatal, and we can handle them and continue.
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     if (rc == SQLITE_BUSY) {</span>
+<span class="lineNum">     252 </span>            :       // Don't hold the lock while we call outside our module.
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :       SQLiteMutexAutoUnlock unlockedScope(mDBMutex);</span>
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span>            :       // Yield, and try again
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :       (void)::PR_Sleep(PR_INTERVAL_NO_WAIT);</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     258 </span>            :     }
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span>            :     // Set an error state.
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :     mState = ERROR;</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :     Telemetry::Accumulate(Telemetry::MOZ_STORAGE_ASYNC_REQUESTS_SUCCESS, false);</span>
+<span class="lineNum">     263 </span>            : 
+<span class="lineNum">     264 </span>            :     // Construct the error message before giving up the mutex (which we cannot
+<span class="lineNum">     265 </span>            :     // hold during the call to notifyError).
+<span class="lineNum">     266 </span>            :     nsCOMPtr&lt;mozIStorageError&gt; errorObj(
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :       new Error(rc, ::sqlite3_errmsg(mNativeConnection))</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :     );</span>
+<span class="lineNum">     269 </span>            :     // We cannot hold the DB mutex while calling notifyError.
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :     SQLiteMutexAutoUnlock unlockedScope(mDBMutex);</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :     (void)notifyError(errorObj);</span>
+<span class="lineNum">     272 </span>            : 
+<span class="lineNum">     273 </span>            :     // Finally, indicate that we should stop processing.
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     276 </span>            : }
+<a name="277"><span class="lineNum">     277 </span>            : </a>
+<span class="lineNum">     278 </span>            : nsresult
+<span class="lineNum">     279 </span><span class="lineCov">          4 : AsyncExecuteStatements::buildAndNotifyResults(sqlite3_stmt *aStatement)</span>
+<span class="lineNum">     280 </span>            : {
+<span class="lineNum">     281 </span><span class="lineCov">          4 :   NS_ASSERTION(mCallback, &quot;Trying to dispatch results without a callback!&quot;);</span>
+<span class="lineNum">     282 </span><span class="lineCov">          4 :   mMutex.AssertNotCurrentThreadOwns();</span>
+<span class="lineNum">     283 </span>            : 
+<span class="lineNum">     284 </span>            :   // Build result object if we need it.
+<span class="lineNum">     285 </span><span class="lineCov">          4 :   if (!mResultSet)</span>
+<span class="lineNum">     286 </span><span class="lineCov">          3 :     mResultSet = new ResultSet();</span>
+<span class="lineNum">     287 </span><span class="lineCov">          4 :   NS_ENSURE_TRUE(mResultSet, NS_ERROR_OUT_OF_MEMORY);</span>
+<span class="lineNum">     288 </span>            : 
+<span class="lineNum">     289 </span><span class="lineCov">          8 :   RefPtr&lt;Row&gt; row(new Row());</span>
+<span class="lineNum">     290 </span><span class="lineCov">          4 :   NS_ENSURE_TRUE(row, NS_ERROR_OUT_OF_MEMORY);</span>
+<span class="lineNum">     291 </span>            : 
+<span class="lineNum">     292 </span><span class="lineCov">          4 :   nsresult rv = row-&gt;initialize(aStatement);</span>
+<span class="lineNum">     293 </span><span class="lineCov">          4 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     294 </span>            : 
+<span class="lineNum">     295 </span><span class="lineCov">          4 :   rv = mResultSet-&gt;add(row);</span>
+<span class="lineNum">     296 </span><span class="lineCov">          4 :   NS_ENSURE_SUCCESS(rv, rv);</span>
+<span class="lineNum">     297 </span>            : 
+<span class="lineNum">     298 </span>            :   // If we have hit our maximum number of allowed results, or if we have hit
+<span class="lineNum">     299 </span>            :   // the maximum amount of time we want to wait for results, notify the
+<span class="lineNum">     300 </span>            :   // calling thread about it.
+<span class="lineNum">     301 </span><span class="lineCov">          4 :   TimeStamp now = TimeStamp::Now();</span>
+<span class="lineNum">     302 </span><span class="lineCov">          4 :   TimeDuration delta = now - mIntervalStart;</span>
+<span class="lineNum">     303 </span><span class="lineCov">          4 :   if (mResultSet-&gt;rows() &gt;= MAX_ROWS_PER_RESULT || delta &gt; mMaxWait) {</span>
+<span class="lineNum">     304 </span>            :     // Notify the caller
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :     rv = notifyResults();</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv))</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :       return NS_OK; // we'll try again with the next result</span>
+<span class="lineNum">     308 </span>            : 
+<span class="lineNum">     309 </span>            :     // Reset our start time
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     mIntervalStart = now;</span>
+<span class="lineNum">     311 </span>            :   }
+<span class="lineNum">     312 </span>            : 
+<span class="lineNum">     313 </span><span class="lineCov">          4 :   return NS_OK;</span>
+<span class="lineNum">     314 </span>            : }
+<a name="315"><span class="lineNum">     315 </span>            : </a>
+<span class="lineNum">     316 </span>            : nsresult
+<span class="lineNum">     317 </span><span class="lineCov">         11 : AsyncExecuteStatements::notifyComplete()</span>
+<span class="lineNum">     318 </span>            : {
+<span class="lineNum">     319 </span><span class="lineCov">         11 :   mMutex.AssertNotCurrentThreadOwns();</span>
+<span class="lineNum">     320 </span><span class="lineCov">         11 :   NS_ASSERTION(mState != PENDING,</span>
+<span class="lineNum">     321 </span>            :                &quot;Still in a pending state when calling Complete!&quot;);
+<span class="lineNum">     322 </span>            : 
+<span class="lineNum">     323 </span>            :   // Reset our statements before we try to commit or rollback.  If we are
+<span class="lineNum">     324 </span>            :   // canceling and have statements that think they have pending work, the
+<span class="lineNum">     325 </span>            :   // rollback will fail.
+<span class="lineNum">     326 </span><span class="lineCov">         22 :   for (uint32_t i = 0; i &lt; mStatements.Length(); i++)</span>
+<span class="lineNum">     327 </span><span class="lineCov">         11 :     mStatements[i].reset();</span>
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span>            :   // Release references to the statement data as soon as possible. If this
+<span class="lineNum">     330 </span>            :   // is the last reference, statements will be finalized immediately on the
+<span class="lineNum">     331 </span>            :   // async thread, hence avoiding several bounces between threads and possible
+<span class="lineNum">     332 </span>            :   // race conditions with AsyncClose().
+<span class="lineNum">     333 </span><span class="lineCov">         11 :   mStatements.Clear();</span>
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span>            :   // Handle our transaction, if we have one
+<span class="lineNum">     336 </span><span class="lineCov">         11 :   if (mHasTransaction) {</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :     if (mState == COMPLETED) {</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :       nsresult rv = mConnection-&gt;commitTransactionInternal(mNativeConnection);</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :       if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :         mState = ERROR;</span>
+<span class="lineNum">     341 </span>            :         (void)notifyError(mozIStorageError::ERROR,
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :                           &quot;Transaction failed to commit&quot;);</span>
+<span class="lineNum">     343 </span>            :       }
+<span class="lineNum">     344 </span>            :     }
+<span class="lineNum">     345 </span>            :     else {
+<span class="lineNum">     346 </span>            :       DebugOnly&lt;nsresult&gt; rv =
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :         mConnection-&gt;rollbackTransactionInternal(mNativeConnection);</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :       NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), &quot;Transaction failed to rollback&quot;);</span>
+<span class="lineNum">     349 </span>            :     }
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :     mHasTransaction = false;</span>
+<span class="lineNum">     351 </span>            :   }
+<span class="lineNum">     352 </span>            : 
+<span class="lineNum">     353 </span>            :   // This will take ownership of mCallback and make sure its destruction will
+<span class="lineNum">     354 </span>            :   // happen on the owner thread.
+<span class="lineNum">     355 </span><span class="lineCov">         22 :   Unused &lt;&lt; mCallingThread-&gt;Dispatch(</span>
+<span class="lineNum">     356 </span><span class="lineCov">         22 :     NewRunnableMethod(&quot;AsyncExecuteStatements::notifyCompleteOnCallingThread&quot;,</span>
+<span class="lineNum">     357 </span>            :                       this, &amp;AsyncExecuteStatements::notifyCompleteOnCallingThread),
+<span class="lineNum">     358 </span><span class="lineCov">         11 :     NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     359 </span>            : 
+<span class="lineNum">     360 </span><span class="lineCov">         11 :   return NS_OK;</span>
+<span class="lineNum">     361 </span>            : }
+<a name="362"><span class="lineNum">     362 </span>            : </a>
+<span class="lineNum">     363 </span>            : nsresult
+<span class="lineNum">     364 </span><span class="lineCov">         11 : AsyncExecuteStatements::notifyCompleteOnCallingThread() {</span>
+<span class="lineNum">     365 </span><span class="lineCov">         11 :   MOZ_ASSERT(mCallingThread-&gt;IsOnCurrentThread());</span>
+<span class="lineNum">     366 </span>            :   // Take ownership of mCallback and responsibility for freeing it when we
+<span class="lineNum">     367 </span>            :   // release it.  Any notifyResultsOnCallingThread and notifyErrorOnCallingThread
+<span class="lineNum">     368 </span>            :   // calls on the stack spinning the event loop have guaranteed their safety by
+<span class="lineNum">     369 </span>            :   // creating their own strong reference before invoking the callback.
+<span class="lineNum">     370 </span><span class="lineCov">         22 :   nsCOMPtr&lt;mozIStorageStatementCallback&gt; callback = mCallback.forget();</span>
+<span class="lineNum">     371 </span><span class="lineCov">         11 :   if (callback) {</span>
+<span class="lineNum">     372 </span><span class="lineCov">         10 :     Unused &lt;&lt; callback-&gt;HandleCompletion(mState);</span>
+<span class="lineNum">     373 </span>            :   }
+<span class="lineNum">     374 </span><span class="lineCov">         22 :   return NS_OK;</span>
+<span class="lineNum">     375 </span>            : }
+<a name="376"><span class="lineNum">     376 </span>            : </a>
+<span class="lineNum">     377 </span>            : nsresult
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 : AsyncExecuteStatements::notifyError(int32_t aErrorCode,</span>
+<span class="lineNum">     379 </span>            :                                     const char *aMessage)
+<span class="lineNum">     380 </span>            : {
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :   mMutex.AssertNotCurrentThreadOwns();</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :   mDBMutex.assertNotCurrentThreadOwns();</span>
+<span class="lineNum">     383 </span>            : 
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :   if (!mCallback)</span>
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;mozIStorageError&gt; errorObj(new Error(aErrorCode, aMessage));</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE(errorObj, NS_ERROR_OUT_OF_MEMORY);</span>
+<span class="lineNum">     389 </span>            : 
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :   return notifyError(errorObj);</span>
+<span class="lineNum">     391 </span>            : }
+<a name="392"><span class="lineNum">     392 </span>            : </a>
+<span class="lineNum">     393 </span>            : nsresult
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 : AsyncExecuteStatements::notifyError(mozIStorageError *aError)</span>
+<span class="lineNum">     395 </span>            : {
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :   mMutex.AssertNotCurrentThreadOwns();</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :   mDBMutex.assertNotCurrentThreadOwns();</span>
+<span class="lineNum">     398 </span>            : 
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :   if (!mCallback)</span>
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     401 </span>            : 
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :   Unused &lt;&lt; mCallingThread-&gt;Dispatch(</span>
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :     NewRunnableMethod&lt;nsCOMPtr&lt;mozIStorageError&gt;&gt;(&quot;AsyncExecuteStatements::notifyErrorOnCallingThread&quot;,</span>
+<span class="lineNum">     404 </span>            :                                                   this, &amp;AsyncExecuteStatements::notifyErrorOnCallingThread, aError),
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :     NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     406 </span>            : 
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     408 </span>            : }
+<a name="409"><span class="lineNum">     409 </span>            : </a>
+<span class="lineNum">     410 </span>            : nsresult
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 : AsyncExecuteStatements::notifyErrorOnCallingThread(mozIStorageError *aError) {</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mCallingThread-&gt;IsOnCurrentThread());</span>
+<span class="lineNum">     413 </span>            :   // Acquire our own strong reference so that if the callback spins a nested
+<span class="lineNum">     414 </span>            :   // event loop and notifyCompleteOnCallingThread is executed, forgetting
+<span class="lineNum">     415 </span>            :   // mCallback, we still have a valid/strong reference that won't be freed until
+<span class="lineNum">     416 </span>            :   // we exit.
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;mozIStorageStatementCallback&gt; callback = mCallback;</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :   if (shouldNotify() &amp;&amp; callback) {</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :     Unused &lt;&lt; callback-&gt;HandleError(aError);</span>
+<span class="lineNum">     420 </span>            :   }
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     422 </span>            : }
+<a name="423"><span class="lineNum">     423 </span>            : </a>
+<span class="lineNum">     424 </span>            : nsresult
+<span class="lineNum">     425 </span><span class="lineCov">          3 : AsyncExecuteStatements::notifyResults()</span>
+<span class="lineNum">     426 </span>            : {
+<span class="lineNum">     427 </span><span class="lineCov">          3 :   mMutex.AssertNotCurrentThreadOwns();</span>
+<span class="lineNum">     428 </span><span class="lineCov">          3 :   MOZ_ASSERT(mCallback, &quot;notifyResults called without a callback!&quot;);</span>
+<span class="lineNum">     429 </span>            : 
+<span class="lineNum">     430 </span>            :   // This takes ownership of mResultSet, a new one will be generated in
+<span class="lineNum">     431 </span>            :   // buildAndNotifyResults() when further results will arrive.
+<span class="lineNum">     432 </span><span class="lineCov">          6 :   Unused &lt;&lt; mCallingThread-&gt;Dispatch(</span>
+<span class="lineNum">     433 </span><span class="lineCov">          6 :     NewRunnableMethod&lt;RefPtr&lt;ResultSet&gt;&gt;(&quot;AsyncExecuteStatements::notifyResultsOnCallingThread&quot;,</span>
+<span class="lineNum">     434 </span><span class="lineCov">          6 :                                          this, &amp;AsyncExecuteStatements::notifyResultsOnCallingThread, mResultSet.forget()),</span>
+<span class="lineNum">     435 </span><span class="lineCov">          3 :     NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     436 </span>            : 
+<span class="lineNum">     437 </span><span class="lineCov">          3 :   return NS_OK;</span>
+<span class="lineNum">     438 </span>            : }
+<a name="439"><span class="lineNum">     439 </span>            : </a>
+<span class="lineNum">     440 </span>            : nsresult
+<span class="lineNum">     441 </span><span class="lineCov">          3 : AsyncExecuteStatements::notifyResultsOnCallingThread(ResultSet *aResultSet)</span>
+<span class="lineNum">     442 </span>            : {
+<span class="lineNum">     443 </span><span class="lineCov">          3 :   MOZ_ASSERT(mCallingThread-&gt;IsOnCurrentThread());</span>
+<span class="lineNum">     444 </span>            :   // Acquire our own strong reference so that if the callback spins a nested
+<span class="lineNum">     445 </span>            :   // event loop and notifyCompleteOnCallingThread is executed, forgetting
+<span class="lineNum">     446 </span>            :   // mCallback, we still have a valid/strong reference that won't be freed until
+<span class="lineNum">     447 </span>            :   // we exit.
+<span class="lineNum">     448 </span><span class="lineCov">          6 :   nsCOMPtr&lt;mozIStorageStatementCallback&gt; callback = mCallback;</span>
+<span class="lineNum">     449 </span><span class="lineCov">          3 :   if (shouldNotify() &amp;&amp; callback) {</span>
+<span class="lineNum">     450 </span><span class="lineCov">          3 :     Unused &lt;&lt; callback-&gt;HandleResult(aResultSet);</span>
+<span class="lineNum">     451 </span>            :   }
+<span class="lineNum">     452 </span><span class="lineCov">          6 :   return NS_OK;</span>
+<a name="453"><span class="lineNum">     453 </span>            : }</a>
+<span class="lineNum">     454 </span>            : 
+<span class="lineNum">     455 </span><span class="lineCov">        257 : NS_IMPL_ISUPPORTS(</span>
+<span class="lineNum">     456 </span>            :   AsyncExecuteStatements,
+<span class="lineNum">     457 </span>            :   nsIRunnable,
+<span class="lineNum">     458 </span>            :   mozIStoragePendingStatement
+<span class="lineNum">     459 </span>            : )
+<a name="460"><span class="lineNum">     460 </span>            : </a>
+<span class="lineNum">     461 </span>            : bool
+<span class="lineNum">     462 </span><span class="lineCov">         11 : AsyncExecuteStatements::statementsNeedTransaction()</span>
+<span class="lineNum">     463 </span>            : {
+<span class="lineNum">     464 </span>            :   // If there is more than one write statement, run in a transaction.
+<span class="lineNum">     465 </span>            :   // Additionally, if we have only one statement but it needs a transaction, due
+<span class="lineNum">     466 </span>            :   // to multiple BindingParams, we will wrap it in one.
+<span class="lineNum">     467 </span><span class="lineCov">         22 :   for (uint32_t i = 0, transactionsCount = 0; i &lt; mStatements.Length(); ++i) {</span>
+<span class="lineNum">     468 </span><span class="lineCov">         11 :     transactionsCount += mStatements[i].needsTransaction();</span>
+<span class="lineNum">     469 </span><span class="lineCov">         11 :     if (transactionsCount &gt; 1) {</span>
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :       return true;</span>
+<span class="lineNum">     471 </span>            :     }
+<span class="lineNum">     472 </span>            :   }
+<span class="lineNum">     473 </span><span class="lineCov">         11 :   return false;</span>
+<span class="lineNum">     474 </span>            : }
+<span class="lineNum">     475 </span>            : 
+<span class="lineNum">     476 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     477 </span>            : //// mozIStoragePendingStatement
+<a name="478"><span class="lineNum">     478 </span>            : </a>
+<span class="lineNum">     479 </span>            : NS_IMETHODIMP
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 : AsyncExecuteStatements::Cancel()</span>
+<span class="lineNum">     481 </span>            : {
+<span class="lineNum">     482 </span>            : #ifdef DEBUG
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :   bool onCallingThread = false;</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :   (void)mCallingThread-&gt;IsOnCurrentThread(&amp;onCallingThread);</span>
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :   NS_ASSERTION(onCallingThread, &quot;Not canceling from the calling thread!&quot;);</span>
+<span class="lineNum">     486 </span>            : #endif
+<span class="lineNum">     487 </span>            : 
+<span class="lineNum">     488 </span>            :   // If we have already canceled, we have an error, but always indicate that
+<span class="lineNum">     489 </span>            :   // we are trying to cancel.
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :   NS_ENSURE_FALSE(mCancelRequested, NS_ERROR_UNEXPECTED);</span>
+<span class="lineNum">     491 </span>            : 
+<span class="lineNum">     492 </span>            :   {
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :     MutexAutoLock lockedScope(mMutex);</span>
+<span class="lineNum">     494 </span>            : 
+<span class="lineNum">     495 </span>            :     // We need to indicate that we want to try and cancel now.
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :     mCancelRequested = true;</span>
+<span class="lineNum">     497 </span>            :   }
+<span class="lineNum">     498 </span>            : 
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     500 </span>            : }
+<span class="lineNum">     501 </span>            : 
+<span class="lineNum">     502 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     503 </span>            : //// nsIRunnable
+<a name="504"><span class="lineNum">     504 </span>            : </a>
+<span class="lineNum">     505 </span>            : NS_IMETHODIMP
+<span class="lineNum">     506 </span><span class="lineCov">         11 : AsyncExecuteStatements::Run()</span>
+<span class="lineNum">     507 </span>            : {
+<span class="lineNum">     508 </span><span class="lineCov">         11 :   MOZ_ASSERT(mConnection-&gt;isConnectionReadyOnThisThread());</span>
+<span class="lineNum">     509 </span>            : 
+<span class="lineNum">     510 </span>            :   // Do not run if we have been canceled.
+<span class="lineNum">     511 </span>            :   {
+<span class="lineNum">     512 </span><span class="lineCov">         22 :     MutexAutoLock lockedScope(mMutex);</span>
+<span class="lineNum">     513 </span><span class="lineCov">         11 :     if (mCancelRequested)</span>
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 :       mState = CANCELED;</span>
+<span class="lineNum">     515 </span>            :   }
+<span class="lineNum">     516 </span><span class="lineCov">         11 :   if (mState == CANCELED)</span>
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :     return notifyComplete();</span>
+<span class="lineNum">     518 </span>            : 
+<span class="lineNum">     519 </span><span class="lineCov">         11 :   if (statementsNeedTransaction() &amp;&amp; mConnection-&gt;getAutocommit()) {</span>
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :     if (NS_SUCCEEDED(mConnection-&gt;beginTransactionInternal(mNativeConnection,</span>
+<span class="lineNum">     521 </span>            :                                                            mozIStorageConnection::TRANSACTION_IMMEDIATE))) {
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :       mHasTransaction = true;</span>
+<span class="lineNum">     523 </span>            :     }
+<span class="lineNum">     524 </span>            : #ifdef DEBUG
+<span class="lineNum">     525 </span>            :     else {
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :       NS_WARNING(&quot;Unable to create a transaction for async execution.&quot;);</span>
+<span class="lineNum">     527 </span>            :     }
+<span class="lineNum">     528 </span>            : #endif
+<span class="lineNum">     529 </span>            :   }
+<span class="lineNum">     530 </span>            : 
+<span class="lineNum">     531 </span>            :   // Execute each statement, giving the callback results if it returns any.
+<span class="lineNum">     532 </span><span class="lineCov">         22 :   for (uint32_t i = 0; i &lt; mStatements.Length(); i++) {</span>
+<span class="lineNum">     533 </span><span class="lineCov">         11 :     bool finished = (i == (mStatements.Length() - 1));</span>
+<span class="lineNum">     534 </span>            : 
+<span class="lineNum">     535 </span>            :     sqlite3_stmt *stmt;
+<span class="lineNum">     536 </span>            :     { // lock the sqlite mutex so sqlite3_errmsg cannot change
+<span class="lineNum">     537 </span><span class="lineCov">         22 :       SQLiteMutexAutoLock lockedScope(mDBMutex);</span>
+<span class="lineNum">     538 </span>            : 
+<span class="lineNum">     539 </span><span class="lineCov">         11 :       int rc = mStatements[i].getSqliteStatement(&amp;stmt);</span>
+<span class="lineNum">     540 </span><span class="lineCov">         11 :       if (rc != SQLITE_OK) {</span>
+<span class="lineNum">     541 </span>            :         // Set our error state.
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :         mState = ERROR;</span>
+<span class="lineNum">     543 </span>            : 
+<span class="lineNum">     544 </span>            :         // Build the error object; can't call notifyError with the lock held
+<span class="lineNum">     545 </span>            :         nsCOMPtr&lt;mozIStorageError&gt; errorObj(
+<span class="lineNum">     546 </span><span class="lineNoCov">          0 :           new Error(rc, ::sqlite3_errmsg(mNativeConnection))</span>
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :         );</span>
+<span class="lineNum">     548 </span>            :         {
+<span class="lineNum">     549 </span>            :           // We cannot hold the DB mutex and call notifyError.
+<span class="lineNum">     550 </span><span class="lineNoCov">          0 :           SQLiteMutexAutoUnlock unlockedScope(mDBMutex);</span>
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :           (void)notifyError(errorObj);</span>
+<span class="lineNum">     552 </span>            :         }
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     554 </span>            :       }
+<span class="lineNum">     555 </span>            :     }
+<span class="lineNum">     556 </span>            : 
+<span class="lineNum">     557 </span>            :     // If we have parameters to bind, bind them, execute, and process.
+<span class="lineNum">     558 </span><span class="lineCov">         11 :     if (mStatements[i].hasParametersToBeBound()) {</span>
+<span class="lineNum">     559 </span><span class="lineCov">          6 :       if (!bindExecuteAndProcessStatement(mStatements[i], finished))</span>
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     561 </span>            :     }
+<span class="lineNum">     562 </span>            :     // Otherwise, just execute and process the statement.
+<span class="lineNum">     563 </span><span class="lineCov">          5 :     else if (!executeAndProcessStatement(stmt, finished)) {</span>
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     565 </span>            :     }
+<span class="lineNum">     566 </span>            :   }
+<span class="lineNum">     567 </span>            : 
+<span class="lineNum">     568 </span>            :   // If we still have results that we haven't notified about, take care of
+<span class="lineNum">     569 </span>            :   // them now.
+<span class="lineNum">     570 </span><span class="lineCov">         11 :   if (mResultSet)</span>
+<span class="lineNum">     571 </span><span class="lineCov">          3 :     (void)notifyResults();</span>
+<span class="lineNum">     572 </span>            : 
+<span class="lineNum">     573 </span>            :   // Notify about completion
+<span class="lineNum">     574 </span><span class="lineCov">         11 :   return notifyComplete();</span>
+<span class="lineNum">     575 </span>            : }
+<span class="lineNum">     576 </span>            : 
+<span class="lineNum">     577 </span>            : } // namespace storage
+<span class="lineNum">     578 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

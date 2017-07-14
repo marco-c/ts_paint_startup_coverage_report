@@ -1,0 +1,703 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - netwerk/cache/nsMemoryCacheDevice.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">netwerk/cache</a> - nsMemoryCacheDevice.cpp<span style="font-size: 80%;"> (source / <a href="nsMemoryCacheDevice.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">273</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">37</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=4 et sw=4 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;nsCache.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;nsMemoryCacheDevice.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;nsCacheService.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;nsICacheService.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;nsICacheVisitor.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;nsIStorageStream.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;nsCRT.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nsReadableUtils.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;mozilla/IntegerPrintfMacros.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;mozilla/MathAlgorithms.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;mozilla/Telemetry.h&quot;
+<span class="lineNum">      18 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : // The memory cache implements the &quot;LRU-SP&quot; caching algorithm
+<span class="lineNum">      21 </span>            : // described in &quot;LRU-SP: A Size-Adjusted and Popularity-Aware LRU Replacement
+<span class="lineNum">      22 </span>            : // Algorithm for Web Caching&quot; by Kai Cheng and Yahiko Kambayashi.
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : // We keep kQueueCount LRU queues, which should be about ceil(log2(mHardLimit))
+<span class="lineNum">      25 </span>            : // The queues hold exponentially increasing ranges of floor(log2((size/nref)))
+<span class="lineNum">      26 </span>            : // values for entries.
+<span class="lineNum">      27 </span>            : // Entries larger than 2^(kQueueCount-1) go in the last queue.
+<span class="lineNum">      28 </span>            : // Entries with no expiration go in the first queue.
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : const char *gMemoryDeviceID      = &quot;memory&quot;;
+<a name="31"><span class="lineNum">      31 </span>            : using namespace mozilla;</a>
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::nsMemoryCacheDevice()</span>
+<span class="lineNum">      34 </span>            :     : mInitialized(false),
+<span class="lineNum">      35 </span>            :       mHardLimit(4 * 1024 * 1024),       // default, if no pref
+<span class="lineNum">      36 </span><span class="lineNoCov">          0 :       mSoftLimit((mHardLimit * 9) / 10), // default, if no pref</span>
+<span class="lineNum">      37 </span>            :       mTotalSize(0),
+<span class="lineNum">      38 </span>            :       mInactiveSize(0),
+<span class="lineNum">      39 </span>            :       mEntryCount(0),
+<span class="lineNum">      40 </span>            :       mMaxEntryCount(0),
+<span class="lineNum">      41 </span><span class="lineNoCov">          0 :       mMaxEntrySize(-1)  // -1 means &quot;no limit&quot;</span>
+<span class="lineNum">      42 </span>            : {
+<span class="lineNum">      43 </span><span class="lineNoCov">          0 :     for (int i=0; i&lt;kQueueCount; ++i)</span>
+<span class="lineNum">      44 </span><span class="lineNoCov">          0 :         PR_INIT_CLIST(&amp;mEvictionList[i]);</span>
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 : }</span>
+<a name="46"><span class="lineNum">      46 </span>            : </a>
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::~nsMemoryCacheDevice()</span>
+<span class="lineNum">      49 </span>            : {
+<span class="lineNum">      50 </span><span class="lineNoCov">          0 :     Shutdown();</span>
+<span class="lineNum">      51 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">      52 </span>            : 
+<a name="53"><span class="lineNum">      53 </span>            : </a>
+<span class="lineNum">      54 </span>            : nsresult
+<span class="lineNum">      55 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::Init()</span>
+<span class="lineNum">      56 </span>            : {
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :     if (mInitialized)  return NS_ERROR_ALREADY_INITIALIZED;</span>
+<span class="lineNum">      58 </span>            : 
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :     mMemCacheEntries.Init();</span>
+<span class="lineNum">      60 </span><span class="lineNoCov">          0 :     mInitialized = true;</span>
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">      62 </span>            : }
+<span class="lineNum">      63 </span>            : 
+<a name="64"><span class="lineNum">      64 </span>            : </a>
+<span class="lineNum">      65 </span>            : nsresult
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::Shutdown()</span>
+<span class="lineNum">      67 </span>            : {
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mInitialized, &quot;### attempting shutdown while not initialized&quot;);</span>
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :     NS_ENSURE_TRUE(mInitialized, NS_ERROR_NOT_INITIALIZED);</span>
+<span class="lineNum">      70 </span>            : 
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :     mMemCacheEntries.Shutdown();</span>
+<span class="lineNum">      72 </span>            : 
+<span class="lineNum">      73 </span>            :     // evict all entries
+<span class="lineNum">      74 </span>            :     nsCacheEntry * entry, * next;
+<span class="lineNum">      75 </span>            : 
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :     for (int i = kQueueCount - 1; i &gt;= 0; --i) {</span>
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :         entry = (nsCacheEntry *)PR_LIST_HEAD(&amp;mEvictionList[i]);</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :         while (entry != &amp;mEvictionList[i]) {</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :             NS_ASSERTION(!entry-&gt;IsInUse(), &quot;### shutting down with active entries&quot;);</span>
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :             next = (nsCacheEntry *)PR_NEXT_LINK(entry);</span>
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :             PR_REMOVE_AND_INIT_LINK(entry);</span>
+<span class="lineNum">      82 </span>            : 
+<span class="lineNum">      83 </span>            :             // update statistics
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :             int32_t memoryRecovered = (int32_t)entry-&gt;DataSize();</span>
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :             mTotalSize    -= memoryRecovered;</span>
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :             mInactiveSize -= memoryRecovered;</span>
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :             --mEntryCount;</span>
+<span class="lineNum">      88 </span>            : 
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :             delete entry;</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :             entry = next;</span>
+<span class="lineNum">      91 </span>            :         }
+<span class="lineNum">      92 </span>            :     }
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span>            : /*
+<span class="lineNum">      95 </span>            :  * we're not factoring in changes to meta data yet...
+<span class="lineNum">      96 </span>            :  *  NS_ASSERTION(mTotalSize == 0, &quot;### mem cache leaking entries?&quot;);
+<span class="lineNum">      97 </span>            :  */
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mInactiveSize == 0, &quot;### mem cache leaking entries?&quot;);</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mEntryCount == 0, &quot;### mem cache leaking entries?&quot;);</span>
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :     mInitialized = false;</span>
+<span class="lineNum">     102 </span>            : 
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     104 </span>            : }
+<span class="lineNum">     105 </span>            : 
+<a name="106"><span class="lineNum">     106 </span>            : </a>
+<span class="lineNum">     107 </span>            : const char *
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::GetDeviceID()</span>
+<span class="lineNum">     109 </span>            : {
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :     return gMemoryDeviceID;</span>
+<span class="lineNum">     111 </span>            : }
+<span class="lineNum">     112 </span>            : 
+<a name="113"><span class="lineNum">     113 </span>            : </a>
+<span class="lineNum">     114 </span>            : nsCacheEntry *
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::FindEntry(nsCString * key, bool *collision)</span>
+<span class="lineNum">     116 </span>            : {
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :     mozilla::Telemetry::AutoTimer&lt;mozilla::Telemetry::CACHE_MEMORY_SEARCH_2&gt; timer;</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :     nsCacheEntry * entry = mMemCacheEntries.GetEntry(key);</span>
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :     if (!entry)  return nullptr;</span>
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span>            :     // move entry to the tail of an eviction list
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :     PR_REMOVE_AND_INIT_LINK(entry);</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :     PR_APPEND_LINK(entry, &amp;mEvictionList[EvictionList(entry, 0)]);</span>
+<span class="lineNum">     124 </span>            : 
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :     mInactiveSize -= entry-&gt;DataSize();</span>
+<span class="lineNum">     126 </span>            : 
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :     return entry;</span>
+<span class="lineNum">     128 </span>            : }
+<span class="lineNum">     129 </span>            : 
+<a name="130"><span class="lineNum">     130 </span>            : </a>
+<span class="lineNum">     131 </span>            : nsresult
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::DeactivateEntry(nsCacheEntry * entry)</span>
+<span class="lineNum">     133 </span>            : {
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :     CACHE_LOG_DEBUG((&quot;nsMemoryCacheDevice::DeactivateEntry for entry 0x%p\n&quot;,</span>
+<span class="lineNum">     135 </span>            :                      entry));
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :     if (entry-&gt;IsDoomed()) {</span>
+<span class="lineNum">     137 </span>            : #ifdef DEBUG
+<span class="lineNum">     138 </span>            :         // XXX verify we've removed it from mMemCacheEntries &amp; eviction list
+<span class="lineNum">     139 </span>            : #endif
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :         delete entry;</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :         CACHE_LOG_DEBUG((&quot;deleted doomed entry 0x%p\n&quot;, entry));</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     143 </span>            :     }
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span>            : #ifdef DEBUG
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :     nsCacheEntry * ourEntry = mMemCacheEntries.GetEntry(entry-&gt;Key());</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :     NS_ASSERTION(ourEntry, &quot;DeactivateEntry called for an entry we don't have!&quot;);</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :     NS_ASSERTION(entry == ourEntry, &quot;entry doesn't match ourEntry&quot;);</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     if (ourEntry != entry)</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :         return NS_ERROR_INVALID_POINTER;</span>
+<span class="lineNum">     151 </span>            : #endif
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :     mInactiveSize += entry-&gt;DataSize();</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :     EvictEntriesIfNecessary();</span>
+<span class="lineNum">     155 </span>            : 
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     157 </span>            : }
+<span class="lineNum">     158 </span>            : 
+<a name="159"><span class="lineNum">     159 </span>            : </a>
+<span class="lineNum">     160 </span>            : nsresult
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::BindEntry(nsCacheEntry * entry)</span>
+<span class="lineNum">     162 </span>            : {
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :     if (!entry-&gt;IsDoomed()) {</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :         NS_ASSERTION(PR_CLIST_IS_EMPTY(entry),&quot;entry is already on a list!&quot;);</span>
+<span class="lineNum">     165 </span>            : 
+<span class="lineNum">     166 </span>            :         // append entry to the eviction list
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :         PR_APPEND_LINK(entry, &amp;mEvictionList[EvictionList(entry, 0)]);</span>
+<span class="lineNum">     168 </span>            : 
+<span class="lineNum">     169 </span>            :         // add entry to hashtable of mem cache entries
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :         nsresult  rv = mMemCacheEntries.AddEntry(entry);</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :             PR_REMOVE_AND_INIT_LINK(entry);</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :             return rv;</span>
+<span class="lineNum">     174 </span>            :         }
+<span class="lineNum">     175 </span>            : 
+<span class="lineNum">     176 </span>            :         // add size of entry to memory totals
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :         ++mEntryCount;</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :         if (mMaxEntryCount &lt; mEntryCount) mMaxEntryCount = mEntryCount;</span>
+<span class="lineNum">     179 </span>            : 
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :         mTotalSize += entry-&gt;DataSize();</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :         EvictEntriesIfNecessary();</span>
+<span class="lineNum">     182 </span>            :     }
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     185 </span>            : }
+<span class="lineNum">     186 </span>            : 
+<a name="187"><span class="lineNum">     187 </span>            : </a>
+<span class="lineNum">     188 </span>            : void
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::DoomEntry(nsCacheEntry * entry)</span>
+<span class="lineNum">     190 </span>            : {
+<span class="lineNum">     191 </span>            : #ifdef DEBUG
+<span class="lineNum">     192 </span>            :     // debug code to verify we have entry
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :     nsCacheEntry * hashEntry = mMemCacheEntries.GetEntry(entry-&gt;Key());</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :     if (!hashEntry)               NS_WARNING(&quot;no entry for key&quot;);</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :     else if (entry != hashEntry)  NS_WARNING(&quot;entry != hashEntry&quot;);</span>
+<span class="lineNum">     196 </span>            : #endif
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :     CACHE_LOG_DEBUG((&quot;Dooming entry 0x%p in memory cache\n&quot;, entry));</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :     EvictEntry(entry, DO_NOT_DELETE_ENTRY);</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     200 </span>            : 
+<a name="201"><span class="lineNum">     201 </span>            : </a>
+<span class="lineNum">     202 </span>            : nsresult
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::OpenInputStreamForEntry( nsCacheEntry *    entry,</span>
+<span class="lineNum">     204 </span>            :                                               nsCacheAccessMode mode,
+<span class="lineNum">     205 </span>            :                                               uint32_t          offset,
+<span class="lineNum">     206 </span>            :                                               nsIInputStream ** result)
+<span class="lineNum">     207 </span>            : {
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :     NS_ENSURE_ARG_POINTER(entry);</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :     NS_ENSURE_ARG_POINTER(result);</span>
+<span class="lineNum">     210 </span>            : 
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIStorageStream&gt; storage;</span>
+<span class="lineNum">     212 </span>            :     nsresult rv;
+<span class="lineNum">     213 </span>            : 
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :     nsISupports *data = entry-&gt;Data();</span>
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :     if (data) {</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :         storage = do_QueryInterface(data, &amp;rv);</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv))</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :             return rv;</span>
+<span class="lineNum">     219 </span>            :     }
+<span class="lineNum">     220 </span>            :     else {
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :         rv = NS_NewStorageStream(4096, uint32_t(-1), getter_AddRefs(storage));</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv))</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :             return rv;</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :         entry-&gt;SetData(storage);</span>
+<span class="lineNum">     225 </span>            :     }
+<span class="lineNum">     226 </span>            : 
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :     return storage-&gt;NewInputStream(offset, result);</span>
+<span class="lineNum">     228 </span>            : }
+<span class="lineNum">     229 </span>            : 
+<a name="230"><span class="lineNum">     230 </span>            : </a>
+<span class="lineNum">     231 </span>            : nsresult
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::OpenOutputStreamForEntry( nsCacheEntry *     entry,</span>
+<span class="lineNum">     233 </span>            :                                                nsCacheAccessMode  mode,
+<span class="lineNum">     234 </span>            :                                                uint32_t           offset,
+<span class="lineNum">     235 </span>            :                                                nsIOutputStream ** result)
+<span class="lineNum">     236 </span>            : {
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :     NS_ENSURE_ARG_POINTER(entry);</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :     NS_ENSURE_ARG_POINTER(result);</span>
+<span class="lineNum">     239 </span>            : 
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIStorageStream&gt; storage;</span>
+<span class="lineNum">     241 </span>            :     nsresult rv;
+<span class="lineNum">     242 </span>            : 
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :     nsISupports *data = entry-&gt;Data();</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :     if (data) {</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :         storage = do_QueryInterface(data, &amp;rv);</span>
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv))</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :             return rv;</span>
+<span class="lineNum">     248 </span>            :     }
+<span class="lineNum">     249 </span>            :     else {
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :         rv = NS_NewStorageStream(4096, uint32_t(-1), getter_AddRefs(storage));</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :         if (NS_FAILED(rv))</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :             return rv;</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :         entry-&gt;SetData(storage);</span>
+<span class="lineNum">     254 </span>            :     }
+<span class="lineNum">     255 </span>            : 
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :     return storage-&gt;GetOutputStream(offset, result);</span>
+<span class="lineNum">     257 </span>            : }
+<span class="lineNum">     258 </span>            : 
+<a name="259"><span class="lineNum">     259 </span>            : </a>
+<span class="lineNum">     260 </span>            : nsresult
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::GetFileForEntry( nsCacheEntry *    entry,</span>
+<span class="lineNum">     262 </span>            :                                       nsIFile **        result )
+<span class="lineNum">     263 </span>            : {
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_IMPLEMENTED;</span>
+<span class="lineNum">     265 </span>            : }
+<a name="266"><span class="lineNum">     266 </span>            : </a>
+<span class="lineNum">     267 </span>            : bool
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::EntryIsTooBig(int64_t entrySize)</span>
+<span class="lineNum">     269 </span>            : {
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :     CACHE_LOG_DEBUG((&quot;nsMemoryCacheDevice::EntryIsTooBig &quot;</span>
+<span class="lineNum">     271 </span>            :                      &quot;[size=%&quot; PRId64 &quot; max=%d soft=%d]\n&quot;,
+<span class="lineNum">     272 </span>            :                      entrySize, mMaxEntrySize, mSoftLimit));
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     if (mMaxEntrySize == -1)</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :         return entrySize &gt; mSoftLimit;</span>
+<span class="lineNum">     275 </span>            :     else
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :         return (entrySize &gt; mSoftLimit || entrySize &gt; mMaxEntrySize);</span>
+<span class="lineNum">     277 </span>            : }
+<a name="278"><span class="lineNum">     278 </span>            : </a>
+<span class="lineNum">     279 </span>            : size_t
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::TotalSize()</span>
+<span class="lineNum">     281 </span>            : {
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :     return mTotalSize;</span>
+<span class="lineNum">     283 </span>            : }
+<a name="284"><span class="lineNum">     284 </span>            : </a>
+<span class="lineNum">     285 </span>            : nsresult
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::OnDataSizeChange( nsCacheEntry * entry, int32_t deltaSize)</span>
+<span class="lineNum">     287 </span>            : {
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :     if (entry-&gt;IsStreamData()) {</span>
+<span class="lineNum">     289 </span>            :         // we have the right to refuse or pre-evict
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :         uint32_t  newSize = entry-&gt;DataSize() + deltaSize;</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :         if (EntryIsTooBig(newSize)) {</span>
+<span class="lineNum">     292 </span>            : #ifdef DEBUG
+<span class="lineNum">     293 </span>            :             nsresult rv =
+<span class="lineNum">     294 </span>            : #endif
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :                 nsCacheService::DoomEntry(entry);</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :             NS_ASSERTION(NS_SUCCEEDED(rv),&quot;DoomEntry() failed.&quot;);</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :             return NS_ERROR_ABORT;</span>
+<span class="lineNum">     298 </span>            :         }
+<span class="lineNum">     299 </span>            :     }
+<span class="lineNum">     300 </span>            : 
+<span class="lineNum">     301 </span>            :     // adjust our totals
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :     mTotalSize    += deltaSize;</span>
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :     if (!entry-&gt;IsDoomed()) {</span>
+<span class="lineNum">     305 </span>            :         // move entry to the tail of the appropriate eviction list
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :         PR_REMOVE_AND_INIT_LINK(entry);</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :         PR_APPEND_LINK(entry, &amp;mEvictionList[EvictionList(entry, deltaSize)]);</span>
+<span class="lineNum">     308 </span>            :     }
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     EvictEntriesIfNecessary();</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     312 </span>            : }
+<span class="lineNum">     313 </span>            : 
+<a name="314"><span class="lineNum">     314 </span>            : </a>
+<span class="lineNum">     315 </span>            : void
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::AdjustMemoryLimits(int32_t  softLimit, int32_t  hardLimit)</span>
+<span class="lineNum">     317 </span>            : {
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     mSoftLimit = softLimit;</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     mHardLimit = hardLimit;</span>
+<span class="lineNum">     320 </span>            : 
+<span class="lineNum">     321 </span>            :     // First, evict entries that won't fit into the new cache size.
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :     EvictEntriesIfNecessary();</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     324 </span>            : 
+<a name="325"><span class="lineNum">     325 </span>            : </a>
+<span class="lineNum">     326 </span>            : void
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::EvictEntry(nsCacheEntry * entry, bool deleteEntry)</span>
+<span class="lineNum">     328 </span>            : {
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :     CACHE_LOG_DEBUG((&quot;Evicting entry 0x%p from memory cache, deleting: %d\n&quot;,</span>
+<span class="lineNum">     330 </span>            :                      entry, deleteEntry));
+<span class="lineNum">     331 </span>            :     // remove entry from our hashtable
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     mMemCacheEntries.RemoveEntry(entry);</span>
+<span class="lineNum">     333 </span>            : 
+<span class="lineNum">     334 </span>            :     // remove entry from the eviction list
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :     PR_REMOVE_AND_INIT_LINK(entry);</span>
+<span class="lineNum">     336 </span>            : 
+<span class="lineNum">     337 </span>            :     // update statistics
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :     int32_t memoryRecovered = (int32_t)entry-&gt;DataSize();</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     mTotalSize    -= memoryRecovered;</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :     if (!entry-&gt;IsDoomed())</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :         mInactiveSize -= memoryRecovered;</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :     --mEntryCount;</span>
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :     if (deleteEntry)  delete entry;</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     346 </span>            : 
+<a name="347"><span class="lineNum">     347 </span>            : </a>
+<span class="lineNum">     348 </span>            : void
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::EvictEntriesIfNecessary(void)</span>
+<span class="lineNum">     350 </span>            : {
+<span class="lineNum">     351 </span>            :     nsCacheEntry * entry;
+<span class="lineNum">     352 </span>            :     nsCacheEntry * maxEntry;
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     CACHE_LOG_DEBUG((&quot;EvictEntriesIfNecessary.  mTotalSize: %d, mHardLimit: %d,&quot;</span>
+<span class="lineNum">     354 </span>            :                      &quot;mInactiveSize: %d, mSoftLimit: %d\n&quot;,
+<span class="lineNum">     355 </span>            :                      mTotalSize, mHardLimit, mInactiveSize, mSoftLimit));
+<span class="lineNum">     356 </span>            : 
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :     if ((mTotalSize &lt; mHardLimit) &amp;&amp; (mInactiveSize &lt; mSoftLimit))</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     359 </span>            : 
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :     uint32_t now = SecondsFromPRTime(PR_Now());</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :     uint64_t entryCost = 0;</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :     uint64_t maxCost = 0;</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     364 </span>            :         // LRU-SP eviction selection: Check the head of each segment (each
+<span class="lineNum">     365 </span>            :         // eviction list, kept in LRU order) and select the maximal-cost
+<span class="lineNum">     366 </span>            :         // entry for eviction. Cost is time-since-accessed * size / nref.
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :         maxEntry = 0;</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :         for (int i = kQueueCount - 1; i &gt;= 0; --i) {</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :             entry = (nsCacheEntry *)PR_LIST_HEAD(&amp;mEvictionList[i]);</span>
+<span class="lineNum">     370 </span>            : 
+<span class="lineNum">     371 </span>            :             // If the head of a list is in use, check the next available entry
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :             while ((entry != &amp;mEvictionList[i]) &amp;&amp;</span>
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :                    (entry-&gt;IsInUse())) {</span>
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :                 entry = (nsCacheEntry *)PR_NEXT_LINK(entry);</span>
+<span class="lineNum">     375 </span>            :             }
+<span class="lineNum">     376 </span>            : 
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :             if (entry != &amp;mEvictionList[i]) {</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :                 entryCost = (uint64_t)</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :                     (now - entry-&gt;LastFetched()) * entry-&gt;DataSize() /</span>
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :                     std::max(1, entry-&gt;FetchCount());</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :                 if (!maxEntry || (entryCost &gt; maxCost)) {</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :                     maxEntry = entry;</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :                     maxCost = entryCost;</span>
+<span class="lineNum">     384 </span>            :                 }
+<span class="lineNum">     385 </span>            :             }
+<span class="lineNum">     386 </span>            :         }
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :         if (maxEntry) {</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :             EvictEntry(maxEntry, DELETE_ENTRY);</span>
+<span class="lineNum">     389 </span>            :         } else {
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     391 </span>            :         }
+<span class="lineNum">     392 </span>            :     }
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :     while ((mTotalSize &gt;= mHardLimit) || (mInactiveSize &gt;= mSoftLimit));</span>
+<span class="lineNum">     394 </span>            : }
+<span class="lineNum">     395 </span>            : 
+<a name="396"><span class="lineNum">     396 </span>            : </a>
+<span class="lineNum">     397 </span>            : int
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::EvictionList(nsCacheEntry * entry, int32_t  deltaSize)</span>
+<span class="lineNum">     399 </span>            : {
+<span class="lineNum">     400 </span>            :     // favor items which never expire by putting them in the lowest-index queue
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :     if (entry-&gt;ExpirationTime() == nsICache::NO_EXPIRATION_TIME)</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     403 </span>            : 
+<span class="lineNum">     404 </span>            :     // compute which eviction queue this entry should go into,
+<span class="lineNum">     405 </span>            :     // based on floor(log2(size/nref))
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :     int32_t  size       = deltaSize + (int32_t)entry-&gt;DataSize();</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :     int32_t  fetchCount = std::max(1, entry-&gt;FetchCount());</span>
+<span class="lineNum">     408 </span>            : 
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :     return std::min((int)mozilla::FloorLog2(size / fetchCount), kQueueCount - 1);</span>
+<span class="lineNum">     410 </span>            : }
+<span class="lineNum">     411 </span>            : 
+<a name="412"><span class="lineNum">     412 </span>            : </a>
+<span class="lineNum">     413 </span>            : nsresult
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::Visit(nsICacheVisitor * visitor)</span>
+<span class="lineNum">     415 </span>            : {
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :     nsMemoryCacheDeviceInfo * deviceInfo = new nsMemoryCacheDeviceInfo(this);</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsICacheDeviceInfo&gt; deviceRef(deviceInfo);</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :     if (!deviceInfo) return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     419 </span>            : 
+<span class="lineNum">     420 </span>            :     bool keepGoing;
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :     nsresult rv = visitor-&gt;VisitDevice(gMemoryDeviceID, deviceInfo, &amp;keepGoing);</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     423 </span>            : 
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :     if (!keepGoing)</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     426 </span>            : 
+<span class="lineNum">     427 </span>            :     nsCacheEntry *              entry;
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsICacheEntryInfo&gt; entryRef;</span>
+<span class="lineNum">     429 </span>            : 
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :     for (int i = kQueueCount - 1; i &gt;= 0; --i) {</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :         entry = (nsCacheEntry *)PR_LIST_HEAD(&amp;mEvictionList[i]);</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :         while (entry != &amp;mEvictionList[i]) {</span>
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :             nsCacheEntryInfo * entryInfo = new nsCacheEntryInfo(entry);</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :             if (!entryInfo) return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :             entryRef = entryInfo;</span>
+<span class="lineNum">     436 </span>            : 
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :             rv = visitor-&gt;VisitEntry(gMemoryDeviceID, entryInfo, &amp;keepGoing);</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :             entryInfo-&gt;DetachEntry();</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :             if (NS_FAILED(rv)) return rv;</span>
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :             if (!keepGoing) break;</span>
+<span class="lineNum">     441 </span>            : 
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :             entry = (nsCacheEntry *)PR_NEXT_LINK(entry);</span>
+<span class="lineNum">     443 </span>            :         }
+<span class="lineNum">     444 </span>            :     }
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     446 </span>            : }
+<span class="lineNum">     447 </span>            : 
+<a name="448"><span class="lineNum">     448 </span>            : </a>
+<span class="lineNum">     449 </span>            : static bool
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 : IsEntryPrivate(nsCacheEntry* entry, void* args)</span>
+<span class="lineNum">     451 </span>            : {
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :     return entry-&gt;IsPrivate();</span>
+<span class="lineNum">     453 </span>            : }
+<span class="lineNum">     454 </span>            : 
+<span class="lineNum">     455 </span>            : struct ClientIDArgs {
+<span class="lineNum">     456 </span>            :     const char* clientID;
+<span class="lineNum">     457 </span>            :     uint32_t prefixLength;
+<span class="lineNum">     458 </span>            : };
+<a name="459"><span class="lineNum">     459 </span>            : </a>
+<span class="lineNum">     460 </span>            : static bool
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 : EntryMatchesClientID(nsCacheEntry* entry, void* args)</span>
+<span class="lineNum">     462 </span>            : {
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :     const char * clientID = static_cast&lt;ClientIDArgs*&gt;(args)-&gt;clientID;</span>
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :     uint32_t prefixLength = static_cast&lt;ClientIDArgs*&gt;(args)-&gt;prefixLength;</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :     const char * key = entry-&gt;Key()-&gt;get();</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :     return !clientID || nsCRT::strncmp(clientID, key, prefixLength) == 0;</span>
+<span class="lineNum">     467 </span>            : }
+<a name="468"><span class="lineNum">     468 </span>            : </a>
+<span class="lineNum">     469 </span>            : nsresult
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::DoEvictEntries(bool (*matchFn)(nsCacheEntry* entry, void* args), void* args)</span>
+<span class="lineNum">     471 </span>            : {
+<span class="lineNum">     472 </span>            :     nsCacheEntry * entry;
+<span class="lineNum">     473 </span>            : 
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :     for (int i = kQueueCount - 1; i &gt;= 0; --i) {</span>
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :         PRCList * elem = PR_LIST_HEAD(&amp;mEvictionList[i]);</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :         while (elem != &amp;mEvictionList[i]) {</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :             entry = (nsCacheEntry *)elem;</span>
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :             elem = PR_NEXT_LINK(elem);</span>
+<span class="lineNum">     479 </span>            : 
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :             if (!matchFn(entry, args))</span>
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     482 </span>            : 
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :             if (entry-&gt;IsInUse()) {</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :                 nsresult rv = nsCacheService::DoomEntry(entry);</span>
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :                 if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :                     CACHE_LOG_WARNING((&quot;memCache-&gt;DoEvictEntries() aborted: rv =%&quot; PRIx32,</span>
+<span class="lineNum">     487 </span>            :                                        static_cast&lt;uint32_t&gt;(rv)));
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :                     return rv;</span>
+<span class="lineNum">     489 </span>            :                 }
+<span class="lineNum">     490 </span>            :             } else {
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :                 EvictEntry(entry, DELETE_ENTRY);</span>
+<span class="lineNum">     492 </span>            :             }
+<span class="lineNum">     493 </span>            :         }
+<span class="lineNum">     494 </span>            :     }
+<span class="lineNum">     495 </span>            : 
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     497 </span>            : }
+<a name="498"><span class="lineNum">     498 </span>            : </a>
+<span class="lineNum">     499 </span>            : nsresult
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::EvictEntries(const char * clientID)</span>
+<span class="lineNum">     501 </span>            : {
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :     ClientIDArgs args = {clientID, clientID ? uint32_t(strlen(clientID)) : 0};</span>
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :     return DoEvictEntries(&amp;EntryMatchesClientID, &amp;args);</span>
+<span class="lineNum">     504 </span>            : }
+<a name="505"><span class="lineNum">     505 </span>            : </a>
+<span class="lineNum">     506 </span>            : nsresult
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::EvictPrivateEntries()</span>
+<span class="lineNum">     508 </span>            : {
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :     return DoEvictEntries(&amp;IsEntryPrivate, nullptr);</span>
+<span class="lineNum">     510 </span>            : }
+<span class="lineNum">     511 </span>            : 
+<span class="lineNum">     512 </span>            : 
+<a name="513"><span class="lineNum">     513 </span>            : // WARNING: SetCapacity can get called before Init()</a>
+<span class="lineNum">     514 </span>            : void
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::SetCapacity(int32_t  capacity)</span>
+<span class="lineNum">     516 </span>            : {
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :     int32_t hardLimit = capacity * 1024;  // convert k into bytes</span>
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :     int32_t softLimit = (hardLimit * 9) / 10;</span>
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :     AdjustMemoryLimits(softLimit, hardLimit);</span>
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 : }</span>
+<a name="521"><span class="lineNum">     521 </span>            : </a>
+<span class="lineNum">     522 </span>            : void
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::SetMaxEntrySize(int32_t maxSizeInKilobytes)</span>
+<span class="lineNum">     524 </span>            : {
+<span class="lineNum">     525 </span>            :     // Internal unit is bytes. Changing this only takes effect *after* the
+<span class="lineNum">     526 </span>            :     // change and has no consequences for existing cache-entries
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :     if (maxSizeInKilobytes &gt;= 0)</span>
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :         mMaxEntrySize = maxSizeInKilobytes * 1024;</span>
+<span class="lineNum">     529 </span>            :     else
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 :         mMaxEntrySize = -1;</span>
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     532 </span>            : 
+<a name="533"><span class="lineNum">     533 </span>            : #ifdef DEBUG</a>
+<span class="lineNum">     534 </span>            : void
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 : nsMemoryCacheDevice::CheckEntryCount()</span>
+<span class="lineNum">     536 </span>            : {
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :     if (!mInitialized)  return;</span>
+<span class="lineNum">     538 </span>            : 
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :     int32_t evictionListCount = 0;</span>
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :     for (int i=0; i&lt;kQueueCount; ++i) {</span>
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :         PRCList * elem = PR_LIST_HEAD(&amp;mEvictionList[i]);</span>
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :         while (elem != &amp;mEvictionList[i]) {</span>
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :             elem = PR_NEXT_LINK(elem);</span>
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :             ++evictionListCount;</span>
+<span class="lineNum">     545 </span>            :         }
+<span class="lineNum">     546 </span>            :     }
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mEntryCount == evictionListCount, &quot;### mem cache badness&quot;);</span>
+<span class="lineNum">     548 </span>            : 
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :     int32_t entryCount = 0;</span>
+<span class="lineNum">     550 </span><span class="lineNoCov">          0 :     for (auto iter = mMemCacheEntries.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :         ++entryCount;</span>
+<span class="lineNum">     552 </span>            :     }
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mEntryCount == entryCount, &quot;### mem cache badness&quot;);</span>
+<span class="lineNum">     554 </span>            : }
+<span class="lineNum">     555 </span>            : #endif
+<span class="lineNum">     556 </span>            : 
+<span class="lineNum">     557 </span>            : /******************************************************************************
+<span class="lineNum">     558 </span>            :  * nsMemoryCacheDeviceInfo - for implementing about:cache
+<span class="lineNum">     559 </span>            :  *****************************************************************************/
+<a name="560"><span class="lineNum">     560 </span>            : </a>
+<span class="lineNum">     561 </span>            : 
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 : NS_IMPL_ISUPPORTS(nsMemoryCacheDeviceInfo, nsICacheDeviceInfo)</span>
+<span class="lineNum">     563 </span>            : 
+<a name="564"><span class="lineNum">     564 </span>            : </a>
+<span class="lineNum">     565 </span>            : NS_IMETHODIMP
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 : nsMemoryCacheDeviceInfo::GetDescription(char ** result)</span>
+<span class="lineNum">     567 </span>            : {
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :     NS_ENSURE_ARG_POINTER(result);</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :     *result = NS_strdup(&quot;Memory cache device&quot;);</span>
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :     if (!*result) return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     572 </span>            : }
+<span class="lineNum">     573 </span>            : 
+<a name="574"><span class="lineNum">     574 </span>            : </a>
+<span class="lineNum">     575 </span>            : NS_IMETHODIMP
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 : nsMemoryCacheDeviceInfo::GetUsageReport(char ** result)</span>
+<span class="lineNum">     577 </span>            : {
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :     NS_ENSURE_ARG_POINTER(result);</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :     nsCString  buffer;</span>
+<span class="lineNum">     580 </span>            : 
+<span class="lineNum">     581 </span>            :     buffer.AssignLiteral(&quot;  &lt;tr&gt;\n&quot;
+<span class="lineNum">     582 </span>            :                          &quot;    &lt;th&gt;Inactive storage:&lt;/th&gt;\n&quot;
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 :                          &quot;    &lt;td&gt;&quot;);</span>
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 :     buffer.AppendInt(mDevice-&gt;mInactiveSize / 1024);</span>
+<span class="lineNum">     585 </span>            :     buffer.AppendLiteral(&quot; KiB&lt;/td&gt;\n&quot;
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :                          &quot;  &lt;/tr&gt;\n&quot;);</span>
+<span class="lineNum">     587 </span>            : 
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :     *result = ToNewCString(buffer);</span>
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 :     if (!*result) return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     591 </span>            : }
+<span class="lineNum">     592 </span>            : 
+<a name="593"><span class="lineNum">     593 </span>            : </a>
+<span class="lineNum">     594 </span>            : NS_IMETHODIMP
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 : nsMemoryCacheDeviceInfo::GetEntryCount(uint32_t * result)</span>
+<span class="lineNum">     596 </span>            : {
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 :     NS_ENSURE_ARG_POINTER(result);</span>
+<span class="lineNum">     598 </span>            :     // XXX compare calculated count vs. mEntryCount
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :     *result = (uint32_t)mDevice-&gt;mEntryCount;</span>
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     601 </span>            : }
+<span class="lineNum">     602 </span>            : 
+<a name="603"><span class="lineNum">     603 </span>            : </a>
+<span class="lineNum">     604 </span>            : NS_IMETHODIMP
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 : nsMemoryCacheDeviceInfo::GetTotalSize(uint32_t * result)</span>
+<span class="lineNum">     606 </span>            : {
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :     NS_ENSURE_ARG_POINTER(result);</span>
+<span class="lineNum">     608 </span><span class="lineNoCov">          0 :     *result = (uint32_t)mDevice-&gt;mTotalSize;</span>
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     610 </span>            : }
+<span class="lineNum">     611 </span>            : 
+<a name="612"><span class="lineNum">     612 </span>            : </a>
+<span class="lineNum">     613 </span>            : NS_IMETHODIMP
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 : nsMemoryCacheDeviceInfo::GetMaximumSize(uint32_t * result)</span>
+<span class="lineNum">     615 </span>            : {
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 :     NS_ENSURE_ARG_POINTER(result);</span>
+<span class="lineNum">     617 </span><span class="lineNoCov">          0 :     *result = (uint32_t)mDevice-&gt;mHardLimit;</span>
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     619 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

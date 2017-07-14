@@ -1,0 +1,1474 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/audio_processing/agc/legacy/analog_agc.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/audio_processing/agc/legacy</a> - analog_agc.c<span style="font-size: 80%;"> (source / <a href="analog_agc.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">540</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">16</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : /* analog_agc.c
+<span class="lineNum">      12 </span>            :  *
+<span class="lineNum">      13 </span>            :  * Using a feedback system, determines an appropriate analog volume level
+<span class="lineNum">      14 </span>            :  * given an input signal and current volume level. Targets a conservative
+<span class="lineNum">      15 </span>            :  * signal level and is intended for use with a digital AGC to apply
+<span class="lineNum">      16 </span>            :  * additional gain.
+<span class="lineNum">      17 </span>            :  *
+<span class="lineNum">      18 </span>            :  */
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : #include &quot;webrtc/modules/audio_processing/agc/legacy/analog_agc.h&quot;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : #include &lt;stdlib.h&gt;
+<span class="lineNum">      23 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">      24 </span>            : #include &lt;stdio.h&gt;
+<span class="lineNum">      25 </span>            : #endif
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : /* The slope of in Q13*/
+<span class="lineNum">      30 </span>            : static const int16_t kSlope1[8] = {21793, 12517, 7189, 4129,
+<span class="lineNum">      31 </span>            :                                    2372,  1362,  472,  78};
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : /* The offset in Q14 */
+<span class="lineNum">      34 </span>            : static const int16_t kOffset1[8] = {25395, 23911, 22206, 20737,
+<span class="lineNum">      35 </span>            :                                     19612, 18805, 17951, 17367};
+<span class="lineNum">      36 </span>            : 
+<span class="lineNum">      37 </span>            : /* The slope of in Q13*/
+<span class="lineNum">      38 </span>            : static const int16_t kSlope2[8] = {2063, 1731, 1452, 1218, 1021, 857, 597, 337};
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span>            : /* The offset in Q14 */
+<span class="lineNum">      41 </span>            : static const int16_t kOffset2[8] = {18432, 18379, 18290, 18177,
+<span class="lineNum">      42 </span>            :                                     18052, 17920, 17670, 17286};
+<span class="lineNum">      43 </span>            : 
+<span class="lineNum">      44 </span>            : static const int16_t kMuteGuardTimeMs = 8000;
+<span class="lineNum">      45 </span>            : static const int16_t kInitCheck = 42;
+<span class="lineNum">      46 </span>            : static const size_t kNumSubframes = 10;
+<span class="lineNum">      47 </span>            : 
+<span class="lineNum">      48 </span>            : /* Default settings if config is not used */
+<span class="lineNum">      49 </span>            : #define AGC_DEFAULT_TARGET_LEVEL 3
+<span class="lineNum">      50 </span>            : #define AGC_DEFAULT_COMP_GAIN 9
+<span class="lineNum">      51 </span>            : /* This is the target level for the analog part in ENV scale. To convert to RMS
+<span class="lineNum">      52 </span>            :  * scale you
+<span class="lineNum">      53 </span>            :  * have to add OFFSET_ENV_TO_RMS.
+<span class="lineNum">      54 </span>            :  */
+<span class="lineNum">      55 </span>            : #define ANALOG_TARGET_LEVEL 11
+<span class="lineNum">      56 </span>            : #define ANALOG_TARGET_LEVEL_2 5  // ANALOG_TARGET_LEVEL / 2
+<span class="lineNum">      57 </span>            : /* Offset between RMS scale (analog part) and ENV scale (digital part). This
+<span class="lineNum">      58 </span>            :  * value actually
+<span class="lineNum">      59 </span>            :  * varies with the FIXED_ANALOG_TARGET_LEVEL, hence we should in the future
+<span class="lineNum">      60 </span>            :  * replace it with
+<span class="lineNum">      61 </span>            :  * a table.
+<span class="lineNum">      62 </span>            :  */
+<span class="lineNum">      63 </span>            : #define OFFSET_ENV_TO_RMS 9
+<span class="lineNum">      64 </span>            : /* The reference input level at which the digital part gives an output of
+<span class="lineNum">      65 </span>            :  * targetLevelDbfs
+<span class="lineNum">      66 </span>            :  * (desired level) if we have no compression gain. This level should be set high
+<span class="lineNum">      67 </span>            :  * enough not
+<span class="lineNum">      68 </span>            :  * to compress the peaks due to the dynamics.
+<span class="lineNum">      69 </span>            :  */
+<span class="lineNum">      70 </span>            : #define DIGITAL_REF_AT_0_COMP_GAIN 4
+<span class="lineNum">      71 </span>            : /* Speed of reference level decrease.
+<span class="lineNum">      72 </span>            :  */
+<span class="lineNum">      73 </span>            : #define DIFF_REF_TO_ANALOG 5
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">      76 </span>            : #define NUM_BLOCKS_IN_SAT_BEFORE_CHANGE_TARGET 7
+<span class="lineNum">      77 </span>            : #endif
+<span class="lineNum">      78 </span>            : /* Size of analog gain table */
+<span class="lineNum">      79 </span>            : #define GAIN_TBL_LEN 32
+<span class="lineNum">      80 </span>            : /* Matlab code:
+<span class="lineNum">      81 </span>            :  * fprintf(1, '\t%i, %i, %i, %i,\n', round(10.^(linspace(0,10,32)/20) * 2^12));
+<span class="lineNum">      82 </span>            :  */
+<span class="lineNum">      83 </span>            : /* Q12 */
+<span class="lineNum">      84 </span>            : static const uint16_t kGainTableAnalog[GAIN_TBL_LEN] = {
+<span class="lineNum">      85 </span>            :     4096, 4251, 4412, 4579,  4752,  4932,  5118,  5312,  5513,  5722, 5938,
+<span class="lineNum">      86 </span>            :     6163, 6396, 6638, 6889,  7150,  7420,  7701,  7992,  8295,  8609, 8934,
+<span class="lineNum">      87 </span>            :     9273, 9623, 9987, 10365, 10758, 11165, 11587, 12025, 12480, 12953};
+<span class="lineNum">      88 </span>            : 
+<span class="lineNum">      89 </span>            : /* Gain/Suppression tables for virtual Mic (in Q10) */
+<span class="lineNum">      90 </span>            : static const uint16_t kGainTableVirtualMic[128] = {
+<span class="lineNum">      91 </span>            :     1052,  1081,  1110,  1141,  1172,  1204,  1237,  1271,  1305,  1341,  1378,
+<span class="lineNum">      92 </span>            :     1416,  1454,  1494,  1535,  1577,  1620,  1664,  1710,  1757,  1805,  1854,
+<span class="lineNum">      93 </span>            :     1905,  1957,  2010,  2065,  2122,  2180,  2239,  2301,  2364,  2428,  2495,
+<span class="lineNum">      94 </span>            :     2563,  2633,  2705,  2779,  2855,  2933,  3013,  3096,  3180,  3267,  3357,
+<span class="lineNum">      95 </span>            :     3449,  3543,  3640,  3739,  3842,  3947,  4055,  4166,  4280,  4397,  4517,
+<span class="lineNum">      96 </span>            :     4640,  4767,  4898,  5032,  5169,  5311,  5456,  5605,  5758,  5916,  6078,
+<span class="lineNum">      97 </span>            :     6244,  6415,  6590,  6770,  6956,  7146,  7341,  7542,  7748,  7960,  8178,
+<span class="lineNum">      98 </span>            :     8402,  8631,  8867,  9110,  9359,  9615,  9878,  10148, 10426, 10711, 11004,
+<span class="lineNum">      99 </span>            :     11305, 11614, 11932, 12258, 12593, 12938, 13292, 13655, 14029, 14412, 14807,
+<span class="lineNum">     100 </span>            :     15212, 15628, 16055, 16494, 16945, 17409, 17885, 18374, 18877, 19393, 19923,
+<span class="lineNum">     101 </span>            :     20468, 21028, 21603, 22194, 22801, 23425, 24065, 24724, 25400, 26095, 26808,
+<span class="lineNum">     102 </span>            :     27541, 28295, 29069, 29864, 30681, 31520, 32382};
+<span class="lineNum">     103 </span>            : static const uint16_t kSuppressionTableVirtualMic[128] = {
+<span class="lineNum">     104 </span>            :     1024, 1006, 988, 970, 952, 935, 918, 902, 886, 870, 854, 839, 824, 809, 794,
+<span class="lineNum">     105 </span>            :     780,  766,  752, 739, 726, 713, 700, 687, 675, 663, 651, 639, 628, 616, 605,
+<span class="lineNum">     106 </span>            :     594,  584,  573, 563, 553, 543, 533, 524, 514, 505, 496, 487, 478, 470, 461,
+<span class="lineNum">     107 </span>            :     453,  445,  437, 429, 421, 414, 406, 399, 392, 385, 378, 371, 364, 358, 351,
+<span class="lineNum">     108 </span>            :     345,  339,  333, 327, 321, 315, 309, 304, 298, 293, 288, 283, 278, 273, 268,
+<span class="lineNum">     109 </span>            :     263,  258,  254, 249, 244, 240, 236, 232, 227, 223, 219, 215, 211, 208, 204,
+<span class="lineNum">     110 </span>            :     200,  197,  193, 190, 186, 183, 180, 176, 173, 170, 167, 164, 161, 158, 155,
+<span class="lineNum">     111 </span>            :     153,  150,  147, 145, 142, 139, 137, 134, 132, 130, 127, 125, 123, 121, 118,
+<span class="lineNum">     112 </span>            :     116,  114,  112, 110, 108, 106, 104, 102};
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span>            : /* Table for target energy levels. Values in Q(-7)
+<span class="lineNum">     115 </span>            :  * Matlab code
+<span class="lineNum">     116 </span>            :  * targetLevelTable = fprintf('%d,\t%d,\t%d,\t%d,\n',
+<span class="lineNum">     117 </span>            :  * round((32767*10.^(-(0:63)'/20)).^2*16/2^7) */
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span>            : static const int32_t kTargetLevelTable[64] = {
+<span class="lineNum">     120 </span>            :     134209536, 106606424, 84680493, 67264106, 53429779, 42440782, 33711911,
+<span class="lineNum">     121 </span>            :     26778323,  21270778,  16895980, 13420954, 10660642, 8468049,  6726411,
+<span class="lineNum">     122 </span>            :     5342978,   4244078,   3371191,  2677832,  2127078,  1689598,  1342095,
+<span class="lineNum">     123 </span>            :     1066064,   846805,    672641,   534298,   424408,   337119,   267783,
+<span class="lineNum">     124 </span>            :     212708,    168960,    134210,   106606,   84680,    67264,    53430,
+<span class="lineNum">     125 </span>            :     42441,     33712,     26778,    21271,    16896,    13421,    10661,
+<span class="lineNum">     126 </span>            :     8468,      6726,      5343,     4244,     3371,     2678,     2127,
+<span class="lineNum">     127 </span>            :     1690,      1342,      1066,     847,      673,      534,      424,
+<span class="lineNum">     128 </span>            :     337,       268,       213,      169,      134,      107,      85,
+<a name="129"><span class="lineNum">     129 </span>            :     67};</a>
+<span class="lineNum">     130 </span>            : 
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 : int WebRtcAgc_AddMic(void* state,</span>
+<span class="lineNum">     132 </span>            :                      int16_t* const* in_mic,
+<span class="lineNum">     133 </span>            :                      size_t num_bands,
+<span class="lineNum">     134 </span>            :                      size_t samples) {
+<span class="lineNum">     135 </span>            :   int32_t nrg, max_nrg, sample, tmp32;
+<span class="lineNum">     136 </span>            :   int32_t* ptr;
+<span class="lineNum">     137 </span>            :   uint16_t targetGainIdx, gain;
+<span class="lineNum">     138 </span>            :   size_t i;
+<span class="lineNum">     139 </span>            :   int16_t n, L, tmp16, tmp_speech[16];
+<span class="lineNum">     140 </span>            :   LegacyAgc* stt;
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :   stt = (LegacyAgc*)state;</span>
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :   if (stt-&gt;fs == 8000) {</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :     L = 8;</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :     if (samples != 80) {</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :       return -1;</span>
+<span class="lineNum">     147 </span>            :     }
+<span class="lineNum">     148 </span>            :   } else {
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     L = 16;</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :     if (samples != 160) {</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :       return -1;</span>
+<span class="lineNum">     152 </span>            :     }
+<span class="lineNum">     153 </span>            :   }
+<span class="lineNum">     154 </span>            : 
+<span class="lineNum">     155 </span>            :   /* apply slowly varying digital gain */
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :   if (stt-&gt;micVol &gt; stt-&gt;maxAnalog) {</span>
+<span class="lineNum">     157 </span>            :     /* |maxLevel| is strictly &gt;= |micVol|, so this condition should be
+<span class="lineNum">     158 </span>            :      * satisfied here, ensuring there is no divide-by-zero. */
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :     RTC_DCHECK_GT(stt-&gt;maxLevel, stt-&gt;maxAnalog);</span>
+<span class="lineNum">     160 </span>            : 
+<span class="lineNum">     161 </span>            :     /* Q1 */
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :     tmp16 = (int16_t)(stt-&gt;micVol - stt-&gt;maxAnalog);</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :     tmp32 = (GAIN_TBL_LEN - 1) * tmp16;</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :     tmp16 = (int16_t)(stt-&gt;maxLevel - stt-&gt;maxAnalog);</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :     targetGainIdx = tmp32 / tmp16;</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     RTC_DCHECK_LT(targetGainIdx, GAIN_TBL_LEN);</span>
+<span class="lineNum">     167 </span>            : 
+<span class="lineNum">     168 </span>            :     /* Increment through the table towards the target gain.
+<span class="lineNum">     169 </span>            :      * If micVol drops below maxAnalog, we allow the gain
+<span class="lineNum">     170 </span>            :      * to be dropped immediately. */
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :     if (stt-&gt;gainTableIdx &lt; targetGainIdx) {</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :       stt-&gt;gainTableIdx++;</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :     } else if (stt-&gt;gainTableIdx &gt; targetGainIdx) {</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :       stt-&gt;gainTableIdx--;</span>
+<span class="lineNum">     175 </span>            :     }
+<span class="lineNum">     176 </span>            : 
+<span class="lineNum">     177 </span>            :     /* Q12 */
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :     gain = kGainTableAnalog[stt-&gt;gainTableIdx];</span>
+<span class="lineNum">     179 </span>            : 
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; samples; i++) {</span>
+<span class="lineNum">     181 </span>            :       size_t j;
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :       for (j = 0; j &lt; num_bands; ++j) {</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :         sample = (in_mic[j][i] * gain) &gt;&gt; 12;</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :         if (sample &gt; 32767) {</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :           in_mic[j][i] = 32767;</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :         } else if (sample &lt; -32768) {</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :           in_mic[j][i] = -32768;</span>
+<span class="lineNum">     188 </span>            :         } else {
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :           in_mic[j][i] = (int16_t)sample;</span>
+<span class="lineNum">     190 </span>            :         }
+<span class="lineNum">     191 </span>            :       }
+<span class="lineNum">     192 </span>            :     }
+<span class="lineNum">     193 </span>            :   } else {
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :     stt-&gt;gainTableIdx = 0;</span>
+<span class="lineNum">     195 </span>            :   }
+<span class="lineNum">     196 </span>            : 
+<span class="lineNum">     197 </span>            :   /* compute envelope */
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :   if (stt-&gt;inQueue &gt; 0) {</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :     ptr = stt-&gt;env[1];</span>
+<span class="lineNum">     200 </span>            :   } else {
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :     ptr = stt-&gt;env[0];</span>
+<span class="lineNum">     202 </span>            :   }
+<span class="lineNum">     203 </span>            : 
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; kNumSubframes; i++) {</span>
+<span class="lineNum">     205 </span>            :     /* iterate over samples */
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :     max_nrg = 0;</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :     for (n = 0; n &lt; L; n++) {</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :       nrg = in_mic[0][i * L + n] * in_mic[0][i * L + n];</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :       if (nrg &gt; max_nrg) {</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :         max_nrg = nrg;</span>
+<span class="lineNum">     211 </span>            :       }
+<span class="lineNum">     212 </span>            :     }
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     ptr[i] = max_nrg;</span>
+<span class="lineNum">     214 </span>            :   }
+<span class="lineNum">     215 </span>            : 
+<span class="lineNum">     216 </span>            :   /* compute energy */
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :   if (stt-&gt;inQueue &gt; 0) {</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :     ptr = stt-&gt;Rxx16w32_array[1];</span>
+<span class="lineNum">     219 </span>            :   } else {
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :     ptr = stt-&gt;Rxx16w32_array[0];</span>
+<span class="lineNum">     221 </span>            :   }
+<span class="lineNum">     222 </span>            : 
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; kNumSubframes / 2; i++) {</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     if (stt-&gt;fs == 16000) {</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :       WebRtcSpl_DownsampleBy2(&amp;in_mic[0][i * 32], 32, tmp_speech,</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :                               stt-&gt;filterState);</span>
+<span class="lineNum">     227 </span>            :     } else {
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :       memcpy(tmp_speech, &amp;in_mic[0][i * 16], 16 * sizeof(short));</span>
+<span class="lineNum">     229 </span>            :     }
+<span class="lineNum">     230 </span>            :     /* Compute energy in blocks of 16 samples */
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     ptr[i] = WebRtcSpl_DotProductWithScale(tmp_speech, tmp_speech, 16, 4);</span>
+<span class="lineNum">     232 </span>            :   }
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span>            :   /* update queue information */
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :   if (stt-&gt;inQueue == 0) {</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :     stt-&gt;inQueue = 1;</span>
+<span class="lineNum">     237 </span>            :   } else {
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :     stt-&gt;inQueue = 2;</span>
+<span class="lineNum">     239 </span>            :   }
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span>            :   /* call VAD (use low band only) */
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :   WebRtcAgc_ProcessVad(&amp;stt-&gt;vadMic, in_mic[0], samples);</span>
+<span class="lineNum">     243 </span>            : 
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="245"><span class="lineNum">     245 </span>            : }</a>
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 : int WebRtcAgc_AddFarend(void* state, const int16_t* in_far, size_t samples) {</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   LegacyAgc* stt = (LegacyAgc*)state;</span>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   int err = WebRtcAgc_GetAddFarendError(state, samples);</span>
+<span class="lineNum">     251 </span>            : 
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :   if (err != 0)</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :     return err;</span>
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :   return WebRtcAgc_AddFarendToDigital(&amp;stt-&gt;digitalAgc, in_far, samples);</span>
+<a name="256"><span class="lineNum">     256 </span>            : }</a>
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 : int WebRtcAgc_GetAddFarendError(void* state, size_t samples) {</span>
+<span class="lineNum">     259 </span>            :   LegacyAgc* stt;
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :   stt = (LegacyAgc*)state;</span>
+<span class="lineNum">     261 </span>            : 
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   if (stt == NULL)</span>
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     264 </span>            : 
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :   if (stt-&gt;fs == 8000) {</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :     if (samples != 80)</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :       return -1;</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :   } else if (stt-&gt;fs == 16000 || stt-&gt;fs == 32000 || stt-&gt;fs == 48000) {</span>
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :     if (samples != 160)</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :       return -1;</span>
+<span class="lineNum">     271 </span>            :   } else {
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     273 </span>            :   }
+<span class="lineNum">     274 </span>            : 
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="276"><span class="lineNum">     276 </span>            : }</a>
+<span class="lineNum">     277 </span>            : 
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 : int WebRtcAgc_VirtualMic(void* agcInst,</span>
+<span class="lineNum">     279 </span>            :                          int16_t* const* in_near,
+<span class="lineNum">     280 </span>            :                          size_t num_bands,
+<span class="lineNum">     281 </span>            :                          size_t samples,
+<span class="lineNum">     282 </span>            :                          int32_t micLevelIn,
+<span class="lineNum">     283 </span>            :                          int32_t* micLevelOut) {
+<span class="lineNum">     284 </span>            :   int32_t tmpFlt, micLevelTmp, gainIdx;
+<span class="lineNum">     285 </span>            :   uint16_t gain;
+<span class="lineNum">     286 </span>            :   size_t ii, j;
+<span class="lineNum">     287 </span>            :   LegacyAgc* stt;
+<span class="lineNum">     288 </span>            : 
+<span class="lineNum">     289 </span>            :   uint32_t nrg;
+<span class="lineNum">     290 </span>            :   size_t sampleCntr;
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   uint32_t frameNrg = 0;</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :   uint32_t frameNrgLimit = 5500;</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :   int16_t numZeroCrossing = 0;</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :   const int16_t kZeroCrossingLowLim = 15;</span>
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :   const int16_t kZeroCrossingHighLim = 20;</span>
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :   stt = (LegacyAgc*)agcInst;</span>
+<span class="lineNum">     298 </span>            : 
+<span class="lineNum">     299 </span>            :   /*
+<span class="lineNum">     300 </span>            :    *  Before applying gain decide if this is a low-level signal.
+<span class="lineNum">     301 </span>            :    *  The idea is that digital AGC will not adapt to low-level
+<span class="lineNum">     302 </span>            :    *  signals.
+<span class="lineNum">     303 </span>            :    */
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :   if (stt-&gt;fs != 8000) {</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :     frameNrgLimit = frameNrgLimit &lt;&lt; 1;</span>
+<span class="lineNum">     306 </span>            :   }
+<span class="lineNum">     307 </span>            : 
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :   frameNrg = (uint32_t)(in_near[0][0] * in_near[0][0]);</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :   for (sampleCntr = 1; sampleCntr &lt; samples; sampleCntr++) {</span>
+<span class="lineNum">     310 </span>            :     // increment frame energy if it is less than the limit
+<span class="lineNum">     311 </span>            :     // the correct value of the energy is not important
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :     if (frameNrg &lt; frameNrgLimit) {</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :       nrg = (uint32_t)(in_near[0][sampleCntr] * in_near[0][sampleCntr]);</span>
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :       frameNrg += nrg;</span>
+<span class="lineNum">     315 </span>            :     }
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span>            :     // Count the zero crossings
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     numZeroCrossing +=</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :         ((in_near[0][sampleCntr] ^ in_near[0][sampleCntr - 1]) &lt; 0);</span>
+<span class="lineNum">     320 </span>            :   }
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :   if ((frameNrg &lt; 500) || (numZeroCrossing &lt;= 5)) {</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :     stt-&gt;lowLevelSignal = 1;</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :   } else if (numZeroCrossing &lt;= kZeroCrossingLowLim) {</span>
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :     stt-&gt;lowLevelSignal = 0;</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :   } else if (frameNrg &lt;= frameNrgLimit) {</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :     stt-&gt;lowLevelSignal = 1;</span>
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :   } else if (numZeroCrossing &gt;= kZeroCrossingHighLim) {</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :     stt-&gt;lowLevelSignal = 1;</span>
+<span class="lineNum">     330 </span>            :   } else {
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :     stt-&gt;lowLevelSignal = 0;</span>
+<span class="lineNum">     332 </span>            :   }
+<span class="lineNum">     333 </span>            : 
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :   micLevelTmp = micLevelIn &lt;&lt; stt-&gt;scale;</span>
+<span class="lineNum">     335 </span>            :   /* Set desired level */
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :   gainIdx = stt-&gt;micVol;</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :   if (stt-&gt;micVol &gt; stt-&gt;maxAnalog) {</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :     gainIdx = stt-&gt;maxAnalog;</span>
+<span class="lineNum">     339 </span>            :   }
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :   if (micLevelTmp != stt-&gt;micRef) {</span>
+<span class="lineNum">     341 </span>            :     /* Something has happened with the physical level, restart. */
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :     stt-&gt;micRef = micLevelTmp;</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :     stt-&gt;micVol = 127;</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :     *micLevelOut = 127;</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :     stt-&gt;micGainIdx = 127;</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :     gainIdx = 127;</span>
+<span class="lineNum">     347 </span>            :   }
+<span class="lineNum">     348 </span>            :   /* Pre-process the signal to emulate the microphone level. */
+<span class="lineNum">     349 </span>            :   /* Take one step at a time in the gain table. */
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :   if (gainIdx &gt; 127) {</span>
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :     gain = kGainTableVirtualMic[gainIdx - 128];</span>
+<span class="lineNum">     352 </span>            :   } else {
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     gain = kSuppressionTableVirtualMic[127 - gainIdx];</span>
+<span class="lineNum">     354 </span>            :   }
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :   for (ii = 0; ii &lt; samples; ii++) {</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :     tmpFlt = (in_near[0][ii] * gain) &gt;&gt; 10;</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :     if (tmpFlt &gt; 32767) {</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :       tmpFlt = 32767;</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :       gainIdx--;</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :       if (gainIdx &gt;= 127) {</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :         gain = kGainTableVirtualMic[gainIdx - 127];</span>
+<span class="lineNum">     362 </span>            :       } else {
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :         gain = kSuppressionTableVirtualMic[127 - gainIdx];</span>
+<span class="lineNum">     364 </span>            :       }
+<span class="lineNum">     365 </span>            :     }
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :     if (tmpFlt &lt; -32768) {</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :       tmpFlt = -32768;</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :       gainIdx--;</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :       if (gainIdx &gt;= 127) {</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :         gain = kGainTableVirtualMic[gainIdx - 127];</span>
+<span class="lineNum">     371 </span>            :       } else {
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :         gain = kSuppressionTableVirtualMic[127 - gainIdx];</span>
+<span class="lineNum">     373 </span>            :       }
+<span class="lineNum">     374 </span>            :     }
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :     in_near[0][ii] = (int16_t)tmpFlt;</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :     for (j = 1; j &lt; num_bands; ++j) {</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :       tmpFlt = (in_near[j][ii] * gain) &gt;&gt; 10;</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :       if (tmpFlt &gt; 32767) {</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :         tmpFlt = 32767;</span>
+<span class="lineNum">     380 </span>            :       }
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :       if (tmpFlt &lt; -32768) {</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :         tmpFlt = -32768;</span>
+<span class="lineNum">     383 </span>            :       }
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :       in_near[j][ii] = (int16_t)tmpFlt;</span>
+<span class="lineNum">     385 </span>            :     }
+<span class="lineNum">     386 </span>            :   }
+<span class="lineNum">     387 </span>            :   /* Set the level we (finally) used */
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :   stt-&gt;micGainIdx = gainIdx;</span>
+<span class="lineNum">     389 </span>            :   //    *micLevelOut = stt-&gt;micGainIdx;
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :   *micLevelOut = stt-&gt;micGainIdx &gt;&gt; stt-&gt;scale;</span>
+<span class="lineNum">     391 </span>            :   /* Add to Mic as if it was the output from a true microphone */
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :   if (WebRtcAgc_AddMic(agcInst, in_near, num_bands, samples) != 0) {</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     394 </span>            :   }
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="396"><span class="lineNum">     396 </span>            : }</a>
+<span class="lineNum">     397 </span>            : 
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 : void WebRtcAgc_UpdateAgcThresholds(LegacyAgc* stt) {</span>
+<span class="lineNum">     399 </span>            :   int16_t tmp16;
+<span class="lineNum">     400 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">     401 </span>            :   int zeros;
+<span class="lineNum">     402 </span>            : 
+<span class="lineNum">     403 </span>            :   if (stt-&gt;micLvlSat) {
+<span class="lineNum">     404 </span>            :     /* Lower the analog target level since we have reached its maximum */
+<span class="lineNum">     405 </span>            :     zeros = WebRtcSpl_NormW32(stt-&gt;Rxx160_LPw32);
+<span class="lineNum">     406 </span>            :     stt-&gt;targetIdxOffset = (3 * zeros - stt-&gt;targetIdx - 2) / 4;
+<span class="lineNum">     407 </span>            :   }
+<span class="lineNum">     408 </span>            : #endif
+<span class="lineNum">     409 </span>            : 
+<span class="lineNum">     410 </span>            :   /* Set analog target level in envelope dBOv scale */
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :   tmp16 = (DIFF_REF_TO_ANALOG * stt-&gt;compressionGaindB) + ANALOG_TARGET_LEVEL_2;</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :   tmp16 = WebRtcSpl_DivW32W16ResW16((int32_t)tmp16, ANALOG_TARGET_LEVEL);</span>
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :   stt-&gt;analogTarget = DIGITAL_REF_AT_0_COMP_GAIN + tmp16;</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :   if (stt-&gt;analogTarget &lt; DIGITAL_REF_AT_0_COMP_GAIN) {</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :     stt-&gt;analogTarget = DIGITAL_REF_AT_0_COMP_GAIN;</span>
+<span class="lineNum">     416 </span>            :   }
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :   if (stt-&gt;agcMode == kAgcModeFixedDigital) {</span>
+<span class="lineNum">     418 </span>            :     /* Adjust for different parameter interpretation in FixedDigital mode */
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :     stt-&gt;analogTarget = stt-&gt;compressionGaindB;</span>
+<span class="lineNum">     420 </span>            :   }
+<span class="lineNum">     421 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">     422 </span>            :   stt-&gt;analogTarget += stt-&gt;targetIdxOffset;
+<span class="lineNum">     423 </span>            : #endif
+<span class="lineNum">     424 </span>            :   /* Since the offset between RMS and ENV is not constant, we should make this
+<span class="lineNum">     425 </span>            :    * into a
+<span class="lineNum">     426 </span>            :    * table, but for now, we'll stick with a constant, tuned for the chosen
+<span class="lineNum">     427 </span>            :    * analog
+<span class="lineNum">     428 </span>            :    * target level.
+<span class="lineNum">     429 </span>            :    */
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :   stt-&gt;targetIdx = ANALOG_TARGET_LEVEL + OFFSET_ENV_TO_RMS;</span>
+<span class="lineNum">     431 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">     432 </span>            :   stt-&gt;targetIdx += stt-&gt;targetIdxOffset;
+<span class="lineNum">     433 </span>            : #endif
+<span class="lineNum">     434 </span>            :   /* Analog adaptation limits */
+<span class="lineNum">     435 </span>            :   /* analogTargetLevel = round((32767*10^(-targetIdx/20))^2*16/2^7) */
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :   stt-&gt;analogTargetLevel =</span>
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :       RXX_BUFFER_LEN * kTargetLevelTable[stt-&gt;targetIdx]; /* ex. -20 dBov */</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :   stt-&gt;startUpperLimit =</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :       RXX_BUFFER_LEN * kTargetLevelTable[stt-&gt;targetIdx - 1]; /* -19 dBov */</span>
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :   stt-&gt;startLowerLimit =</span>
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :       RXX_BUFFER_LEN * kTargetLevelTable[stt-&gt;targetIdx + 1]; /* -21 dBov */</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :   stt-&gt;upperPrimaryLimit =</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :       RXX_BUFFER_LEN * kTargetLevelTable[stt-&gt;targetIdx - 2]; /* -18 dBov */</span>
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :   stt-&gt;lowerPrimaryLimit =</span>
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :       RXX_BUFFER_LEN * kTargetLevelTable[stt-&gt;targetIdx + 2]; /* -22 dBov */</span>
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :   stt-&gt;upperSecondaryLimit =</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :       RXX_BUFFER_LEN * kTargetLevelTable[stt-&gt;targetIdx - 5]; /* -15 dBov */</span>
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :   stt-&gt;lowerSecondaryLimit =</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :       RXX_BUFFER_LEN * kTargetLevelTable[stt-&gt;targetIdx + 5]; /* -25 dBov */</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :   stt-&gt;upperLimit = stt-&gt;startUpperLimit;</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :   stt-&gt;lowerLimit = stt-&gt;startLowerLimit;</span>
+<a name="452"><span class="lineNum">     452 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     453 </span>            : 
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 : void WebRtcAgc_SaturationCtrl(LegacyAgc* stt,</span>
+<span class="lineNum">     455 </span>            :                               uint8_t* saturated,
+<span class="lineNum">     456 </span>            :                               int32_t* env) {
+<span class="lineNum">     457 </span>            :   int16_t i, tmpW16;
+<span class="lineNum">     458 </span>            : 
+<span class="lineNum">     459 </span>            :   /* Check if the signal is saturated */
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; 10; i++) {</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :     tmpW16 = (int16_t)(env[i] &gt;&gt; 20);</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :     if (tmpW16 &gt; 875) {</span>
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :       stt-&gt;envSum += tmpW16;</span>
+<span class="lineNum">     464 </span>            :     }
+<span class="lineNum">     465 </span>            :   }
+<span class="lineNum">     466 </span>            : 
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :   if (stt-&gt;envSum &gt; 25000) {</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :     *saturated = 1;</span>
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :     stt-&gt;envSum = 0;</span>
+<span class="lineNum">     470 </span>            :   }
+<span class="lineNum">     471 </span>            : 
+<span class="lineNum">     472 </span>            :   /* stt-&gt;envSum *= 0.99; */
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :   stt-&gt;envSum = (int16_t)((stt-&gt;envSum * 32440) &gt;&gt; 15);</span>
+<a name="474"><span class="lineNum">     474 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     475 </span>            : 
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 : void WebRtcAgc_ZeroCtrl(LegacyAgc* stt, int32_t* inMicLevel, int32_t* env) {</span>
+<span class="lineNum">     477 </span>            :   int16_t i;
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :   int64_t tmp = 0;</span>
+<span class="lineNum">     479 </span>            :   int32_t midVal;
+<span class="lineNum">     480 </span>            : 
+<span class="lineNum">     481 </span>            :   /* Is the input signal zero? */
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; 10; i++) {</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :     tmp += env[i];</span>
+<span class="lineNum">     484 </span>            :   }
+<span class="lineNum">     485 </span>            : 
+<span class="lineNum">     486 </span>            :   /* Each block is allowed to have a few non-zero
+<span class="lineNum">     487 </span>            :    * samples.
+<span class="lineNum">     488 </span>            :    */
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :   if (tmp &lt; 500) {</span>
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :     stt-&gt;msZero += 10;</span>
+<span class="lineNum">     491 </span>            :   } else {
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :     stt-&gt;msZero = 0;</span>
+<span class="lineNum">     493 </span>            :   }
+<span class="lineNum">     494 </span>            : 
+<span class="lineNum">     495 </span><span class="lineNoCov">          0 :   if (stt-&gt;muteGuardMs &gt; 0) {</span>
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :     stt-&gt;muteGuardMs -= 10;</span>
+<span class="lineNum">     497 </span>            :   }
+<span class="lineNum">     498 </span>            : 
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :   if (stt-&gt;msZero &gt; 500) {</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :     stt-&gt;msZero = 0;</span>
+<span class="lineNum">     501 </span>            : 
+<span class="lineNum">     502 </span>            :     /* Increase microphone level only if it's less than 50% */
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :     midVal = (stt-&gt;maxAnalog + stt-&gt;minLevel + 1) / 2;</span>
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :     if (*inMicLevel &lt; midVal) {</span>
+<span class="lineNum">     505 </span>            :       /* *inMicLevel *= 1.1; */
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :       *inMicLevel = (1126 * *inMicLevel) &gt;&gt; 10;</span>
+<span class="lineNum">     507 </span>            :       /* Reduces risk of a muted mic repeatedly triggering excessive levels due
+<span class="lineNum">     508 </span>            :        * to zero signal detection. */
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :       *inMicLevel = WEBRTC_SPL_MIN(*inMicLevel, stt-&gt;zeroCtrlMax);</span>
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :       stt-&gt;micVol = *inMicLevel;</span>
+<span class="lineNum">     511 </span>            :     }
+<span class="lineNum">     512 </span>            : 
+<span class="lineNum">     513 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">     514 </span>            :     fprintf(stt-&gt;fpt,
+<span class="lineNum">     515 </span>            :             &quot;\t\tAGC-&gt;zeroCntrl, frame %d: 500 ms under threshold,&quot;
+<span class="lineNum">     516 </span>            :             &quot; micVol: %d\n&quot;,
+<span class="lineNum">     517 </span>            :             stt-&gt;fcount, stt-&gt;micVol);
+<span class="lineNum">     518 </span>            : #endif
+<span class="lineNum">     519 </span>            : 
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :     stt-&gt;activeSpeech = 0;</span>
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :     stt-&gt;Rxx16_LPw32Max = 0;</span>
+<span class="lineNum">     522 </span>            : 
+<span class="lineNum">     523 </span>            :     /* The AGC has a tendency (due to problems with the VAD parameters), to
+<span class="lineNum">     524 </span>            :      * vastly increase the volume after a muting event. This timer prevents
+<span class="lineNum">     525 </span>            :      * upwards adaptation for a short period. */
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :     stt-&gt;muteGuardMs = kMuteGuardTimeMs;</span>
+<span class="lineNum">     527 </span>            :   }
+<a name="528"><span class="lineNum">     528 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     529 </span>            : 
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 : void WebRtcAgc_SpeakerInactiveCtrl(LegacyAgc* stt) {</span>
+<span class="lineNum">     531 </span>            :   /* Check if the near end speaker is inactive.
+<span class="lineNum">     532 </span>            :    * If that is the case the VAD threshold is
+<span class="lineNum">     533 </span>            :    * increased since the VAD speech model gets
+<span class="lineNum">     534 </span>            :    * more sensitive to any sound after a long
+<span class="lineNum">     535 </span>            :    * silence.
+<span class="lineNum">     536 </span>            :    */
+<span class="lineNum">     537 </span>            : 
+<span class="lineNum">     538 </span>            :   int32_t tmp32;
+<span class="lineNum">     539 </span>            :   int16_t vadThresh;
+<span class="lineNum">     540 </span>            : 
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :   if (stt-&gt;vadMic.stdLongTerm &lt; 2500) {</span>
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :     stt-&gt;vadThreshold = 1500;</span>
+<span class="lineNum">     543 </span>            :   } else {
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :     vadThresh = kNormalVadThreshold;</span>
+<span class="lineNum">     545 </span><span class="lineNoCov">          0 :     if (stt-&gt;vadMic.stdLongTerm &lt; 4500) {</span>
+<span class="lineNum">     546 </span>            :       /* Scale between min and max threshold */
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :       vadThresh += (4500 - stt-&gt;vadMic.stdLongTerm) / 2;</span>
+<span class="lineNum">     548 </span>            :     }
+<span class="lineNum">     549 </span>            : 
+<span class="lineNum">     550 </span>            :     /* stt-&gt;vadThreshold = (31 * stt-&gt;vadThreshold + vadThresh) / 32; */
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :     tmp32 = vadThresh + 31 * stt-&gt;vadThreshold;</span>
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     stt-&gt;vadThreshold = (int16_t)(tmp32 &gt;&gt; 5);</span>
+<span class="lineNum">     553 </span>            :   }
+<a name="554"><span class="lineNum">     554 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     555 </span>            : 
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 : void WebRtcAgc_ExpCurve(int16_t volume, int16_t* index) {</span>
+<span class="lineNum">     557 </span>            :   // volume in Q14
+<span class="lineNum">     558 </span>            :   // index in [0-7]
+<span class="lineNum">     559 </span>            :   /* 8 different curves */
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 :   if (volume &gt; 5243) {</span>
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 :     if (volume &gt; 7864) {</span>
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :       if (volume &gt; 12124) {</span>
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :         *index = 7;</span>
+<span class="lineNum">     564 </span>            :       } else {
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :         *index = 6;</span>
+<span class="lineNum">     566 </span>            :       }
+<span class="lineNum">     567 </span>            :     } else {
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :       if (volume &gt; 6554) {</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :         *index = 5;</span>
+<span class="lineNum">     570 </span>            :       } else {
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :         *index = 4;</span>
+<span class="lineNum">     572 </span>            :       }
+<span class="lineNum">     573 </span>            :     }
+<span class="lineNum">     574 </span>            :   } else {
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :     if (volume &gt; 2621) {</span>
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :       if (volume &gt; 3932) {</span>
+<span class="lineNum">     577 </span><span class="lineNoCov">          0 :         *index = 3;</span>
+<span class="lineNum">     578 </span>            :       } else {
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :         *index = 2;</span>
+<span class="lineNum">     580 </span>            :       }
+<span class="lineNum">     581 </span>            :     } else {
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :       if (volume &gt; 1311) {</span>
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 :         *index = 1;</span>
+<span class="lineNum">     584 </span>            :       } else {
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :         *index = 0;</span>
+<span class="lineNum">     586 </span>            :       }
+<span class="lineNum">     587 </span>            :     }
+<span class="lineNum">     588 </span>            :   }
+<a name="589"><span class="lineNum">     589 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     590 </span>            : 
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 : int32_t WebRtcAgc_ProcessAnalog(void* state,</span>
+<span class="lineNum">     592 </span>            :                                 int32_t inMicLevel,
+<span class="lineNum">     593 </span>            :                                 int32_t* outMicLevel,
+<span class="lineNum">     594 </span>            :                                 int16_t vadLogRatio,
+<span class="lineNum">     595 </span>            :                                 int16_t echo,
+<span class="lineNum">     596 </span>            :                                 uint8_t* saturationWarning) {
+<span class="lineNum">     597 </span>            :   uint32_t tmpU32;
+<span class="lineNum">     598 </span>            :   int32_t Rxx16w32, tmp32;
+<span class="lineNum">     599 </span>            :   int32_t inMicLevelTmp, lastMicVol;
+<span class="lineNum">     600 </span>            :   int16_t i;
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :   uint8_t saturated = 0;</span>
+<span class="lineNum">     602 </span>            :   LegacyAgc* stt;
+<span class="lineNum">     603 </span>            : 
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :   stt = (LegacyAgc*)state;</span>
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :   inMicLevelTmp = inMicLevel &lt;&lt; stt-&gt;scale;</span>
+<span class="lineNum">     606 </span>            : 
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :   if (inMicLevelTmp &gt; stt-&gt;maxAnalog) {</span>
+<span class="lineNum">     608 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">     609 </span>            :     fprintf(stt-&gt;fpt, &quot;\tAGC-&gt;ProcessAnalog, frame %d: micLvl &gt; maxAnalog\n&quot;,
+<span class="lineNum">     610 </span>            :             stt-&gt;fcount);
+<span class="lineNum">     611 </span>            : #endif
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 :   } else if (inMicLevelTmp &lt; stt-&gt;minLevel) {</span>
+<span class="lineNum">     614 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">     615 </span>            :     fprintf(stt-&gt;fpt, &quot;\tAGC-&gt;ProcessAnalog, frame %d: micLvl &lt; minLevel\n&quot;,
+<span class="lineNum">     616 </span>            :             stt-&gt;fcount);
+<span class="lineNum">     617 </span>            : #endif
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">     619 </span>            :   }
+<span class="lineNum">     620 </span>            : 
+<span class="lineNum">     621 </span><span class="lineNoCov">          0 :   if (stt-&gt;firstCall == 0) {</span>
+<span class="lineNum">     622 </span>            :     int32_t tmpVol;
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 :     stt-&gt;firstCall = 1;</span>
+<span class="lineNum">     624 </span><span class="lineNoCov">          0 :     tmp32 = ((stt-&gt;maxLevel - stt-&gt;minLevel) * 51) &gt;&gt; 9;</span>
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :     tmpVol = (stt-&gt;minLevel + tmp32);</span>
+<span class="lineNum">     626 </span>            : 
+<span class="lineNum">     627 </span>            :     /* If the mic level is very low at start, increase it! */
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :     if ((inMicLevelTmp &lt; tmpVol) &amp;&amp; (stt-&gt;agcMode == kAgcModeAdaptiveAnalog)) {</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :       inMicLevelTmp = tmpVol;</span>
+<span class="lineNum">     630 </span>            :     }
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :     stt-&gt;micVol = inMicLevelTmp;</span>
+<span class="lineNum">     632 </span>            :   }
+<span class="lineNum">     633 </span>            : 
+<span class="lineNum">     634 </span>            :   /* Set the mic level to the previous output value if there is digital input
+<span class="lineNum">     635 </span>            :    * gain */
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :   if ((inMicLevelTmp == stt-&gt;maxAnalog) &amp;&amp; (stt-&gt;micVol &gt; stt-&gt;maxAnalog)) {</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :     inMicLevelTmp = stt-&gt;micVol;</span>
+<span class="lineNum">     638 </span>            :   }
+<span class="lineNum">     639 </span>            : 
+<span class="lineNum">     640 </span>            :   /* If the mic level was manually changed to a very low value raise it! */
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :   if ((inMicLevelTmp != stt-&gt;micVol) &amp;&amp; (inMicLevelTmp &lt; stt-&gt;minOutput)) {</span>
+<span class="lineNum">     642 </span><span class="lineNoCov">          0 :     tmp32 = ((stt-&gt;maxLevel - stt-&gt;minLevel) * 51) &gt;&gt; 9;</span>
+<span class="lineNum">     643 </span><span class="lineNoCov">          0 :     inMicLevelTmp = (stt-&gt;minLevel + tmp32);</span>
+<span class="lineNum">     644 </span><span class="lineNoCov">          0 :     stt-&gt;micVol = inMicLevelTmp;</span>
+<span class="lineNum">     645 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">     646 </span>            : // stt-&gt;numBlocksMicLvlSat = 0;
+<span class="lineNum">     647 </span>            : #endif
+<span class="lineNum">     648 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">     649 </span>            :     fprintf(stt-&gt;fpt,
+<span class="lineNum">     650 </span>            :             &quot;\tAGC-&gt;ProcessAnalog, frame %d: micLvl &lt; minLevel by manual&quot;
+<span class="lineNum">     651 </span>            :             &quot; decrease, raise vol\n&quot;,
+<span class="lineNum">     652 </span>            :             stt-&gt;fcount);
+<span class="lineNum">     653 </span>            : #endif
+<span class="lineNum">     654 </span>            :   }
+<span class="lineNum">     655 </span>            : 
+<span class="lineNum">     656 </span><span class="lineNoCov">          0 :   if (inMicLevelTmp != stt-&gt;micVol) {</span>
+<span class="lineNum">     657 </span><span class="lineNoCov">          0 :     if (inMicLevel == stt-&gt;lastInMicLevel) {</span>
+<span class="lineNum">     658 </span>            :       // We requested a volume adjustment, but it didn't occur. This is
+<span class="lineNum">     659 </span>            :       // probably due to a coarse quantization of the volume slider.
+<span class="lineNum">     660 </span>            :       // Restore the requested value to prevent getting stuck.
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :       inMicLevelTmp = stt-&gt;micVol;</span>
+<span class="lineNum">     662 </span>            :     } else {
+<span class="lineNum">     663 </span>            :       // As long as the value changed, update to match.
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :       stt-&gt;micVol = inMicLevelTmp;</span>
+<span class="lineNum">     665 </span>            :     }
+<span class="lineNum">     666 </span>            :   }
+<span class="lineNum">     667 </span>            : 
+<span class="lineNum">     668 </span><span class="lineNoCov">          0 :   if (inMicLevelTmp &gt; stt-&gt;maxLevel) {</span>
+<span class="lineNum">     669 </span>            :     // Always allow the user to raise the volume above the maxLevel.
+<span class="lineNum">     670 </span><span class="lineNoCov">          0 :     stt-&gt;maxLevel = inMicLevelTmp;</span>
+<span class="lineNum">     671 </span>            :   }
+<span class="lineNum">     672 </span>            : 
+<span class="lineNum">     673 </span>            :   // Store last value here, after we've taken care of manual updates etc.
+<span class="lineNum">     674 </span><span class="lineNoCov">          0 :   stt-&gt;lastInMicLevel = inMicLevel;</span>
+<span class="lineNum">     675 </span><span class="lineNoCov">          0 :   lastMicVol = stt-&gt;micVol;</span>
+<span class="lineNum">     676 </span>            : 
+<span class="lineNum">     677 </span>            :   /* Checks if the signal is saturated. Also a check if individual samples
+<span class="lineNum">     678 </span>            :    * are larger than 12000 is done. If they are the counter for increasing
+<span class="lineNum">     679 </span>            :    * the volume level is set to -100ms
+<span class="lineNum">     680 </span>            :    */
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :   WebRtcAgc_SaturationCtrl(stt, &amp;saturated, stt-&gt;env[0]);</span>
+<span class="lineNum">     682 </span>            : 
+<span class="lineNum">     683 </span>            :   /* The AGC is always allowed to lower the level if the signal is saturated */
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :   if (saturated == 1) {</span>
+<span class="lineNum">     685 </span>            :     /* Lower the recording level
+<span class="lineNum">     686 </span>            :      * Rxx160_LP is adjusted down because it is so slow it could
+<span class="lineNum">     687 </span>            :      * cause the AGC to make wrong decisions. */
+<span class="lineNum">     688 </span>            :     /* stt-&gt;Rxx160_LPw32 *= 0.875; */
+<span class="lineNum">     689 </span><span class="lineNoCov">          0 :     stt-&gt;Rxx160_LPw32 = (stt-&gt;Rxx160_LPw32 / 8) * 7;</span>
+<span class="lineNum">     690 </span>            : 
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :     stt-&gt;zeroCtrlMax = stt-&gt;micVol;</span>
+<span class="lineNum">     692 </span>            : 
+<span class="lineNum">     693 </span>            :     /* stt-&gt;micVol *= 0.903; */
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :     tmp32 = inMicLevelTmp - stt-&gt;minLevel;</span>
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :     tmpU32 = WEBRTC_SPL_UMUL(29591, (uint32_t)(tmp32));</span>
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :     stt-&gt;micVol = (tmpU32 &gt;&gt; 15) + stt-&gt;minLevel;</span>
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :     if (stt-&gt;micVol &gt; lastMicVol - 2) {</span>
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :       stt-&gt;micVol = lastMicVol - 2;</span>
+<span class="lineNum">     699 </span>            :     }
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :     inMicLevelTmp = stt-&gt;micVol;</span>
+<span class="lineNum">     701 </span>            : 
+<span class="lineNum">     702 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">     703 </span>            :     fprintf(stt-&gt;fpt,
+<span class="lineNum">     704 </span>            :             &quot;\tAGC-&gt;ProcessAnalog, frame %d: saturated, micVol = %d\n&quot;,
+<span class="lineNum">     705 </span>            :             stt-&gt;fcount, stt-&gt;micVol);
+<span class="lineNum">     706 </span>            : #endif
+<span class="lineNum">     707 </span>            : 
+<span class="lineNum">     708 </span><span class="lineNoCov">          0 :     if (stt-&gt;micVol &lt; stt-&gt;minOutput) {</span>
+<span class="lineNum">     709 </span><span class="lineNoCov">          0 :       *saturationWarning = 1;</span>
+<span class="lineNum">     710 </span>            :     }
+<span class="lineNum">     711 </span>            : 
+<span class="lineNum">     712 </span>            :     /* Reset counter for decrease of volume level to avoid
+<span class="lineNum">     713 </span>            :      * decreasing too much. The saturation control can still
+<span class="lineNum">     714 </span>            :      * lower the level if needed. */
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :     stt-&gt;msTooHigh = -100;</span>
+<span class="lineNum">     716 </span>            : 
+<span class="lineNum">     717 </span>            :     /* Enable the control mechanism to ensure that our measure,
+<span class="lineNum">     718 </span>            :      * Rxx160_LP, is in the correct range. This must be done since
+<span class="lineNum">     719 </span>            :      * the measure is very slow. */
+<span class="lineNum">     720 </span><span class="lineNoCov">          0 :     stt-&gt;activeSpeech = 0;</span>
+<span class="lineNum">     721 </span><span class="lineNoCov">          0 :     stt-&gt;Rxx16_LPw32Max = 0;</span>
+<span class="lineNum">     722 </span>            : 
+<span class="lineNum">     723 </span>            :     /* Reset to initial values */
+<span class="lineNum">     724 </span><span class="lineNoCov">          0 :     stt-&gt;msecSpeechInnerChange = kMsecSpeechInner;</span>
+<span class="lineNum">     725 </span><span class="lineNoCov">          0 :     stt-&gt;msecSpeechOuterChange = kMsecSpeechOuter;</span>
+<span class="lineNum">     726 </span><span class="lineNoCov">          0 :     stt-&gt;changeToSlowMode = 0;</span>
+<span class="lineNum">     727 </span>            : 
+<span class="lineNum">     728 </span><span class="lineNoCov">          0 :     stt-&gt;muteGuardMs = 0;</span>
+<span class="lineNum">     729 </span>            : 
+<span class="lineNum">     730 </span><span class="lineNoCov">          0 :     stt-&gt;upperLimit = stt-&gt;startUpperLimit;</span>
+<span class="lineNum">     731 </span><span class="lineNoCov">          0 :     stt-&gt;lowerLimit = stt-&gt;startLowerLimit;</span>
+<span class="lineNum">     732 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">     733 </span>            : // stt-&gt;numBlocksMicLvlSat = 0;
+<span class="lineNum">     734 </span>            : #endif
+<span class="lineNum">     735 </span>            :   }
+<span class="lineNum">     736 </span>            : 
+<span class="lineNum">     737 </span>            :   /* Check if the input speech is zero. If so the mic volume
+<span class="lineNum">     738 </span>            :    * is increased. On some computers the input is zero up as high
+<span class="lineNum">     739 </span>            :    * level as 17% */
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :   WebRtcAgc_ZeroCtrl(stt, &amp;inMicLevelTmp, stt-&gt;env[0]);</span>
+<span class="lineNum">     741 </span>            : 
+<span class="lineNum">     742 </span>            :   /* Check if the near end speaker is inactive.
+<span class="lineNum">     743 </span>            :    * If that is the case the VAD threshold is
+<span class="lineNum">     744 </span>            :    * increased since the VAD speech model gets
+<span class="lineNum">     745 </span>            :    * more sensitive to any sound after a long
+<span class="lineNum">     746 </span>            :    * silence.
+<span class="lineNum">     747 </span>            :    */
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :   WebRtcAgc_SpeakerInactiveCtrl(stt);</span>
+<span class="lineNum">     749 </span>            : 
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; 5; i++) {</span>
+<span class="lineNum">     751 </span>            :     /* Computed on blocks of 16 samples */
+<span class="lineNum">     752 </span>            : 
+<span class="lineNum">     753 </span><span class="lineNoCov">          0 :     Rxx16w32 = stt-&gt;Rxx16w32_array[0][i];</span>
+<span class="lineNum">     754 </span>            : 
+<span class="lineNum">     755 </span>            :     /* Rxx160w32 in Q(-7) */
+<span class="lineNum">     756 </span><span class="lineNoCov">          0 :     tmp32 = (Rxx16w32 - stt-&gt;Rxx16_vectorw32[stt-&gt;Rxx16pos]) &gt;&gt; 3;</span>
+<span class="lineNum">     757 </span><span class="lineNoCov">          0 :     stt-&gt;Rxx160w32 = stt-&gt;Rxx160w32 + tmp32;</span>
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :     stt-&gt;Rxx16_vectorw32[stt-&gt;Rxx16pos] = Rxx16w32;</span>
+<span class="lineNum">     759 </span>            : 
+<span class="lineNum">     760 </span>            :     /* Circular buffer */
+<span class="lineNum">     761 </span><span class="lineNoCov">          0 :     stt-&gt;Rxx16pos++;</span>
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :     if (stt-&gt;Rxx16pos == RXX_BUFFER_LEN) {</span>
+<span class="lineNum">     763 </span><span class="lineNoCov">          0 :       stt-&gt;Rxx16pos = 0;</span>
+<span class="lineNum">     764 </span>            :     }
+<span class="lineNum">     765 </span>            : 
+<span class="lineNum">     766 </span>            :     /* Rxx16_LPw32 in Q(-4) */
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 :     tmp32 = (Rxx16w32 - stt-&gt;Rxx16_LPw32) &gt;&gt; kAlphaShortTerm;</span>
+<span class="lineNum">     768 </span><span class="lineNoCov">          0 :     stt-&gt;Rxx16_LPw32 = (stt-&gt;Rxx16_LPw32) + tmp32;</span>
+<span class="lineNum">     769 </span>            : 
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :     if (vadLogRatio &gt; stt-&gt;vadThreshold) {</span>
+<span class="lineNum">     771 </span>            :       /* Speech detected! */
+<span class="lineNum">     772 </span>            : 
+<span class="lineNum">     773 </span>            :       /* Check if Rxx160_LP is in the correct range. If
+<span class="lineNum">     774 </span>            :        * it is too high/low then we set it to the maximum of
+<span class="lineNum">     775 </span>            :        * Rxx16_LPw32 during the first 200ms of speech.
+<span class="lineNum">     776 </span>            :        */
+<span class="lineNum">     777 </span><span class="lineNoCov">          0 :       if (stt-&gt;activeSpeech &lt; 250) {</span>
+<span class="lineNum">     778 </span><span class="lineNoCov">          0 :         stt-&gt;activeSpeech += 2;</span>
+<span class="lineNum">     779 </span>            : 
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 :         if (stt-&gt;Rxx16_LPw32 &gt; stt-&gt;Rxx16_LPw32Max) {</span>
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 :           stt-&gt;Rxx16_LPw32Max = stt-&gt;Rxx16_LPw32;</span>
+<span class="lineNum">     782 </span>            :         }
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :       } else if (stt-&gt;activeSpeech == 250) {</span>
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :         stt-&gt;activeSpeech += 2;</span>
+<span class="lineNum">     785 </span><span class="lineNoCov">          0 :         tmp32 = stt-&gt;Rxx16_LPw32Max &gt;&gt; 3;</span>
+<span class="lineNum">     786 </span><span class="lineNoCov">          0 :         stt-&gt;Rxx160_LPw32 = tmp32 * RXX_BUFFER_LEN;</span>
+<span class="lineNum">     787 </span>            :       }
+<span class="lineNum">     788 </span>            : 
+<span class="lineNum">     789 </span><span class="lineNoCov">          0 :       tmp32 = (stt-&gt;Rxx160w32 - stt-&gt;Rxx160_LPw32) &gt;&gt; kAlphaLongTerm;</span>
+<span class="lineNum">     790 </span><span class="lineNoCov">          0 :       stt-&gt;Rxx160_LPw32 = stt-&gt;Rxx160_LPw32 + tmp32;</span>
+<span class="lineNum">     791 </span>            : 
+<span class="lineNum">     792 </span><span class="lineNoCov">          0 :       if (stt-&gt;Rxx160_LPw32 &gt; stt-&gt;upperSecondaryLimit) {</span>
+<span class="lineNum">     793 </span><span class="lineNoCov">          0 :         stt-&gt;msTooHigh += 2;</span>
+<span class="lineNum">     794 </span><span class="lineNoCov">          0 :         stt-&gt;msTooLow = 0;</span>
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :         stt-&gt;changeToSlowMode = 0;</span>
+<span class="lineNum">     796 </span>            : 
+<span class="lineNum">     797 </span><span class="lineNoCov">          0 :         if (stt-&gt;msTooHigh &gt; stt-&gt;msecSpeechOuterChange) {</span>
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 :           stt-&gt;msTooHigh = 0;</span>
+<span class="lineNum">     799 </span>            : 
+<span class="lineNum">     800 </span>            :           /* Lower the recording level */
+<span class="lineNum">     801 </span>            :           /* Multiply by 0.828125 which corresponds to decreasing ~0.8dB */
+<span class="lineNum">     802 </span><span class="lineNoCov">          0 :           tmp32 = stt-&gt;Rxx160_LPw32 &gt;&gt; 6;</span>
+<span class="lineNum">     803 </span><span class="lineNoCov">          0 :           stt-&gt;Rxx160_LPw32 = tmp32 * 53;</span>
+<span class="lineNum">     804 </span>            : 
+<span class="lineNum">     805 </span>            :           /* Reduce the max gain to avoid excessive oscillation
+<span class="lineNum">     806 </span>            :            * (but never drop below the maximum analog level).
+<span class="lineNum">     807 </span>            :            */
+<span class="lineNum">     808 </span><span class="lineNoCov">          0 :           stt-&gt;maxLevel = (15 * stt-&gt;maxLevel + stt-&gt;micVol) / 16;</span>
+<span class="lineNum">     809 </span><span class="lineNoCov">          0 :           stt-&gt;maxLevel = WEBRTC_SPL_MAX(stt-&gt;maxLevel, stt-&gt;maxAnalog);</span>
+<span class="lineNum">     810 </span>            : 
+<span class="lineNum">     811 </span><span class="lineNoCov">          0 :           stt-&gt;zeroCtrlMax = stt-&gt;micVol;</span>
+<span class="lineNum">     812 </span>            : 
+<span class="lineNum">     813 </span>            :           /* 0.95 in Q15 */
+<span class="lineNum">     814 </span><span class="lineNoCov">          0 :           tmp32 = inMicLevelTmp - stt-&gt;minLevel;</span>
+<span class="lineNum">     815 </span><span class="lineNoCov">          0 :           tmpU32 = WEBRTC_SPL_UMUL(31130, (uint32_t)(tmp32));</span>
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 :           stt-&gt;micVol = (tmpU32 &gt;&gt; 15) + stt-&gt;minLevel;</span>
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :           if (stt-&gt;micVol &gt; lastMicVol - 1) {</span>
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 :             stt-&gt;micVol = lastMicVol - 1;</span>
+<span class="lineNum">     819 </span>            :           }
+<span class="lineNum">     820 </span><span class="lineNoCov">          0 :           inMicLevelTmp = stt-&gt;micVol;</span>
+<span class="lineNum">     821 </span>            : 
+<span class="lineNum">     822 </span>            :           /* Enable the control mechanism to ensure that our measure,
+<span class="lineNum">     823 </span>            :            * Rxx160_LP, is in the correct range.
+<span class="lineNum">     824 </span>            :            */
+<span class="lineNum">     825 </span><span class="lineNoCov">          0 :           stt-&gt;activeSpeech = 0;</span>
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 :           stt-&gt;Rxx16_LPw32Max = 0;</span>
+<span class="lineNum">     827 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">     828 </span>            : // stt-&gt;numBlocksMicLvlSat = 0;
+<span class="lineNum">     829 </span>            : #endif
+<span class="lineNum">     830 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">     831 </span>            :           fprintf(stt-&gt;fpt,
+<span class="lineNum">     832 </span>            :                   &quot;\tAGC-&gt;ProcessAnalog, frame %d: measure &gt;&quot;
+<span class="lineNum">     833 </span>            :                   &quot; 2ndUpperLim, micVol = %d, maxLevel = %d\n&quot;,
+<span class="lineNum">     834 </span>            :                   stt-&gt;fcount, stt-&gt;micVol, stt-&gt;maxLevel);
+<span class="lineNum">     835 </span>            : #endif
+<span class="lineNum">     836 </span>            :         }
+<span class="lineNum">     837 </span><span class="lineNoCov">          0 :       } else if (stt-&gt;Rxx160_LPw32 &gt; stt-&gt;upperLimit) {</span>
+<span class="lineNum">     838 </span><span class="lineNoCov">          0 :         stt-&gt;msTooHigh += 2;</span>
+<span class="lineNum">     839 </span><span class="lineNoCov">          0 :         stt-&gt;msTooLow = 0;</span>
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :         stt-&gt;changeToSlowMode = 0;</span>
+<span class="lineNum">     841 </span>            : 
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :         if (stt-&gt;msTooHigh &gt; stt-&gt;msecSpeechInnerChange) {</span>
+<span class="lineNum">     843 </span>            :           /* Lower the recording level */
+<span class="lineNum">     844 </span><span class="lineNoCov">          0 :           stt-&gt;msTooHigh = 0;</span>
+<span class="lineNum">     845 </span>            :           /* Multiply by 0.828125 which corresponds to decreasing ~0.8dB */
+<span class="lineNum">     846 </span><span class="lineNoCov">          0 :           stt-&gt;Rxx160_LPw32 = (stt-&gt;Rxx160_LPw32 / 64) * 53;</span>
+<span class="lineNum">     847 </span>            : 
+<span class="lineNum">     848 </span>            :           /* Reduce the max gain to avoid excessive oscillation
+<span class="lineNum">     849 </span>            :            * (but never drop below the maximum analog level).
+<span class="lineNum">     850 </span>            :            */
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :           stt-&gt;maxLevel = (15 * stt-&gt;maxLevel + stt-&gt;micVol) / 16;</span>
+<span class="lineNum">     852 </span><span class="lineNoCov">          0 :           stt-&gt;maxLevel = WEBRTC_SPL_MAX(stt-&gt;maxLevel, stt-&gt;maxAnalog);</span>
+<span class="lineNum">     853 </span>            : 
+<span class="lineNum">     854 </span><span class="lineNoCov">          0 :           stt-&gt;zeroCtrlMax = stt-&gt;micVol;</span>
+<span class="lineNum">     855 </span>            : 
+<span class="lineNum">     856 </span>            :           /* 0.965 in Q15 */
+<span class="lineNum">     857 </span><span class="lineNoCov">          0 :           tmp32 = inMicLevelTmp - stt-&gt;minLevel;</span>
+<span class="lineNum">     858 </span><span class="lineNoCov">          0 :           tmpU32 =</span>
+<span class="lineNum">     859 </span><span class="lineNoCov">          0 :               WEBRTC_SPL_UMUL(31621, (uint32_t)(inMicLevelTmp - stt-&gt;minLevel));</span>
+<span class="lineNum">     860 </span><span class="lineNoCov">          0 :           stt-&gt;micVol = (tmpU32 &gt;&gt; 15) + stt-&gt;minLevel;</span>
+<span class="lineNum">     861 </span><span class="lineNoCov">          0 :           if (stt-&gt;micVol &gt; lastMicVol - 1) {</span>
+<span class="lineNum">     862 </span><span class="lineNoCov">          0 :             stt-&gt;micVol = lastMicVol - 1;</span>
+<span class="lineNum">     863 </span>            :           }
+<span class="lineNum">     864 </span><span class="lineNoCov">          0 :           inMicLevelTmp = stt-&gt;micVol;</span>
+<span class="lineNum">     865 </span>            : 
+<span class="lineNum">     866 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">     867 </span>            : // stt-&gt;numBlocksMicLvlSat = 0;
+<span class="lineNum">     868 </span>            : #endif
+<span class="lineNum">     869 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">     870 </span>            :           fprintf(stt-&gt;fpt,
+<span class="lineNum">     871 </span>            :                   &quot;\tAGC-&gt;ProcessAnalog, frame %d: measure &gt;&quot;
+<span class="lineNum">     872 </span>            :                   &quot; UpperLim, micVol = %d, maxLevel = %d\n&quot;,
+<span class="lineNum">     873 </span>            :                   stt-&gt;fcount, stt-&gt;micVol, stt-&gt;maxLevel);
+<span class="lineNum">     874 </span>            : #endif
+<span class="lineNum">     875 </span>            :         }
+<span class="lineNum">     876 </span><span class="lineNoCov">          0 :       } else if (stt-&gt;Rxx160_LPw32 &lt; stt-&gt;lowerSecondaryLimit) {</span>
+<span class="lineNum">     877 </span><span class="lineNoCov">          0 :         stt-&gt;msTooHigh = 0;</span>
+<span class="lineNum">     878 </span><span class="lineNoCov">          0 :         stt-&gt;changeToSlowMode = 0;</span>
+<span class="lineNum">     879 </span><span class="lineNoCov">          0 :         stt-&gt;msTooLow += 2;</span>
+<span class="lineNum">     880 </span>            : 
+<span class="lineNum">     881 </span><span class="lineNoCov">          0 :         if (stt-&gt;msTooLow &gt; stt-&gt;msecSpeechOuterChange) {</span>
+<span class="lineNum">     882 </span>            :           /* Raise the recording level */
+<span class="lineNum">     883 </span>            :           int16_t index, weightFIX;
+<span class="lineNum">     884 </span><span class="lineNoCov">          0 :           int16_t volNormFIX = 16384;  // =1 in Q14.</span>
+<span class="lineNum">     885 </span>            : 
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 :           stt-&gt;msTooLow = 0;</span>
+<span class="lineNum">     887 </span>            : 
+<span class="lineNum">     888 </span>            :           /* Normalize the volume level */
+<span class="lineNum">     889 </span><span class="lineNoCov">          0 :           tmp32 = (inMicLevelTmp - stt-&gt;minLevel) &lt;&lt; 14;</span>
+<span class="lineNum">     890 </span><span class="lineNoCov">          0 :           if (stt-&gt;maxInit != stt-&gt;minLevel) {</span>
+<span class="lineNum">     891 </span><span class="lineNoCov">          0 :             volNormFIX = tmp32 / (stt-&gt;maxInit - stt-&gt;minLevel);</span>
+<span class="lineNum">     892 </span>            :           }
+<span class="lineNum">     893 </span>            : 
+<span class="lineNum">     894 </span>            :           /* Find correct curve */
+<span class="lineNum">     895 </span><span class="lineNoCov">          0 :           WebRtcAgc_ExpCurve(volNormFIX, &amp;index);</span>
+<span class="lineNum">     896 </span>            : 
+<span class="lineNum">     897 </span>            :           /* Compute weighting factor for the volume increase, 32^(-2*X)/2+1.05
+<span class="lineNum">     898 </span>            :            */
+<span class="lineNum">     899 </span><span class="lineNoCov">          0 :           weightFIX =</span>
+<span class="lineNum">     900 </span><span class="lineNoCov">          0 :               kOffset1[index] - (int16_t)((kSlope1[index] * volNormFIX) &gt;&gt; 13);</span>
+<span class="lineNum">     901 </span>            : 
+<span class="lineNum">     902 </span>            :           /* stt-&gt;Rxx160_LPw32 *= 1.047 [~0.2 dB]; */
+<span class="lineNum">     903 </span><span class="lineNoCov">          0 :           stt-&gt;Rxx160_LPw32 = (stt-&gt;Rxx160_LPw32 / 64) * 67;</span>
+<span class="lineNum">     904 </span>            : 
+<span class="lineNum">     905 </span><span class="lineNoCov">          0 :           tmp32 = inMicLevelTmp - stt-&gt;minLevel;</span>
+<span class="lineNum">     906 </span><span class="lineNoCov">          0 :           tmpU32 =</span>
+<span class="lineNum">     907 </span><span class="lineNoCov">          0 :               ((uint32_t)weightFIX * (uint32_t)(inMicLevelTmp - stt-&gt;minLevel));</span>
+<span class="lineNum">     908 </span><span class="lineNoCov">          0 :           stt-&gt;micVol = (tmpU32 &gt;&gt; 14) + stt-&gt;minLevel;</span>
+<span class="lineNum">     909 </span><span class="lineNoCov">          0 :           if (stt-&gt;micVol &lt; lastMicVol + 2) {</span>
+<span class="lineNum">     910 </span><span class="lineNoCov">          0 :             stt-&gt;micVol = lastMicVol + 2;</span>
+<span class="lineNum">     911 </span>            :           }
+<span class="lineNum">     912 </span>            : 
+<span class="lineNum">     913 </span><span class="lineNoCov">          0 :           inMicLevelTmp = stt-&gt;micVol;</span>
+<span class="lineNum">     914 </span>            : 
+<span class="lineNum">     915 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">     916 </span>            :           /* Count ms in level saturation */
+<span class="lineNum">     917 </span>            :           // if (stt-&gt;micVol &gt; stt-&gt;maxAnalog) {
+<span class="lineNum">     918 </span>            :           if (stt-&gt;micVol &gt; 150) {
+<span class="lineNum">     919 </span>            :             /* mic level is saturated */
+<span class="lineNum">     920 </span>            :             stt-&gt;numBlocksMicLvlSat++;
+<span class="lineNum">     921 </span>            :             fprintf(stderr, &quot;Sat mic Level: %d\n&quot;, stt-&gt;numBlocksMicLvlSat);
+<span class="lineNum">     922 </span>            :           }
+<span class="lineNum">     923 </span>            : #endif
+<span class="lineNum">     924 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">     925 </span>            :           fprintf(stt-&gt;fpt,
+<span class="lineNum">     926 </span>            :                   &quot;\tAGC-&gt;ProcessAnalog, frame %d: measure &lt;&quot;
+<span class="lineNum">     927 </span>            :                   &quot; 2ndLowerLim, micVol = %d\n&quot;,
+<span class="lineNum">     928 </span>            :                   stt-&gt;fcount, stt-&gt;micVol);
+<span class="lineNum">     929 </span>            : #endif
+<span class="lineNum">     930 </span>            :         }
+<span class="lineNum">     931 </span><span class="lineNoCov">          0 :       } else if (stt-&gt;Rxx160_LPw32 &lt; stt-&gt;lowerLimit) {</span>
+<span class="lineNum">     932 </span><span class="lineNoCov">          0 :         stt-&gt;msTooHigh = 0;</span>
+<span class="lineNum">     933 </span><span class="lineNoCov">          0 :         stt-&gt;changeToSlowMode = 0;</span>
+<span class="lineNum">     934 </span><span class="lineNoCov">          0 :         stt-&gt;msTooLow += 2;</span>
+<span class="lineNum">     935 </span>            : 
+<span class="lineNum">     936 </span><span class="lineNoCov">          0 :         if (stt-&gt;msTooLow &gt; stt-&gt;msecSpeechInnerChange) {</span>
+<span class="lineNum">     937 </span>            :           /* Raise the recording level */
+<span class="lineNum">     938 </span>            :           int16_t index, weightFIX;
+<span class="lineNum">     939 </span><span class="lineNoCov">          0 :           int16_t volNormFIX = 16384;  // =1 in Q14.</span>
+<span class="lineNum">     940 </span>            : 
+<span class="lineNum">     941 </span><span class="lineNoCov">          0 :           stt-&gt;msTooLow = 0;</span>
+<span class="lineNum">     942 </span>            : 
+<span class="lineNum">     943 </span>            :           /* Normalize the volume level */
+<span class="lineNum">     944 </span><span class="lineNoCov">          0 :           tmp32 = (inMicLevelTmp - stt-&gt;minLevel) &lt;&lt; 14;</span>
+<span class="lineNum">     945 </span><span class="lineNoCov">          0 :           if (stt-&gt;maxInit != stt-&gt;minLevel) {</span>
+<span class="lineNum">     946 </span><span class="lineNoCov">          0 :             volNormFIX = tmp32 / (stt-&gt;maxInit - stt-&gt;minLevel);</span>
+<span class="lineNum">     947 </span>            :           }
+<span class="lineNum">     948 </span>            : 
+<span class="lineNum">     949 </span>            :           /* Find correct curve */
+<span class="lineNum">     950 </span><span class="lineNoCov">          0 :           WebRtcAgc_ExpCurve(volNormFIX, &amp;index);</span>
+<span class="lineNum">     951 </span>            : 
+<span class="lineNum">     952 </span>            :           /* Compute weighting factor for the volume increase, (3.^(-2.*X))/8+1
+<span class="lineNum">     953 </span>            :            */
+<span class="lineNum">     954 </span><span class="lineNoCov">          0 :           weightFIX =</span>
+<span class="lineNum">     955 </span><span class="lineNoCov">          0 :               kOffset2[index] - (int16_t)((kSlope2[index] * volNormFIX) &gt;&gt; 13);</span>
+<span class="lineNum">     956 </span>            : 
+<span class="lineNum">     957 </span>            :           /* stt-&gt;Rxx160_LPw32 *= 1.047 [~0.2 dB]; */
+<span class="lineNum">     958 </span><span class="lineNoCov">          0 :           stt-&gt;Rxx160_LPw32 = (stt-&gt;Rxx160_LPw32 / 64) * 67;</span>
+<span class="lineNum">     959 </span>            : 
+<span class="lineNum">     960 </span><span class="lineNoCov">          0 :           tmp32 = inMicLevelTmp - stt-&gt;minLevel;</span>
+<span class="lineNum">     961 </span><span class="lineNoCov">          0 :           tmpU32 =</span>
+<span class="lineNum">     962 </span><span class="lineNoCov">          0 :               ((uint32_t)weightFIX * (uint32_t)(inMicLevelTmp - stt-&gt;minLevel));</span>
+<span class="lineNum">     963 </span><span class="lineNoCov">          0 :           stt-&gt;micVol = (tmpU32 &gt;&gt; 14) + stt-&gt;minLevel;</span>
+<span class="lineNum">     964 </span><span class="lineNoCov">          0 :           if (stt-&gt;micVol &lt; lastMicVol + 1) {</span>
+<span class="lineNum">     965 </span><span class="lineNoCov">          0 :             stt-&gt;micVol = lastMicVol + 1;</span>
+<span class="lineNum">     966 </span>            :           }
+<span class="lineNum">     967 </span>            : 
+<span class="lineNum">     968 </span><span class="lineNoCov">          0 :           inMicLevelTmp = stt-&gt;micVol;</span>
+<span class="lineNum">     969 </span>            : 
+<span class="lineNum">     970 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">     971 </span>            :           /* Count ms in level saturation */
+<span class="lineNum">     972 </span>            :           // if (stt-&gt;micVol &gt; stt-&gt;maxAnalog) {
+<span class="lineNum">     973 </span>            :           if (stt-&gt;micVol &gt; 150) {
+<span class="lineNum">     974 </span>            :             /* mic level is saturated */
+<span class="lineNum">     975 </span>            :             stt-&gt;numBlocksMicLvlSat++;
+<span class="lineNum">     976 </span>            :             fprintf(stderr, &quot;Sat mic Level: %d\n&quot;, stt-&gt;numBlocksMicLvlSat);
+<span class="lineNum">     977 </span>            :           }
+<span class="lineNum">     978 </span>            : #endif
+<span class="lineNum">     979 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">     980 </span>            :           fprintf(stt-&gt;fpt,
+<span class="lineNum">     981 </span>            :                   &quot;\tAGC-&gt;ProcessAnalog, frame %d: measure &lt; LowerLim, micVol &quot;
+<span class="lineNum">     982 </span>            :                   &quot;= %d\n&quot;,
+<span class="lineNum">     983 </span>            :                   stt-&gt;fcount, stt-&gt;micVol);
+<span class="lineNum">     984 </span>            : #endif
+<span class="lineNum">     985 </span>            :         }
+<span class="lineNum">     986 </span>            :       } else {
+<span class="lineNum">     987 </span>            :         /* The signal is inside the desired range which is:
+<span class="lineNum">     988 </span>            :          * lowerLimit &lt; Rxx160_LP/640 &lt; upperLimit
+<span class="lineNum">     989 </span>            :          */
+<span class="lineNum">     990 </span><span class="lineNoCov">          0 :         if (stt-&gt;changeToSlowMode &gt; 4000) {</span>
+<span class="lineNum">     991 </span><span class="lineNoCov">          0 :           stt-&gt;msecSpeechInnerChange = 1000;</span>
+<span class="lineNum">     992 </span><span class="lineNoCov">          0 :           stt-&gt;msecSpeechOuterChange = 500;</span>
+<span class="lineNum">     993 </span><span class="lineNoCov">          0 :           stt-&gt;upperLimit = stt-&gt;upperPrimaryLimit;</span>
+<span class="lineNum">     994 </span><span class="lineNoCov">          0 :           stt-&gt;lowerLimit = stt-&gt;lowerPrimaryLimit;</span>
+<span class="lineNum">     995 </span>            :         } else {
+<span class="lineNum">     996 </span><span class="lineNoCov">          0 :           stt-&gt;changeToSlowMode += 2;  // in milliseconds</span>
+<span class="lineNum">     997 </span>            :         }
+<span class="lineNum">     998 </span><span class="lineNoCov">          0 :         stt-&gt;msTooLow = 0;</span>
+<span class="lineNum">     999 </span><span class="lineNoCov">          0 :         stt-&gt;msTooHigh = 0;</span>
+<span class="lineNum">    1000 </span>            : 
+<span class="lineNum">    1001 </span><span class="lineNoCov">          0 :         stt-&gt;micVol = inMicLevelTmp;</span>
+<span class="lineNum">    1002 </span>            :       }
+<span class="lineNum">    1003 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">    1004 </span>            :       if (stt-&gt;numBlocksMicLvlSat &gt; NUM_BLOCKS_IN_SAT_BEFORE_CHANGE_TARGET) {
+<span class="lineNum">    1005 </span>            :         stt-&gt;micLvlSat = 1;
+<span class="lineNum">    1006 </span>            :         fprintf(stderr, &quot;target before = %d (%d)\n&quot;, stt-&gt;analogTargetLevel,
+<span class="lineNum">    1007 </span>            :                 stt-&gt;targetIdx);
+<span class="lineNum">    1008 </span>            :         WebRtcAgc_UpdateAgcThresholds(stt);
+<span class="lineNum">    1009 </span>            :         WebRtcAgc_CalculateGainTable(
+<span class="lineNum">    1010 </span>            :             &amp;(stt-&gt;digitalAgc.gainTable[0]), stt-&gt;compressionGaindB,
+<span class="lineNum">    1011 </span>            :             stt-&gt;targetLevelDbfs, stt-&gt;limiterEnable, stt-&gt;analogTarget);
+<span class="lineNum">    1012 </span>            :         stt-&gt;numBlocksMicLvlSat = 0;
+<span class="lineNum">    1013 </span>            :         stt-&gt;micLvlSat = 0;
+<span class="lineNum">    1014 </span>            :         fprintf(stderr, &quot;target offset = %d\n&quot;, stt-&gt;targetIdxOffset);
+<span class="lineNum">    1015 </span>            :         fprintf(stderr, &quot;target after  = %d (%d)\n&quot;, stt-&gt;analogTargetLevel,
+<span class="lineNum">    1016 </span>            :                 stt-&gt;targetIdx);
+<span class="lineNum">    1017 </span>            :       }
+<span class="lineNum">    1018 </span>            : #endif
+<span class="lineNum">    1019 </span>            :     }
+<span class="lineNum">    1020 </span>            :   }
+<span class="lineNum">    1021 </span>            : 
+<span class="lineNum">    1022 </span>            :   /* Ensure gain is not increased in presence of echo or after a mute event
+<span class="lineNum">    1023 </span>            :    * (but allow the zeroCtrl() increase on the frame of a mute detection).
+<span class="lineNum">    1024 </span>            :    */
+<span class="lineNum">    1025 </span><span class="lineNoCov">          0 :   if (echo == 1 ||</span>
+<span class="lineNum">    1026 </span><span class="lineNoCov">          0 :       (stt-&gt;muteGuardMs &gt; 0 &amp;&amp; stt-&gt;muteGuardMs &lt; kMuteGuardTimeMs)) {</span>
+<span class="lineNum">    1027 </span><span class="lineNoCov">          0 :     if (stt-&gt;micVol &gt; lastMicVol) {</span>
+<span class="lineNum">    1028 </span><span class="lineNoCov">          0 :       stt-&gt;micVol = lastMicVol;</span>
+<span class="lineNum">    1029 </span>            :     }
+<span class="lineNum">    1030 </span>            :   }
+<span class="lineNum">    1031 </span>            : 
+<span class="lineNum">    1032 </span>            :   /* limit the gain */
+<span class="lineNum">    1033 </span><span class="lineNoCov">          0 :   if (stt-&gt;micVol &gt; stt-&gt;maxLevel) {</span>
+<span class="lineNum">    1034 </span><span class="lineNoCov">          0 :     stt-&gt;micVol = stt-&gt;maxLevel;</span>
+<span class="lineNum">    1035 </span><span class="lineNoCov">          0 :   } else if (stt-&gt;micVol &lt; stt-&gt;minOutput) {</span>
+<span class="lineNum">    1036 </span><span class="lineNoCov">          0 :     stt-&gt;micVol = stt-&gt;minOutput;</span>
+<span class="lineNum">    1037 </span>            :   }
+<span class="lineNum">    1038 </span>            : 
+<span class="lineNum">    1039 </span><span class="lineNoCov">          0 :   *outMicLevel = WEBRTC_SPL_MIN(stt-&gt;micVol, stt-&gt;maxAnalog) &gt;&gt; stt-&gt;scale;</span>
+<span class="lineNum">    1040 </span>            : 
+<span class="lineNum">    1041 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="1042"><span class="lineNum">    1042 </span>            : }</a>
+<span class="lineNum">    1043 </span>            : 
+<span class="lineNum">    1044 </span><span class="lineNoCov">          0 : int WebRtcAgc_Process(void* agcInst,</span>
+<span class="lineNum">    1045 </span>            :                       const int16_t* const* in_near,
+<span class="lineNum">    1046 </span>            :                       size_t num_bands,
+<span class="lineNum">    1047 </span>            :                       size_t samples,
+<span class="lineNum">    1048 </span>            :                       int16_t* const* out,
+<span class="lineNum">    1049 </span>            :                       int32_t inMicLevel,
+<span class="lineNum">    1050 </span>            :                       int32_t* outMicLevel,
+<span class="lineNum">    1051 </span>            :                       int16_t echo,
+<span class="lineNum">    1052 </span>            :                       uint8_t* saturationWarning) {
+<span class="lineNum">    1053 </span>            :   LegacyAgc* stt;
+<span class="lineNum">    1054 </span>            : 
+<span class="lineNum">    1055 </span><span class="lineNoCov">          0 :   stt = (LegacyAgc*)agcInst;</span>
+<span class="lineNum">    1056 </span>            : 
+<span class="lineNum">    1057 </span>            :   //
+<span class="lineNum">    1058 </span><span class="lineNoCov">          0 :   if (stt == NULL) {</span>
+<span class="lineNum">    1059 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1060 </span>            :   }
+<span class="lineNum">    1061 </span>            :   //
+<span class="lineNum">    1062 </span>            : 
+<span class="lineNum">    1063 </span><span class="lineNoCov">          0 :   if (stt-&gt;fs == 8000) {</span>
+<span class="lineNum">    1064 </span><span class="lineNoCov">          0 :     if (samples != 80) {</span>
+<span class="lineNum">    1065 </span><span class="lineNoCov">          0 :       return -1;</span>
+<span class="lineNum">    1066 </span>            :     }
+<span class="lineNum">    1067 </span><span class="lineNoCov">          0 :   } else if (stt-&gt;fs == 16000 || stt-&gt;fs == 32000 || stt-&gt;fs == 48000) {</span>
+<span class="lineNum">    1068 </span><span class="lineNoCov">          0 :     if (samples != 160) {</span>
+<span class="lineNum">    1069 </span><span class="lineNoCov">          0 :       return -1;</span>
+<span class="lineNum">    1070 </span>            :     }
+<span class="lineNum">    1071 </span>            :   } else {
+<span class="lineNum">    1072 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1073 </span>            :   }
+<span class="lineNum">    1074 </span>            : 
+<span class="lineNum">    1075 </span><span class="lineNoCov">          0 :   *saturationWarning = 0;</span>
+<span class="lineNum">    1076 </span>            :   // TODO(minyue): PUT IN RANGE CHECKING FOR INPUT LEVELS
+<span class="lineNum">    1077 </span><span class="lineNoCov">          0 :   *outMicLevel = inMicLevel;</span>
+<span class="lineNum">    1078 </span>            : 
+<span class="lineNum">    1079 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1080 </span>            :   stt-&gt;fcount++;
+<span class="lineNum">    1081 </span>            : #endif
+<span class="lineNum">    1082 </span>            : 
+<span class="lineNum">    1083 </span><span class="lineNoCov">          0 :   if (WebRtcAgc_ProcessDigital(&amp;stt-&gt;digitalAgc, in_near, num_bands, out,</span>
+<span class="lineNum">    1084 </span><span class="lineNoCov">          0 :                                stt-&gt;fs, stt-&gt;lowLevelSignal) == -1) {</span>
+<span class="lineNum">    1085 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1086 </span>            :     fprintf(stt-&gt;fpt, &quot;AGC-&gt;Process, frame %d: Error from DigAGC\n\n&quot;,
+<span class="lineNum">    1087 </span>            :             stt-&gt;fcount);
+<span class="lineNum">    1088 </span>            : #endif
+<span class="lineNum">    1089 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1090 </span>            :   }
+<span class="lineNum">    1091 </span><span class="lineNoCov">          0 :   if (stt-&gt;agcMode &lt; kAgcModeFixedDigital &amp;&amp;</span>
+<span class="lineNum">    1092 </span><span class="lineNoCov">          0 :       (stt-&gt;lowLevelSignal == 0 || stt-&gt;agcMode != kAgcModeAdaptiveDigital)) {</span>
+<span class="lineNum">    1093 </span><span class="lineNoCov">          0 :     if (WebRtcAgc_ProcessAnalog(agcInst, inMicLevel, outMicLevel,</span>
+<span class="lineNum">    1094 </span><span class="lineNoCov">          0 :                                 stt-&gt;vadMic.logRatio, echo,</span>
+<span class="lineNum">    1095 </span>            :                                 saturationWarning) == -1) {
+<span class="lineNum">    1096 </span><span class="lineNoCov">          0 :       return -1;</span>
+<span class="lineNum">    1097 </span>            :     }
+<span class="lineNum">    1098 </span>            :   }
+<span class="lineNum">    1099 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1100 </span>            :   fprintf(stt-&gt;agcLog, &quot;%5d\t%d\t%d\t%d\t%d\n&quot;, stt-&gt;fcount, inMicLevel,
+<span class="lineNum">    1101 </span>            :           *outMicLevel, stt-&gt;maxLevel, stt-&gt;micVol);
+<span class="lineNum">    1102 </span>            : #endif
+<span class="lineNum">    1103 </span>            : 
+<span class="lineNum">    1104 </span>            :   /* update queue */
+<span class="lineNum">    1105 </span><span class="lineNoCov">          0 :   if (stt-&gt;inQueue &gt; 1) {</span>
+<span class="lineNum">    1106 </span><span class="lineNoCov">          0 :     memcpy(stt-&gt;env[0], stt-&gt;env[1], 10 * sizeof(int32_t));</span>
+<span class="lineNum">    1107 </span><span class="lineNoCov">          0 :     memcpy(stt-&gt;Rxx16w32_array[0], stt-&gt;Rxx16w32_array[1], 5 * sizeof(int32_t));</span>
+<span class="lineNum">    1108 </span>            :   }
+<span class="lineNum">    1109 </span>            : 
+<span class="lineNum">    1110 </span><span class="lineNoCov">          0 :   if (stt-&gt;inQueue &gt; 0) {</span>
+<span class="lineNum">    1111 </span><span class="lineNoCov">          0 :     stt-&gt;inQueue--;</span>
+<span class="lineNum">    1112 </span>            :   }
+<span class="lineNum">    1113 </span>            : 
+<span class="lineNum">    1114 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="1115"><span class="lineNum">    1115 </span>            : }</a>
+<span class="lineNum">    1116 </span>            : 
+<span class="lineNum">    1117 </span><span class="lineNoCov">          0 : int WebRtcAgc_set_config(void* agcInst, WebRtcAgcConfig agcConfig) {</span>
+<span class="lineNum">    1118 </span>            :   LegacyAgc* stt;
+<span class="lineNum">    1119 </span><span class="lineNoCov">          0 :   stt = (LegacyAgc*)agcInst;</span>
+<span class="lineNum">    1120 </span>            : 
+<span class="lineNum">    1121 </span><span class="lineNoCov">          0 :   if (stt == NULL) {</span>
+<span class="lineNum">    1122 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1123 </span>            :   }
+<span class="lineNum">    1124 </span>            : 
+<span class="lineNum">    1125 </span><span class="lineNoCov">          0 :   if (stt-&gt;initFlag != kInitCheck) {</span>
+<span class="lineNum">    1126 </span><span class="lineNoCov">          0 :     stt-&gt;lastError = AGC_UNINITIALIZED_ERROR;</span>
+<span class="lineNum">    1127 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1128 </span>            :   }
+<span class="lineNum">    1129 </span>            : 
+<span class="lineNum">    1130 </span><span class="lineNoCov">          0 :   if (agcConfig.limiterEnable != kAgcFalse &amp;&amp;</span>
+<span class="lineNum">    1131 </span><span class="lineNoCov">          0 :       agcConfig.limiterEnable != kAgcTrue) {</span>
+<span class="lineNum">    1132 </span><span class="lineNoCov">          0 :     stt-&gt;lastError = AGC_BAD_PARAMETER_ERROR;</span>
+<span class="lineNum">    1133 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1134 </span>            :   }
+<span class="lineNum">    1135 </span><span class="lineNoCov">          0 :   stt-&gt;limiterEnable = agcConfig.limiterEnable;</span>
+<span class="lineNum">    1136 </span><span class="lineNoCov">          0 :   stt-&gt;compressionGaindB = agcConfig.compressionGaindB;</span>
+<span class="lineNum">    1137 </span><span class="lineNoCov">          0 :   if ((agcConfig.targetLevelDbfs &lt; 0) || (agcConfig.targetLevelDbfs &gt; 31)) {</span>
+<span class="lineNum">    1138 </span><span class="lineNoCov">          0 :     stt-&gt;lastError = AGC_BAD_PARAMETER_ERROR;</span>
+<span class="lineNum">    1139 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1140 </span>            :   }
+<span class="lineNum">    1141 </span><span class="lineNoCov">          0 :   stt-&gt;targetLevelDbfs = agcConfig.targetLevelDbfs;</span>
+<span class="lineNum">    1142 </span>            : 
+<span class="lineNum">    1143 </span><span class="lineNoCov">          0 :   if (stt-&gt;agcMode == kAgcModeFixedDigital) {</span>
+<span class="lineNum">    1144 </span>            :     /* Adjust for different parameter interpretation in FixedDigital mode */
+<span class="lineNum">    1145 </span><span class="lineNoCov">          0 :     stt-&gt;compressionGaindB += agcConfig.targetLevelDbfs;</span>
+<span class="lineNum">    1146 </span>            :   }
+<span class="lineNum">    1147 </span>            : 
+<span class="lineNum">    1148 </span>            :   /* Update threshold levels for analog adaptation */
+<span class="lineNum">    1149 </span><span class="lineNoCov">          0 :   WebRtcAgc_UpdateAgcThresholds(stt);</span>
+<span class="lineNum">    1150 </span>            : 
+<span class="lineNum">    1151 </span>            :   /* Recalculate gain table */
+<span class="lineNum">    1152 </span><span class="lineNoCov">          0 :   if (WebRtcAgc_CalculateGainTable(</span>
+<span class="lineNum">    1153 </span><span class="lineNoCov">          0 :           &amp;(stt-&gt;digitalAgc.gainTable[0]), stt-&gt;compressionGaindB,</span>
+<span class="lineNum">    1154 </span><span class="lineNoCov">          0 :           stt-&gt;targetLevelDbfs, stt-&gt;limiterEnable, stt-&gt;analogTarget) == -1) {</span>
+<span class="lineNum">    1155 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1156 </span>            :     fprintf(stt-&gt;fpt, &quot;AGC-&gt;set_config, frame %d: Error from calcGainTable\n\n&quot;,
+<span class="lineNum">    1157 </span>            :             stt-&gt;fcount);
+<span class="lineNum">    1158 </span>            : #endif
+<span class="lineNum">    1159 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1160 </span>            :   }
+<span class="lineNum">    1161 </span>            :   /* Store the config in a WebRtcAgcConfig */
+<span class="lineNum">    1162 </span><span class="lineNoCov">          0 :   stt-&gt;usedConfig.compressionGaindB = agcConfig.compressionGaindB;</span>
+<span class="lineNum">    1163 </span><span class="lineNoCov">          0 :   stt-&gt;usedConfig.limiterEnable = agcConfig.limiterEnable;</span>
+<span class="lineNum">    1164 </span><span class="lineNoCov">          0 :   stt-&gt;usedConfig.targetLevelDbfs = agcConfig.targetLevelDbfs;</span>
+<span class="lineNum">    1165 </span>            : 
+<span class="lineNum">    1166 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="1167"><span class="lineNum">    1167 </span>            : }</a>
+<span class="lineNum">    1168 </span>            : 
+<span class="lineNum">    1169 </span><span class="lineNoCov">          0 : int WebRtcAgc_get_config(void* agcInst, WebRtcAgcConfig* config) {</span>
+<span class="lineNum">    1170 </span>            :   LegacyAgc* stt;
+<span class="lineNum">    1171 </span><span class="lineNoCov">          0 :   stt = (LegacyAgc*)agcInst;</span>
+<span class="lineNum">    1172 </span>            : 
+<span class="lineNum">    1173 </span><span class="lineNoCov">          0 :   if (stt == NULL) {</span>
+<span class="lineNum">    1174 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1175 </span>            :   }
+<span class="lineNum">    1176 </span>            : 
+<span class="lineNum">    1177 </span><span class="lineNoCov">          0 :   if (config == NULL) {</span>
+<span class="lineNum">    1178 </span><span class="lineNoCov">          0 :     stt-&gt;lastError = AGC_NULL_POINTER_ERROR;</span>
+<span class="lineNum">    1179 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1180 </span>            :   }
+<span class="lineNum">    1181 </span>            : 
+<span class="lineNum">    1182 </span><span class="lineNoCov">          0 :   if (stt-&gt;initFlag != kInitCheck) {</span>
+<span class="lineNum">    1183 </span><span class="lineNoCov">          0 :     stt-&gt;lastError = AGC_UNINITIALIZED_ERROR;</span>
+<span class="lineNum">    1184 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1185 </span>            :   }
+<span class="lineNum">    1186 </span>            : 
+<span class="lineNum">    1187 </span><span class="lineNoCov">          0 :   config-&gt;limiterEnable = stt-&gt;usedConfig.limiterEnable;</span>
+<span class="lineNum">    1188 </span><span class="lineNoCov">          0 :   config-&gt;targetLevelDbfs = stt-&gt;usedConfig.targetLevelDbfs;</span>
+<span class="lineNum">    1189 </span><span class="lineNoCov">          0 :   config-&gt;compressionGaindB = stt-&gt;usedConfig.compressionGaindB;</span>
+<span class="lineNum">    1190 </span>            : 
+<span class="lineNum">    1191 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="1192"><span class="lineNum">    1192 </span>            : }</a>
+<span class="lineNum">    1193 </span>            : 
+<span class="lineNum">    1194 </span><span class="lineNoCov">          0 : void* WebRtcAgc_Create() {</span>
+<span class="lineNum">    1195 </span><span class="lineNoCov">          0 :   LegacyAgc* stt = malloc(sizeof(LegacyAgc));</span>
+<span class="lineNum">    1196 </span>            : 
+<span class="lineNum">    1197 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1198 </span>            :   stt-&gt;fpt = fopen(&quot;./agc_test_log.txt&quot;, &quot;wt&quot;);
+<span class="lineNum">    1199 </span>            :   stt-&gt;agcLog = fopen(&quot;./agc_debug_log.txt&quot;, &quot;wt&quot;);
+<span class="lineNum">    1200 </span>            :   stt-&gt;digitalAgc.logFile = fopen(&quot;./agc_log.txt&quot;, &quot;wt&quot;);
+<span class="lineNum">    1201 </span>            : #endif
+<span class="lineNum">    1202 </span>            : 
+<span class="lineNum">    1203 </span><span class="lineNoCov">          0 :   stt-&gt;initFlag = 0;</span>
+<span class="lineNum">    1204 </span><span class="lineNoCov">          0 :   stt-&gt;lastError = 0;</span>
+<span class="lineNum">    1205 </span>            : 
+<span class="lineNum">    1206 </span><span class="lineNoCov">          0 :   return stt;</span>
+<a name="1207"><span class="lineNum">    1207 </span>            : }</a>
+<span class="lineNum">    1208 </span>            : 
+<span class="lineNum">    1209 </span><span class="lineNoCov">          0 : void WebRtcAgc_Free(void* state) {</span>
+<span class="lineNum">    1210 </span>            :   LegacyAgc* stt;
+<span class="lineNum">    1211 </span>            : 
+<span class="lineNum">    1212 </span><span class="lineNoCov">          0 :   stt = (LegacyAgc*)state;</span>
+<span class="lineNum">    1213 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1214 </span>            :   fclose(stt-&gt;fpt);
+<span class="lineNum">    1215 </span>            :   fclose(stt-&gt;agcLog);
+<span class="lineNum">    1216 </span>            :   fclose(stt-&gt;digitalAgc.logFile);
+<span class="lineNum">    1217 </span>            : #endif
+<span class="lineNum">    1218 </span><span class="lineNoCov">          0 :   free(stt);</span>
+<span class="lineNum">    1219 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">    1220 </span>            : 
+<span class="lineNum">    1221 </span>            : /* minLevel     - Minimum volume level
+<a name="1222"><span class="lineNum">    1222 </span>            :  * maxLevel     - Maximum volume level</a>
+<span class="lineNum">    1223 </span>            :  */
+<span class="lineNum">    1224 </span><span class="lineNoCov">          0 : int WebRtcAgc_Init(void* agcInst,</span>
+<span class="lineNum">    1225 </span>            :                    int32_t minLevel,
+<span class="lineNum">    1226 </span>            :                    int32_t maxLevel,
+<span class="lineNum">    1227 </span>            :                    int16_t agcMode,
+<span class="lineNum">    1228 </span>            :                    uint32_t fs) {
+<span class="lineNum">    1229 </span>            :   int32_t max_add, tmp32;
+<span class="lineNum">    1230 </span>            :   int16_t i;
+<span class="lineNum">    1231 </span>            :   int tmpNorm;
+<span class="lineNum">    1232 </span>            :   LegacyAgc* stt;
+<span class="lineNum">    1233 </span>            : 
+<span class="lineNum">    1234 </span>            :   /* typecast state pointer */
+<span class="lineNum">    1235 </span><span class="lineNoCov">          0 :   stt = (LegacyAgc*)agcInst;</span>
+<span class="lineNum">    1236 </span>            : 
+<span class="lineNum">    1237 </span><span class="lineNoCov">          0 :   if (WebRtcAgc_InitDigital(&amp;stt-&gt;digitalAgc, agcMode) != 0) {</span>
+<span class="lineNum">    1238 </span><span class="lineNoCov">          0 :     stt-&gt;lastError = AGC_UNINITIALIZED_ERROR;</span>
+<span class="lineNum">    1239 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1240 </span>            :   }
+<span class="lineNum">    1241 </span>            : 
+<span class="lineNum">    1242 </span>            :   /* Analog AGC variables */
+<span class="lineNum">    1243 </span><span class="lineNoCov">          0 :   stt-&gt;envSum = 0;</span>
+<span class="lineNum">    1244 </span>            : 
+<span class="lineNum">    1245 </span>            : /* mode     = 0 - Only saturation protection
+<span class="lineNum">    1246 </span>            :  *            1 - Analog Automatic Gain Control [-targetLevelDbfs (default -3
+<span class="lineNum">    1247 </span>            :  * dBOv)]
+<span class="lineNum">    1248 </span>            :  *            2 - Digital Automatic Gain Control [-targetLevelDbfs (default -3
+<span class="lineNum">    1249 </span>            :  * dBOv)]
+<span class="lineNum">    1250 </span>            :  *            3 - Fixed Digital Gain [compressionGaindB (default 8 dB)]
+<span class="lineNum">    1251 </span>            :  */
+<span class="lineNum">    1252 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1253 </span>            :   stt-&gt;fcount = 0;
+<span class="lineNum">    1254 </span>            :   fprintf(stt-&gt;fpt, &quot;AGC-&gt;Init\n&quot;);
+<span class="lineNum">    1255 </span>            : #endif
+<span class="lineNum">    1256 </span><span class="lineNoCov">          0 :   if (agcMode &lt; kAgcModeUnchanged || agcMode &gt; kAgcModeFixedDigital) {</span>
+<span class="lineNum">    1257 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1258 </span>            :     fprintf(stt-&gt;fpt, &quot;AGC-&gt;Init: error, incorrect mode\n\n&quot;);
+<span class="lineNum">    1259 </span>            : #endif
+<span class="lineNum">    1260 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1261 </span>            :   }
+<span class="lineNum">    1262 </span><span class="lineNoCov">          0 :   stt-&gt;agcMode = agcMode;</span>
+<span class="lineNum">    1263 </span><span class="lineNoCov">          0 :   stt-&gt;fs = fs;</span>
+<span class="lineNum">    1264 </span>            : 
+<span class="lineNum">    1265 </span>            :   /* initialize input VAD */
+<span class="lineNum">    1266 </span><span class="lineNoCov">          0 :   WebRtcAgc_InitVad(&amp;stt-&gt;vadMic);</span>
+<span class="lineNum">    1267 </span>            : 
+<span class="lineNum">    1268 </span>            :   /* If the volume range is smaller than 0-256 then
+<span class="lineNum">    1269 </span>            :    * the levels are shifted up to Q8-domain */
+<span class="lineNum">    1270 </span><span class="lineNoCov">          0 :   tmpNorm = WebRtcSpl_NormU32((uint32_t)maxLevel);</span>
+<span class="lineNum">    1271 </span><span class="lineNoCov">          0 :   stt-&gt;scale = tmpNorm - 23;</span>
+<span class="lineNum">    1272 </span><span class="lineNoCov">          0 :   if (stt-&gt;scale &lt; 0) {</span>
+<span class="lineNum">    1273 </span><span class="lineNoCov">          0 :     stt-&gt;scale = 0;</span>
+<span class="lineNum">    1274 </span>            :   }
+<span class="lineNum">    1275 </span>            :   // TODO(bjornv): Investigate if we really need to scale up a small range now
+<span class="lineNum">    1276 </span>            :   // when we have
+<span class="lineNum">    1277 </span>            :   // a guard against zero-increments. For now, we do not support scale up (scale
+<span class="lineNum">    1278 </span>            :   // = 0).
+<span class="lineNum">    1279 </span><span class="lineNoCov">          0 :   stt-&gt;scale = 0;</span>
+<span class="lineNum">    1280 </span><span class="lineNoCov">          0 :   maxLevel &lt;&lt;= stt-&gt;scale;</span>
+<span class="lineNum">    1281 </span><span class="lineNoCov">          0 :   minLevel &lt;&lt;= stt-&gt;scale;</span>
+<span class="lineNum">    1282 </span>            : 
+<span class="lineNum">    1283 </span>            :   /* Make minLevel and maxLevel static in AdaptiveDigital */
+<span class="lineNum">    1284 </span><span class="lineNoCov">          0 :   if (stt-&gt;agcMode == kAgcModeAdaptiveDigital) {</span>
+<span class="lineNum">    1285 </span><span class="lineNoCov">          0 :     minLevel = 0;</span>
+<span class="lineNum">    1286 </span><span class="lineNoCov">          0 :     maxLevel = 255;</span>
+<span class="lineNum">    1287 </span><span class="lineNoCov">          0 :     stt-&gt;scale = 0;</span>
+<span class="lineNum">    1288 </span>            :   }
+<span class="lineNum">    1289 </span>            :   /* The maximum supplemental volume range is based on a vague idea
+<span class="lineNum">    1290 </span>            :    * of how much lower the gain will be than the real analog gain. */
+<span class="lineNum">    1291 </span><span class="lineNoCov">          0 :   max_add = (maxLevel - minLevel) / 4;</span>
+<span class="lineNum">    1292 </span>            : 
+<span class="lineNum">    1293 </span>            :   /* Minimum/maximum volume level that can be set */
+<span class="lineNum">    1294 </span><span class="lineNoCov">          0 :   stt-&gt;minLevel = minLevel;</span>
+<span class="lineNum">    1295 </span><span class="lineNoCov">          0 :   stt-&gt;maxAnalog = maxLevel;</span>
+<span class="lineNum">    1296 </span><span class="lineNoCov">          0 :   stt-&gt;maxLevel = maxLevel + max_add;</span>
+<span class="lineNum">    1297 </span><span class="lineNoCov">          0 :   stt-&gt;maxInit = stt-&gt;maxLevel;</span>
+<span class="lineNum">    1298 </span>            : 
+<span class="lineNum">    1299 </span><span class="lineNoCov">          0 :   stt-&gt;zeroCtrlMax = stt-&gt;maxAnalog;</span>
+<span class="lineNum">    1300 </span><span class="lineNoCov">          0 :   stt-&gt;lastInMicLevel = 0;</span>
+<span class="lineNum">    1301 </span>            : 
+<span class="lineNum">    1302 </span>            :   /* Initialize micVol parameter */
+<span class="lineNum">    1303 </span><span class="lineNoCov">          0 :   stt-&gt;micVol = stt-&gt;maxAnalog;</span>
+<span class="lineNum">    1304 </span><span class="lineNoCov">          0 :   if (stt-&gt;agcMode == kAgcModeAdaptiveDigital) {</span>
+<span class="lineNum">    1305 </span><span class="lineNoCov">          0 :     stt-&gt;micVol = 127; /* Mid-point of mic level */</span>
+<span class="lineNum">    1306 </span>            :   }
+<span class="lineNum">    1307 </span><span class="lineNoCov">          0 :   stt-&gt;micRef = stt-&gt;micVol;</span>
+<span class="lineNum">    1308 </span><span class="lineNoCov">          0 :   stt-&gt;micGainIdx = 127;</span>
+<span class="lineNum">    1309 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">    1310 </span>            :   stt-&gt;numBlocksMicLvlSat = 0;
+<span class="lineNum">    1311 </span>            :   stt-&gt;micLvlSat = 0;
+<span class="lineNum">    1312 </span>            : #endif
+<span class="lineNum">    1313 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1314 </span>            :   fprintf(stt-&gt;fpt, &quot;AGC-&gt;Init: minLevel = %d, maxAnalog = %d, maxLevel = %d\n&quot;,
+<span class="lineNum">    1315 </span>            :           stt-&gt;minLevel, stt-&gt;maxAnalog, stt-&gt;maxLevel);
+<span class="lineNum">    1316 </span>            : #endif
+<span class="lineNum">    1317 </span>            : 
+<span class="lineNum">    1318 </span>            :   /* Minimum output volume is 4% higher than the available lowest volume level
+<span class="lineNum">    1319 </span>            :    */
+<span class="lineNum">    1320 </span><span class="lineNoCov">          0 :   tmp32 = ((stt-&gt;maxLevel - stt-&gt;minLevel) * 10) &gt;&gt; 8;</span>
+<span class="lineNum">    1321 </span><span class="lineNoCov">          0 :   stt-&gt;minOutput = (stt-&gt;minLevel + tmp32);</span>
+<span class="lineNum">    1322 </span>            : 
+<span class="lineNum">    1323 </span><span class="lineNoCov">          0 :   stt-&gt;msTooLow = 0;</span>
+<span class="lineNum">    1324 </span><span class="lineNoCov">          0 :   stt-&gt;msTooHigh = 0;</span>
+<span class="lineNum">    1325 </span><span class="lineNoCov">          0 :   stt-&gt;changeToSlowMode = 0;</span>
+<span class="lineNum">    1326 </span><span class="lineNoCov">          0 :   stt-&gt;firstCall = 0;</span>
+<span class="lineNum">    1327 </span><span class="lineNoCov">          0 :   stt-&gt;msZero = 0;</span>
+<span class="lineNum">    1328 </span><span class="lineNoCov">          0 :   stt-&gt;muteGuardMs = 0;</span>
+<span class="lineNum">    1329 </span><span class="lineNoCov">          0 :   stt-&gt;gainTableIdx = 0;</span>
+<span class="lineNum">    1330 </span>            : 
+<span class="lineNum">    1331 </span><span class="lineNoCov">          0 :   stt-&gt;msecSpeechInnerChange = kMsecSpeechInner;</span>
+<span class="lineNum">    1332 </span><span class="lineNoCov">          0 :   stt-&gt;msecSpeechOuterChange = kMsecSpeechOuter;</span>
+<span class="lineNum">    1333 </span>            : 
+<span class="lineNum">    1334 </span><span class="lineNoCov">          0 :   stt-&gt;activeSpeech = 0;</span>
+<span class="lineNum">    1335 </span><span class="lineNoCov">          0 :   stt-&gt;Rxx16_LPw32Max = 0;</span>
+<span class="lineNum">    1336 </span>            : 
+<span class="lineNum">    1337 </span><span class="lineNoCov">          0 :   stt-&gt;vadThreshold = kNormalVadThreshold;</span>
+<span class="lineNum">    1338 </span><span class="lineNoCov">          0 :   stt-&gt;inActive = 0;</span>
+<span class="lineNum">    1339 </span>            : 
+<span class="lineNum">    1340 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; RXX_BUFFER_LEN; i++) {</span>
+<span class="lineNum">    1341 </span><span class="lineNoCov">          0 :     stt-&gt;Rxx16_vectorw32[i] = (int32_t)1000; /* -54dBm0 */</span>
+<span class="lineNum">    1342 </span>            :   }
+<span class="lineNum">    1343 </span><span class="lineNoCov">          0 :   stt-&gt;Rxx160w32 =</span>
+<span class="lineNum">    1344 </span>            :       125 * RXX_BUFFER_LEN; /* (stt-&gt;Rxx16_vectorw32[0]&gt;&gt;3) = 125 */
+<span class="lineNum">    1345 </span>            : 
+<span class="lineNum">    1346 </span><span class="lineNoCov">          0 :   stt-&gt;Rxx16pos = 0;</span>
+<span class="lineNum">    1347 </span><span class="lineNoCov">          0 :   stt-&gt;Rxx16_LPw32 = (int32_t)16284; /* Q(-4) */</span>
+<span class="lineNum">    1348 </span>            : 
+<span class="lineNum">    1349 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; 5; i++) {</span>
+<span class="lineNum">    1350 </span><span class="lineNoCov">          0 :     stt-&gt;Rxx16w32_array[0][i] = 0;</span>
+<span class="lineNum">    1351 </span>            :   }
+<span class="lineNum">    1352 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; 10; i++) {</span>
+<span class="lineNum">    1353 </span><span class="lineNoCov">          0 :     stt-&gt;env[0][i] = 0;</span>
+<span class="lineNum">    1354 </span><span class="lineNoCov">          0 :     stt-&gt;env[1][i] = 0;</span>
+<span class="lineNum">    1355 </span>            :   }
+<span class="lineNum">    1356 </span><span class="lineNoCov">          0 :   stt-&gt;inQueue = 0;</span>
+<span class="lineNum">    1357 </span>            : 
+<span class="lineNum">    1358 </span>            : #ifdef MIC_LEVEL_FEEDBACK
+<span class="lineNum">    1359 </span>            :   stt-&gt;targetIdxOffset = 0;
+<span class="lineNum">    1360 </span>            : #endif
+<span class="lineNum">    1361 </span>            : 
+<span class="lineNum">    1362 </span><span class="lineNoCov">          0 :   WebRtcSpl_MemSetW32(stt-&gt;filterState, 0, 8);</span>
+<span class="lineNum">    1363 </span>            : 
+<span class="lineNum">    1364 </span><span class="lineNoCov">          0 :   stt-&gt;initFlag = kInitCheck;</span>
+<span class="lineNum">    1365 </span>            :   // Default config settings.
+<span class="lineNum">    1366 </span><span class="lineNoCov">          0 :   stt-&gt;defaultConfig.limiterEnable = kAgcTrue;</span>
+<span class="lineNum">    1367 </span><span class="lineNoCov">          0 :   stt-&gt;defaultConfig.targetLevelDbfs = AGC_DEFAULT_TARGET_LEVEL;</span>
+<span class="lineNum">    1368 </span><span class="lineNoCov">          0 :   stt-&gt;defaultConfig.compressionGaindB = AGC_DEFAULT_COMP_GAIN;</span>
+<span class="lineNum">    1369 </span>            : 
+<span class="lineNum">    1370 </span><span class="lineNoCov">          0 :   if (WebRtcAgc_set_config(stt, stt-&gt;defaultConfig) == -1) {</span>
+<span class="lineNum">    1371 </span><span class="lineNoCov">          0 :     stt-&gt;lastError = AGC_UNSPECIFIED_ERROR;</span>
+<span class="lineNum">    1372 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1373 </span>            :   }
+<span class="lineNum">    1374 </span><span class="lineNoCov">          0 :   stt-&gt;Rxx160_LPw32 = stt-&gt;analogTargetLevel;  // Initialize rms value</span>
+<span class="lineNum">    1375 </span>            : 
+<span class="lineNum">    1376 </span><span class="lineNoCov">          0 :   stt-&gt;lowLevelSignal = 0;</span>
+<span class="lineNum">    1377 </span>            : 
+<span class="lineNum">    1378 </span>            :   /* Only positive values are allowed that are not too large */
+<span class="lineNum">    1379 </span><span class="lineNoCov">          0 :   if ((minLevel &gt;= maxLevel) || (maxLevel &amp; 0xFC000000)) {</span>
+<span class="lineNum">    1380 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1381 </span>            :     fprintf(stt-&gt;fpt, &quot;minLevel, maxLevel value(s) are invalid\n\n&quot;);
+<span class="lineNum">    1382 </span>            : #endif
+<span class="lineNum">    1383 </span><span class="lineNoCov">          0 :     return -1;</span>
+<span class="lineNum">    1384 </span>            :   } else {
+<span class="lineNum">    1385 </span>            : #ifdef WEBRTC_AGC_DEBUG_DUMP
+<span class="lineNum">    1386 </span>            :     fprintf(stt-&gt;fpt, &quot;\n&quot;);
+<span class="lineNum">    1387 </span>            : #endif
+<span class="lineNum">    1388 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">    1389 </span>            :   }
+<span class="lineNum">    1390 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

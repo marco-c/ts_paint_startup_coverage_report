@@ -1,0 +1,964 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/libvpx/libvpx/vp8/decoder/threading.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../index.html">top level</a> - <a href="index.html">media/libvpx/libvpx/vp8/decoder</a> - threading.c<span style="font-size: 80%;"> (source / <a href="threading.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">435</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2010 The WebM project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;vpx_config.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;vp8_rtcd.h&quot;
+<span class="lineNum">      13 </span>            : #if !defined(WIN32) &amp;&amp; CONFIG_OS_SUPPORT == 1
+<span class="lineNum">      14 </span>            : #include &lt;unistd.h&gt;
+<span class="lineNum">      15 </span>            : #endif
+<span class="lineNum">      16 </span>            : #include &quot;onyxd_int.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;vpx_mem/vpx_mem.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;vp8/common/threading.h&quot;
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : #include &quot;vp8/common/loopfilter.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;vp8/common/extend.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;vpx_ports/vpx_timer.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;detokenize.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;vp8/common/reconintra4x4.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;vp8/common/reconinter.h&quot;
+<span class="lineNum">      26 </span>            : #include &quot;vp8/common/reconintra.h&quot;
+<span class="lineNum">      27 </span>            : #include &quot;vp8/common/setupintrarecon.h&quot;
+<span class="lineNum">      28 </span>            : #if CONFIG_ERROR_CONCEALMENT
+<span class="lineNum">      29 </span>            : #include &quot;error_concealment.h&quot;
+<span class="lineNum">      30 </span>            : #endif
+<span class="lineNum">      31 </span>            : 
+<span class="lineNum">      32 </span>            : #define CALLOC_ARRAY(p, n) CHECK_MEM_ERROR((p), vpx_calloc(sizeof(*(p)), (n)))
+<span class="lineNum">      33 </span>            : #define CALLOC_ARRAY_ALIGNED(p, n, algn)                            \
+<span class="lineNum">      34 </span>            :   do {                                                              \
+<span class="lineNum">      35 </span>            :     CHECK_MEM_ERROR((p), vpx_memalign((algn), sizeof(*(p)) * (n))); \
+<span class="lineNum">      36 </span>            :     memset((p), 0, (n) * sizeof(*(p)));                             \
+<span class="lineNum">      37 </span>            :   } while (0)
+<span class="lineNum">      38 </span>            : 
+<a name="39"><span class="lineNum">      39 </span>            : void vp8_mb_init_dequantizer(VP8D_COMP *pbi, MACROBLOCKD *xd);</a>
+<span class="lineNum">      40 </span>            : 
+<span class="lineNum">      41 </span><span class="lineNoCov">          0 : static void setup_decoding_thread_data(VP8D_COMP *pbi, MACROBLOCKD *xd,</span>
+<span class="lineNum">      42 </span>            :                                        MB_ROW_DEC *mbrd, int count) {
+<span class="lineNum">      43 </span><span class="lineNoCov">          0 :   VP8_COMMON *const pc = &amp;pbi-&gt;common;</span>
+<span class="lineNum">      44 </span>            :   int i;
+<span class="lineNum">      45 </span>            : 
+<span class="lineNum">      46 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; count; ++i) {</span>
+<span class="lineNum">      47 </span><span class="lineNoCov">          0 :     MACROBLOCKD *mbd = &amp;mbrd[i].mbd;</span>
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 :     mbd-&gt;subpixel_predict = xd-&gt;subpixel_predict;</span>
+<span class="lineNum">      49 </span><span class="lineNoCov">          0 :     mbd-&gt;subpixel_predict8x4 = xd-&gt;subpixel_predict8x4;</span>
+<span class="lineNum">      50 </span><span class="lineNoCov">          0 :     mbd-&gt;subpixel_predict8x8 = xd-&gt;subpixel_predict8x8;</span>
+<span class="lineNum">      51 </span><span class="lineNoCov">          0 :     mbd-&gt;subpixel_predict16x16 = xd-&gt;subpixel_predict16x16;</span>
+<span class="lineNum">      52 </span>            : 
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 :     mbd-&gt;frame_type = pc-&gt;frame_type;</span>
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 :     mbd-&gt;pre = xd-&gt;pre;</span>
+<span class="lineNum">      55 </span><span class="lineNoCov">          0 :     mbd-&gt;dst = xd-&gt;dst;</span>
+<span class="lineNum">      56 </span>            : 
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :     mbd-&gt;segmentation_enabled = xd-&gt;segmentation_enabled;</span>
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 :     mbd-&gt;mb_segement_abs_delta = xd-&gt;mb_segement_abs_delta;</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :     memcpy(mbd-&gt;segment_feature_data, xd-&gt;segment_feature_data,</span>
+<span class="lineNum">      60 </span>            :            sizeof(xd-&gt;segment_feature_data));
+<span class="lineNum">      61 </span>            : 
+<span class="lineNum">      62 </span>            :     /*signed char ref_lf_deltas[MAX_REF_LF_DELTAS];*/
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :     memcpy(mbd-&gt;ref_lf_deltas, xd-&gt;ref_lf_deltas, sizeof(xd-&gt;ref_lf_deltas));</span>
+<span class="lineNum">      64 </span>            :     /*signed char mode_lf_deltas[MAX_MODE_LF_DELTAS];*/
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :     memcpy(mbd-&gt;mode_lf_deltas, xd-&gt;mode_lf_deltas, sizeof(xd-&gt;mode_lf_deltas));</span>
+<span class="lineNum">      66 </span>            :     /*unsigned char mode_ref_lf_delta_enabled;
+<span class="lineNum">      67 </span>            :     unsigned char mode_ref_lf_delta_update;*/
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :     mbd-&gt;mode_ref_lf_delta_enabled = xd-&gt;mode_ref_lf_delta_enabled;</span>
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :     mbd-&gt;mode_ref_lf_delta_update = xd-&gt;mode_ref_lf_delta_update;</span>
+<span class="lineNum">      70 </span>            : 
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :     mbd-&gt;current_bc = &amp;pbi-&gt;mbc[0];</span>
+<span class="lineNum">      72 </span>            : 
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :     memcpy(mbd-&gt;dequant_y1_dc, xd-&gt;dequant_y1_dc, sizeof(xd-&gt;dequant_y1_dc));</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :     memcpy(mbd-&gt;dequant_y1, xd-&gt;dequant_y1, sizeof(xd-&gt;dequant_y1));</span>
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 :     memcpy(mbd-&gt;dequant_y2, xd-&gt;dequant_y2, sizeof(xd-&gt;dequant_y2));</span>
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :     memcpy(mbd-&gt;dequant_uv, xd-&gt;dequant_uv, sizeof(xd-&gt;dequant_uv));</span>
+<span class="lineNum">      77 </span>            : 
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :     mbd-&gt;fullpixel_mask = 0xffffffff;</span>
+<span class="lineNum">      79 </span>            : 
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :     if (pc-&gt;full_pixel) mbd-&gt;fullpixel_mask = 0xfffffff8;</span>
+<span class="lineNum">      81 </span>            :   }
+<span class="lineNum">      82 </span>            : 
+<span class="lineNum">      83 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; pc-&gt;mb_rows; ++i) pbi-&gt;mt_current_mb_col[i] = -1;</span>
+<a name="84"><span class="lineNum">      84 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      85 </span>            : 
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 : static void mt_decode_macroblock(VP8D_COMP *pbi, MACROBLOCKD *xd,</span>
+<span class="lineNum">      87 </span>            :                                  unsigned int mb_idx) {
+<span class="lineNum">      88 </span>            :   MB_PREDICTION_MODE mode;
+<span class="lineNum">      89 </span>            :   int i;
+<span class="lineNum">      90 </span>            : #if CONFIG_ERROR_CONCEALMENT
+<span class="lineNum">      91 </span>            :   int corruption_detected = 0;
+<span class="lineNum">      92 </span>            : #else
+<span class="lineNum">      93 </span>            :   (void)mb_idx;
+<span class="lineNum">      94 </span>            : #endif
+<span class="lineNum">      95 </span>            : 
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :   if (xd-&gt;mode_info_context-&gt;mbmi.mb_skip_coeff) {</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :     vp8_reset_mb_tokens_context(xd);</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :   } else if (!vp8dx_bool_error(xd-&gt;current_bc)) {</span>
+<span class="lineNum">      99 </span>            :     int eobtotal;
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :     eobtotal = vp8_decode_mb_tokens(pbi, xd);</span>
+<span class="lineNum">     101 </span>            : 
+<span class="lineNum">     102 </span>            :     /* Special case:  Force the loopfilter to skip when eobtotal is zero */
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :     xd-&gt;mode_info_context-&gt;mbmi.mb_skip_coeff = (eobtotal == 0);</span>
+<span class="lineNum">     104 </span>            :   }
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :   mode = xd-&gt;mode_info_context-&gt;mbmi.mode;</span>
+<span class="lineNum">     107 </span>            : 
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :   if (xd-&gt;segmentation_enabled) vp8_mb_init_dequantizer(pbi, xd);</span>
+<span class="lineNum">     109 </span>            : 
+<span class="lineNum">     110 </span>            : #if CONFIG_ERROR_CONCEALMENT
+<span class="lineNum">     111 </span>            : 
+<span class="lineNum">     112 </span>            :   if (pbi-&gt;ec_active) {
+<span class="lineNum">     113 </span>            :     int throw_residual;
+<span class="lineNum">     114 </span>            :     /* When we have independent partitions we can apply residual even
+<span class="lineNum">     115 </span>            :      * though other partitions within the frame are corrupt.
+<span class="lineNum">     116 </span>            :      */
+<span class="lineNum">     117 </span>            :     throw_residual =
+<span class="lineNum">     118 </span>            :         (!pbi-&gt;independent_partitions &amp;&amp; pbi-&gt;frame_corrupt_residual);
+<span class="lineNum">     119 </span>            :     throw_residual = (throw_residual || vp8dx_bool_error(xd-&gt;current_bc));
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span>            :     if ((mb_idx &gt;= pbi-&gt;mvs_corrupt_from_mb || throw_residual)) {
+<span class="lineNum">     122 </span>            :       /* MB with corrupt residuals or corrupt mode/motion vectors.
+<span class="lineNum">     123 </span>            :        * Better to use the predictor as reconstruction.
+<span class="lineNum">     124 </span>            :        */
+<span class="lineNum">     125 </span>            :       pbi-&gt;frame_corrupt_residual = 1;
+<span class="lineNum">     126 </span>            :       memset(xd-&gt;qcoeff, 0, sizeof(xd-&gt;qcoeff));
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span>            :       corruption_detected = 1;
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span>            :       /* force idct to be skipped for B_PRED and use the
+<span class="lineNum">     131 </span>            :        * prediction only for reconstruction
+<span class="lineNum">     132 </span>            :        * */
+<span class="lineNum">     133 </span>            :       memset(xd-&gt;eobs, 0, 25);
+<span class="lineNum">     134 </span>            :     }
+<span class="lineNum">     135 </span>            :   }
+<span class="lineNum">     136 </span>            : #endif
+<span class="lineNum">     137 </span>            : 
+<span class="lineNum">     138 </span>            :   /* do prediction */
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   if (xd-&gt;mode_info_context-&gt;mbmi.ref_frame == INTRA_FRAME) {</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     vp8_build_intra_predictors_mbuv_s(</span>
+<span class="lineNum">     141 </span>            :         xd, xd-&gt;recon_above[1], xd-&gt;recon_above[2], xd-&gt;recon_left[1],
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :         xd-&gt;recon_left[2], xd-&gt;recon_left_stride[1], xd-&gt;dst.u_buffer,</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :         xd-&gt;dst.v_buffer, xd-&gt;dst.uv_stride);</span>
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :     if (mode != B_PRED) {</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :       vp8_build_intra_predictors_mby_s(</span>
+<span class="lineNum">     147 </span>            :           xd, xd-&gt;recon_above[0], xd-&gt;recon_left[0], xd-&gt;recon_left_stride[0],
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :           xd-&gt;dst.y_buffer, xd-&gt;dst.y_stride);</span>
+<span class="lineNum">     149 </span>            :     } else {
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :       short *DQC = xd-&gt;dequant_y1;</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :       int dst_stride = xd-&gt;dst.y_stride;</span>
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span>            :       /* clear out residual eob info */
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :       if (xd-&gt;mode_info_context-&gt;mbmi.mb_skip_coeff) memset(xd-&gt;eobs, 0, 25);</span>
+<span class="lineNum">     155 </span>            : 
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :       intra_prediction_down_copy(xd, xd-&gt;recon_above[0] + 16);</span>
+<span class="lineNum">     157 </span>            : 
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :       for (i = 0; i &lt; 16; ++i) {</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :         BLOCKD *b = &amp;xd-&gt;block[i];</span>
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :         unsigned char *dst = xd-&gt;dst.y_buffer + b-&gt;offset;</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :         B_PREDICTION_MODE b_mode = xd-&gt;mode_info_context-&gt;bmi[i].as_mode;</span>
+<span class="lineNum">     162 </span>            :         unsigned char *Above;
+<span class="lineNum">     163 </span>            :         unsigned char *yleft;
+<span class="lineNum">     164 </span>            :         int left_stride;
+<span class="lineNum">     165 </span>            :         unsigned char top_left;
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span>            :         /*Caution: For some b_mode, it needs 8 pixels (4 above + 4
+<span class="lineNum">     168 </span>            :          * above-right).*/
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :         if (i &lt; 4 &amp;&amp; pbi-&gt;common.filter_level) {</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :           Above = xd-&gt;recon_above[0] + b-&gt;offset;</span>
+<span class="lineNum">     171 </span>            :         } else {
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :           Above = dst - dst_stride;</span>
+<span class="lineNum">     173 </span>            :         }
+<span class="lineNum">     174 </span>            : 
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :         if (i % 4 == 0 &amp;&amp; pbi-&gt;common.filter_level) {</span>
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :           yleft = xd-&gt;recon_left[0] + i;</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :           left_stride = 1;</span>
+<span class="lineNum">     178 </span>            :         } else {
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :           yleft = dst - 1;</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :           left_stride = dst_stride;</span>
+<span class="lineNum">     181 </span>            :         }
+<span class="lineNum">     182 </span>            : 
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :         if ((i == 4 || i == 8 || i == 12) &amp;&amp; pbi-&gt;common.filter_level) {</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :           top_left = *(xd-&gt;recon_left[0] + i - 1);</span>
+<span class="lineNum">     185 </span>            :         } else {
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :           top_left = Above[-1];</span>
+<span class="lineNum">     187 </span>            :         }
+<span class="lineNum">     188 </span>            : 
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :         vp8_intra4x4_predict(Above, yleft, left_stride, b_mode, dst, dst_stride,</span>
+<span class="lineNum">     190 </span>            :                              top_left);
+<span class="lineNum">     191 </span>            : 
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :         if (xd-&gt;eobs[i]) {</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :           if (xd-&gt;eobs[i] &gt; 1) {</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :             vp8_dequant_idct_add(b-&gt;qcoeff, DQC, dst, dst_stride);</span>
+<span class="lineNum">     195 </span>            :           } else {
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :             vp8_dc_only_idct_add(b-&gt;qcoeff[0] * DQC[0], dst, dst_stride, dst,</span>
+<span class="lineNum">     197 </span>            :                                  dst_stride);
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :             memset(b-&gt;qcoeff, 0, 2 * sizeof(b-&gt;qcoeff[0]));</span>
+<span class="lineNum">     199 </span>            :           }
+<span class="lineNum">     200 </span>            :         }
+<span class="lineNum">     201 </span>            :       }
+<span class="lineNum">     202 </span>            :     }
+<span class="lineNum">     203 </span>            :   } else {
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :     vp8_build_inter_predictors_mb(xd);</span>
+<span class="lineNum">     205 </span>            :   }
+<span class="lineNum">     206 </span>            : 
+<span class="lineNum">     207 </span>            : #if CONFIG_ERROR_CONCEALMENT
+<span class="lineNum">     208 </span>            :   if (corruption_detected) {
+<span class="lineNum">     209 </span>            :     return;
+<span class="lineNum">     210 </span>            :   }
+<span class="lineNum">     211 </span>            : #endif
+<span class="lineNum">     212 </span>            : 
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   if (!xd-&gt;mode_info_context-&gt;mbmi.mb_skip_coeff) {</span>
+<span class="lineNum">     214 </span>            :     /* dequantization and idct */
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :     if (mode != B_PRED) {</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :       short *DQC = xd-&gt;dequant_y1;</span>
+<span class="lineNum">     217 </span>            : 
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :       if (mode != SPLITMV) {</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :         BLOCKD *b = &amp;xd-&gt;block[24];</span>
+<span class="lineNum">     220 </span>            : 
+<span class="lineNum">     221 </span>            :         /* do 2nd order transform on the dc block */
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :         if (xd-&gt;eobs[24] &gt; 1) {</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :           vp8_dequantize_b(b, xd-&gt;dequant_y2);</span>
+<span class="lineNum">     224 </span>            : 
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :           vp8_short_inv_walsh4x4(&amp;b-&gt;dqcoeff[0], xd-&gt;qcoeff);</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :           memset(b-&gt;qcoeff, 0, 16 * sizeof(b-&gt;qcoeff[0]));</span>
+<span class="lineNum">     227 </span>            :         } else {
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :           b-&gt;dqcoeff[0] = b-&gt;qcoeff[0] * xd-&gt;dequant_y2[0];</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :           vp8_short_inv_walsh4x4_1(&amp;b-&gt;dqcoeff[0], xd-&gt;qcoeff);</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :           memset(b-&gt;qcoeff, 0, 2 * sizeof(b-&gt;qcoeff[0]));</span>
+<span class="lineNum">     231 </span>            :         }
+<span class="lineNum">     232 </span>            : 
+<span class="lineNum">     233 </span>            :         /* override the dc dequant constant in order to preserve the
+<span class="lineNum">     234 </span>            :          * dc components
+<span class="lineNum">     235 </span>            :          */
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :         DQC = xd-&gt;dequant_y1_dc;</span>
+<span class="lineNum">     237 </span>            :       }
+<span class="lineNum">     238 </span>            : 
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :       vp8_dequant_idct_add_y_block(xd-&gt;qcoeff, DQC, xd-&gt;dst.y_buffer,</span>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :                                    xd-&gt;dst.y_stride, xd-&gt;eobs);</span>
+<span class="lineNum">     241 </span>            :     }
+<span class="lineNum">     242 </span>            : 
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :     vp8_dequant_idct_add_uv_block(xd-&gt;qcoeff + 16 * 16, xd-&gt;dequant_uv,</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :                                   xd-&gt;dst.u_buffer, xd-&gt;dst.v_buffer,</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :                                   xd-&gt;dst.uv_stride, xd-&gt;eobs + 16);</span>
+<span class="lineNum">     246 </span>            :   }
+<a name="247"><span class="lineNum">     247 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     248 </span>            : 
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 : static void mt_decode_mb_rows(VP8D_COMP *pbi, MACROBLOCKD *xd,</span>
+<span class="lineNum">     250 </span>            :                               int start_mb_row) {
+<span class="lineNum">     251 </span>            :   const int *last_row_current_mb_col;
+<span class="lineNum">     252 </span>            :   int *current_mb_col;
+<span class="lineNum">     253 </span>            :   int mb_row;
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :   VP8_COMMON *pc = &amp;pbi-&gt;common;</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :   const int nsync = pbi-&gt;sync_range;</span>
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   const int first_row_no_sync_above = pc-&gt;mb_cols + nsync;</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :   int num_part = 1 &lt;&lt; pbi-&gt;common.multi_token_partition;</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :   int last_mb_row = start_mb_row;</span>
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :   YV12_BUFFER_CONFIG *yv12_fb_new = pbi-&gt;dec_fb_ref[INTRA_FRAME];</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :   YV12_BUFFER_CONFIG *yv12_fb_lst = pbi-&gt;dec_fb_ref[LAST_FRAME];</span>
+<span class="lineNum">     262 </span>            : 
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :   int recon_y_stride = yv12_fb_new-&gt;y_stride;</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :   int recon_uv_stride = yv12_fb_new-&gt;uv_stride;</span>
+<span class="lineNum">     265 </span>            : 
+<span class="lineNum">     266 </span>            :   unsigned char *ref_buffer[MAX_REF_FRAMES][3];
+<span class="lineNum">     267 </span>            :   unsigned char *dst_buffer[3];
+<span class="lineNum">     268 </span>            :   int i;
+<span class="lineNum">     269 </span>            :   int ref_fb_corrupted[MAX_REF_FRAMES];
+<span class="lineNum">     270 </span>            : 
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :   ref_fb_corrupted[INTRA_FRAME] = 0;</span>
+<span class="lineNum">     272 </span>            : 
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :   for (i = 1; i &lt; MAX_REF_FRAMES; ++i) {</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     YV12_BUFFER_CONFIG *this_fb = pbi-&gt;dec_fb_ref[i];</span>
+<span class="lineNum">     275 </span>            : 
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :     ref_buffer[i][0] = this_fb-&gt;y_buffer;</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :     ref_buffer[i][1] = this_fb-&gt;u_buffer;</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :     ref_buffer[i][2] = this_fb-&gt;v_buffer;</span>
+<span class="lineNum">     279 </span>            : 
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :     ref_fb_corrupted[i] = this_fb-&gt;corrupted;</span>
+<span class="lineNum">     281 </span>            :   }
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :   dst_buffer[0] = yv12_fb_new-&gt;y_buffer;</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :   dst_buffer[1] = yv12_fb_new-&gt;u_buffer;</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :   dst_buffer[2] = yv12_fb_new-&gt;v_buffer;</span>
+<span class="lineNum">     286 </span>            : 
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   xd-&gt;up_available = (start_mb_row != 0);</span>
+<span class="lineNum">     288 </span>            : 
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   xd-&gt;mode_info_context = pc-&gt;mi + pc-&gt;mode_info_stride * start_mb_row;</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   xd-&gt;mode_info_stride = pc-&gt;mode_info_stride;</span>
+<span class="lineNum">     291 </span>            : 
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :   for (mb_row = start_mb_row; mb_row &lt; pc-&gt;mb_rows;</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :        mb_row += (pbi-&gt;decoding_thread_count + 1)) {</span>
+<span class="lineNum">     294 </span>            :     int recon_yoffset, recon_uvoffset;
+<span class="lineNum">     295 </span>            :     int mb_col;
+<span class="lineNum">     296 </span>            :     int filter_level;
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :     loop_filter_info_n *lfi_n = &amp;pc-&gt;lf_info;</span>
+<span class="lineNum">     298 </span>            : 
+<span class="lineNum">     299 </span>            :     /* save last row processed by this thread */
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :     last_mb_row = mb_row;</span>
+<span class="lineNum">     301 </span>            :     /* select bool coder for current partition */
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :     xd-&gt;current_bc = &amp;pbi-&gt;mbc[mb_row % num_part];</span>
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :     if (mb_row &gt; 0) {</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :       last_row_current_mb_col = &amp;pbi-&gt;mt_current_mb_col[mb_row - 1];</span>
+<span class="lineNum">     306 </span>            :     } else {
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :       last_row_current_mb_col = &amp;first_row_no_sync_above;</span>
+<span class="lineNum">     308 </span>            :     }
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     current_mb_col = &amp;pbi-&gt;mt_current_mb_col[mb_row];</span>
+<span class="lineNum">     311 </span>            : 
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :     recon_yoffset = mb_row * recon_y_stride * 16;</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :     recon_uvoffset = mb_row * recon_uv_stride * 8;</span>
+<span class="lineNum">     314 </span>            : 
+<span class="lineNum">     315 </span>            :     /* reset contexts */
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :     xd-&gt;above_context = pc-&gt;above_context;</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :     memset(xd-&gt;left_context, 0, sizeof(ENTROPY_CONTEXT_PLANES));</span>
+<span class="lineNum">     318 </span>            : 
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     xd-&gt;left_available = 0;</span>
+<span class="lineNum">     320 </span>            : 
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     xd-&gt;mb_to_top_edge = -((mb_row * 16) &lt;&lt; 3);</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :     xd-&gt;mb_to_bottom_edge = ((pc-&gt;mb_rows - 1 - mb_row) * 16) &lt;&lt; 3;</span>
+<span class="lineNum">     323 </span>            : 
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :     if (pbi-&gt;common.filter_level) {</span>
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[0] = pbi-&gt;mt_yabove_row[mb_row] + 0 * 16 + 32;</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[1] = pbi-&gt;mt_uabove_row[mb_row] + 0 * 8 + 16;</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[2] = pbi-&gt;mt_vabove_row[mb_row] + 0 * 8 + 16;</span>
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :       xd-&gt;recon_left[0] = pbi-&gt;mt_yleft_col[mb_row];</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :       xd-&gt;recon_left[1] = pbi-&gt;mt_uleft_col[mb_row];</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :       xd-&gt;recon_left[2] = pbi-&gt;mt_vleft_col[mb_row];</span>
+<span class="lineNum">     332 </span>            : 
+<span class="lineNum">     333 </span>            :       /* TODO: move to outside row loop */
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :       xd-&gt;recon_left_stride[0] = 1;</span>
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :       xd-&gt;recon_left_stride[1] = 1;</span>
+<span class="lineNum">     336 </span>            :     } else {
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[0] = dst_buffer[0] + recon_yoffset;</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[1] = dst_buffer[1] + recon_uvoffset;</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[2] = dst_buffer[2] + recon_uvoffset;</span>
+<span class="lineNum">     340 </span>            : 
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :       xd-&gt;recon_left[0] = xd-&gt;recon_above[0] - 1;</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :       xd-&gt;recon_left[1] = xd-&gt;recon_above[1] - 1;</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :       xd-&gt;recon_left[2] = xd-&gt;recon_above[2] - 1;</span>
+<span class="lineNum">     344 </span>            : 
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[0] -= xd-&gt;dst.y_stride;</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[1] -= xd-&gt;dst.uv_stride;</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[2] -= xd-&gt;dst.uv_stride;</span>
+<span class="lineNum">     348 </span>            : 
+<span class="lineNum">     349 </span>            :       /* TODO: move to outside row loop */
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :       xd-&gt;recon_left_stride[0] = xd-&gt;dst.y_stride;</span>
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :       xd-&gt;recon_left_stride[1] = xd-&gt;dst.uv_stride;</span>
+<span class="lineNum">     352 </span>            : 
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :       setup_intra_recon_left(xd-&gt;recon_left[0], xd-&gt;recon_left[1],</span>
+<span class="lineNum">     354 </span>            :                              xd-&gt;recon_left[2], xd-&gt;dst.y_stride,
+<span class="lineNum">     355 </span>            :                              xd-&gt;dst.uv_stride);
+<span class="lineNum">     356 </span>            :     }
+<span class="lineNum">     357 </span>            : 
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :     for (mb_col = 0; mb_col &lt; pc-&gt;mb_cols; ++mb_col) {</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :       if (((mb_col - 1) % nsync) == 0) {</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :         pthread_mutex_t *mutex = &amp;pbi-&gt;pmutex[mb_row];</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :         protected_write(mutex, current_mb_col, mb_col - 1);</span>
+<span class="lineNum">     362 </span>            :       }
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :       if (mb_row &amp;&amp; !(mb_col &amp; (nsync - 1))) {</span>
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :         pthread_mutex_t *mutex = &amp;pbi-&gt;pmutex[mb_row - 1];</span>
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :         sync_read(mutex, mb_col, last_row_current_mb_col, nsync);</span>
+<span class="lineNum">     367 </span>            :       }
+<span class="lineNum">     368 </span>            : 
+<span class="lineNum">     369 </span>            :       /* Distance of MB to the various image edges.
+<span class="lineNum">     370 </span>            :        * These are specified to 8th pel as they are always
+<span class="lineNum">     371 </span>            :        * compared to values that are in 1/8th pel units.
+<span class="lineNum">     372 </span>            :        */
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :       xd-&gt;mb_to_left_edge = -((mb_col * 16) &lt;&lt; 3);</span>
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :       xd-&gt;mb_to_right_edge = ((pc-&gt;mb_cols - 1 - mb_col) * 16) &lt;&lt; 3;</span>
+<span class="lineNum">     375 </span>            : 
+<span class="lineNum">     376 </span>            : #if CONFIG_ERROR_CONCEALMENT
+<span class="lineNum">     377 </span>            :       {
+<span class="lineNum">     378 </span>            :         int corrupt_residual =
+<span class="lineNum">     379 </span>            :             (!pbi-&gt;independent_partitions &amp;&amp; pbi-&gt;frame_corrupt_residual) ||
+<span class="lineNum">     380 </span>            :             vp8dx_bool_error(xd-&gt;current_bc);
+<span class="lineNum">     381 </span>            :         if (pbi-&gt;ec_active &amp;&amp;
+<span class="lineNum">     382 </span>            :             (xd-&gt;mode_info_context-&gt;mbmi.ref_frame == INTRA_FRAME) &amp;&amp;
+<span class="lineNum">     383 </span>            :             corrupt_residual) {
+<span class="lineNum">     384 </span>            :           /* We have an intra block with corrupt
+<span class="lineNum">     385 </span>            :            * coefficients, better to conceal with an inter
+<span class="lineNum">     386 </span>            :            * block.
+<span class="lineNum">     387 </span>            :            * Interpolate MVs from neighboring MBs
+<span class="lineNum">     388 </span>            :            *
+<span class="lineNum">     389 </span>            :            * Note that for the first mb with corrupt
+<span class="lineNum">     390 </span>            :            * residual in a frame, we might not discover
+<span class="lineNum">     391 </span>            :            * that before decoding the residual. That
+<span class="lineNum">     392 </span>            :            * happens after this check, and therefore no
+<span class="lineNum">     393 </span>            :            * inter concealment will be done.
+<span class="lineNum">     394 </span>            :            */
+<span class="lineNum">     395 </span>            :           vp8_interpolate_motion(xd, mb_row, mb_col, pc-&gt;mb_rows, pc-&gt;mb_cols);
+<span class="lineNum">     396 </span>            :         }
+<span class="lineNum">     397 </span>            :       }
+<span class="lineNum">     398 </span>            : #endif
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :       xd-&gt;dst.y_buffer = dst_buffer[0] + recon_yoffset;</span>
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :       xd-&gt;dst.u_buffer = dst_buffer[1] + recon_uvoffset;</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :       xd-&gt;dst.v_buffer = dst_buffer[2] + recon_uvoffset;</span>
+<span class="lineNum">     403 </span>            : 
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :       xd-&gt;pre.y_buffer =</span>
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :           ref_buffer[xd-&gt;mode_info_context-&gt;mbmi.ref_frame][0] + recon_yoffset;</span>
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :       xd-&gt;pre.u_buffer =</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :           ref_buffer[xd-&gt;mode_info_context-&gt;mbmi.ref_frame][1] + recon_uvoffset;</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :       xd-&gt;pre.v_buffer =</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :           ref_buffer[xd-&gt;mode_info_context-&gt;mbmi.ref_frame][2] + recon_uvoffset;</span>
+<span class="lineNum">     410 </span>            : 
+<span class="lineNum">     411 </span>            :       /* propagate errors from reference frames */
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :       xd-&gt;corrupted |= ref_fb_corrupted[xd-&gt;mode_info_context-&gt;mbmi.ref_frame];</span>
+<span class="lineNum">     413 </span>            : 
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :       mt_decode_macroblock(pbi, xd, 0);</span>
+<span class="lineNum">     415 </span>            : 
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :       xd-&gt;left_available = 1;</span>
+<span class="lineNum">     417 </span>            : 
+<span class="lineNum">     418 </span>            :       /* check if the boolean decoder has suffered an error */
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :       xd-&gt;corrupted |= vp8dx_bool_error(xd-&gt;current_bc);</span>
+<span class="lineNum">     420 </span>            : 
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[0] += 16;</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[1] += 8;</span>
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :       xd-&gt;recon_above[2] += 8;</span>
+<span class="lineNum">     424 </span>            : 
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :       if (!pbi-&gt;common.filter_level) {</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :         xd-&gt;recon_left[0] += 16;</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :         xd-&gt;recon_left[1] += 8;</span>
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :         xd-&gt;recon_left[2] += 8;</span>
+<span class="lineNum">     429 </span>            :       }
+<span class="lineNum">     430 </span>            : 
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :       if (pbi-&gt;common.filter_level) {</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :         int skip_lf = (xd-&gt;mode_info_context-&gt;mbmi.mode != B_PRED &amp;&amp;</span>
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :                        xd-&gt;mode_info_context-&gt;mbmi.mode != SPLITMV &amp;&amp;</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :                        xd-&gt;mode_info_context-&gt;mbmi.mb_skip_coeff);</span>
+<span class="lineNum">     435 </span>            : 
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :         const int mode_index =</span>
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :             lfi_n-&gt;mode_lf_lut[xd-&gt;mode_info_context-&gt;mbmi.mode];</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :         const int seg = xd-&gt;mode_info_context-&gt;mbmi.segment_id;</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :         const int ref_frame = xd-&gt;mode_info_context-&gt;mbmi.ref_frame;</span>
+<span class="lineNum">     440 </span>            : 
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :         filter_level = lfi_n-&gt;lvl[seg][ref_frame][mode_index];</span>
+<span class="lineNum">     442 </span>            : 
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :         if (mb_row != pc-&gt;mb_rows - 1) {</span>
+<span class="lineNum">     444 </span>            :           /* Save decoded MB last row data for next-row decoding */
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :           memcpy((pbi-&gt;mt_yabove_row[mb_row + 1] + 32 + mb_col * 16),</span>
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :                  (xd-&gt;dst.y_buffer + 15 * recon_y_stride), 16);</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :           memcpy((pbi-&gt;mt_uabove_row[mb_row + 1] + 16 + mb_col * 8),</span>
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :                  (xd-&gt;dst.u_buffer + 7 * recon_uv_stride), 8);</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :           memcpy((pbi-&gt;mt_vabove_row[mb_row + 1] + 16 + mb_col * 8),</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :                  (xd-&gt;dst.v_buffer + 7 * recon_uv_stride), 8);</span>
+<span class="lineNum">     451 </span>            :         }
+<span class="lineNum">     452 </span>            : 
+<span class="lineNum">     453 </span>            :         /* save left_col for next MB decoding */
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :         if (mb_col != pc-&gt;mb_cols - 1) {</span>
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :           MODE_INFO *next = xd-&gt;mode_info_context + 1;</span>
+<span class="lineNum">     456 </span>            : 
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :           if (next-&gt;mbmi.ref_frame == INTRA_FRAME) {</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :             for (i = 0; i &lt; 16; ++i) {</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :               pbi-&gt;mt_yleft_col[mb_row][i] =</span>
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :                   xd-&gt;dst.y_buffer[i * recon_y_stride + 15];</span>
+<span class="lineNum">     461 </span>            :             }
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :             for (i = 0; i &lt; 8; ++i) {</span>
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :               pbi-&gt;mt_uleft_col[mb_row][i] =</span>
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :                   xd-&gt;dst.u_buffer[i * recon_uv_stride + 7];</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :               pbi-&gt;mt_vleft_col[mb_row][i] =</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :                   xd-&gt;dst.v_buffer[i * recon_uv_stride + 7];</span>
+<span class="lineNum">     467 </span>            :             }
+<span class="lineNum">     468 </span>            :           }
+<span class="lineNum">     469 </span>            :         }
+<span class="lineNum">     470 </span>            : 
+<span class="lineNum">     471 </span>            :         /* loopfilter on this macroblock. */
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :         if (filter_level) {</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :           if (pc-&gt;filter_type == NORMAL_LOOPFILTER) {</span>
+<span class="lineNum">     474 </span>            :             loop_filter_info lfi;
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :             FRAME_TYPE frame_type = pc-&gt;frame_type;</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :             const int hev_index = lfi_n-&gt;hev_thr_lut[frame_type][filter_level];</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :             lfi.mblim = lfi_n-&gt;mblim[filter_level];</span>
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :             lfi.blim = lfi_n-&gt;blim[filter_level];</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :             lfi.lim = lfi_n-&gt;lim[filter_level];</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :             lfi.hev_thr = lfi_n-&gt;hev_thr[hev_index];</span>
+<span class="lineNum">     481 </span>            : 
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :             if (mb_col &gt; 0)</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :               vp8_loop_filter_mbv(xd-&gt;dst.y_buffer, xd-&gt;dst.u_buffer,</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :                                   xd-&gt;dst.v_buffer, recon_y_stride,</span>
+<span class="lineNum">     485 </span>            :                                   recon_uv_stride, &amp;lfi);
+<span class="lineNum">     486 </span>            : 
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :             if (!skip_lf)</span>
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :               vp8_loop_filter_bv(xd-&gt;dst.y_buffer, xd-&gt;dst.u_buffer,</span>
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :                                  xd-&gt;dst.v_buffer, recon_y_stride,</span>
+<span class="lineNum">     490 </span>            :                                  recon_uv_stride, &amp;lfi);
+<span class="lineNum">     491 </span>            : 
+<span class="lineNum">     492 </span>            :             /* don't apply across umv border */
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :             if (mb_row &gt; 0)</span>
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :               vp8_loop_filter_mbh(xd-&gt;dst.y_buffer, xd-&gt;dst.u_buffer,</span>
+<span class="lineNum">     495 </span><span class="lineNoCov">          0 :                                   xd-&gt;dst.v_buffer, recon_y_stride,</span>
+<span class="lineNum">     496 </span>            :                                   recon_uv_stride, &amp;lfi);
+<span class="lineNum">     497 </span>            : 
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :             if (!skip_lf)</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :               vp8_loop_filter_bh(xd-&gt;dst.y_buffer, xd-&gt;dst.u_buffer,</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :                                  xd-&gt;dst.v_buffer, recon_y_stride,</span>
+<span class="lineNum">     501 </span>            :                                  recon_uv_stride, &amp;lfi);
+<span class="lineNum">     502 </span>            :           } else {
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :             if (mb_col &gt; 0)</span>
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :               vp8_loop_filter_simple_mbv(xd-&gt;dst.y_buffer, recon_y_stride,</span>
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :                                          lfi_n-&gt;mblim[filter_level]);</span>
+<span class="lineNum">     506 </span>            : 
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :             if (!skip_lf)</span>
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :               vp8_loop_filter_simple_bv(xd-&gt;dst.y_buffer, recon_y_stride,</span>
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :                                         lfi_n-&gt;blim[filter_level]);</span>
+<span class="lineNum">     510 </span>            : 
+<span class="lineNum">     511 </span>            :             /* don't apply across umv border */
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :             if (mb_row &gt; 0)</span>
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :               vp8_loop_filter_simple_mbh(xd-&gt;dst.y_buffer, recon_y_stride,</span>
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 :                                          lfi_n-&gt;mblim[filter_level]);</span>
+<span class="lineNum">     515 </span>            : 
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :             if (!skip_lf)</span>
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :               vp8_loop_filter_simple_bh(xd-&gt;dst.y_buffer, recon_y_stride,</span>
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :                                         lfi_n-&gt;blim[filter_level]);</span>
+<span class="lineNum">     519 </span>            :           }
+<span class="lineNum">     520 </span>            :         }
+<span class="lineNum">     521 </span>            :       }
+<span class="lineNum">     522 </span>            : 
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :       recon_yoffset += 16;</span>
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :       recon_uvoffset += 8;</span>
+<span class="lineNum">     525 </span>            : 
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :       ++xd-&gt;mode_info_context; /* next mb */</span>
+<span class="lineNum">     527 </span>            : 
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :       xd-&gt;above_context++;</span>
+<span class="lineNum">     529 </span>            :     }
+<span class="lineNum">     530 </span>            : 
+<span class="lineNum">     531 </span>            :     /* adjust to the next row of mbs */
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :     if (pbi-&gt;common.filter_level) {</span>
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :       if (mb_row != pc-&gt;mb_rows - 1) {</span>
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :         int lasty = yv12_fb_lst-&gt;y_width + VP8BORDERINPIXELS;</span>
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :         int lastuv = (yv12_fb_lst-&gt;y_width &gt;&gt; 1) + (VP8BORDERINPIXELS &gt;&gt; 1);</span>
+<span class="lineNum">     536 </span>            : 
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :         for (i = 0; i &lt; 4; ++i) {</span>
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :           pbi-&gt;mt_yabove_row[mb_row + 1][lasty + i] =</span>
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :               pbi-&gt;mt_yabove_row[mb_row + 1][lasty - 1];</span>
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :           pbi-&gt;mt_uabove_row[mb_row + 1][lastuv + i] =</span>
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :               pbi-&gt;mt_uabove_row[mb_row + 1][lastuv - 1];</span>
+<span class="lineNum">     542 </span><span class="lineNoCov">          0 :           pbi-&gt;mt_vabove_row[mb_row + 1][lastuv + i] =</span>
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :               pbi-&gt;mt_vabove_row[mb_row + 1][lastuv - 1];</span>
+<span class="lineNum">     544 </span>            :         }
+<span class="lineNum">     545 </span>            :       }
+<span class="lineNum">     546 </span>            :     } else {
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :       vp8_extend_mb_row(yv12_fb_new, xd-&gt;dst.y_buffer + 16,</span>
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :                         xd-&gt;dst.u_buffer + 8, xd-&gt;dst.v_buffer + 8);</span>
+<span class="lineNum">     549 </span>            :     }
+<span class="lineNum">     550 </span>            : 
+<span class="lineNum">     551 </span>            :     /* last MB of row is ready just after extension is done */
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     protected_write(&amp;pbi-&gt;pmutex[mb_row], current_mb_col, mb_col + nsync);</span>
+<span class="lineNum">     553 </span>            : 
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :     ++xd-&gt;mode_info_context; /* skip prediction column */</span>
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :     xd-&gt;up_available = 1;</span>
+<span class="lineNum">     556 </span>            : 
+<span class="lineNum">     557 </span>            :     /* since we have multithread */
+<span class="lineNum">     558 </span><span class="lineNoCov">          0 :     xd-&gt;mode_info_context += xd-&gt;mode_info_stride * pbi-&gt;decoding_thread_count;</span>
+<span class="lineNum">     559 </span>            :   }
+<span class="lineNum">     560 </span>            : 
+<span class="lineNum">     561 </span>            :   /* signal end of frame decoding if this thread processed the last mb_row */
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :   if (last_mb_row == (pc-&gt;mb_rows - 1)) sem_post(&amp;pbi-&gt;h_event_end_decoding);</span>
+<a name="563"><span class="lineNum">     563 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     564 </span>            : 
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 : static THREAD_FUNCTION thread_decoding_proc(void *p_data) {</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :   int ithread = ((DECODETHREAD_DATA *)p_data)-&gt;ithread;</span>
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :   VP8D_COMP *pbi = (VP8D_COMP *)(((DECODETHREAD_DATA *)p_data)-&gt;ptr1);</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :   MB_ROW_DEC *mbrd = (MB_ROW_DEC *)(((DECODETHREAD_DATA *)p_data)-&gt;ptr2);</span>
+<span class="lineNum">     569 </span>            :   ENTROPY_CONTEXT_PLANES mb_row_left_context;
+<span class="lineNum">     570 </span>            : 
+<span class="lineNum">     571 </span>            :   while (1) {
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :     if (protected_read(&amp;pbi-&gt;mt_mutex, &amp;pbi-&gt;b_multithreaded_rd) == 0) break;</span>
+<span class="lineNum">     573 </span>            : 
+<span class="lineNum">     574 </span><span class="lineNoCov">          0 :     if (sem_wait(&amp;pbi-&gt;h_event_start_decoding[ithread]) == 0) {</span>
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :       if (protected_read(&amp;pbi-&gt;mt_mutex, &amp;pbi-&gt;b_multithreaded_rd) == 0) {</span>
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     577 </span>            :       } else {
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :         MACROBLOCKD *xd = &amp;mbrd-&gt;mbd;</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :         xd-&gt;left_context = &amp;mb_row_left_context;</span>
+<span class="lineNum">     580 </span>            : 
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :         mt_decode_mb_rows(pbi, xd, ithread + 1);</span>
+<span class="lineNum">     582 </span>            :       }
+<span class="lineNum">     583 </span>            :     }
+<span class="lineNum">     584 </span>            :   }
+<span class="lineNum">     585 </span>            : 
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="587"><span class="lineNum">     587 </span>            : }</a>
+<span class="lineNum">     588 </span>            : 
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 : void vp8_decoder_create_threads(VP8D_COMP *pbi) {</span>
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :   int core_count = 0;</span>
+<span class="lineNum">     591 </span>            :   unsigned int ithread;
+<span class="lineNum">     592 </span>            : 
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :   pbi-&gt;b_multithreaded_rd = 0;</span>
+<span class="lineNum">     594 </span><span class="lineNoCov">          0 :   pbi-&gt;allocated_decoding_thread_count = 0;</span>
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :   pthread_mutex_init(&amp;pbi-&gt;mt_mutex, NULL);</span>
+<span class="lineNum">     596 </span>            : 
+<span class="lineNum">     597 </span>            :   /* limit decoding threads to the max number of token partitions */
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :   core_count = (pbi-&gt;max_threads &gt; 8) ? 8 : pbi-&gt;max_threads;</span>
+<span class="lineNum">     599 </span>            : 
+<span class="lineNum">     600 </span>            :   /* limit decoding threads to the available cores */
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :   if (core_count &gt; pbi-&gt;common.processor_core_count) {</span>
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :     core_count = pbi-&gt;common.processor_core_count;</span>
+<span class="lineNum">     603 </span>            :   }
+<span class="lineNum">     604 </span>            : 
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :   if (core_count &gt; 1) {</span>
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :     pbi-&gt;b_multithreaded_rd = 1;</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :     pbi-&gt;decoding_thread_count = core_count - 1;</span>
+<span class="lineNum">     608 </span>            : 
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY(pbi-&gt;h_decoding_thread, pbi-&gt;decoding_thread_count);</span>
+<span class="lineNum">     610 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY(pbi-&gt;h_event_start_decoding, pbi-&gt;decoding_thread_count);</span>
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY_ALIGNED(pbi-&gt;mb_row_di, pbi-&gt;decoding_thread_count, 32);</span>
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY(pbi-&gt;de_thread_data, pbi-&gt;decoding_thread_count);</span>
+<span class="lineNum">     613 </span>            : 
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :     if (sem_init(&amp;pbi-&gt;h_event_end_decoding, 0, 0)) {</span>
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :       vpx_internal_error(&amp;pbi-&gt;common.error, VPX_CODEC_MEM_ERROR,</span>
+<span class="lineNum">     616 </span>            :                          &quot;Failed to initialize semaphore&quot;);
+<span class="lineNum">     617 </span>            :     }
+<span class="lineNum">     618 </span>            : 
+<span class="lineNum">     619 </span><span class="lineNoCov">          0 :     for (ithread = 0; ithread &lt; pbi-&gt;decoding_thread_count; ++ithread) {</span>
+<span class="lineNum">     620 </span><span class="lineNoCov">          0 :       if (sem_init(&amp;pbi-&gt;h_event_start_decoding[ithread], 0, 0)) break;</span>
+<span class="lineNum">     621 </span>            : 
+<span class="lineNum">     622 </span><span class="lineNoCov">          0 :       vp8_setup_block_dptrs(&amp;pbi-&gt;mb_row_di[ithread].mbd);</span>
+<span class="lineNum">     623 </span>            : 
+<span class="lineNum">     624 </span><span class="lineNoCov">          0 :       pbi-&gt;de_thread_data[ithread].ithread = ithread;</span>
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :       pbi-&gt;de_thread_data[ithread].ptr1 = (void *)pbi;</span>
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :       pbi-&gt;de_thread_data[ithread].ptr2 = (void *)&amp;pbi-&gt;mb_row_di[ithread];</span>
+<span class="lineNum">     627 </span>            : 
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :       if (pthread_create(&amp;pbi-&gt;h_decoding_thread[ithread], 0,</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :                          thread_decoding_proc, &amp;pbi-&gt;de_thread_data[ithread])) {</span>
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 :         sem_destroy(&amp;pbi-&gt;h_event_start_decoding[ithread]);</span>
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     632 </span>            :       }
+<span class="lineNum">     633 </span>            :     }
+<span class="lineNum">     634 </span>            : 
+<span class="lineNum">     635 </span><span class="lineNoCov">          0 :     pbi-&gt;allocated_decoding_thread_count = ithread;</span>
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :     if (pbi-&gt;allocated_decoding_thread_count !=</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :         (int)pbi-&gt;decoding_thread_count) {</span>
+<span class="lineNum">     638 </span>            :       /* the remainder of cleanup cases will be handled in
+<span class="lineNum">     639 </span>            :        * vp8_decoder_remove_threads(). */
+<span class="lineNum">     640 </span><span class="lineNoCov">          0 :       if (pbi-&gt;allocated_decoding_thread_count == 0) {</span>
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :         sem_destroy(&amp;pbi-&gt;h_event_end_decoding);</span>
+<span class="lineNum">     642 </span>            :       }
+<span class="lineNum">     643 </span><span class="lineNoCov">          0 :       vpx_internal_error(&amp;pbi-&gt;common.error, VPX_CODEC_MEM_ERROR,</span>
+<span class="lineNum">     644 </span>            :                          &quot;Failed to create threads&quot;);
+<span class="lineNum">     645 </span>            :     }
+<span class="lineNum">     646 </span>            :   }
+<a name="647"><span class="lineNum">     647 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     648 </span>            : 
+<span class="lineNum">     649 </span><span class="lineNoCov">          0 : void vp8mt_de_alloc_temp_buffers(VP8D_COMP *pbi, int mb_rows) {</span>
+<span class="lineNum">     650 </span>            :   int i;
+<span class="lineNum">     651 </span>            : 
+<span class="lineNum">     652 </span>            :   /* De-allocate mutex */
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 :   if (pbi-&gt;pmutex != NULL) {</span>
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; mb_rows; ++i) {</span>
+<span class="lineNum">     655 </span><span class="lineNoCov">          0 :       pthread_mutex_destroy(&amp;pbi-&gt;pmutex[i]);</span>
+<span class="lineNum">     656 </span>            :     }
+<span class="lineNum">     657 </span>            : 
+<span class="lineNum">     658 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;pmutex);</span>
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :     pbi-&gt;pmutex = NULL;</span>
+<span class="lineNum">     660 </span>            :   }
+<span class="lineNum">     661 </span>            : 
+<span class="lineNum">     662 </span><span class="lineNoCov">          0 :   vpx_free(pbi-&gt;mt_current_mb_col);</span>
+<span class="lineNum">     663 </span><span class="lineNoCov">          0 :   pbi-&gt;mt_current_mb_col = NULL;</span>
+<span class="lineNum">     664 </span>            : 
+<span class="lineNum">     665 </span>            :   /* Free above_row buffers. */
+<span class="lineNum">     666 </span><span class="lineNoCov">          0 :   if (pbi-&gt;mt_yabove_row) {</span>
+<span class="lineNum">     667 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; mb_rows; ++i) {</span>
+<span class="lineNum">     668 </span><span class="lineNoCov">          0 :       vpx_free(pbi-&gt;mt_yabove_row[i]);</span>
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :       pbi-&gt;mt_yabove_row[i] = NULL;</span>
+<span class="lineNum">     670 </span>            :     }
+<span class="lineNum">     671 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;mt_yabove_row);</span>
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :     pbi-&gt;mt_yabove_row = NULL;</span>
+<span class="lineNum">     673 </span>            :   }
+<span class="lineNum">     674 </span>            : 
+<span class="lineNum">     675 </span><span class="lineNoCov">          0 :   if (pbi-&gt;mt_uabove_row) {</span>
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; mb_rows; ++i) {</span>
+<span class="lineNum">     677 </span><span class="lineNoCov">          0 :       vpx_free(pbi-&gt;mt_uabove_row[i]);</span>
+<span class="lineNum">     678 </span><span class="lineNoCov">          0 :       pbi-&gt;mt_uabove_row[i] = NULL;</span>
+<span class="lineNum">     679 </span>            :     }
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;mt_uabove_row);</span>
+<span class="lineNum">     681 </span><span class="lineNoCov">          0 :     pbi-&gt;mt_uabove_row = NULL;</span>
+<span class="lineNum">     682 </span>            :   }
+<span class="lineNum">     683 </span>            : 
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :   if (pbi-&gt;mt_vabove_row) {</span>
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; mb_rows; ++i) {</span>
+<span class="lineNum">     686 </span><span class="lineNoCov">          0 :       vpx_free(pbi-&gt;mt_vabove_row[i]);</span>
+<span class="lineNum">     687 </span><span class="lineNoCov">          0 :       pbi-&gt;mt_vabove_row[i] = NULL;</span>
+<span class="lineNum">     688 </span>            :     }
+<span class="lineNum">     689 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;mt_vabove_row);</span>
+<span class="lineNum">     690 </span><span class="lineNoCov">          0 :     pbi-&gt;mt_vabove_row = NULL;</span>
+<span class="lineNum">     691 </span>            :   }
+<span class="lineNum">     692 </span>            : 
+<span class="lineNum">     693 </span>            :   /* Free left_col buffers. */
+<span class="lineNum">     694 </span><span class="lineNoCov">          0 :   if (pbi-&gt;mt_yleft_col) {</span>
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; mb_rows; ++i) {</span>
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :       vpx_free(pbi-&gt;mt_yleft_col[i]);</span>
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :       pbi-&gt;mt_yleft_col[i] = NULL;</span>
+<span class="lineNum">     698 </span>            :     }
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;mt_yleft_col);</span>
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :     pbi-&gt;mt_yleft_col = NULL;</span>
+<span class="lineNum">     701 </span>            :   }
+<span class="lineNum">     702 </span>            : 
+<span class="lineNum">     703 </span><span class="lineNoCov">          0 :   if (pbi-&gt;mt_uleft_col) {</span>
+<span class="lineNum">     704 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; mb_rows; ++i) {</span>
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :       vpx_free(pbi-&gt;mt_uleft_col[i]);</span>
+<span class="lineNum">     706 </span><span class="lineNoCov">          0 :       pbi-&gt;mt_uleft_col[i] = NULL;</span>
+<span class="lineNum">     707 </span>            :     }
+<span class="lineNum">     708 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;mt_uleft_col);</span>
+<span class="lineNum">     709 </span><span class="lineNoCov">          0 :     pbi-&gt;mt_uleft_col = NULL;</span>
+<span class="lineNum">     710 </span>            :   }
+<span class="lineNum">     711 </span>            : 
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :   if (pbi-&gt;mt_vleft_col) {</span>
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; mb_rows; ++i) {</span>
+<span class="lineNum">     714 </span><span class="lineNoCov">          0 :       vpx_free(pbi-&gt;mt_vleft_col[i]);</span>
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :       pbi-&gt;mt_vleft_col[i] = NULL;</span>
+<span class="lineNum">     716 </span>            :     }
+<span class="lineNum">     717 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;mt_vleft_col);</span>
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 :     pbi-&gt;mt_vleft_col = NULL;</span>
+<span class="lineNum">     719 </span>            :   }
+<a name="720"><span class="lineNum">     720 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     721 </span>            : 
+<span class="lineNum">     722 </span><span class="lineNoCov">          0 : void vp8mt_alloc_temp_buffers(VP8D_COMP *pbi, int width, int prev_mb_rows) {</span>
+<span class="lineNum">     723 </span><span class="lineNoCov">          0 :   VP8_COMMON *const pc = &amp;pbi-&gt;common;</span>
+<span class="lineNum">     724 </span>            :   int i;
+<span class="lineNum">     725 </span>            :   int uv_width;
+<span class="lineNum">     726 </span>            : 
+<span class="lineNum">     727 </span><span class="lineNoCov">          0 :   if (protected_read(&amp;pbi-&gt;mt_mutex, &amp;pbi-&gt;b_multithreaded_rd)) {</span>
+<span class="lineNum">     728 </span><span class="lineNoCov">          0 :     vp8mt_de_alloc_temp_buffers(pbi, prev_mb_rows);</span>
+<span class="lineNum">     729 </span>            : 
+<span class="lineNum">     730 </span>            :     /* our internal buffers are always multiples of 16 */
+<span class="lineNum">     731 </span><span class="lineNoCov">          0 :     if ((width &amp; 0xf) != 0) width += 16 - (width &amp; 0xf);</span>
+<span class="lineNum">     732 </span>            : 
+<span class="lineNum">     733 </span><span class="lineNoCov">          0 :     if (width &lt; 640) {</span>
+<span class="lineNum">     734 </span><span class="lineNoCov">          0 :       pbi-&gt;sync_range = 1;</span>
+<span class="lineNum">     735 </span><span class="lineNoCov">          0 :     } else if (width &lt;= 1280) {</span>
+<span class="lineNum">     736 </span><span class="lineNoCov">          0 :       pbi-&gt;sync_range = 8;</span>
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :     } else if (width &lt;= 2560) {</span>
+<span class="lineNum">     738 </span><span class="lineNoCov">          0 :       pbi-&gt;sync_range = 16;</span>
+<span class="lineNum">     739 </span>            :     } else {
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :       pbi-&gt;sync_range = 32;</span>
+<span class="lineNum">     741 </span>            :     }
+<span class="lineNum">     742 </span>            : 
+<span class="lineNum">     743 </span><span class="lineNoCov">          0 :     uv_width = width &gt;&gt; 1;</span>
+<span class="lineNum">     744 </span>            : 
+<span class="lineNum">     745 </span>            :     /* Allocate mutex */
+<span class="lineNum">     746 </span><span class="lineNoCov">          0 :     CHECK_MEM_ERROR(pbi-&gt;pmutex,</span>
+<span class="lineNum">     747 </span>            :                     vpx_malloc(sizeof(*pbi-&gt;pmutex) * pc-&gt;mb_rows));
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :     if (pbi-&gt;pmutex) {</span>
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :       for (i = 0; i &lt; pc-&gt;mb_rows; ++i) {</span>
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :         pthread_mutex_init(&amp;pbi-&gt;pmutex[i], NULL);</span>
+<span class="lineNum">     751 </span>            :       }
+<span class="lineNum">     752 </span>            :     }
+<span class="lineNum">     753 </span>            : 
+<span class="lineNum">     754 </span>            :     /* Allocate an int for each mb row. */
+<span class="lineNum">     755 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY(pbi-&gt;mt_current_mb_col, pc-&gt;mb_rows);</span>
+<span class="lineNum">     756 </span>            : 
+<span class="lineNum">     757 </span>            :     /* Allocate memory for above_row buffers. */
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY(pbi-&gt;mt_yabove_row, pc-&gt;mb_rows);</span>
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; pc-&gt;mb_rows; ++i)</span>
+<span class="lineNum">     760 </span><span class="lineNoCov">          0 :       CHECK_MEM_ERROR(pbi-&gt;mt_yabove_row[i],</span>
+<span class="lineNum">     761 </span>            :                       vpx_memalign(16, sizeof(unsigned char) *
+<span class="lineNum">     762 </span>            :                                            (width + (VP8BORDERINPIXELS &lt;&lt; 1))));
+<span class="lineNum">     763 </span>            : 
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY(pbi-&gt;mt_uabove_row, pc-&gt;mb_rows);</span>
+<span class="lineNum">     765 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; pc-&gt;mb_rows; ++i)</span>
+<span class="lineNum">     766 </span><span class="lineNoCov">          0 :       CHECK_MEM_ERROR(pbi-&gt;mt_uabove_row[i],</span>
+<span class="lineNum">     767 </span>            :                       vpx_memalign(16, sizeof(unsigned char) *
+<span class="lineNum">     768 </span>            :                                            (uv_width + VP8BORDERINPIXELS)));
+<span class="lineNum">     769 </span>            : 
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY(pbi-&gt;mt_vabove_row, pc-&gt;mb_rows);</span>
+<span class="lineNum">     771 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; pc-&gt;mb_rows; ++i)</span>
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 :       CHECK_MEM_ERROR(pbi-&gt;mt_vabove_row[i],</span>
+<span class="lineNum">     773 </span>            :                       vpx_memalign(16, sizeof(unsigned char) *
+<span class="lineNum">     774 </span>            :                                            (uv_width + VP8BORDERINPIXELS)));
+<span class="lineNum">     775 </span>            : 
+<span class="lineNum">     776 </span>            :     /* Allocate memory for left_col buffers. */
+<span class="lineNum">     777 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY(pbi-&gt;mt_yleft_col, pc-&gt;mb_rows);</span>
+<span class="lineNum">     778 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; pc-&gt;mb_rows; ++i)</span>
+<span class="lineNum">     779 </span><span class="lineNoCov">          0 :       CHECK_MEM_ERROR(pbi-&gt;mt_yleft_col[i],</span>
+<span class="lineNum">     780 </span>            :                       vpx_calloc(sizeof(unsigned char) * 16, 1));
+<span class="lineNum">     781 </span>            : 
+<span class="lineNum">     782 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY(pbi-&gt;mt_uleft_col, pc-&gt;mb_rows);</span>
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; pc-&gt;mb_rows; ++i)</span>
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :       CHECK_MEM_ERROR(pbi-&gt;mt_uleft_col[i],</span>
+<span class="lineNum">     785 </span>            :                       vpx_calloc(sizeof(unsigned char) * 8, 1));
+<span class="lineNum">     786 </span>            : 
+<span class="lineNum">     787 </span><span class="lineNoCov">          0 :     CALLOC_ARRAY(pbi-&gt;mt_vleft_col, pc-&gt;mb_rows);</span>
+<span class="lineNum">     788 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; pc-&gt;mb_rows; ++i)</span>
+<span class="lineNum">     789 </span><span class="lineNoCov">          0 :       CHECK_MEM_ERROR(pbi-&gt;mt_vleft_col[i],</span>
+<span class="lineNum">     790 </span>            :                       vpx_calloc(sizeof(unsigned char) * 8, 1));
+<span class="lineNum">     791 </span>            :   }
+<a name="792"><span class="lineNum">     792 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     793 </span>            : 
+<span class="lineNum">     794 </span><span class="lineNoCov">          0 : void vp8_decoder_remove_threads(VP8D_COMP *pbi) {</span>
+<span class="lineNum">     795 </span>            :   /* shutdown MB Decoding thread; */
+<span class="lineNum">     796 </span><span class="lineNoCov">          0 :   if (protected_read(&amp;pbi-&gt;mt_mutex, &amp;pbi-&gt;b_multithreaded_rd)) {</span>
+<span class="lineNum">     797 </span>            :     int i;
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 :     protected_write(&amp;pbi-&gt;mt_mutex, &amp;pbi-&gt;b_multithreaded_rd, 0);</span>
+<span class="lineNum">     799 </span>            : 
+<span class="lineNum">     800 </span>            :     /* allow all threads to exit */
+<span class="lineNum">     801 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; pbi-&gt;allocated_decoding_thread_count; ++i) {</span>
+<span class="lineNum">     802 </span><span class="lineNoCov">          0 :       sem_post(&amp;pbi-&gt;h_event_start_decoding[i]);</span>
+<span class="lineNum">     803 </span><span class="lineNoCov">          0 :       pthread_join(pbi-&gt;h_decoding_thread[i], NULL);</span>
+<span class="lineNum">     804 </span>            :     }
+<span class="lineNum">     805 </span>            : 
+<span class="lineNum">     806 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; pbi-&gt;allocated_decoding_thread_count; ++i) {</span>
+<span class="lineNum">     807 </span><span class="lineNoCov">          0 :       sem_destroy(&amp;pbi-&gt;h_event_start_decoding[i]);</span>
+<span class="lineNum">     808 </span>            :     }
+<span class="lineNum">     809 </span>            : 
+<span class="lineNum">     810 </span><span class="lineNoCov">          0 :     if (pbi-&gt;allocated_decoding_thread_count) {</span>
+<span class="lineNum">     811 </span><span class="lineNoCov">          0 :       sem_destroy(&amp;pbi-&gt;h_event_end_decoding);</span>
+<span class="lineNum">     812 </span>            :     }
+<span class="lineNum">     813 </span>            : 
+<span class="lineNum">     814 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;h_decoding_thread);</span>
+<span class="lineNum">     815 </span><span class="lineNoCov">          0 :     pbi-&gt;h_decoding_thread = NULL;</span>
+<span class="lineNum">     816 </span>            : 
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;h_event_start_decoding);</span>
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 :     pbi-&gt;h_event_start_decoding = NULL;</span>
+<span class="lineNum">     819 </span>            : 
+<span class="lineNum">     820 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;mb_row_di);</span>
+<span class="lineNum">     821 </span><span class="lineNoCov">          0 :     pbi-&gt;mb_row_di = NULL;</span>
+<span class="lineNum">     822 </span>            : 
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 :     vpx_free(pbi-&gt;de_thread_data);</span>
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :     pbi-&gt;de_thread_data = NULL;</span>
+<span class="lineNum">     825 </span>            : 
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 :     vp8mt_de_alloc_temp_buffers(pbi, pbi-&gt;common.mb_rows);</span>
+<span class="lineNum">     827 </span>            :   }
+<span class="lineNum">     828 </span><span class="lineNoCov">          0 :   pthread_mutex_destroy(&amp;pbi-&gt;mt_mutex);</span>
+<a name="829"><span class="lineNum">     829 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     830 </span>            : 
+<span class="lineNum">     831 </span><span class="lineNoCov">          0 : void vp8mt_decode_mb_rows(VP8D_COMP *pbi, MACROBLOCKD *xd) {</span>
+<span class="lineNum">     832 </span><span class="lineNoCov">          0 :   VP8_COMMON *pc = &amp;pbi-&gt;common;</span>
+<span class="lineNum">     833 </span>            :   unsigned int i;
+<span class="lineNum">     834 </span>            :   int j;
+<span class="lineNum">     835 </span>            : 
+<span class="lineNum">     836 </span><span class="lineNoCov">          0 :   int filter_level = pc-&gt;filter_level;</span>
+<span class="lineNum">     837 </span><span class="lineNoCov">          0 :   YV12_BUFFER_CONFIG *yv12_fb_new = pbi-&gt;dec_fb_ref[INTRA_FRAME];</span>
+<span class="lineNum">     838 </span>            : 
+<span class="lineNum">     839 </span><span class="lineNoCov">          0 :   if (filter_level) {</span>
+<span class="lineNum">     840 </span>            :     /* Set above_row buffer to 127 for decoding first MB row */
+<span class="lineNum">     841 </span><span class="lineNoCov">          0 :     memset(pbi-&gt;mt_yabove_row[0] + VP8BORDERINPIXELS - 1, 127,</span>
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :            yv12_fb_new-&gt;y_width + 5);</span>
+<span class="lineNum">     843 </span><span class="lineNoCov">          0 :     memset(pbi-&gt;mt_uabove_row[0] + (VP8BORDERINPIXELS &gt;&gt; 1) - 1, 127,</span>
+<span class="lineNum">     844 </span><span class="lineNoCov">          0 :            (yv12_fb_new-&gt;y_width &gt;&gt; 1) + 5);</span>
+<span class="lineNum">     845 </span><span class="lineNoCov">          0 :     memset(pbi-&gt;mt_vabove_row[0] + (VP8BORDERINPIXELS &gt;&gt; 1) - 1, 127,</span>
+<span class="lineNum">     846 </span><span class="lineNoCov">          0 :            (yv12_fb_new-&gt;y_width &gt;&gt; 1) + 5);</span>
+<span class="lineNum">     847 </span>            : 
+<span class="lineNum">     848 </span><span class="lineNoCov">          0 :     for (j = 1; j &lt; pc-&gt;mb_rows; ++j) {</span>
+<span class="lineNum">     849 </span><span class="lineNoCov">          0 :       memset(pbi-&gt;mt_yabove_row[j] + VP8BORDERINPIXELS - 1, (unsigned char)129,</span>
+<span class="lineNum">     850 </span>            :              1);
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :       memset(pbi-&gt;mt_uabove_row[j] + (VP8BORDERINPIXELS &gt;&gt; 1) - 1,</span>
+<span class="lineNum">     852 </span>            :              (unsigned char)129, 1);
+<span class="lineNum">     853 </span><span class="lineNoCov">          0 :       memset(pbi-&gt;mt_vabove_row[j] + (VP8BORDERINPIXELS &gt;&gt; 1) - 1,</span>
+<span class="lineNum">     854 </span>            :              (unsigned char)129, 1);
+<span class="lineNum">     855 </span>            :     }
+<span class="lineNum">     856 </span>            : 
+<span class="lineNum">     857 </span>            :     /* Set left_col to 129 initially */
+<span class="lineNum">     858 </span><span class="lineNoCov">          0 :     for (j = 0; j &lt; pc-&gt;mb_rows; ++j) {</span>
+<span class="lineNum">     859 </span><span class="lineNoCov">          0 :       memset(pbi-&gt;mt_yleft_col[j], (unsigned char)129, 16);</span>
+<span class="lineNum">     860 </span><span class="lineNoCov">          0 :       memset(pbi-&gt;mt_uleft_col[j], (unsigned char)129, 8);</span>
+<span class="lineNum">     861 </span><span class="lineNoCov">          0 :       memset(pbi-&gt;mt_vleft_col[j], (unsigned char)129, 8);</span>
+<span class="lineNum">     862 </span>            :     }
+<span class="lineNum">     863 </span>            : 
+<span class="lineNum">     864 </span>            :     /* Initialize the loop filter for this frame. */
+<span class="lineNum">     865 </span><span class="lineNoCov">          0 :     vp8_loop_filter_frame_init(pc, &amp;pbi-&gt;mb, filter_level);</span>
+<span class="lineNum">     866 </span>            :   } else {
+<span class="lineNum">     867 </span><span class="lineNoCov">          0 :     vp8_setup_intra_recon_top_line(yv12_fb_new);</span>
+<span class="lineNum">     868 </span>            :   }
+<span class="lineNum">     869 </span>            : 
+<span class="lineNum">     870 </span><span class="lineNoCov">          0 :   setup_decoding_thread_data(pbi, xd, pbi-&gt;mb_row_di,</span>
+<span class="lineNum">     871 </span><span class="lineNoCov">          0 :                              pbi-&gt;decoding_thread_count);</span>
+<span class="lineNum">     872 </span>            : 
+<span class="lineNum">     873 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; pbi-&gt;decoding_thread_count; ++i) {</span>
+<span class="lineNum">     874 </span><span class="lineNoCov">          0 :     sem_post(&amp;pbi-&gt;h_event_start_decoding[i]);</span>
+<span class="lineNum">     875 </span>            :   }
+<span class="lineNum">     876 </span>            : 
+<span class="lineNum">     877 </span><span class="lineNoCov">          0 :   mt_decode_mb_rows(pbi, xd, 0);</span>
+<span class="lineNum">     878 </span>            : 
+<span class="lineNum">     879 </span><span class="lineNoCov">          0 :   sem_wait(&amp;pbi-&gt;h_event_end_decoding); /* add back for each frame */</span>
+<span class="lineNum">     880 </span><span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,1627 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - xpcom/base/CycleCollectedJSRuntime.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">xpcom/base</a> - CycleCollectedJSRuntime.cpp<span style="font-size: 80%;"> (source / <a href="CycleCollectedJSRuntime.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">167</td>
+            <td class="headerCovTableEntry">644</td>
+            <td class="headerCovTableEntryLo">25.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">30</td>
+            <td class="headerCovTableEntry">101</td>
+            <td class="headerCovTableEntryLo">29.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : // We're dividing JS objects into 3 categories:
+<span class="lineNum">       8 </span>            : //
+<span class="lineNum">       9 </span>            : // 1. &quot;real&quot; roots, held by the JS engine itself or rooted through the root
+<span class="lineNum">      10 </span>            : //    and lock JS APIs. Roots from this category are considered black in the
+<span class="lineNum">      11 </span>            : //    cycle collector, any cycle they participate in is uncollectable.
+<span class="lineNum">      12 </span>            : //
+<span class="lineNum">      13 </span>            : // 2. certain roots held by C++ objects that are guaranteed to be alive.
+<span class="lineNum">      14 </span>            : //    Roots from this category are considered black in the cycle collector,
+<span class="lineNum">      15 </span>            : //    and any cycle they participate in is uncollectable. These roots are
+<span class="lineNum">      16 </span>            : //    traced from TraceNativeBlackRoots.
+<span class="lineNum">      17 </span>            : //
+<span class="lineNum">      18 </span>            : // 3. all other roots held by C++ objects that participate in cycle
+<span class="lineNum">      19 </span>            : //    collection, held by us (see TraceNativeGrayRoots). Roots from this
+<span class="lineNum">      20 </span>            : //    category are considered grey in the cycle collector; whether or not
+<span class="lineNum">      21 </span>            : //    they are collected depends on the objects that hold them.
+<span class="lineNum">      22 </span>            : //
+<span class="lineNum">      23 </span>            : // Note that if a root is in multiple categories the fact that it is in
+<span class="lineNum">      24 </span>            : // category 1 or 2 that takes precedence, so it will be considered black.
+<span class="lineNum">      25 </span>            : //
+<span class="lineNum">      26 </span>            : // During garbage collection we switch to an additional mark color (gray)
+<span class="lineNum">      27 </span>            : // when tracing inside TraceNativeGrayRoots. This allows us to walk those
+<span class="lineNum">      28 </span>            : // roots later on and add all objects reachable only from them to the
+<span class="lineNum">      29 </span>            : // cycle collector.
+<span class="lineNum">      30 </span>            : //
+<span class="lineNum">      31 </span>            : // Phases:
+<span class="lineNum">      32 </span>            : //
+<span class="lineNum">      33 </span>            : // 1. marking of the roots in category 1 by having the JS GC do its marking
+<span class="lineNum">      34 </span>            : // 2. marking of the roots in category 2 by having the JS GC call us back
+<span class="lineNum">      35 </span>            : //    (via JS_SetExtraGCRootsTracer) and running TraceNativeBlackRoots
+<span class="lineNum">      36 </span>            : // 3. marking of the roots in category 3 by TraceNativeGrayRoots using an
+<span class="lineNum">      37 </span>            : //    additional color (gray).
+<span class="lineNum">      38 </span>            : // 4. end of GC, GC can sweep its heap
+<span class="lineNum">      39 </span>            : //
+<span class="lineNum">      40 </span>            : // At some later point, when the cycle collector runs:
+<span class="lineNum">      41 </span>            : //
+<span class="lineNum">      42 </span>            : // 5. walk gray objects and add them to the cycle collector, cycle collect
+<span class="lineNum">      43 </span>            : //
+<span class="lineNum">      44 </span>            : // JS objects that are part of cycles the cycle collector breaks will be
+<span class="lineNum">      45 </span>            : // collected by the next JS GC.
+<span class="lineNum">      46 </span>            : //
+<span class="lineNum">      47 </span>            : // If WantAllTraces() is false the cycle collector will not traverse roots
+<span class="lineNum">      48 </span>            : // from category 1 or any JS objects held by them. Any JS objects they hold
+<span class="lineNum">      49 </span>            : // will already be marked by the JS GC and will thus be colored black
+<span class="lineNum">      50 </span>            : // themselves. Any C++ objects they hold will have a missing (untraversed)
+<span class="lineNum">      51 </span>            : // edge from the JS object to the C++ object and so it will be marked black
+<span class="lineNum">      52 </span>            : // too. This decreases the number of objects that the cycle collector has to
+<span class="lineNum">      53 </span>            : // deal with.
+<span class="lineNum">      54 </span>            : // To improve debugging, if WantAllTraces() is true all JS objects are
+<span class="lineNum">      55 </span>            : // traversed.
+<span class="lineNum">      56 </span>            : 
+<span class="lineNum">      57 </span>            : #include &quot;mozilla/CycleCollectedJSRuntime.h&quot;
+<span class="lineNum">      58 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      59 </span>            : #include &quot;mozilla/ArrayUtils.h&quot;
+<span class="lineNum">      60 </span>            : #include &quot;mozilla/AutoRestore.h&quot;
+<span class="lineNum">      61 </span>            : #include &quot;mozilla/CycleCollectedJSContext.h&quot;
+<span class="lineNum">      62 </span>            : #include &quot;mozilla/Move.h&quot;
+<span class="lineNum">      63 </span>            : #include &quot;mozilla/MemoryReporting.h&quot;
+<span class="lineNum">      64 </span>            : #include &quot;mozilla/Sprintf.h&quot;
+<span class="lineNum">      65 </span>            : #include &quot;mozilla/Telemetry.h&quot;
+<span class="lineNum">      66 </span>            : #include &quot;mozilla/TimelineConsumers.h&quot;
+<span class="lineNum">      67 </span>            : #include &quot;mozilla/TimelineMarker.h&quot;
+<span class="lineNum">      68 </span>            : #include &quot;mozilla/Unused.h&quot;
+<span class="lineNum">      69 </span>            : #include &quot;mozilla/DebuggerOnGCRunnable.h&quot;
+<span class="lineNum">      70 </span>            : #include &quot;mozilla/dom/DOMJSClass.h&quot;
+<span class="lineNum">      71 </span>            : #include &quot;mozilla/dom/ProfileTimelineMarkerBinding.h&quot;
+<span class="lineNum">      72 </span>            : #include &quot;mozilla/dom/Promise.h&quot;
+<span class="lineNum">      73 </span>            : #include &quot;mozilla/dom/PromiseBinding.h&quot;
+<span class="lineNum">      74 </span>            : #include &quot;mozilla/dom/PromiseDebugging.h&quot;
+<span class="lineNum">      75 </span>            : #include &quot;mozilla/dom/ScriptSettings.h&quot;
+<span class="lineNum">      76 </span>            : #include &quot;jsprf.h&quot;
+<span class="lineNum">      77 </span>            : #include &quot;js/Debug.h&quot;
+<span class="lineNum">      78 </span>            : #include &quot;js/GCAPI.h&quot;
+<span class="lineNum">      79 </span>            : #include &quot;nsContentUtils.h&quot;
+<span class="lineNum">      80 </span>            : #include &quot;nsCycleCollectionNoteRootCallback.h&quot;
+<span class="lineNum">      81 </span>            : #include &quot;nsCycleCollectionParticipant.h&quot;
+<span class="lineNum">      82 </span>            : #include &quot;nsCycleCollector.h&quot;
+<span class="lineNum">      83 </span>            : #include &quot;nsDOMJSUtils.h&quot;
+<span class="lineNum">      84 </span>            : #include &quot;nsJSUtils.h&quot;
+<span class="lineNum">      85 </span>            : #include &quot;nsWrapperCache.h&quot;
+<span class="lineNum">      86 </span>            : #include &quot;nsStringBuffer.h&quot;
+<span class="lineNum">      87 </span>            : #include &quot;GeckoProfiler.h&quot;
+<span class="lineNum">      88 </span>            : #include &quot;ProfilerMarkerPayload.h&quot;
+<span class="lineNum">      89 </span>            : 
+<span class="lineNum">      90 </span>            : #ifdef MOZ_CRASHREPORTER
+<span class="lineNum">      91 </span>            : #include &quot;nsExceptionHandler.h&quot;
+<span class="lineNum">      92 </span>            : #endif
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span>            : #include &quot;nsIException.h&quot;
+<span class="lineNum">      95 </span>            : #include &quot;nsIPlatformInfo.h&quot;
+<span class="lineNum">      96 </span>            : #include &quot;nsThread.h&quot;
+<span class="lineNum">      97 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      98 </span>            : #include &quot;xpcpublic.h&quot;
+<span class="lineNum">      99 </span>            : 
+<span class="lineNum">     100 </span>            : using namespace mozilla;
+<span class="lineNum">     101 </span>            : using namespace mozilla::dom;
+<span class="lineNum">     102 </span>            : 
+<span class="lineNum">     103 </span>            : namespace mozilla {
+<span class="lineNum">     104 </span>            : 
+<span class="lineNum">     105 </span>            : struct DeferredFinalizeFunctionHolder
+<span class="lineNum">     106 </span>            : {
+<span class="lineNum">     107 </span>            :   DeferredFinalizeFunction run;
+<span class="lineNum">     108 </span>            :   void* data;
+<span class="lineNum">     109 </span>            : };
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span>            : class IncrementalFinalizeRunnable : public Runnable
+<span class="lineNum">     112 </span>            : {
+<span class="lineNum">     113 </span>            :   typedef AutoTArray&lt;DeferredFinalizeFunctionHolder, 16&gt; DeferredFinalizeArray;
+<span class="lineNum">     114 </span>            :   typedef CycleCollectedJSRuntime::DeferredFinalizerTable DeferredFinalizerTable;
+<span class="lineNum">     115 </span>            : 
+<span class="lineNum">     116 </span>            :   CycleCollectedJSRuntime* mRuntime;
+<span class="lineNum">     117 </span>            :   DeferredFinalizeArray mDeferredFinalizeFunctions;
+<span class="lineNum">     118 </span>            :   uint32_t mFinalizeFunctionToRun;
+<span class="lineNum">     119 </span>            :   bool mReleasing;
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span>            :   static const PRTime SliceMillis = 5; /* ms */
+<span class="lineNum">     122 </span>            : 
+<span class="lineNum">     123 </span>            : public:
+<span class="lineNum">     124 </span>            :   IncrementalFinalizeRunnable(CycleCollectedJSRuntime* aRt,
+<span class="lineNum">     125 </span>            :                               DeferredFinalizerTable&amp; aFinalizerTable);
+<span class="lineNum">     126 </span>            :   virtual ~IncrementalFinalizeRunnable();
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span>            :   void ReleaseNow(bool aLimited);
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span>            :   NS_DECL_NSIRUNNABLE
+<span class="lineNum">     131 </span>            : };
+<span class="lineNum">     132 </span>            : 
+<span class="lineNum">     133 </span>            : } // namespace mozilla
+<span class="lineNum">     134 </span>            : 
+<a name="135"><span class="lineNum">     135 </span>            : struct NoteWeakMapChildrenTracer : public JS::CallbackTracer</a>
+<span class="lineNum">     136 </span>            : {
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :   NoteWeakMapChildrenTracer(JSRuntime* aRt,</span>
+<span class="lineNum">     138 </span>            :                             nsCycleCollectionNoteRootCallback&amp; aCb)
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :     : JS::CallbackTracer(aRt), mCb(aCb), mTracedAny(false), mMap(nullptr),</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :       mKey(nullptr), mKeyDelegate(nullptr)</span>
+<span class="lineNum">     141 </span>            :   {
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     143 </span>            :   void onChild(const JS::GCCellPtr&amp; aThing) override;
+<span class="lineNum">     144 </span>            :   nsCycleCollectionNoteRootCallback&amp; mCb;
+<span class="lineNum">     145 </span>            :   bool mTracedAny;
+<span class="lineNum">     146 </span>            :   JSObject* mMap;
+<span class="lineNum">     147 </span>            :   JS::GCCellPtr mKey;
+<span class="lineNum">     148 </span>            :   JSObject* mKeyDelegate;
+<span class="lineNum">     149 </span>            : };
+<a name="150"><span class="lineNum">     150 </span>            : </a>
+<span class="lineNum">     151 </span>            : void
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 : NoteWeakMapChildrenTracer::onChild(const JS::GCCellPtr&amp; aThing)</span>
+<span class="lineNum">     153 </span>            : {
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :   if (aThing.is&lt;JSString&gt;()) {</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     156 </span>            :   }
+<span class="lineNum">     157 </span>            : 
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :   if (!JS::GCThingIsMarkedGray(aThing) &amp;&amp; !mCb.WantAllTraces()) {</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     160 </span>            :   }
+<span class="lineNum">     161 </span>            : 
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   if (AddToCCKind(aThing.kind())) {</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :     mCb.NoteWeakMapping(mMap, mKey, mKeyDelegate, aThing);</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :     mTracedAny = true;</span>
+<span class="lineNum">     165 </span>            :   } else {
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     JS::TraceChildren(this, aThing);</span>
+<span class="lineNum">     167 </span>            :   }
+<span class="lineNum">     168 </span>            : }
+<span class="lineNum">     169 </span>            : 
+<a name="170"><span class="lineNum">     170 </span>            : struct NoteWeakMapsTracer : public js::WeakMapTracer</a>
+<span class="lineNum">     171 </span>            : {
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :   NoteWeakMapsTracer(JSRuntime* aRt, nsCycleCollectionNoteRootCallback&amp; aCccb)</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :     : js::WeakMapTracer(aRt), mCb(aCccb), mChildTracer(aRt, aCccb)</span>
+<span class="lineNum">     174 </span>            :   {
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     176 </span>            :   void trace(JSObject* aMap, JS::GCCellPtr aKey, JS::GCCellPtr aValue) override;
+<span class="lineNum">     177 </span>            :   nsCycleCollectionNoteRootCallback&amp; mCb;
+<span class="lineNum">     178 </span>            :   NoteWeakMapChildrenTracer mChildTracer;
+<span class="lineNum">     179 </span>            : };
+<a name="180"><span class="lineNum">     180 </span>            : </a>
+<span class="lineNum">     181 </span>            : void
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 : NoteWeakMapsTracer::trace(JSObject* aMap, JS::GCCellPtr aKey,</span>
+<span class="lineNum">     183 </span>            :                           JS::GCCellPtr aValue)
+<span class="lineNum">     184 </span>            : {
+<span class="lineNum">     185 </span>            :   // If nothing that could be held alive by this entry is marked gray, return.
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :   if ((!aKey || !JS::GCThingIsMarkedGray(aKey)) &amp;&amp;</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :       MOZ_LIKELY(!mCb.WantAllTraces())) {</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :     if (!aValue || !JS::GCThingIsMarkedGray(aValue) || aValue.is&lt;JSString&gt;()) {</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">     190 </span>            :     }
+<span class="lineNum">     191 </span>            :   }
+<span class="lineNum">     192 </span>            : 
+<span class="lineNum">     193 </span>            :   // The cycle collector can only properly reason about weak maps if it can
+<span class="lineNum">     194 </span>            :   // reason about the liveness of their keys, which in turn requires that
+<span class="lineNum">     195 </span>            :   // the key can be represented in the cycle collector graph.  All existing
+<span class="lineNum">     196 </span>            :   // uses of weak maps use either objects or scripts as keys, which are okay.
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(AddToCCKind(aKey.kind()));</span>
+<span class="lineNum">     198 </span>            : 
+<span class="lineNum">     199 </span>            :   // As an emergency fallback for non-debug builds, if the key is not
+<span class="lineNum">     200 </span>            :   // representable in the cycle collector graph, we treat it as marked.  This
+<span class="lineNum">     201 </span>            :   // can cause leaks, but is preferable to ignoring the binding, which could
+<span class="lineNum">     202 </span>            :   // cause the cycle collector to free live objects.
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :   if (!AddToCCKind(aKey.kind())) {</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :     aKey = nullptr;</span>
+<span class="lineNum">     205 </span>            :   }
+<span class="lineNum">     206 </span>            : 
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :   JSObject* kdelegate = nullptr;</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :   if (aKey.is&lt;JSObject&gt;()) {</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :     kdelegate = js::GetWeakmapKeyDelegate(&amp;aKey.as&lt;JSObject&gt;());</span>
+<span class="lineNum">     210 </span>            :   }
+<span class="lineNum">     211 </span>            : 
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :   if (AddToCCKind(aValue.kind())) {</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     mCb.NoteWeakMapping(aMap, aKey, kdelegate, aValue);</span>
+<span class="lineNum">     214 </span>            :   } else {
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :     mChildTracer.mTracedAny = false;</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :     mChildTracer.mMap = aMap;</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :     mChildTracer.mKey = aKey;</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :     mChildTracer.mKeyDelegate = kdelegate;</span>
+<span class="lineNum">     219 </span>            : 
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :     if (!aValue.is&lt;JSString&gt;()) {</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :       JS::TraceChildren(&amp;mChildTracer, aValue);</span>
+<span class="lineNum">     222 </span>            :     }
+<span class="lineNum">     223 </span>            : 
+<span class="lineNum">     224 </span>            :     // The delegate could hold alive the key, so report something to the CC
+<span class="lineNum">     225 </span>            :     // if we haven't already.
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :     if (!mChildTracer.mTracedAny &amp;&amp;</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :         aKey &amp;&amp; JS::GCThingIsMarkedGray(aKey) &amp;&amp; kdelegate) {</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :       mCb.NoteWeakMapping(aMap, aKey, kdelegate, nullptr);</span>
+<span class="lineNum">     229 </span>            :     }
+<span class="lineNum">     230 </span>            :   }
+<span class="lineNum">     231 </span>            : }
+<span class="lineNum">     232 </span>            : 
+<span class="lineNum">     233 </span>            : // Report whether the key or value of a weak mapping entry are gray but need to
+<a name="234"><span class="lineNum">     234 </span>            : // be marked black.</a>
+<span class="lineNum">     235 </span>            : static void
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 : ShouldWeakMappingEntryBeBlack(JSObject* aMap, JS::GCCellPtr aKey, JS::GCCellPtr aValue,</span>
+<span class="lineNum">     237 </span>            :                               bool* aKeyShouldBeBlack, bool* aValueShouldBeBlack)
+<span class="lineNum">     238 </span>            : {
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :   *aKeyShouldBeBlack = false;</span>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :   *aValueShouldBeBlack = false;</span>
+<span class="lineNum">     241 </span>            : 
+<span class="lineNum">     242 </span>            :   // If nothing that could be held alive by this entry is marked gray, return.
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :   bool keyMightNeedMarking = aKey &amp;&amp; JS::GCThingIsMarkedGray(aKey);</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   bool valueMightNeedMarking = aValue &amp;&amp; JS::GCThingIsMarkedGray(aValue) &amp;&amp;</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :     aValue.kind() != JS::TraceKind::String;</span>
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   if (!keyMightNeedMarking &amp;&amp; !valueMightNeedMarking) {</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     248 </span>            :   }
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   if (!AddToCCKind(aKey.kind())) {</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     aKey = nullptr;</span>
+<span class="lineNum">     252 </span>            :   }
+<span class="lineNum">     253 </span>            : 
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :   if (keyMightNeedMarking &amp;&amp; aKey.is&lt;JSObject&gt;()) {</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :     JSObject* kdelegate = js::GetWeakmapKeyDelegate(&amp;aKey.as&lt;JSObject&gt;());</span>
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :     if (kdelegate &amp;&amp; !JS::ObjectIsMarkedGray(kdelegate) &amp;&amp;</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :         (!aMap || !JS::ObjectIsMarkedGray(aMap)))</span>
+<span class="lineNum">     258 </span>            :     {
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :       *aKeyShouldBeBlack = true;</span>
+<span class="lineNum">     260 </span>            :     }
+<span class="lineNum">     261 </span>            :   }
+<span class="lineNum">     262 </span>            : 
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :   if (aValue &amp;&amp; JS::GCThingIsMarkedGray(aValue) &amp;&amp;</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :       (!aKey || !JS::GCThingIsMarkedGray(aKey)) &amp;&amp;</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :       (!aMap || !JS::ObjectIsMarkedGray(aMap)) &amp;&amp;</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :       aValue.kind() != JS::TraceKind::Shape) {</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     *aValueShouldBeBlack = true;</span>
+<span class="lineNum">     268 </span>            :   }
+<span class="lineNum">     269 </span>            : }
+<span class="lineNum">     270 </span>            : 
+<a name="271"><span class="lineNum">     271 </span>            : struct FixWeakMappingGrayBitsTracer : public js::WeakMapTracer</a>
+<span class="lineNum">     272 </span>            : {
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :   explicit FixWeakMappingGrayBitsTracer(JSRuntime* aRt)</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :     : js::WeakMapTracer(aRt)</span>
+<span class="lineNum">     275 </span>            :   {
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :   }</span>
+<a name="277"><span class="lineNum">     277 </span>            : </a>
+<span class="lineNum">     278 </span>            :   void
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :   FixAll()</span>
+<span class="lineNum">     280 </span>            :   {
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :       mAnyMarked = false;</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :       js::TraceWeakMaps(this);</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :     } while (mAnyMarked);</span>
+<a name="285"><span class="lineNum">     285 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     286 </span>            : 
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   void trace(JSObject* aMap, JS::GCCellPtr aKey, JS::GCCellPtr aValue) override</span>
+<span class="lineNum">     288 </span>            :   {
+<span class="lineNum">     289 </span>            :     bool keyShouldBeBlack;
+<span class="lineNum">     290 </span>            :     bool valueShouldBeBlack;
+<span class="lineNum">     291 </span>            :     ShouldWeakMappingEntryBeBlack(aMap, aKey, aValue,
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :                                   &amp;keyShouldBeBlack, &amp;valueShouldBeBlack);</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :     if (keyShouldBeBlack &amp;&amp; JS::UnmarkGrayGCThingRecursively(aKey)) {</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :       mAnyMarked = true;</span>
+<span class="lineNum">     295 </span>            :     }
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :     if (valueShouldBeBlack &amp;&amp; JS::UnmarkGrayGCThingRecursively(aValue)) {</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :       mAnyMarked = true;</span>
+<span class="lineNum">     299 </span>            :     }
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     301 </span>            : 
+<span class="lineNum">     302 </span>            :   MOZ_INIT_OUTSIDE_CTOR bool mAnyMarked;
+<span class="lineNum">     303 </span>            : };
+<span class="lineNum">     304 </span>            : 
+<span class="lineNum">     305 </span>            : #ifdef DEBUG
+<span class="lineNum">     306 </span>            : // Check whether weak maps are marked correctly according to the logic above.
+<a name="307"><span class="lineNum">     307 </span>            : struct CheckWeakMappingGrayBitsTracer : public js::WeakMapTracer</a>
+<span class="lineNum">     308 </span>            : {
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :   explicit CheckWeakMappingGrayBitsTracer(JSRuntime* aRt)</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     : js::WeakMapTracer(aRt), mFailed(false)</span>
+<span class="lineNum">     311 </span>            :   {
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :   }</span>
+<a name="313"><span class="lineNum">     313 </span>            : </a>
+<span class="lineNum">     314 </span>            :   static bool
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :   Check(JSRuntime* aRt)</span>
+<span class="lineNum">     316 </span>            :   {
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :     CheckWeakMappingGrayBitsTracer tracer(aRt);</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     js::TraceWeakMaps(&amp;tracer);</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     return !tracer.mFailed;</span>
+<a name="320"><span class="lineNum">     320 </span>            :   }</a>
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :   void trace(JSObject* aMap, JS::GCCellPtr aKey, JS::GCCellPtr aValue) override</span>
+<span class="lineNum">     323 </span>            :   {
+<span class="lineNum">     324 </span>            :     bool keyShouldBeBlack;
+<span class="lineNum">     325 </span>            :     bool valueShouldBeBlack;
+<span class="lineNum">     326 </span>            :     ShouldWeakMappingEntryBeBlack(aMap, aKey, aValue,
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :                                   &amp;keyShouldBeBlack, &amp;valueShouldBeBlack);</span>
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :     if (keyShouldBeBlack) {</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :       fprintf(stderr, &quot;Weak mapping key %p of map %p should be black\n&quot;,</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :               aKey.asCell(), aMap);</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :       mFailed = true;</span>
+<span class="lineNum">     333 </span>            :     }
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :     if (valueShouldBeBlack) {</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :       fprintf(stderr, &quot;Weak mapping value %p of map %p should be black\n&quot;,</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :               aValue.asCell(), aMap);</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :       mFailed = true;</span>
+<span class="lineNum">     339 </span>            :     }
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span>            :   bool mFailed;
+<span class="lineNum">     343 </span>            : };
+<span class="lineNum">     344 </span>            : #endif // DEBUG
+<a name="345"><span class="lineNum">     345 </span>            : </a>
+<span class="lineNum">     346 </span>            : static void
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 : CheckParticipatesInCycleCollection(JS::GCCellPtr aThing, const char* aName,</span>
+<span class="lineNum">     348 </span>            :                                    void* aClosure)
+<span class="lineNum">     349 </span>            : {
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 :   bool* cycleCollectionEnabled = static_cast&lt;bool*&gt;(aClosure);</span>
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :   if (*cycleCollectionEnabled) {</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     354 </span>            :   }
+<span class="lineNum">     355 </span>            : 
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :   if (AddToCCKind(aThing.kind()) &amp;&amp; JS::GCThingIsMarkedGray(aThing)) {</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :     *cycleCollectionEnabled = true;</span>
+<span class="lineNum">     358 </span>            :   }
+<span class="lineNum">     359 </span>            : }
+<a name="360"><span class="lineNum">     360 </span>            : </a>
+<span class="lineNum">     361 </span>            : NS_IMETHODIMP
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 : JSGCThingParticipant::TraverseNative(void* aPtr,</span>
+<span class="lineNum">     363 </span>            :                                      nsCycleCollectionTraversalCallback&amp; aCb)
+<span class="lineNum">     364 </span>            : {
+<span class="lineNum">     365 </span>            :   auto runtime = reinterpret_cast&lt;CycleCollectedJSRuntime*&gt;(
+<span class="lineNum">     366 </span>            :     reinterpret_cast&lt;char*&gt;(this) - offsetof(CycleCollectedJSRuntime,
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :                                              mGCThingCycleCollectorGlobal));</span>
+<span class="lineNum">     368 </span>            : 
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :   JS::GCCellPtr cellPtr(aPtr, JS::GCThingTraceKind(aPtr));</span>
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :   runtime-&gt;TraverseGCThing(CycleCollectedJSRuntime::TRAVERSE_FULL, cellPtr, aCb);</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     372 </span>            : }
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span>            : // NB: This is only used to initialize the participant in
+<span class="lineNum">     375 </span>            : // CycleCollectedJSRuntime. It should never be used directly.
+<span class="lineNum">     376 </span>            : static JSGCThingParticipant sGCThingCycleCollectorGlobal;
+<a name="377"><span class="lineNum">     377 </span>            : </a>
+<span class="lineNum">     378 </span>            : NS_IMETHODIMP
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 : JSZoneParticipant::TraverseNative(void* aPtr,</span>
+<span class="lineNum">     380 </span>            :                                   nsCycleCollectionTraversalCallback&amp; aCb)
+<span class="lineNum">     381 </span>            : {
+<span class="lineNum">     382 </span>            :   auto runtime = reinterpret_cast&lt;CycleCollectedJSRuntime*&gt;(
+<span class="lineNum">     383 </span>            :     reinterpret_cast&lt;char*&gt;(this) - offsetof(CycleCollectedJSRuntime,
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :                                              mJSZoneCycleCollectorGlobal));</span>
+<span class="lineNum">     385 </span>            : 
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!aCb.WantAllTraces());</span>
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :   JS::Zone* zone = static_cast&lt;JS::Zone*&gt;(aPtr);</span>
+<span class="lineNum">     388 </span>            : 
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :   runtime-&gt;TraverseZone(zone, aCb);</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     391 </span>            : }
+<span class="lineNum">     392 </span>            : 
+<a name="393"><span class="lineNum">     393 </span>            : struct TraversalTracer : public JS::CallbackTracer</a>
+<span class="lineNum">     394 </span>            : {
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :   TraversalTracer(JSRuntime* aRt, nsCycleCollectionTraversalCallback&amp; aCb)</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :     : JS::CallbackTracer(aRt, DoNotTraceWeakMaps), mCb(aCb)</span>
+<span class="lineNum">     397 </span>            :   {
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     399 </span>            :   void onChild(const JS::GCCellPtr&amp; aThing) override;
+<span class="lineNum">     400 </span>            :   nsCycleCollectionTraversalCallback&amp; mCb;
+<span class="lineNum">     401 </span>            : };
+<a name="402"><span class="lineNum">     402 </span>            : </a>
+<span class="lineNum">     403 </span>            : void
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 : TraversalTracer::onChild(const JS::GCCellPtr&amp; aThing)</span>
+<span class="lineNum">     405 </span>            : {
+<span class="lineNum">     406 </span>            :   // Don't traverse non-gray objects, unless we want all traces.
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :   if (!JS::GCThingIsMarkedGray(aThing) &amp;&amp; !mCb.WantAllTraces()) {</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     409 </span>            :   }
+<span class="lineNum">     410 </span>            : 
+<span class="lineNum">     411 </span>            :   /*
+<span class="lineNum">     412 </span>            :    * This function needs to be careful to avoid stack overflow. Normally, when
+<span class="lineNum">     413 </span>            :    * AddToCCKind is true, the recursion terminates immediately as we just add
+<span class="lineNum">     414 </span>            :    * |thing| to the CC graph. So overflow is only possible when there are long
+<span class="lineNum">     415 </span>            :    * or cyclic chains of non-AddToCCKind GC things. Places where this can occur
+<span class="lineNum">     416 </span>            :    * use special APIs to handle such chains iteratively.
+<span class="lineNum">     417 </span>            :    */
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :   if (AddToCCKind(aThing.kind())) {</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :     if (MOZ_UNLIKELY(mCb.WantDebugInfo())) {</span>
+<span class="lineNum">     420 </span>            :       char buffer[200];
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :       getTracingEdgeName(buffer, sizeof(buffer));</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :       mCb.NoteNextEdgeName(buffer);</span>
+<span class="lineNum">     423 </span>            :     }
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :     mCb.NoteJSChild(aThing);</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :   } else if (aThing.is&lt;js::Shape&gt;()) {</span>
+<span class="lineNum">     426 </span>            :     // The maximum depth of traversal when tracing a Shape is unbounded, due to
+<span class="lineNum">     427 </span>            :     // the parent pointers on the shape.
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :     JS_TraceShapeCycleCollectorChildren(this, aThing);</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :   } else if (aThing.is&lt;js::ObjectGroup&gt;()) {</span>
+<span class="lineNum">     430 </span>            :     // The maximum depth of traversal when tracing an ObjectGroup is unbounded,
+<span class="lineNum">     431 </span>            :     // due to information attached to the groups which can lead other groups to
+<span class="lineNum">     432 </span>            :     // be traced.
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :     JS_TraceObjectGroupCycleCollectorChildren(this, aThing);</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :   } else if (!aThing.is&lt;JSString&gt;()) {</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :     JS::TraceChildren(this, aThing);</span>
+<span class="lineNum">     436 </span>            :   }
+<span class="lineNum">     437 </span>            : }
+<a name="438"><span class="lineNum">     438 </span>            : </a>
+<span class="lineNum">     439 </span>            : static void
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 : NoteJSChildGrayWrapperShim(void* aData, JS::GCCellPtr aThing)</span>
+<span class="lineNum">     441 </span>            : {
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :   TraversalTracer* trc = static_cast&lt;TraversalTracer*&gt;(aData);</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :   trc-&gt;onChild(aThing);</span>
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     445 </span>            : 
+<span class="lineNum">     446 </span>            : /*
+<span class="lineNum">     447 </span>            :  * The cycle collection participant for a Zone is intended to produce the same
+<span class="lineNum">     448 </span>            :  * results as if all of the gray GCthings in a zone were merged into a single node,
+<span class="lineNum">     449 </span>            :  * except for self-edges. This avoids the overhead of representing all of the GCthings in
+<span class="lineNum">     450 </span>            :  * the zone in the cycle collector graph, which should be much faster if many of
+<span class="lineNum">     451 </span>            :  * the GCthings in the zone are gray.
+<span class="lineNum">     452 </span>            :  *
+<span class="lineNum">     453 </span>            :  * Zone merging should not always be used, because it is a conservative
+<span class="lineNum">     454 </span>            :  * approximation of the true cycle collector graph that can incorrectly identify some
+<span class="lineNum">     455 </span>            :  * garbage objects as being live. For instance, consider two cycles that pass through a
+<span class="lineNum">     456 </span>            :  * zone, where one is garbage and the other is live. If we merge the entire
+<span class="lineNum">     457 </span>            :  * zone, the cycle collector will think that both are alive.
+<span class="lineNum">     458 </span>            :  *
+<span class="lineNum">     459 </span>            :  * We don't have to worry about losing track of a garbage cycle, because any such garbage
+<span class="lineNum">     460 </span>            :  * cycle incorrectly identified as live must contain at least one C++ to JS edge, and
+<span class="lineNum">     461 </span>            :  * XPConnect will always add the C++ object to the CC graph. (This is in contrast to pure
+<span class="lineNum">     462 </span>            :  * C++ garbage cycles, which must always be properly identified, because we clear the
+<span class="lineNum">     463 </span>            :  * purple buffer during every CC, which may contain the last reference to a garbage
+<span class="lineNum">     464 </span>            :  * cycle.)
+<span class="lineNum">     465 </span>            :  */
+<span class="lineNum">     466 </span>            : 
+<span class="lineNum">     467 </span>            : // NB: This is only used to initialize the participant in
+<span class="lineNum">     468 </span>            : // CycleCollectedJSRuntime. It should never be used directly.
+<span class="lineNum">     469 </span>            : static const JSZoneParticipant sJSZoneCycleCollectorGlobal;
+<a name="470"><span class="lineNum">     470 </span>            : </a>
+<span class="lineNum">     471 </span>            : static
+<span class="lineNum">     472 </span><span class="lineCov">         21 : void JSObjectsTenuredCb(JSContext* aContext, void* aData)</span>
+<span class="lineNum">     473 </span>            : {
+<span class="lineNum">     474 </span><span class="lineCov">         21 :   static_cast&lt;CycleCollectedJSRuntime*&gt;(aData)-&gt;JSObjectsTenured();</span>
+<span class="lineNum">     475 </span><span class="lineCov">         21 : }</span>
+<a name="476"><span class="lineNum">     476 </span>            : </a>
+<span class="lineNum">     477 </span>            : bool
+<span class="lineNum">     478 </span><span class="lineCov">       1445 : mozilla::GetBuildId(JS::BuildIdCharVector* aBuildID)</span>
+<span class="lineNum">     479 </span>            : {
+<span class="lineNum">     480 </span><span class="lineCov">       2890 :   nsCOMPtr&lt;nsIPlatformInfo&gt; info = do_GetService(&quot;@mozilla.org/xre/app-info;1&quot;);</span>
+<span class="lineNum">     481 </span><span class="lineCov">       1445 :   if (!info) {</span>
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     483 </span>            :   }
+<span class="lineNum">     484 </span>            : 
+<span class="lineNum">     485 </span><span class="lineCov">       2890 :   nsCString buildID;</span>
+<span class="lineNum">     486 </span><span class="lineCov">       1445 :   nsresult rv = info-&gt;GetPlatformBuildID(buildID);</span>
+<span class="lineNum">     487 </span><span class="lineCov">       1445 :   NS_ENSURE_SUCCESS(rv, false);</span>
+<span class="lineNum">     488 </span>            : 
+<span class="lineNum">     489 </span><span class="lineCov">       1445 :   if (!aBuildID-&gt;resize(buildID.Length())) {</span>
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     491 </span>            :   }
+<span class="lineNum">     492 </span>            : 
+<span class="lineNum">     493 </span><span class="lineCov">      21675 :   for (size_t i = 0; i &lt; buildID.Length(); i++) {</span>
+<span class="lineNum">     494 </span><span class="lineCov">      20230 :     (*aBuildID)[i] = buildID[i];</span>
+<span class="lineNum">     495 </span>            :   }
+<span class="lineNum">     496 </span>            : 
+<span class="lineNum">     497 </span><span class="lineCov">       1445 :   return true;</span>
+<span class="lineNum">     498 </span>            : }
+<a name="499"><span class="lineNum">     499 </span>            : </a>
+<span class="lineNum">     500 </span>            : static void
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 : MozCrashWarningReporter(JSContext*, JSErrorReport*)</span>
+<span class="lineNum">     502 </span>            : {
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :   MOZ_CRASH(&quot;Why is someone touching JSAPI without an AutoJSAPI?&quot;);</span>
+<a name="504"><span class="lineNum">     504 </span>            : }</a>
+<span class="lineNum">     505 </span>            : 
+<span class="lineNum">     506 </span><span class="lineCov">          4 : CycleCollectedJSRuntime::CycleCollectedJSRuntime(JSContext* aCx)</span>
+<span class="lineNum">     507 </span>            :   : mGCThingCycleCollectorGlobal(sGCThingCycleCollectorGlobal)
+<span class="lineNum">     508 </span>            :   , mJSZoneCycleCollectorGlobal(sJSZoneCycleCollectorGlobal)
+<span class="lineNum">     509 </span><span class="lineCov">          4 :   , mJSRuntime(JS_GetRuntime(aCx))</span>
+<span class="lineNum">     510 </span>            :   , mPrevGCSliceCallback(nullptr)
+<span class="lineNum">     511 </span>            :   , mPrevGCNurseryCollectionCallback(nullptr)
+<span class="lineNum">     512 </span>            :   , mJSHolderMap(256)
+<span class="lineNum">     513 </span>            :   , mOutOfMemoryState(OOMState::OK)
+<span class="lineNum">     514 </span><span class="lineCov">          8 :   , mLargeAllocationFailureState(OOMState::OK)</span>
+<span class="lineNum">     515 </span>            : {
+<span class="lineNum">     516 </span><span class="lineCov">          4 :   MOZ_COUNT_CTOR(CycleCollectedJSRuntime);</span>
+<span class="lineNum">     517 </span><span class="lineCov">          4 :   MOZ_ASSERT(aCx);</span>
+<span class="lineNum">     518 </span><span class="lineCov">          4 :   MOZ_ASSERT(mJSRuntime);</span>
+<span class="lineNum">     519 </span>            : 
+<span class="lineNum">     520 </span><span class="lineCov">          4 :   if (!JS_AddExtraGCRootsTracer(aCx, TraceBlackJS, this)) {</span>
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :     MOZ_CRASH(&quot;JS_AddExtraGCRootsTracer failed&quot;);</span>
+<span class="lineNum">     522 </span>            :   }
+<span class="lineNum">     523 </span><span class="lineCov">          4 :   JS_SetGrayGCRootsTracer(aCx, TraceGrayJS, this);</span>
+<span class="lineNum">     524 </span><span class="lineCov">          4 :   JS_SetGCCallback(aCx, GCCallback, this);</span>
+<span class="lineNum">     525 </span><span class="lineCov">          4 :   mPrevGCSliceCallback = JS::SetGCSliceCallback(aCx, GCSliceCallback);</span>
+<span class="lineNum">     526 </span>            : 
+<span class="lineNum">     527 </span><span class="lineCov">          4 :   if (NS_IsMainThread()) {</span>
+<span class="lineNum">     528 </span>            :     // We would like to support all threads here, but the way timeline consumers
+<span class="lineNum">     529 </span>            :     // are set up currently, you can either add a marker for one specific
+<span class="lineNum">     530 </span>            :     // docshell, or for every consumer globally. We would like to add a marker
+<span class="lineNum">     531 </span>            :     // for every consumer observing anything on this thread, but that is not
+<span class="lineNum">     532 </span>            :     // currently possible. For now, add global markers only when we are on the
+<span class="lineNum">     533 </span>            :     // main thread, since the UI for this tracing data only displays data
+<span class="lineNum">     534 </span>            :     // relevant to the main-thread.
+<span class="lineNum">     535 </span><span class="lineCov">          3 :     mPrevGCNurseryCollectionCallback = JS::SetGCNurseryCollectionCallback(</span>
+<span class="lineNum">     536 </span>            :       aCx, GCNurseryCollectionCallback);
+<span class="lineNum">     537 </span>            :   }
+<span class="lineNum">     538 </span>            : 
+<span class="lineNum">     539 </span><span class="lineCov">          4 :   JS_SetObjectsTenuredCallback(aCx, JSObjectsTenuredCb, this);</span>
+<span class="lineNum">     540 </span><span class="lineCov">          4 :   JS::SetOutOfMemoryCallback(aCx, OutOfMemoryCallback, this);</span>
+<span class="lineNum">     541 </span><span class="lineCov">          4 :   JS_SetExternalStringSizeofCallback(aCx, SizeofExternalStringCallback);</span>
+<span class="lineNum">     542 </span><span class="lineCov">          4 :   JS::SetBuildIdOp(aCx, GetBuildId);</span>
+<span class="lineNum">     543 </span><span class="lineCov">          4 :   JS::SetWarningReporter(aCx, MozCrashWarningReporter);</span>
+<span class="lineNum">     544 </span>            : #ifdef MOZ_CRASHREPORTER
+<span class="lineNum">     545 </span>            :     js::AutoEnterOOMUnsafeRegion::setAnnotateOOMAllocationSizeCallback(
+<span class="lineNum">     546 </span><span class="lineCov">          4 :             CrashReporter::AnnotateOOMAllocationSize);</span>
+<span class="lineNum">     547 </span>            : #endif
+<span class="lineNum">     548 </span>            : 
+<span class="lineNum">     549 </span>            :   static js::DOMCallbacks DOMcallbacks = {
+<span class="lineNum">     550 </span>            :     InstanceClassHasProtoAtDepth
+<span class="lineNum">     551 </span>            :   };
+<span class="lineNum">     552 </span><span class="lineCov">          4 :   SetDOMCallbacks(aCx, &amp;DOMcallbacks);</span>
+<span class="lineNum">     553 </span><span class="lineCov">          4 :   js::SetScriptEnvironmentPreparer(aCx, &amp;mEnvironmentPreparer);</span>
+<span class="lineNum">     554 </span>            : 
+<span class="lineNum">     555 </span><span class="lineCov">          4 :   JS::dbg::SetDebuggerMallocSizeOf(aCx, moz_malloc_size_of);</span>
+<span class="lineNum">     556 </span><span class="lineCov">          4 : }</span>
+<a name="557"><span class="lineNum">     557 </span>            : </a>
+<span class="lineNum">     558 </span>            : void
+<span class="lineNum">     559 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::Shutdown(JSContext* cx)</span>
+<span class="lineNum">     560 </span>            : {
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 :   JS_RemoveExtraGCRootsTracer(cx, TraceBlackJS, this);</span>
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :   JS_RemoveExtraGCRootsTracer(cx, TraceGrayJS, this);</span>
+<a name="563"><span class="lineNum">     563 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     564 </span>            : 
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::~CycleCollectedJSRuntime()</span>
+<span class="lineNum">     566 </span>            : {
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :   MOZ_COUNT_DTOR(CycleCollectedJSRuntime);</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!mDeferredFinalizerTable.Count());</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 : }</span>
+<a name="570"><span class="lineNum">     570 </span>            : </a>
+<span class="lineNum">     571 </span>            : void
+<span class="lineNum">     572 </span><span class="lineCov">          4 : CycleCollectedJSRuntime::AddContext(CycleCollectedJSContext* aContext)</span>
+<span class="lineNum">     573 </span>            : {
+<span class="lineNum">     574 </span><span class="lineCov">          4 :   mContexts.insertBack(aContext);</span>
+<span class="lineNum">     575 </span><span class="lineCov">          4 : }</span>
+<a name="576"><span class="lineNum">     576 </span>            : </a>
+<span class="lineNum">     577 </span>            : void
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::RemoveContext(CycleCollectedJSContext* aContext)</span>
+<span class="lineNum">     579 </span>            : {
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :   aContext-&gt;removeFrom(mContexts);</span>
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 : }</span>
+<a name="582"><span class="lineNum">     582 </span>            : </a>
+<span class="lineNum">     583 </span>            : size_t
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const</span>
+<span class="lineNum">     585 </span>            : {
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :   size_t n = 0;</span>
+<span class="lineNum">     587 </span>            : 
+<span class="lineNum">     588 </span>            :   // We're deliberately not measuring anything hanging off the entries in
+<span class="lineNum">     589 </span>            :   // mJSHolders.
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :   n += mJSHolders.SizeOfExcludingThis(aMallocSizeOf);</span>
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :   n += mJSHolderMap.ShallowSizeOfExcludingThis(aMallocSizeOf);</span>
+<span class="lineNum">     592 </span>            : 
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :   return n;</span>
+<span class="lineNum">     594 </span>            : }
+<a name="595"><span class="lineNum">     595 </span>            : </a>
+<span class="lineNum">     596 </span>            : void
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::UnmarkSkippableJSHolders()</span>
+<span class="lineNum">     598 </span>            : {
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :   for (auto iter = mJSHolders.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :     void* holder = iter.Get().mHolder;</span>
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :     nsScriptObjectTracer* tracer = iter.Get().mTracer;</span>
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :     tracer-&gt;CanSkip(holder, true);</span>
+<span class="lineNum">     603 </span>            :   }
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 : }</span>
+<a name="605"><span class="lineNum">     605 </span>            : </a>
+<span class="lineNum">     606 </span>            : void
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::DescribeGCThing(bool aIsMarked, JS::GCCellPtr aThing,</span>
+<span class="lineNum">     608 </span>            :                                          nsCycleCollectionTraversalCallback&amp; aCb) const
+<span class="lineNum">     609 </span>            : {
+<span class="lineNum">     610 </span><span class="lineNoCov">          0 :   if (!aCb.WantDebugInfo()) {</span>
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :     aCb.DescribeGCedNode(aIsMarked, &quot;JS Object&quot;);</span>
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     613 </span>            :   }
+<span class="lineNum">     614 </span>            : 
+<span class="lineNum">     615 </span>            :   char name[72];
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 :   uint64_t compartmentAddress = 0;</span>
+<span class="lineNum">     617 </span><span class="lineNoCov">          0 :   if (aThing.is&lt;JSObject&gt;()) {</span>
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 :     JSObject* obj = &amp;aThing.as&lt;JSObject&gt;();</span>
+<span class="lineNum">     619 </span><span class="lineNoCov">          0 :     compartmentAddress = (uint64_t)js::GetObjectCompartment(obj);</span>
+<span class="lineNum">     620 </span><span class="lineNoCov">          0 :     const js::Class* clasp = js::GetObjectClass(obj);</span>
+<span class="lineNum">     621 </span>            : 
+<span class="lineNum">     622 </span>            :     // Give the subclass a chance to do something
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 :     if (DescribeCustomObjects(obj, clasp, name)) {</span>
+<span class="lineNum">     624 </span>            :       // Nothing else to do!
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :     } else if (js::IsFunctionObject(obj)) {</span>
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :       JSFunction* fun = JS_GetObjectFunction(obj);</span>
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :       JSString* str = JS_GetFunctionDisplayId(fun);</span>
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :       if (str) {</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :         JSFlatString* flat = JS_ASSERT_STRING_IS_FLAT(str);</span>
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 :         nsAutoString chars;</span>
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :         AssignJSFlatString(chars, flat);</span>
+<span class="lineNum">     632 </span><span class="lineNoCov">          0 :         NS_ConvertUTF16toUTF8 fname(chars);</span>
+<span class="lineNum">     633 </span><span class="lineNoCov">          0 :         SprintfLiteral(name, &quot;JS Object (Function - %s)&quot;, fname.get());</span>
+<span class="lineNum">     634 </span>            :       } else {
+<span class="lineNum">     635 </span><span class="lineNoCov">          0 :         SprintfLiteral(name, &quot;JS Object (Function)&quot;);</span>
+<span class="lineNum">     636 </span>            :       }
+<span class="lineNum">     637 </span>            :     } else {
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 :       SprintfLiteral(name, &quot;JS Object (%s)&quot;, clasp-&gt;name);</span>
+<span class="lineNum">     639 </span>            :     }
+<span class="lineNum">     640 </span>            :   } else {
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :     SprintfLiteral(name, &quot;JS %s&quot;, JS::GCTraceKindToAscii(aThing.kind()));</span>
+<span class="lineNum">     642 </span>            :   }
+<span class="lineNum">     643 </span>            : 
+<span class="lineNum">     644 </span>            :   // Disable printing global for objects while we figure out ObjShrink fallout.
+<span class="lineNum">     645 </span><span class="lineNoCov">          0 :   aCb.DescribeGCedNode(aIsMarked, name, compartmentAddress);</span>
+<span class="lineNum">     646 </span>            : }
+<a name="647"><span class="lineNum">     647 </span>            : </a>
+<span class="lineNum">     648 </span>            : void
+<span class="lineNum">     649 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::NoteGCThingJSChildren(JS::GCCellPtr aThing,</span>
+<span class="lineNum">     650 </span>            :                                                nsCycleCollectionTraversalCallback&amp; aCb) const
+<span class="lineNum">     651 </span>            : {
+<span class="lineNum">     652 </span><span class="lineNoCov">          0 :   TraversalTracer trc(mJSRuntime, aCb);</span>
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 :   JS::TraceChildren(&amp;trc, aThing);</span>
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 : }</span>
+<a name="655"><span class="lineNum">     655 </span>            : </a>
+<span class="lineNum">     656 </span>            : void
+<span class="lineNum">     657 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::NoteGCThingXPCOMChildren(const js::Class* aClasp,</span>
+<span class="lineNum">     658 </span>            :                                                   JSObject* aObj,
+<span class="lineNum">     659 </span>            :                                                   nsCycleCollectionTraversalCallback&amp; aCb) const
+<span class="lineNum">     660 </span>            : {
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aClasp);</span>
+<span class="lineNum">     662 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aClasp == js::GetObjectClass(aObj));</span>
+<span class="lineNum">     663 </span>            : 
+<span class="lineNum">     664 </span><span class="lineNoCov">          0 :   if (NoteCustomGCThingXPCOMChildren(aClasp, aObj, aCb)) {</span>
+<span class="lineNum">     665 </span>            :     // Nothing else to do!
+<span class="lineNum">     666 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     667 </span>            :   }
+<span class="lineNum">     668 </span>            :   // XXX This test does seem fragile, we should probably whitelist classes
+<span class="lineNum">     669 </span>            :   //     that do hold a strong reference, but that might not be possible.
+<span class="lineNum">     670 </span><span class="lineNoCov">          0 :   else if (aClasp-&gt;flags &amp; JSCLASS_HAS_PRIVATE &amp;&amp;</span>
+<span class="lineNum">     671 </span><span class="lineNoCov">          0 :            aClasp-&gt;flags &amp; JSCLASS_PRIVATE_IS_NSISUPPORTS) {</span>
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCb, &quot;js::GetObjectPrivate(obj)&quot;);</span>
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :     aCb.NoteXPCOMChild(static_cast&lt;nsISupports*&gt;(js::GetObjectPrivate(aObj)));</span>
+<span class="lineNum">     674 </span>            :   } else {
+<span class="lineNum">     675 </span><span class="lineNoCov">          0 :     const DOMJSClass* domClass = GetDOMClass(aObj);</span>
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :     if (domClass) {</span>
+<span class="lineNum">     677 </span><span class="lineNoCov">          0 :       NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCb, &quot;UnwrapDOMObject(obj)&quot;);</span>
+<span class="lineNum">     678 </span>            :       // It's possible that our object is an unforgeable holder object, in
+<span class="lineNum">     679 </span>            :       // which case it doesn't actually have a C++ DOM object associated with
+<span class="lineNum">     680 </span>            :       // it.  Use UnwrapPossiblyNotInitializedDOMObject, which produces null in
+<span class="lineNum">     681 </span>            :       // that case, since NoteXPCOMChild/NoteNativeChild are null-safe.
+<span class="lineNum">     682 </span><span class="lineNoCov">          0 :       if (domClass-&gt;mDOMObjectIsISupports) {</span>
+<span class="lineNum">     683 </span><span class="lineNoCov">          0 :         aCb.NoteXPCOMChild(UnwrapPossiblyNotInitializedDOMObject&lt;nsISupports&gt;(aObj));</span>
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :       } else if (domClass-&gt;mParticipant) {</span>
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :         aCb.NoteNativeChild(UnwrapPossiblyNotInitializedDOMObject&lt;void&gt;(aObj),</span>
+<span class="lineNum">     686 </span><span class="lineNoCov">          0 :                             domClass-&gt;mParticipant);</span>
+<span class="lineNum">     687 </span>            :       }
+<span class="lineNum">     688 </span>            :     }
+<span class="lineNum">     689 </span>            :   }
+<span class="lineNum">     690 </span>            : }
+<a name="691"><span class="lineNum">     691 </span>            : </a>
+<span class="lineNum">     692 </span>            : void
+<span class="lineNum">     693 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::TraverseGCThing(TraverseSelect aTs, JS::GCCellPtr aThing,</span>
+<span class="lineNum">     694 </span>            :                                          nsCycleCollectionTraversalCallback&amp; aCb)
+<span class="lineNum">     695 </span>            : {
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :   bool isMarkedGray = JS::GCThingIsMarkedGray(aThing);</span>
+<span class="lineNum">     697 </span>            : 
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :   if (aTs == TRAVERSE_FULL) {</span>
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :     DescribeGCThing(!isMarkedGray, aThing, aCb);</span>
+<span class="lineNum">     700 </span>            :   }
+<span class="lineNum">     701 </span>            : 
+<span class="lineNum">     702 </span>            :   // If this object is alive, then all of its children are alive. For JS objects,
+<span class="lineNum">     703 </span>            :   // the black-gray invariant ensures the children are also marked black. For C++
+<span class="lineNum">     704 </span>            :   // objects, the ref count from this object will keep them alive. Thus we don't
+<span class="lineNum">     705 </span>            :   // need to trace our children, unless we are debugging using WantAllTraces.
+<span class="lineNum">     706 </span><span class="lineNoCov">          0 :   if (!isMarkedGray &amp;&amp; !aCb.WantAllTraces()) {</span>
+<span class="lineNum">     707 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     708 </span>            :   }
+<span class="lineNum">     709 </span>            : 
+<span class="lineNum">     710 </span><span class="lineNoCov">          0 :   if (aTs == TRAVERSE_FULL) {</span>
+<span class="lineNum">     711 </span><span class="lineNoCov">          0 :     NoteGCThingJSChildren(aThing, aCb);</span>
+<span class="lineNum">     712 </span>            :   }
+<span class="lineNum">     713 </span>            : 
+<span class="lineNum">     714 </span><span class="lineNoCov">          0 :   if (aThing.is&lt;JSObject&gt;()) {</span>
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 :     JSObject* obj = &amp;aThing.as&lt;JSObject&gt;();</span>
+<span class="lineNum">     716 </span><span class="lineNoCov">          0 :     NoteGCThingXPCOMChildren(js::GetObjectClass(obj), obj, aCb);</span>
+<span class="lineNum">     717 </span>            :   }
+<span class="lineNum">     718 </span>            : }
+<span class="lineNum">     719 </span>            : 
+<span class="lineNum">     720 </span>            : struct TraverseObjectShimClosure
+<span class="lineNum">     721 </span>            : {
+<span class="lineNum">     722 </span>            :   nsCycleCollectionTraversalCallback&amp; cb;
+<span class="lineNum">     723 </span>            :   CycleCollectedJSRuntime* self;
+<span class="lineNum">     724 </span>            : };
+<a name="725"><span class="lineNum">     725 </span>            : </a>
+<span class="lineNum">     726 </span>            : void
+<span class="lineNum">     727 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::TraverseZone(JS::Zone* aZone,</span>
+<span class="lineNum">     728 </span>            :                                       nsCycleCollectionTraversalCallback&amp; aCb)
+<span class="lineNum">     729 </span>            : {
+<span class="lineNum">     730 </span>            :   /*
+<span class="lineNum">     731 </span>            :    * We treat the zone as being gray. We handle non-gray GCthings in the
+<span class="lineNum">     732 </span>            :    * zone by not reporting their children to the CC. The black-gray invariant
+<span class="lineNum">     733 </span>            :    * ensures that any JS children will also be non-gray, and thus don't need to be
+<span class="lineNum">     734 </span>            :    * added to the graph. For C++ children, not representing the edge from the
+<span class="lineNum">     735 </span>            :    * non-gray JS GCthings to the C++ object will keep the child alive.
+<span class="lineNum">     736 </span>            :    *
+<span class="lineNum">     737 </span>            :    * We don't allow zone merging in a WantAllTraces CC, because then these
+<span class="lineNum">     738 </span>            :    * assumptions don't hold.
+<span class="lineNum">     739 </span>            :    */
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :   aCb.DescribeGCedNode(false, &quot;JS Zone&quot;);</span>
+<span class="lineNum">     741 </span>            : 
+<span class="lineNum">     742 </span>            :   /*
+<span class="lineNum">     743 </span>            :    * Every JS child of everything in the zone is either in the zone
+<span class="lineNum">     744 </span>            :    * or is a cross-compartment wrapper. In the former case, we don't need to
+<span class="lineNum">     745 </span>            :    * represent these edges in the CC graph because JS objects are not ref counted.
+<span class="lineNum">     746 </span>            :    * In the latter case, the JS engine keeps a map of these wrappers, which we
+<span class="lineNum">     747 </span>            :    * iterate over. Edges between compartments in the same zone will add
+<span class="lineNum">     748 </span>            :    * unnecessary loop edges to the graph (bug 842137).
+<span class="lineNum">     749 </span>            :    */
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :   TraversalTracer trc(mJSRuntime, aCb);</span>
+<span class="lineNum">     751 </span><span class="lineNoCov">          0 :   js::VisitGrayWrapperTargets(aZone, NoteJSChildGrayWrapperShim, &amp;trc);</span>
+<span class="lineNum">     752 </span>            : 
+<span class="lineNum">     753 </span>            :   /*
+<span class="lineNum">     754 </span>            :    * To find C++ children of things in the zone, we scan every JS Object in
+<span class="lineNum">     755 </span>            :    * the zone. Only JS Objects can have C++ children.
+<span class="lineNum">     756 </span>            :    */
+<span class="lineNum">     757 </span><span class="lineNoCov">          0 :   TraverseObjectShimClosure closure = { aCb, this };</span>
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :   js::IterateGrayObjects(aZone, TraverseObjectShim, &amp;closure);</span>
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 : }</span>
+<a name="760"><span class="lineNum">     760 </span>            : </a>
+<span class="lineNum">     761 </span>            : /* static */ void
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::TraverseObjectShim(void* aData, JS::GCCellPtr aThing)</span>
+<span class="lineNum">     763 </span>            : {
+<span class="lineNum">     764 </span>            :   TraverseObjectShimClosure* closure =
+<span class="lineNum">     765 </span><span class="lineNoCov">          0 :     static_cast&lt;TraverseObjectShimClosure*&gt;(aData);</span>
+<span class="lineNum">     766 </span>            : 
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aThing.is&lt;JSObject&gt;());</span>
+<span class="lineNum">     768 </span><span class="lineNoCov">          0 :   closure-&gt;self-&gt;TraverseGCThing(CycleCollectedJSRuntime::TRAVERSE_CPP,</span>
+<span class="lineNum">     769 </span><span class="lineNoCov">          0 :                                  aThing, closure-&gt;cb);</span>
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 : }</span>
+<a name="771"><span class="lineNum">     771 </span>            : </a>
+<span class="lineNum">     772 </span>            : void
+<span class="lineNum">     773 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::TraverseNativeRoots(nsCycleCollectionNoteRootCallback&amp; aCb)</span>
+<span class="lineNum">     774 </span>            : {
+<span class="lineNum">     775 </span>            :   // NB: This is here just to preserve the existing XPConnect order. I doubt it
+<span class="lineNum">     776 </span>            :   // would hurt to do this after the JS holders.
+<span class="lineNum">     777 </span><span class="lineNoCov">          0 :   TraverseAdditionalNativeRoots(aCb);</span>
+<span class="lineNum">     778 </span>            : 
+<span class="lineNum">     779 </span><span class="lineNoCov">          0 :   for (auto iter = mJSHolders.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 :     void* holder = iter.Get().mHolder;</span>
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 :     nsScriptObjectTracer* tracer = iter.Get().mTracer;</span>
+<span class="lineNum">     782 </span>            : 
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :     bool noteRoot = false;</span>
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :     if (MOZ_UNLIKELY(aCb.WantAllTraces())) {</span>
+<span class="lineNum">     785 </span><span class="lineNoCov">          0 :       noteRoot = true;</span>
+<span class="lineNum">     786 </span>            :     } else {
+<span class="lineNum">     787 </span>            :       tracer-&gt;Trace(holder,
+<span class="lineNum">     788 </span><span class="lineNoCov">          0 :                     TraceCallbackFunc(CheckParticipatesInCycleCollection),</span>
+<span class="lineNum">     789 </span><span class="lineNoCov">          0 :                     &amp;noteRoot);</span>
+<span class="lineNum">     790 </span>            :     }
+<span class="lineNum">     791 </span>            : 
+<span class="lineNum">     792 </span><span class="lineNoCov">          0 :     if (noteRoot) {</span>
+<span class="lineNum">     793 </span><span class="lineNoCov">          0 :       aCb.NoteNativeRoot(holder, tracer);</span>
+<span class="lineNum">     794 </span>            :     }
+<span class="lineNum">     795 </span>            :   }
+<span class="lineNum">     796 </span><span class="lineNoCov">          0 : }</span>
+<a name="797"><span class="lineNum">     797 </span>            : </a>
+<span class="lineNum">     798 </span>            : /* static */ void
+<span class="lineNum">     799 </span><span class="lineCov">          1 : CycleCollectedJSRuntime::TraceBlackJS(JSTracer* aTracer, void* aData)</span>
+<span class="lineNum">     800 </span>            : {
+<span class="lineNum">     801 </span><span class="lineCov">          1 :   CycleCollectedJSRuntime* self = static_cast&lt;CycleCollectedJSRuntime*&gt;(aData);</span>
+<span class="lineNum">     802 </span>            : 
+<span class="lineNum">     803 </span><span class="lineCov">          1 :   self-&gt;TraceNativeBlackRoots(aTracer);</span>
+<span class="lineNum">     804 </span><span class="lineCov">          1 : }</span>
+<a name="805"><span class="lineNum">     805 </span>            : </a>
+<span class="lineNum">     806 </span>            : /* static */ void
+<span class="lineNum">     807 </span><span class="lineCov">          1 : CycleCollectedJSRuntime::TraceGrayJS(JSTracer* aTracer, void* aData)</span>
+<span class="lineNum">     808 </span>            : {
+<span class="lineNum">     809 </span><span class="lineCov">          1 :   CycleCollectedJSRuntime* self = static_cast&lt;CycleCollectedJSRuntime*&gt;(aData);</span>
+<span class="lineNum">     810 </span>            : 
+<span class="lineNum">     811 </span>            :   // Mark these roots as gray so the CC can walk them later.
+<span class="lineNum">     812 </span><span class="lineCov">          1 :   self-&gt;TraceNativeGrayRoots(aTracer);</span>
+<span class="lineNum">     813 </span><span class="lineCov">          1 : }</span>
+<a name="814"><span class="lineNum">     814 </span>            : </a>
+<span class="lineNum">     815 </span>            : /* static */ void
+<span class="lineNum">     816 </span><span class="lineCov">          1 : CycleCollectedJSRuntime::GCCallback(JSContext* aContext,</span>
+<span class="lineNum">     817 </span>            :                                     JSGCStatus aStatus,
+<span class="lineNum">     818 </span>            :                                     void* aData)
+<span class="lineNum">     819 </span>            : {
+<span class="lineNum">     820 </span><span class="lineCov">          1 :   CycleCollectedJSRuntime* self = static_cast&lt;CycleCollectedJSRuntime*&gt;(aData);</span>
+<span class="lineNum">     821 </span>            : 
+<span class="lineNum">     822 </span><span class="lineCov">          1 :   MOZ_ASSERT(CycleCollectedJSContext::Get()-&gt;Context() == aContext);</span>
+<span class="lineNum">     823 </span><span class="lineCov">          1 :   MOZ_ASSERT(CycleCollectedJSContext::Get()-&gt;Runtime() == self);</span>
+<span class="lineNum">     824 </span>            : 
+<span class="lineNum">     825 </span><span class="lineCov">          1 :   self-&gt;OnGC(aContext, aStatus);</span>
+<span class="lineNum">     826 </span><span class="lineCov">          1 : }</span>
+<a name="827"><span class="lineNum">     827 </span>            : </a>
+<span class="lineNum">     828 </span>            : /* static */ void
+<span class="lineNum">     829 </span><span class="lineCov">          7 : CycleCollectedJSRuntime::GCSliceCallback(JSContext* aContext,</span>
+<span class="lineNum">     830 </span>            :                                          JS::GCProgress aProgress,
+<span class="lineNum">     831 </span>            :                                          const JS::GCDescription&amp; aDesc)
+<span class="lineNum">     832 </span>            : {
+<span class="lineNum">     833 </span><span class="lineCov">          7 :   CycleCollectedJSRuntime* self = CycleCollectedJSRuntime::Get();</span>
+<span class="lineNum">     834 </span><span class="lineCov">          7 :   MOZ_ASSERT(CycleCollectedJSContext::Get()-&gt;Context() == aContext);</span>
+<span class="lineNum">     835 </span>            : 
+<span class="lineNum">     836 </span><span class="lineCov">          7 :   if (profiler_is_active()) {</span>
+<span class="lineNum">     837 </span><span class="lineNoCov">          0 :     if (aProgress == JS::GC_CYCLE_END) {</span>
+<span class="lineNum">     838 </span><span class="lineNoCov">          0 :       profiler_add_marker(</span>
+<span class="lineNum">     839 </span>            :         &quot;GCMajor&quot;,
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :         MakeUnique&lt;GCMajorMarkerPayload&gt;(aDesc.startTime(aContext),</span>
+<span class="lineNum">     841 </span><span class="lineNoCov">          0 :                                          aDesc.endTime(aContext),</span>
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :                                          aDesc.summaryToJSON(aContext)));</span>
+<span class="lineNum">     843 </span><span class="lineNoCov">          0 :     } else if (aProgress == JS::GC_SLICE_END) {</span>
+<span class="lineNum">     844 </span><span class="lineNoCov">          0 :       profiler_add_marker(</span>
+<span class="lineNum">     845 </span>            :         &quot;GCSlice&quot;,
+<span class="lineNum">     846 </span><span class="lineNoCov">          0 :         MakeUnique&lt;GCSliceMarkerPayload&gt;(aDesc.lastSliceStart(aContext),</span>
+<span class="lineNum">     847 </span><span class="lineNoCov">          0 :                                          aDesc.lastSliceEnd(aContext),</span>
+<span class="lineNum">     848 </span><span class="lineNoCov">          0 :                                          aDesc.sliceToJSON(aContext)));</span>
+<span class="lineNum">     849 </span>            :     }
+<span class="lineNum">     850 </span>            :   }
+<span class="lineNum">     851 </span>            : 
+<span class="lineNum">     852 </span><span class="lineCov">          7 :   if (aProgress == JS::GC_CYCLE_END &amp;&amp;</span>
+<span class="lineNum">     853 </span><span class="lineNoCov">          0 :       JS::dbg::FireOnGarbageCollectionHookRequired(aContext)) {</span>
+<span class="lineNum">     854 </span><span class="lineNoCov">          0 :     JS::gcreason::Reason reason = aDesc.reason_;</span>
+<span class="lineNum">     855 </span>            :     Unused &lt;&lt;
+<span class="lineNum">     856 </span><span class="lineNoCov">          0 :       NS_WARN_IF(NS_FAILED(DebuggerOnGCRunnable::Enqueue(aContext, aDesc)) &amp;&amp;</span>
+<span class="lineNum">     857 </span>            :                  reason != JS::gcreason::SHUTDOWN_CC &amp;&amp;
+<span class="lineNum">     858 </span>            :                  reason != JS::gcreason::DESTROY_RUNTIME &amp;&amp;
+<span class="lineNum">     859 </span>            :                  reason != JS::gcreason::XPCONNECT_SHUTDOWN);
+<span class="lineNum">     860 </span>            :   }
+<span class="lineNum">     861 </span>            : 
+<span class="lineNum">     862 </span><span class="lineCov">          7 :   if (self-&gt;mPrevGCSliceCallback) {</span>
+<span class="lineNum">     863 </span><span class="lineNoCov">          0 :     self-&gt;mPrevGCSliceCallback(aContext, aProgress, aDesc);</span>
+<span class="lineNum">     864 </span>            :   }
+<a name="865"><span class="lineNum">     865 </span><span class="lineCov">          7 : }</span></a>
+<span class="lineNum">     866 </span>            : 
+<span class="lineNum">     867 </span><span class="lineNoCov">          0 : class MinorGCMarker : public TimelineMarker</span>
+<span class="lineNum">     868 </span>            : {
+<span class="lineNum">     869 </span>            : private:
+<span class="lineNum">     870 </span>            :   JS::gcreason::Reason mReason;
+<a name="871"><span class="lineNum">     871 </span>            : </a>
+<span class="lineNum">     872 </span>            : public:
+<span class="lineNum">     873 </span><span class="lineNoCov">          0 :   MinorGCMarker(MarkerTracingType aTracingType,</span>
+<span class="lineNum">     874 </span>            :                 JS::gcreason::Reason aReason)
+<span class="lineNum">     875 </span><span class="lineNoCov">          0 :     : TimelineMarker(&quot;MinorGC&quot;,</span>
+<span class="lineNum">     876 </span>            :                      aTracingType,
+<span class="lineNum">     877 </span>            :                      MarkerStackRequest::NO_STACK)
+<span class="lineNum">     878 </span><span class="lineNoCov">          0 :     , mReason(aReason)</span>
+<span class="lineNum">     879 </span>            :     {
+<span class="lineNum">     880 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(aTracingType == MarkerTracingType::START ||</span>
+<span class="lineNum">     881 </span>            :                  aTracingType == MarkerTracingType::END);
+<a name="882"><span class="lineNum">     882 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     883 </span>            : 
+<span class="lineNum">     884 </span><span class="lineNoCov">          0 :   MinorGCMarker(JS::GCNurseryProgress aProgress,</span>
+<span class="lineNum">     885 </span>            :                 JS::gcreason::Reason aReason)
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 :     : TimelineMarker(&quot;MinorGC&quot;,</span>
+<span class="lineNum">     887 </span>            :                      aProgress == JS::GCNurseryProgress::GC_NURSERY_COLLECTION_START
+<span class="lineNum">     888 </span>            :                        ? MarkerTracingType::START
+<span class="lineNum">     889 </span>            :                        : MarkerTracingType::END,
+<span class="lineNum">     890 </span>            :                      MarkerStackRequest::NO_STACK)
+<span class="lineNum">     891 </span><span class="lineNoCov">          0 :     , mReason(aReason)</span>
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :   { }</span>
+<a name="893"><span class="lineNum">     893 </span>            : </a>
+<span class="lineNum">     894 </span>            :   virtual void
+<span class="lineNum">     895 </span><span class="lineNoCov">          0 :   AddDetails(JSContext* aCx,</span>
+<span class="lineNum">     896 </span>            :              dom::ProfileTimelineMarker&amp; aMarker) override
+<span class="lineNum">     897 </span>            :   {
+<span class="lineNum">     898 </span><span class="lineNoCov">          0 :     TimelineMarker::AddDetails(aCx, aMarker);</span>
+<span class="lineNum">     899 </span>            : 
+<span class="lineNum">     900 </span><span class="lineNoCov">          0 :     if (GetTracingType() == MarkerTracingType::START) {</span>
+<span class="lineNum">     901 </span><span class="lineNoCov">          0 :       auto reason = JS::gcreason::ExplainReason(mReason);</span>
+<span class="lineNum">     902 </span><span class="lineNoCov">          0 :       aMarker.mCauseName.Construct(NS_ConvertUTF8toUTF16(reason));</span>
+<span class="lineNum">     903 </span>            :     }
+<span class="lineNum">     904 </span><span class="lineNoCov">          0 :   }</span>
+<a name="905"><span class="lineNum">     905 </span>            : </a>
+<span class="lineNum">     906 </span>            :   virtual UniquePtr&lt;AbstractTimelineMarker&gt;
+<span class="lineNum">     907 </span><span class="lineNoCov">          0 :   Clone() override</span>
+<span class="lineNum">     908 </span>            :   {
+<span class="lineNum">     909 </span><span class="lineNoCov">          0 :     auto clone = MakeUnique&lt;MinorGCMarker&gt;(GetTracingType(), mReason);</span>
+<span class="lineNum">     910 </span><span class="lineNoCov">          0 :     clone-&gt;SetCustomTime(GetTime());</span>
+<span class="lineNum">     911 </span><span class="lineNoCov">          0 :     return UniquePtr&lt;AbstractTimelineMarker&gt;(Move(clone));</span>
+<span class="lineNum">     912 </span>            :   }
+<span class="lineNum">     913 </span>            : };
+<a name="914"><span class="lineNum">     914 </span>            : </a>
+<span class="lineNum">     915 </span>            : /* static */ void
+<span class="lineNum">     916 </span><span class="lineCov">         48 : CycleCollectedJSRuntime::GCNurseryCollectionCallback(JSContext* aContext,</span>
+<span class="lineNum">     917 </span>            :                                                      JS::GCNurseryProgress aProgress,
+<span class="lineNum">     918 </span>            :                                                      JS::gcreason::Reason aReason)
+<span class="lineNum">     919 </span>            : {
+<span class="lineNum">     920 </span><span class="lineCov">         48 :   CycleCollectedJSRuntime* self = CycleCollectedJSRuntime::Get();</span>
+<span class="lineNum">     921 </span><span class="lineCov">         48 :   MOZ_ASSERT(CycleCollectedJSContext::Get()-&gt;Context() == aContext);</span>
+<span class="lineNum">     922 </span><span class="lineCov">         48 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     923 </span>            : 
+<span class="lineNum">     924 </span><span class="lineCov">         96 :   RefPtr&lt;TimelineConsumers&gt; timelines = TimelineConsumers::Get();</span>
+<span class="lineNum">     925 </span><span class="lineCov">         48 :   if (timelines &amp;&amp; !timelines-&gt;IsEmpty()) {</span>
+<span class="lineNum">     926 </span>            :     UniquePtr&lt;AbstractTimelineMarker&gt; abstractMarker(
+<span class="lineNum">     927 </span><span class="lineNoCov">          0 :       MakeUnique&lt;MinorGCMarker&gt;(aProgress, aReason));</span>
+<span class="lineNum">     928 </span><span class="lineNoCov">          0 :     timelines-&gt;AddMarkerForAllObservedDocShells(abstractMarker);</span>
+<span class="lineNum">     929 </span>            :   }
+<span class="lineNum">     930 </span>            : 
+<span class="lineNum">     931 </span><span class="lineCov">         48 :   if (aProgress == JS::GCNurseryProgress::GC_NURSERY_COLLECTION_START) {</span>
+<span class="lineNum">     932 </span><span class="lineCov">         24 :     self-&gt;mLatestNurseryCollectionStart = TimeStamp::Now();</span>
+<span class="lineNum">     933 </span><span class="lineCov">         48 :   } else if ((aProgress == JS::GCNurseryProgress::GC_NURSERY_COLLECTION_END) &amp;&amp;</span>
+<span class="lineNum">     934 </span><span class="lineCov">         24 :              profiler_is_active())</span>
+<span class="lineNum">     935 </span>            :   {
+<span class="lineNum">     936 </span><span class="lineNoCov">          0 :     profiler_add_marker(</span>
+<span class="lineNum">     937 </span>            :       &quot;GCMinor&quot;,
+<span class="lineNum">     938 </span><span class="lineNoCov">          0 :       MakeUnique&lt;GCMinorMarkerPayload&gt;(self-&gt;mLatestNurseryCollectionStart,</span>
+<span class="lineNum">     939 </span><span class="lineNoCov">          0 :                                        TimeStamp::Now(),</span>
+<span class="lineNum">     940 </span><span class="lineNoCov">          0 :                                        JS::MinorGcToJSON(aContext)));</span>
+<span class="lineNum">     941 </span>            :   }
+<span class="lineNum">     942 </span>            : 
+<span class="lineNum">     943 </span><span class="lineCov">         48 :   if (self-&gt;mPrevGCNurseryCollectionCallback) {</span>
+<span class="lineNum">     944 </span><span class="lineNoCov">          0 :     self-&gt;mPrevGCNurseryCollectionCallback(aContext, aProgress, aReason);</span>
+<span class="lineNum">     945 </span>            :   }
+<span class="lineNum">     946 </span><span class="lineCov">         48 : }</span>
+<span class="lineNum">     947 </span>            : 
+<a name="948"><span class="lineNum">     948 </span>            : </a>
+<span class="lineNum">     949 </span>            : /* static */ void
+<span class="lineNum">     950 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::OutOfMemoryCallback(JSContext* aContext,</span>
+<span class="lineNum">     951 </span>            :                                              void* aData)
+<span class="lineNum">     952 </span>            : {
+<span class="lineNum">     953 </span><span class="lineNoCov">          0 :   CycleCollectedJSRuntime* self = static_cast&lt;CycleCollectedJSRuntime*&gt;(aData);</span>
+<span class="lineNum">     954 </span>            : 
+<span class="lineNum">     955 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(CycleCollectedJSContext::Get()-&gt;Context() == aContext);</span>
+<span class="lineNum">     956 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(CycleCollectedJSContext::Get()-&gt;Runtime() == self);</span>
+<span class="lineNum">     957 </span>            : 
+<span class="lineNum">     958 </span><span class="lineNoCov">          0 :   self-&gt;OnOutOfMemory();</span>
+<span class="lineNum">     959 </span><span class="lineNoCov">          0 : }</span>
+<a name="960"><span class="lineNum">     960 </span>            : </a>
+<span class="lineNum">     961 </span>            : /* static */ size_t
+<span class="lineNum">     962 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::SizeofExternalStringCallback(JSString* aStr,</span>
+<span class="lineNum">     963 </span>            :                                                       MallocSizeOf aMallocSizeOf)
+<span class="lineNum">     964 </span>            : {
+<span class="lineNum">     965 </span>            :   // We promised the JS engine we would not GC.  Enforce that:
+<span class="lineNum">     966 </span><span class="lineNoCov">          0 :   JS::AutoCheckCannotGC autoCannotGC;</span>
+<span class="lineNum">     967 </span>            : 
+<span class="lineNum">     968 </span><span class="lineNoCov">          0 :   if (!XPCStringConvert::IsDOMString(aStr)) {</span>
+<span class="lineNum">     969 </span>            :     // Might be a literal or something we don't understand.  Just claim 0.
+<span class="lineNum">     970 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     971 </span>            :   }
+<span class="lineNum">     972 </span>            : 
+<span class="lineNum">     973 </span><span class="lineNoCov">          0 :   const char16_t* chars = JS_GetTwoByteExternalStringChars(aStr);</span>
+<span class="lineNum">     974 </span><span class="lineNoCov">          0 :   const nsStringBuffer* buf = nsStringBuffer::FromData((void*)chars);</span>
+<span class="lineNum">     975 </span>            :   // We want sizeof including this, because the entire string buffer is owned by
+<span class="lineNum">     976 </span>            :   // the external string.  But only report here if we're unshared; if we're
+<span class="lineNum">     977 </span>            :   // shared then we don't know who really owns this data.
+<span class="lineNum">     978 </span><span class="lineNoCov">          0 :   return buf-&gt;SizeOfIncludingThisIfUnshared(aMallocSizeOf);</span>
+<a name="979"><span class="lineNum">     979 </span>            : }</a>
+<span class="lineNum">     980 </span>            : 
+<a name="981"><span class="lineNum">     981 </span><span class="lineCov">       3441 : struct JsGcTracer : public TraceCallbacks</span></a>
+<span class="lineNum">     982 </span>            : {
+<span class="lineNum">     983 </span><span class="lineCov">          9 :   virtual void Trace(JS::Heap&lt;JS::Value&gt;* aPtr, const char* aName,</span>
+<span class="lineNum">     984 </span>            :                      void* aClosure) const override
+<span class="lineNum">     985 </span>            :   {
+<a name="986"><span class="lineNum">     986 </span><span class="lineCov">          9 :     JS::TraceEdge(static_cast&lt;JSTracer*&gt;(aClosure), aPtr, aName);</span></a>
+<span class="lineNum">     987 </span><span class="lineCov">          9 :   }</span>
+<span class="lineNum">     988 </span><span class="lineNoCov">          0 :   virtual void Trace(JS::Heap&lt;jsid&gt;* aPtr, const char* aName,</span>
+<span class="lineNum">     989 </span>            :                      void* aClosure) const override
+<span class="lineNum">     990 </span>            :   {
+<a name="991"><span class="lineNum">     991 </span><span class="lineNoCov">          0 :     JS::TraceEdge(static_cast&lt;JSTracer*&gt;(aClosure), aPtr, aName);</span></a>
+<span class="lineNum">     992 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     993 </span><span class="lineCov">       4093 :   virtual void Trace(JS::Heap&lt;JSObject*&gt;* aPtr, const char* aName,</span>
+<span class="lineNum">     994 </span>            :                      void* aClosure) const override
+<span class="lineNum">     995 </span>            :   {
+<a name="996"><span class="lineNum">     996 </span><span class="lineCov">       4093 :     JS::TraceEdge(static_cast&lt;JSTracer*&gt;(aClosure), aPtr, aName);</span></a>
+<span class="lineNum">     997 </span><span class="lineCov">       4093 :   }</span>
+<span class="lineNum">     998 </span><span class="lineCov">        252 :   virtual void Trace(JSObject** aPtr, const char* aName,</span>
+<span class="lineNum">     999 </span>            :                      void* aClosure) const override
+<span class="lineNum">    1000 </span>            :   {
+<a name="1001"><span class="lineNum">    1001 </span><span class="lineCov">        252 :     js::UnsafeTraceManuallyBarrieredEdge(static_cast&lt;JSTracer*&gt;(aClosure), aPtr, aName);</span></a>
+<span class="lineNum">    1002 </span><span class="lineCov">        252 :   }</span>
+<span class="lineNum">    1003 </span><span class="lineCov">        472 :   virtual void Trace(JS::TenuredHeap&lt;JSObject*&gt;* aPtr, const char* aName,</span>
+<span class="lineNum">    1004 </span>            :                      void* aClosure) const override
+<span class="lineNum">    1005 </span>            :   {
+<a name="1006"><span class="lineNum">    1006 </span><span class="lineCov">        472 :     JS::TraceEdge(static_cast&lt;JSTracer*&gt;(aClosure), aPtr, aName);</span></a>
+<span class="lineNum">    1007 </span><span class="lineCov">        472 :   }</span>
+<span class="lineNum">    1008 </span><span class="lineNoCov">          0 :   virtual void Trace(JS::Heap&lt;JSString*&gt;* aPtr, const char* aName,</span>
+<span class="lineNum">    1009 </span>            :                      void* aClosure) const override
+<span class="lineNum">    1010 </span>            :   {
+<a name="1011"><span class="lineNum">    1011 </span><span class="lineNoCov">          0 :     JS::TraceEdge(static_cast&lt;JSTracer*&gt;(aClosure), aPtr, aName);</span></a>
+<span class="lineNum">    1012 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">    1013 </span><span class="lineCov">         39 :   virtual void Trace(JS::Heap&lt;JSScript*&gt;* aPtr, const char* aName,</span>
+<span class="lineNum">    1014 </span>            :                      void* aClosure) const override
+<span class="lineNum">    1015 </span>            :   {
+<a name="1016"><span class="lineNum">    1016 </span><span class="lineCov">         39 :     JS::TraceEdge(static_cast&lt;JSTracer*&gt;(aClosure), aPtr, aName);</span></a>
+<span class="lineNum">    1017 </span><span class="lineCov">         39 :   }</span>
+<span class="lineNum">    1018 </span><span class="lineNoCov">          0 :   virtual void Trace(JS::Heap&lt;JSFunction*&gt;* aPtr, const char* aName,</span>
+<span class="lineNum">    1019 </span>            :                      void* aClosure) const override
+<span class="lineNum">    1020 </span>            :   {
+<span class="lineNum">    1021 </span><span class="lineNoCov">          0 :     JS::TraceEdge(static_cast&lt;JSTracer*&gt;(aClosure), aPtr, aName);</span>
+<span class="lineNum">    1022 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">    1023 </span>            : };
+<a name="1024"><span class="lineNum">    1024 </span>            : </a>
+<span class="lineNum">    1025 </span>            : void
+<span class="lineNum">    1026 </span><span class="lineCov">         47 : mozilla::TraceScriptHolder(nsISupports* aHolder, JSTracer* aTracer)</span>
+<span class="lineNum">    1027 </span>            : {
+<span class="lineNum">    1028 </span><span class="lineCov">         47 :   nsXPCOMCycleCollectionParticipant* participant = nullptr;</span>
+<span class="lineNum">    1029 </span><span class="lineCov">         47 :   CallQueryInterface(aHolder, &amp;participant);</span>
+<span class="lineNum">    1030 </span><span class="lineCov">         47 :   participant-&gt;Trace(aHolder, JsGcTracer(), aTracer);</span>
+<span class="lineNum">    1031 </span><span class="lineCov">         47 : }</span>
+<a name="1032"><span class="lineNum">    1032 </span>            : </a>
+<span class="lineNum">    1033 </span>            : void
+<span class="lineNum">    1034 </span><span class="lineCov">          1 : CycleCollectedJSRuntime::TraceNativeGrayRoots(JSTracer* aTracer)</span>
+<span class="lineNum">    1035 </span>            : {
+<span class="lineNum">    1036 </span>            :   // NB: This is here just to preserve the existing XPConnect order. I doubt it
+<span class="lineNum">    1037 </span>            :   // would hurt to do this after the JS holders.
+<span class="lineNum">    1038 </span><span class="lineCov">          1 :   TraceAdditionalNativeGrayRoots(aTracer);</span>
+<span class="lineNum">    1039 </span>            : 
+<span class="lineNum">    1040 </span><span class="lineCov">       3395 :   for (auto iter = mJSHolders.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">    1041 </span><span class="lineCov">       3394 :     void* holder = iter.Get().mHolder;</span>
+<span class="lineNum">    1042 </span><span class="lineCov">       3394 :     nsScriptObjectTracer* tracer = iter.Get().mTracer;</span>
+<span class="lineNum">    1043 </span><span class="lineCov">       3394 :     tracer-&gt;Trace(holder, JsGcTracer(), aTracer);</span>
+<span class="lineNum">    1044 </span>            :   }
+<span class="lineNum">    1045 </span><span class="lineCov">          1 : }</span>
+<a name="1046"><span class="lineNum">    1046 </span>            : </a>
+<span class="lineNum">    1047 </span>            : void
+<span class="lineNum">    1048 </span><span class="lineCov">       3461 : CycleCollectedJSRuntime::AddJSHolder(void* aHolder, nsScriptObjectTracer* aTracer)</span>
+<span class="lineNum">    1049 </span>            : {
+<span class="lineNum">    1050 </span><span class="lineCov">       3461 :   JSHolderInfo* info = nullptr;</span>
+<span class="lineNum">    1051 </span><span class="lineCov">       3461 :   if (mJSHolderMap.Get(aHolder, &amp;info)) {</span>
+<span class="lineNum">    1052 </span><span class="lineCov">          9 :     MOZ_ASSERT(info-&gt;mHolder == aHolder);</span>
+<span class="lineNum">    1053 </span><span class="lineCov">          9 :     info-&gt;mTracer = aTracer;</span>
+<span class="lineNum">    1054 </span><span class="lineCov">          9 :     return;</span>
+<span class="lineNum">    1055 </span>            :   }
+<span class="lineNum">    1056 </span>            : 
+<span class="lineNum">    1057 </span><span class="lineCov">       3452 :   mJSHolders.InfallibleAppend(JSHolderInfo {aHolder, aTracer});</span>
+<span class="lineNum">    1058 </span><span class="lineCov">       3452 :   mJSHolderMap.Put(aHolder, &amp;mJSHolders.GetLast());</span>
+<a name="1059"><span class="lineNum">    1059 </span>            : }</a>
+<span class="lineNum">    1060 </span>            : 
+<a name="1061"><span class="lineNum">    1061 </span><span class="lineCov">        267 : struct ClearJSHolder : public TraceCallbacks</span></a>
+<span class="lineNum">    1062 </span>            : {
+<span class="lineNum">    1063 </span><span class="lineCov">          1 :   virtual void Trace(JS::Heap&lt;JS::Value&gt;* aPtr, const char*, void*) const override</span>
+<span class="lineNum">    1064 </span>            :   {
+<span class="lineNum">    1065 </span><span class="lineCov">          1 :     aPtr-&gt;setUndefined();</span>
+<a name="1066"><span class="lineNum">    1066 </span><span class="lineCov">          1 :   }</span></a>
+<span class="lineNum">    1067 </span>            : 
+<span class="lineNum">    1068 </span><span class="lineNoCov">          0 :   virtual void Trace(JS::Heap&lt;jsid&gt;* aPtr, const char*, void*) const override</span>
+<span class="lineNum">    1069 </span>            :   {
+<span class="lineNum">    1070 </span><span class="lineNoCov">          0 :     *aPtr = JSID_VOID;</span>
+<a name="1071"><span class="lineNum">    1071 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">    1072 </span>            : 
+<span class="lineNum">    1073 </span><span class="lineCov">        493 :   virtual void Trace(JS::Heap&lt;JSObject*&gt;* aPtr, const char*, void*) const override</span>
+<span class="lineNum">    1074 </span>            :   {
+<span class="lineNum">    1075 </span><span class="lineCov">        493 :     *aPtr = nullptr;</span>
+<a name="1076"><span class="lineNum">    1076 </span><span class="lineCov">        493 :   }</span></a>
+<span class="lineNum">    1077 </span>            : 
+<span class="lineNum">    1078 </span><span class="lineNoCov">          0 :   virtual void Trace(JSObject** aPtr, const char* aName,</span>
+<span class="lineNum">    1079 </span>            :                      void* aClosure) const override
+<span class="lineNum">    1080 </span>            :   {
+<span class="lineNum">    1081 </span><span class="lineNoCov">          0 :     *aPtr = nullptr;</span>
+<a name="1082"><span class="lineNum">    1082 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">    1083 </span>            : 
+<span class="lineNum">    1084 </span><span class="lineCov">        237 :   virtual void Trace(JS::TenuredHeap&lt;JSObject*&gt;* aPtr, const char*, void*) const override</span>
+<span class="lineNum">    1085 </span>            :   {
+<span class="lineNum">    1086 </span><span class="lineCov">        237 :     *aPtr = nullptr;</span>
+<a name="1087"><span class="lineNum">    1087 </span><span class="lineCov">        237 :   }</span></a>
+<span class="lineNum">    1088 </span>            : 
+<span class="lineNum">    1089 </span><span class="lineNoCov">          0 :   virtual void Trace(JS::Heap&lt;JSString*&gt;* aPtr, const char*, void*) const override</span>
+<span class="lineNum">    1090 </span>            :   {
+<span class="lineNum">    1091 </span><span class="lineNoCov">          0 :     *aPtr = nullptr;</span>
+<a name="1092"><span class="lineNum">    1092 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">    1093 </span>            : 
+<span class="lineNum">    1094 </span><span class="lineNoCov">          0 :   virtual void Trace(JS::Heap&lt;JSScript*&gt;* aPtr, const char*, void*) const override</span>
+<span class="lineNum">    1095 </span>            :   {
+<span class="lineNum">    1096 </span><span class="lineNoCov">          0 :     *aPtr = nullptr;</span>
+<a name="1097"><span class="lineNum">    1097 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">    1098 </span>            : 
+<span class="lineNum">    1099 </span><span class="lineNoCov">          0 :   virtual void Trace(JS::Heap&lt;JSFunction*&gt;* aPtr, const char*, void*) const override</span>
+<span class="lineNum">    1100 </span>            :   {
+<span class="lineNum">    1101 </span><span class="lineNoCov">          0 :     *aPtr = nullptr;</span>
+<span class="lineNum">    1102 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">    1103 </span>            : };
+<a name="1104"><span class="lineNum">    1104 </span>            : </a>
+<span class="lineNum">    1105 </span>            : void
+<span class="lineNum">    1106 </span><span class="lineCov">        281 : CycleCollectedJSRuntime::RemoveJSHolder(void* aHolder)</span>
+<span class="lineNum">    1107 </span>            : {
+<span class="lineNum">    1108 </span><span class="lineCov">        281 :   JSHolderInfo* info = nullptr;</span>
+<span class="lineNum">    1109 </span><span class="lineCov">        281 :   if (mJSHolderMap.Get(aHolder, &amp;info)) {</span>
+<span class="lineNum">    1110 </span><span class="lineCov">        267 :     MOZ_ASSERT(info-&gt;mHolder == aHolder);</span>
+<span class="lineNum">    1111 </span><span class="lineCov">        267 :     info-&gt;mTracer-&gt;Trace(aHolder, ClearJSHolder(), nullptr);</span>
+<span class="lineNum">    1112 </span>            : 
+<span class="lineNum">    1113 </span><span class="lineCov">        267 :     JSHolderInfo* lastInfo = &amp;mJSHolders.GetLast();</span>
+<span class="lineNum">    1114 </span><span class="lineCov">        267 :     if (info != lastInfo) {</span>
+<span class="lineNum">    1115 </span><span class="lineCov">        267 :       *info = *lastInfo;</span>
+<span class="lineNum">    1116 </span><span class="lineCov">        267 :       mJSHolderMap.Put(info-&gt;mHolder, info);</span>
+<span class="lineNum">    1117 </span>            :     }
+<span class="lineNum">    1118 </span>            : 
+<span class="lineNum">    1119 </span><span class="lineCov">        267 :     mJSHolders.PopLast();</span>
+<span class="lineNum">    1120 </span><span class="lineCov">        267 :     mJSHolderMap.Remove(aHolder);</span>
+<span class="lineNum">    1121 </span>            :   }
+<span class="lineNum">    1122 </span><span class="lineCov">        281 : }</span>
+<span class="lineNum">    1123 </span>            : 
+<a name="1124"><span class="lineNum">    1124 </span>            : #ifdef DEBUG</a>
+<span class="lineNum">    1125 </span>            : bool
+<span class="lineNum">    1126 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::IsJSHolder(void* aHolder)</span>
+<span class="lineNum">    1127 </span>            : {
+<span class="lineNum">    1128 </span><span class="lineNoCov">          0 :   return mJSHolderMap.Get(aHolder, nullptr);</span>
+<span class="lineNum">    1129 </span>            : }
+<a name="1130"><span class="lineNum">    1130 </span>            : </a>
+<span class="lineNum">    1131 </span>            : static void
+<span class="lineNum">    1132 </span><span class="lineNoCov">          0 : AssertNoGcThing(JS::GCCellPtr aGCThing, const char* aName, void* aClosure)</span>
+<span class="lineNum">    1133 </span>            : {
+<span class="lineNum">    1134 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!aGCThing);</span>
+<span class="lineNum">    1135 </span><span class="lineNoCov">          0 : }</span>
+<a name="1136"><span class="lineNum">    1136 </span>            : </a>
+<span class="lineNum">    1137 </span>            : void
+<span class="lineNum">    1138 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::AssertNoObjectsToTrace(void* aPossibleJSHolder)</span>
+<span class="lineNum">    1139 </span>            : {
+<span class="lineNum">    1140 </span><span class="lineNoCov">          0 :   JSHolderInfo* info = nullptr;</span>
+<span class="lineNum">    1141 </span><span class="lineNoCov">          0 :   if (!mJSHolderMap.Get(aPossibleJSHolder, &amp;info)) {</span>
+<span class="lineNum">    1142 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">    1143 </span>            :   }
+<span class="lineNum">    1144 </span>            : 
+<span class="lineNum">    1145 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(info-&gt;mHolder == aPossibleJSHolder);</span>
+<span class="lineNum">    1146 </span><span class="lineNoCov">          0 :   info-&gt;mTracer-&gt;Trace(aPossibleJSHolder, TraceCallbackFunc(AssertNoGcThing), nullptr);</span>
+<span class="lineNum">    1147 </span>            : }
+<span class="lineNum">    1148 </span>            : #endif
+<a name="1149"><span class="lineNum">    1149 </span>            : </a>
+<span class="lineNum">    1150 </span>            : nsCycleCollectionParticipant*
+<span class="lineNum">    1151 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::GCThingParticipant()</span>
+<span class="lineNum">    1152 </span>            : {
+<span class="lineNum">    1153 </span><span class="lineNoCov">          0 :   return &amp;mGCThingCycleCollectorGlobal;</span>
+<span class="lineNum">    1154 </span>            : }
+<a name="1155"><span class="lineNum">    1155 </span>            : </a>
+<span class="lineNum">    1156 </span>            : nsCycleCollectionParticipant*
+<span class="lineNum">    1157 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::ZoneParticipant()</span>
+<span class="lineNum">    1158 </span>            : {
+<span class="lineNum">    1159 </span><span class="lineNoCov">          0 :   return &amp;mJSZoneCycleCollectorGlobal;</span>
+<span class="lineNum">    1160 </span>            : }
+<a name="1161"><span class="lineNum">    1161 </span>            : </a>
+<span class="lineNum">    1162 </span>            : nsresult
+<span class="lineNum">    1163 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::TraverseRoots(nsCycleCollectionNoteRootCallback&amp; aCb)</span>
+<span class="lineNum">    1164 </span>            : {
+<span class="lineNum">    1165 </span><span class="lineNoCov">          0 :   TraverseNativeRoots(aCb);</span>
+<span class="lineNum">    1166 </span>            : 
+<span class="lineNum">    1167 </span><span class="lineNoCov">          0 :   NoteWeakMapsTracer trc(mJSRuntime, aCb);</span>
+<span class="lineNum">    1168 </span><span class="lineNoCov">          0 :   js::TraceWeakMaps(&amp;trc);</span>
+<span class="lineNum">    1169 </span>            : 
+<span class="lineNum">    1170 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">    1171 </span>            : }
+<a name="1172"><span class="lineNum">    1172 </span>            : </a>
+<span class="lineNum">    1173 </span>            : bool
+<span class="lineNum">    1174 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::UsefulToMergeZones() const</span>
+<span class="lineNum">    1175 </span>            : {
+<span class="lineNum">    1176 </span><span class="lineNoCov">          0 :   return false;</span>
+<span class="lineNum">    1177 </span>            : }
+<a name="1178"><span class="lineNum">    1178 </span>            : </a>
+<span class="lineNum">    1179 </span>            : void
+<span class="lineNum">    1180 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::FixWeakMappingGrayBits() const</span>
+<span class="lineNum">    1181 </span>            : {
+<span class="lineNum">    1182 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!JS::IsIncrementalGCInProgress(mJSRuntime),</span>
+<span class="lineNum">    1183 </span>            :              &quot;Don't call FixWeakMappingGrayBits during a GC.&quot;);
+<span class="lineNum">    1184 </span><span class="lineNoCov">          0 :   FixWeakMappingGrayBitsTracer fixer(mJSRuntime);</span>
+<span class="lineNum">    1185 </span><span class="lineNoCov">          0 :   fixer.FixAll();</span>
+<span class="lineNum">    1186 </span><span class="lineNoCov">          0 : }</span>
+<a name="1187"><span class="lineNum">    1187 </span>            : </a>
+<span class="lineNum">    1188 </span>            : void
+<span class="lineNum">    1189 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::CheckGrayBits() const</span>
+<span class="lineNum">    1190 </span>            : {
+<span class="lineNum">    1191 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!JS::IsIncrementalGCInProgress(mJSRuntime),</span>
+<span class="lineNum">    1192 </span>            :              &quot;Don't call CheckGrayBits during a GC.&quot;);
+<span class="lineNum">    1193 </span>            : 
+<span class="lineNum">    1194 </span>            : #ifndef ANDROID
+<span class="lineNum">    1195 </span>            :   // Bug 1346874 - The gray state check is expensive. Android tests are already
+<span class="lineNum">    1196 </span>            :   // slow enough that this check can easily push them over the threshold to a
+<span class="lineNum">    1197 </span>            :   // timeout.
+<span class="lineNum">    1198 </span>            : 
+<span class="lineNum">    1199 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(js::CheckGrayMarkingState(mJSRuntime));</span>
+<span class="lineNum">    1200 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(CheckWeakMappingGrayBitsTracer::Check(mJSRuntime));</span>
+<span class="lineNum">    1201 </span>            : #endif
+<span class="lineNum">    1202 </span><span class="lineNoCov">          0 : }</span>
+<a name="1203"><span class="lineNum">    1203 </span>            : </a>
+<span class="lineNum">    1204 </span>            : bool
+<span class="lineNum">    1205 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::AreGCGrayBitsValid() const</span>
+<span class="lineNum">    1206 </span>            : {
+<span class="lineNum">    1207 </span><span class="lineNoCov">          0 :   return js::AreGCGrayBitsValid(mJSRuntime);</span>
+<span class="lineNum">    1208 </span>            : }
+<a name="1209"><span class="lineNum">    1209 </span>            : </a>
+<span class="lineNum">    1210 </span>            : void
+<span class="lineNum">    1211 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::GarbageCollect(uint32_t aReason) const</span>
+<span class="lineNum">    1212 </span>            : {
+<span class="lineNum">    1213 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(aReason &lt; JS::gcreason::NUM_REASONS);</span>
+<span class="lineNum">    1214 </span><span class="lineNoCov">          0 :   JS::gcreason::Reason gcreason = static_cast&lt;JS::gcreason::Reason&gt;(aReason);</span>
+<span class="lineNum">    1215 </span>            : 
+<span class="lineNum">    1216 </span><span class="lineNoCov">          0 :   JSContext* cx = CycleCollectedJSContext::Get()-&gt;Context();</span>
+<span class="lineNum">    1217 </span><span class="lineNoCov">          0 :   JS::PrepareForFullGC(cx);</span>
+<span class="lineNum">    1218 </span><span class="lineNoCov">          0 :   JS::GCForReason(cx, GC_NORMAL, gcreason);</span>
+<span class="lineNum">    1219 </span><span class="lineNoCov">          0 : }</span>
+<a name="1220"><span class="lineNum">    1220 </span>            : </a>
+<span class="lineNum">    1221 </span>            : void
+<span class="lineNum">    1222 </span><span class="lineCov">         21 : CycleCollectedJSRuntime::JSObjectsTenured()</span>
+<span class="lineNum">    1223 </span>            : {
+<span class="lineNum">    1224 </span><span class="lineCov">         82 :   for (auto iter = mNurseryObjects.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">    1225 </span><span class="lineCov">         61 :     nsWrapperCache* cache = iter.Get();</span>
+<span class="lineNum">    1226 </span><span class="lineCov">         61 :     JSObject* wrapper = cache-&gt;GetWrapperMaybeDead();</span>
+<span class="lineNum">    1227 </span><span class="lineCov">         61 :     MOZ_DIAGNOSTIC_ASSERT(wrapper);</span>
+<span class="lineNum">    1228 </span><span class="lineCov">         61 :     if (!JS::ObjectIsTenured(wrapper)) {</span>
+<span class="lineNum">    1229 </span><span class="lineCov">         58 :       MOZ_ASSERT(!cache-&gt;PreservingWrapper());</span>
+<span class="lineNum">    1230 </span><span class="lineCov">         58 :       const JSClass* jsClass = js::GetObjectJSClass(wrapper);</span>
+<span class="lineNum">    1231 </span><span class="lineCov">         58 :       jsClass-&gt;doFinalize(nullptr, wrapper);</span>
+<span class="lineNum">    1232 </span>            :     }
+<span class="lineNum">    1233 </span>            :   }
+<span class="lineNum">    1234 </span>            : 
+<span class="lineNum">    1235 </span>            : #ifdef DEBUG
+<span class="lineNum">    1236 </span><span class="lineCov">         21 : for (auto iter = mPreservedNurseryObjects.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">    1237 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(JS::ObjectIsTenured(iter.Get().get()));</span>
+<span class="lineNum">    1238 </span>            : }
+<span class="lineNum">    1239 </span>            : #endif
+<span class="lineNum">    1240 </span>            : 
+<span class="lineNum">    1241 </span><span class="lineCov">         21 :   mNurseryObjects.Clear();</span>
+<span class="lineNum">    1242 </span><span class="lineCov">         21 :   mPreservedNurseryObjects.Clear();</span>
+<span class="lineNum">    1243 </span><span class="lineCov">         21 : }</span>
+<a name="1244"><span class="lineNum">    1244 </span>            : </a>
+<span class="lineNum">    1245 </span>            : void
+<span class="lineNum">    1246 </span><span class="lineCov">         77 : CycleCollectedJSRuntime::NurseryWrapperAdded(nsWrapperCache* aCache)</span>
+<span class="lineNum">    1247 </span>            : {
+<span class="lineNum">    1248 </span><span class="lineCov">         77 :   MOZ_ASSERT(aCache);</span>
+<span class="lineNum">    1249 </span><span class="lineCov">         77 :   MOZ_ASSERT(aCache-&gt;GetWrapperMaybeDead());</span>
+<span class="lineNum">    1250 </span><span class="lineCov">         77 :   MOZ_ASSERT(!JS::ObjectIsTenured(aCache-&gt;GetWrapperMaybeDead()));</span>
+<span class="lineNum">    1251 </span><span class="lineCov">         77 :   mNurseryObjects.InfallibleAppend(aCache);</span>
+<span class="lineNum">    1252 </span><span class="lineCov">         77 : }</span>
+<a name="1253"><span class="lineNum">    1253 </span>            : </a>
+<span class="lineNum">    1254 </span>            : void
+<span class="lineNum">    1255 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::NurseryWrapperPreserved(JSObject* aWrapper)</span>
+<span class="lineNum">    1256 </span>            : {
+<span class="lineNum">    1257 </span><span class="lineNoCov">          0 :   mPreservedNurseryObjects.InfallibleAppend(</span>
+<span class="lineNum">    1258 </span><span class="lineNoCov">          0 :     JS::PersistentRooted&lt;JSObject*&gt;(mJSRuntime, aWrapper));</span>
+<span class="lineNum">    1259 </span><span class="lineNoCov">          0 : }</span>
+<a name="1260"><span class="lineNum">    1260 </span>            : </a>
+<span class="lineNum">    1261 </span>            : void
+<span class="lineNum">    1262 </span><span class="lineCov">         58 : CycleCollectedJSRuntime::DeferredFinalize(DeferredFinalizeAppendFunction aAppendFunc,</span>
+<span class="lineNum">    1263 </span>            :                                           DeferredFinalizeFunction aFunc,
+<span class="lineNum">    1264 </span>            :                                           void* aThing)
+<span class="lineNum">    1265 </span>            : {
+<span class="lineNum">    1266 </span><span class="lineCov">        116 :   if (auto entry = mDeferredFinalizerTable.LookupForAdd(aFunc)) {</span>
+<span class="lineNum">    1267 </span><span class="lineCov">         57 :     aAppendFunc(entry.Data(), aThing);</span>
+<a name="1268"><span class="lineNum">    1268 </span>            :   } else {</a>
+<span class="lineNum">    1269 </span>            :     entry.OrInsert(
+<span class="lineNum">    1270 </span><span class="lineCov">          2 :       [aAppendFunc, aThing] () { return aAppendFunc(nullptr, aThing); });</span>
+<span class="lineNum">    1271 </span>            :   }
+<span class="lineNum">    1272 </span><span class="lineCov">         58 : }</span>
+<a name="1273"><span class="lineNum">    1273 </span>            : </a>
+<span class="lineNum">    1274 </span>            : void
+<span class="lineNum">    1275 </span><span class="lineCov">         58 : CycleCollectedJSRuntime::DeferredFinalize(nsISupports* aSupports)</span>
+<span class="lineNum">    1276 </span>            : {
+<span class="lineNum">    1277 </span>            :   typedef DeferredFinalizerImpl&lt;nsISupports&gt; Impl;
+<span class="lineNum">    1278 </span>            :   DeferredFinalize(Impl::AppendDeferredFinalizePointer, Impl::DeferredFinalize,
+<span class="lineNum">    1279 </span><span class="lineCov">         58 :                    aSupports);</span>
+<span class="lineNum">    1280 </span><span class="lineCov">         58 : }</span>
+<a name="1281"><span class="lineNum">    1281 </span>            : </a>
+<span class="lineNum">    1282 </span>            : void
+<span class="lineNum">    1283 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::DumpJSHeap(FILE* aFile)</span>
+<span class="lineNum">    1284 </span>            : {
+<span class="lineNum">    1285 </span><span class="lineNoCov">          0 :   JSContext* cx = CycleCollectedJSContext::Get()-&gt;Context();</span>
+<span class="lineNum">    1286 </span><span class="lineNoCov">          0 :   js::DumpHeap(cx, aFile, js::CollectNurseryBeforeDump);</span>
+<a name="1287"><span class="lineNum">    1287 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">    1288 </span>            : 
+<span class="lineNum">    1289 </span><span class="lineNoCov">          0 : IncrementalFinalizeRunnable::IncrementalFinalizeRunnable(CycleCollectedJSRuntime* aRt,</span>
+<span class="lineNum">    1290 </span><span class="lineNoCov">          0 :                                                          DeferredFinalizerTable&amp; aFinalizers)</span>
+<span class="lineNum">    1291 </span>            :   : Runnable(&quot;IncrementalFinalizeRunnable&quot;)
+<span class="lineNum">    1292 </span>            :   , mRuntime(aRt)
+<span class="lineNum">    1293 </span>            :   , mFinalizeFunctionToRun(0)
+<span class="lineNum">    1294 </span><span class="lineNoCov">          0 :   , mReleasing(false)</span>
+<span class="lineNum">    1295 </span>            : {
+<span class="lineNum">    1296 </span><span class="lineNoCov">          0 :   for (auto iter = aFinalizers.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">    1297 </span><span class="lineNoCov">          0 :     DeferredFinalizeFunction&amp; function = iter.Key();</span>
+<span class="lineNum">    1298 </span><span class="lineNoCov">          0 :     void*&amp; data = iter.Data();</span>
+<span class="lineNum">    1299 </span>            : 
+<span class="lineNum">    1300 </span>            :     DeferredFinalizeFunctionHolder* holder =
+<span class="lineNum">    1301 </span><span class="lineNoCov">          0 :       mDeferredFinalizeFunctions.AppendElement();</span>
+<span class="lineNum">    1302 </span><span class="lineNoCov">          0 :     holder-&gt;run = function;</span>
+<span class="lineNum">    1303 </span><span class="lineNoCov">          0 :     holder-&gt;data = data;</span>
+<span class="lineNum">    1304 </span>            : 
+<span class="lineNum">    1305 </span><span class="lineNoCov">          0 :     iter.Remove();</span>
+<span class="lineNum">    1306 </span>            :   }
+<a name="1307"><span class="lineNum">    1307 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">    1308 </span>            : 
+<span class="lineNum">    1309 </span><span class="lineNoCov">          0 : IncrementalFinalizeRunnable::~IncrementalFinalizeRunnable()</span>
+<span class="lineNum">    1310 </span>            : {
+<span class="lineNum">    1311 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(this != mRuntime-&gt;mFinalizeRunnable);</span>
+<span class="lineNum">    1312 </span><span class="lineNoCov">          0 : }</span>
+<a name="1313"><span class="lineNum">    1313 </span>            : </a>
+<span class="lineNum">    1314 </span>            : void
+<span class="lineNum">    1315 </span><span class="lineNoCov">          0 : IncrementalFinalizeRunnable::ReleaseNow(bool aLimited)</span>
+<span class="lineNum">    1316 </span>            : {
+<span class="lineNum">    1317 </span><span class="lineNoCov">          0 :   if (mReleasing) {</span>
+<span class="lineNum">    1318 </span><span class="lineNoCov">          0 :     NS_WARNING(&quot;Re-entering ReleaseNow&quot;);</span>
+<span class="lineNum">    1319 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">    1320 </span>            :   }
+<span class="lineNum">    1321 </span>            :   {
+<span class="lineNum">    1322 </span><span class="lineNoCov">          0 :     mozilla::AutoRestore&lt;bool&gt; ar(mReleasing);</span>
+<span class="lineNum">    1323 </span><span class="lineNoCov">          0 :     mReleasing = true;</span>
+<span class="lineNum">    1324 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mDeferredFinalizeFunctions.Length() != 0,</span>
+<span class="lineNum">    1325 </span>            :                &quot;We should have at least ReleaseSliceNow to run&quot;);
+<span class="lineNum">    1326 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mFinalizeFunctionToRun &lt; mDeferredFinalizeFunctions.Length(),</span>
+<span class="lineNum">    1327 </span>            :                &quot;No more finalizers to run?&quot;);
+<span class="lineNum">    1328 </span>            : 
+<span class="lineNum">    1329 </span><span class="lineNoCov">          0 :     TimeDuration sliceTime = TimeDuration::FromMilliseconds(SliceMillis);</span>
+<span class="lineNum">    1330 </span><span class="lineNoCov">          0 :     TimeStamp started = TimeStamp::Now();</span>
+<span class="lineNum">    1331 </span><span class="lineNoCov">          0 :     bool timeout = false;</span>
+<span class="lineNum">    1332 </span><span class="lineNoCov">          0 :     do {</span>
+<span class="lineNum">    1333 </span>            :       const DeferredFinalizeFunctionHolder&amp; function =
+<span class="lineNum">    1334 </span><span class="lineNoCov">          0 :         mDeferredFinalizeFunctions[mFinalizeFunctionToRun];</span>
+<span class="lineNum">    1335 </span><span class="lineNoCov">          0 :       if (aLimited) {</span>
+<span class="lineNum">    1336 </span><span class="lineNoCov">          0 :         bool done = false;</span>
+<span class="lineNum">    1337 </span><span class="lineNoCov">          0 :         while (!timeout &amp;&amp; !done) {</span>
+<span class="lineNum">    1338 </span>            :           /*
+<span class="lineNum">    1339 </span>            :            * We don't want to read the clock too often, so we try to
+<span class="lineNum">    1340 </span>            :            * release slices of 100 items.
+<span class="lineNum">    1341 </span>            :            */
+<span class="lineNum">    1342 </span><span class="lineNoCov">          0 :           done = function.run(100, function.data);</span>
+<span class="lineNum">    1343 </span><span class="lineNoCov">          0 :           timeout = TimeStamp::Now() - started &gt;= sliceTime;</span>
+<span class="lineNum">    1344 </span>            :         }
+<span class="lineNum">    1345 </span><span class="lineNoCov">          0 :         if (done) {</span>
+<span class="lineNum">    1346 </span><span class="lineNoCov">          0 :           ++mFinalizeFunctionToRun;</span>
+<span class="lineNum">    1347 </span>            :         }
+<span class="lineNum">    1348 </span><span class="lineNoCov">          0 :         if (timeout) {</span>
+<span class="lineNum">    1349 </span><span class="lineNoCov">          0 :           break;</span>
+<span class="lineNum">    1350 </span>            :         }
+<span class="lineNum">    1351 </span>            :       } else {
+<span class="lineNum">    1352 </span><span class="lineNoCov">          0 :         while (!function.run(UINT32_MAX, function.data));</span>
+<span class="lineNum">    1353 </span><span class="lineNoCov">          0 :         ++mFinalizeFunctionToRun;</span>
+<span class="lineNum">    1354 </span>            :       }
+<span class="lineNum">    1355 </span><span class="lineNoCov">          0 :     } while (mFinalizeFunctionToRun &lt; mDeferredFinalizeFunctions.Length());</span>
+<span class="lineNum">    1356 </span>            :   }
+<span class="lineNum">    1357 </span>            : 
+<span class="lineNum">    1358 </span><span class="lineNoCov">          0 :   if (mFinalizeFunctionToRun == mDeferredFinalizeFunctions.Length()) {</span>
+<span class="lineNum">    1359 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mRuntime-&gt;mFinalizeRunnable == this);</span>
+<span class="lineNum">    1360 </span><span class="lineNoCov">          0 :     mDeferredFinalizeFunctions.Clear();</span>
+<span class="lineNum">    1361 </span>            :     // NB: This may delete this!
+<span class="lineNum">    1362 </span><span class="lineNoCov">          0 :     mRuntime-&gt;mFinalizeRunnable = nullptr;</span>
+<span class="lineNum">    1363 </span>            :   }
+<span class="lineNum">    1364 </span>            : }
+<a name="1365"><span class="lineNum">    1365 </span>            : </a>
+<span class="lineNum">    1366 </span>            : NS_IMETHODIMP
+<span class="lineNum">    1367 </span><span class="lineNoCov">          0 : IncrementalFinalizeRunnable::Run()</span>
+<span class="lineNum">    1368 </span>            : {
+<span class="lineNum">    1369 </span><span class="lineNoCov">          0 :   if (mRuntime-&gt;mFinalizeRunnable != this) {</span>
+<span class="lineNum">    1370 </span>            :     /* These items were already processed synchronously in JSGC_END. */
+<span class="lineNum">    1371 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(!mDeferredFinalizeFunctions.Length());</span>
+<span class="lineNum">    1372 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">    1373 </span>            :   }
+<span class="lineNum">    1374 </span>            : 
+<span class="lineNum">    1375 </span><span class="lineNoCov">          0 :   TimeStamp start = TimeStamp::Now();</span>
+<span class="lineNum">    1376 </span><span class="lineNoCov">          0 :   ReleaseNow(true);</span>
+<span class="lineNum">    1377 </span>            : 
+<span class="lineNum">    1378 </span><span class="lineNoCov">          0 :   if (mDeferredFinalizeFunctions.Length()) {</span>
+<span class="lineNum">    1379 </span><span class="lineNoCov">          0 :     nsresult rv = NS_DispatchToCurrentThread(this);</span>
+<span class="lineNum">    1380 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">    1381 </span><span class="lineNoCov">          0 :       ReleaseNow(false);</span>
+<span class="lineNum">    1382 </span>            :     }
+<span class="lineNum">    1383 </span>            :   }
+<span class="lineNum">    1384 </span>            : 
+<span class="lineNum">    1385 </span><span class="lineNoCov">          0 :   uint32_t duration = (uint32_t)((TimeStamp::Now() - start).ToMilliseconds());</span>
+<span class="lineNum">    1386 </span><span class="lineNoCov">          0 :   Telemetry::Accumulate(Telemetry::DEFERRED_FINALIZE_ASYNC, duration);</span>
+<span class="lineNum">    1387 </span>            : 
+<span class="lineNum">    1388 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">    1389 </span>            : }
+<a name="1390"><span class="lineNum">    1390 </span>            : </a>
+<span class="lineNum">    1391 </span>            : void
+<span class="lineNum">    1392 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::FinalizeDeferredThings(CycleCollectedJSContext::DeferredFinalizeType aType)</span>
+<span class="lineNum">    1393 </span>            : {
+<span class="lineNum">    1394 </span>            :   /*
+<span class="lineNum">    1395 </span>            :    * If the previous GC created a runnable to finalize objects
+<span class="lineNum">    1396 </span>            :    * incrementally, and if it hasn't finished yet, finish it now. We
+<span class="lineNum">    1397 </span>            :    * don't want these to build up. We also don't want to allow any
+<span class="lineNum">    1398 </span>            :    * existing incremental finalize runnables to run after a
+<span class="lineNum">    1399 </span>            :    * non-incremental GC, since they are often used to detect leaks.
+<span class="lineNum">    1400 </span>            :    */
+<span class="lineNum">    1401 </span><span class="lineNoCov">          0 :   if (mFinalizeRunnable) {</span>
+<span class="lineNum">    1402 </span><span class="lineNoCov">          0 :     mFinalizeRunnable-&gt;ReleaseNow(false);</span>
+<span class="lineNum">    1403 </span><span class="lineNoCov">          0 :     if (mFinalizeRunnable) {</span>
+<span class="lineNum">    1404 </span>            :       // If we re-entered ReleaseNow, we couldn't delete mFinalizeRunnable and
+<span class="lineNum">    1405 </span>            :       // we need to just continue processing it.
+<span class="lineNum">    1406 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">    1407 </span>            :     }
+<span class="lineNum">    1408 </span>            :   }
+<span class="lineNum">    1409 </span>            : 
+<span class="lineNum">    1410 </span><span class="lineNoCov">          0 :   if (mDeferredFinalizerTable.Count() == 0) {</span>
+<span class="lineNum">    1411 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">    1412 </span>            :   }
+<span class="lineNum">    1413 </span>            : 
+<span class="lineNum">    1414 </span>            :   mFinalizeRunnable = new IncrementalFinalizeRunnable(this,
+<span class="lineNum">    1415 </span><span class="lineNoCov">          0 :                                                       mDeferredFinalizerTable);</span>
+<span class="lineNum">    1416 </span>            : 
+<span class="lineNum">    1417 </span>            :   // Everything should be gone now.
+<span class="lineNum">    1418 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mDeferredFinalizerTable.Count() == 0);</span>
+<span class="lineNum">    1419 </span>            : 
+<span class="lineNum">    1420 </span><span class="lineNoCov">          0 :   if (aType == CycleCollectedJSContext::FinalizeIncrementally) {</span>
+<span class="lineNum">    1421 </span><span class="lineNoCov">          0 :     NS_DispatchToCurrentThread(mFinalizeRunnable);</span>
+<span class="lineNum">    1422 </span>            :   } else {
+<span class="lineNum">    1423 </span><span class="lineNoCov">          0 :     mFinalizeRunnable-&gt;ReleaseNow(false);</span>
+<span class="lineNum">    1424 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(!mFinalizeRunnable);</span>
+<span class="lineNum">    1425 </span>            :   }
+<span class="lineNum">    1426 </span>            : }
+<a name="1427"><span class="lineNum">    1427 </span>            : </a>
+<span class="lineNum">    1428 </span>            : void
+<span class="lineNum">    1429 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::AnnotateAndSetOutOfMemory(OOMState* aStatePtr,</span>
+<span class="lineNum">    1430 </span>            :                                                    OOMState aNewState)
+<span class="lineNum">    1431 </span>            : {
+<span class="lineNum">    1432 </span><span class="lineNoCov">          0 :   *aStatePtr = aNewState;</span>
+<span class="lineNum">    1433 </span>            : #ifdef MOZ_CRASHREPORTER
+<span class="lineNum">    1434 </span><span class="lineNoCov">          0 :   CrashReporter::AnnotateCrashReport(aStatePtr == &amp;mOutOfMemoryState</span>
+<span class="lineNum">    1435 </span><span class="lineNoCov">          0 :                                      ? NS_LITERAL_CSTRING(&quot;JSOutOfMemory&quot;)</span>
+<span class="lineNum">    1436 </span><span class="lineNoCov">          0 :                                      : NS_LITERAL_CSTRING(&quot;JSLargeAllocationFailure&quot;),</span>
+<span class="lineNum">    1437 </span>            :                                      aNewState == OOMState::Reporting
+<span class="lineNum">    1438 </span><span class="lineNoCov">          0 :                                      ? NS_LITERAL_CSTRING(&quot;Reporting&quot;)</span>
+<span class="lineNum">    1439 </span>            :                                      : aNewState == OOMState::Reported
+<span class="lineNum">    1440 </span><span class="lineNoCov">          0 :                                      ? NS_LITERAL_CSTRING(&quot;Reported&quot;)</span>
+<span class="lineNum">    1441 </span><span class="lineNoCov">          0 :                                      : NS_LITERAL_CSTRING(&quot;Recovered&quot;));</span>
+<span class="lineNum">    1442 </span>            : #endif
+<span class="lineNum">    1443 </span><span class="lineNoCov">          0 : }</span>
+<a name="1444"><span class="lineNum">    1444 </span>            : </a>
+<span class="lineNum">    1445 </span>            : void
+<span class="lineNum">    1446 </span><span class="lineCov">          1 : CycleCollectedJSRuntime::OnGC(JSContext* aContext,</span>
+<span class="lineNum">    1447 </span>            :                               JSGCStatus aStatus)
+<span class="lineNum">    1448 </span>            : {
+<span class="lineNum">    1449 </span><span class="lineCov">          1 :   switch (aStatus) {</span>
+<span class="lineNum">    1450 </span>            :     case JSGC_BEGIN:
+<span class="lineNum">    1451 </span><span class="lineCov">          1 :       nsCycleCollector_prepareForGarbageCollection();</span>
+<span class="lineNum">    1452 </span><span class="lineCov">          1 :       mZonesWaitingForGC.Clear();</span>
+<span class="lineNum">    1453 </span><span class="lineCov">          1 :       break;</span>
+<span class="lineNum">    1454 </span>            :     case JSGC_END: {
+<span class="lineNum">    1455 </span>            : #ifdef MOZ_CRASHREPORTER
+<span class="lineNum">    1456 </span><span class="lineNoCov">          0 :       if (mOutOfMemoryState == OOMState::Reported) {</span>
+<span class="lineNum">    1457 </span><span class="lineNoCov">          0 :         AnnotateAndSetOutOfMemory(&amp;mOutOfMemoryState, OOMState::Recovered);</span>
+<span class="lineNum">    1458 </span>            :       }
+<span class="lineNum">    1459 </span><span class="lineNoCov">          0 :       if (mLargeAllocationFailureState == OOMState::Reported) {</span>
+<span class="lineNum">    1460 </span><span class="lineNoCov">          0 :         AnnotateAndSetOutOfMemory(&amp;mLargeAllocationFailureState, OOMState::Recovered);</span>
+<span class="lineNum">    1461 </span>            :       }
+<span class="lineNum">    1462 </span>            : #endif
+<span class="lineNum">    1463 </span>            : 
+<span class="lineNum">    1464 </span>            :       // Do any deferred finalization of native objects. Normally we do this
+<span class="lineNum">    1465 </span>            :       // incrementally for an incremental GC, and immediately for a
+<span class="lineNum">    1466 </span>            :       // non-incremental GC, on the basis that the type of GC reflects how
+<span class="lineNum">    1467 </span>            :       // urgently resources should be destroyed. However under some circumstances
+<span class="lineNum">    1468 </span>            :       // (such as in js::InternalCallOrConstruct) we can end up running a
+<span class="lineNum">    1469 </span>            :       // non-incremental GC when there is a pending exception, and the finalizers
+<span class="lineNum">    1470 </span>            :       // are not set up to handle that. In that case, just run them later, after
+<span class="lineNum">    1471 </span>            :       // we've returned to the event loop.
+<span class="lineNum">    1472 </span><span class="lineNoCov">          0 :       bool finalizeIncrementally = JS::WasIncrementalGC(mJSRuntime) || JS_IsExceptionPending(aContext);</span>
+<span class="lineNum">    1473 </span><span class="lineNoCov">          0 :       FinalizeDeferredThings(finalizeIncrementally</span>
+<span class="lineNum">    1474 </span>            :                              ? CycleCollectedJSContext::FinalizeIncrementally
+<span class="lineNum">    1475 </span><span class="lineNoCov">          0 :                              : CycleCollectedJSContext::FinalizeNow);</span>
+<span class="lineNum">    1476 </span>            : 
+<span class="lineNum">    1477 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">    1478 </span>            :     }
+<span class="lineNum">    1479 </span>            :     default:
+<span class="lineNum">    1480 </span><span class="lineNoCov">          0 :       MOZ_CRASH();</span>
+<span class="lineNum">    1481 </span>            :   }
+<span class="lineNum">    1482 </span>            : 
+<span class="lineNum">    1483 </span><span class="lineCov">          1 :   CustomGCCallback(aStatus);</span>
+<span class="lineNum">    1484 </span><span class="lineCov">          1 : }</span>
+<a name="1485"><span class="lineNum">    1485 </span>            : </a>
+<span class="lineNum">    1486 </span>            : void
+<span class="lineNum">    1487 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::OnOutOfMemory()</span>
+<span class="lineNum">    1488 </span>            : {
+<span class="lineNum">    1489 </span><span class="lineNoCov">          0 :   AnnotateAndSetOutOfMemory(&amp;mOutOfMemoryState, OOMState::Reporting);</span>
+<span class="lineNum">    1490 </span><span class="lineNoCov">          0 :   CustomOutOfMemoryCallback();</span>
+<span class="lineNum">    1491 </span><span class="lineNoCov">          0 :   AnnotateAndSetOutOfMemory(&amp;mOutOfMemoryState, OOMState::Reported);</span>
+<span class="lineNum">    1492 </span><span class="lineNoCov">          0 : }</span>
+<a name="1493"><span class="lineNum">    1493 </span>            : </a>
+<span class="lineNum">    1494 </span>            : void
+<span class="lineNum">    1495 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::SetLargeAllocationFailure(OOMState aNewState)</span>
+<span class="lineNum">    1496 </span>            : {
+<span class="lineNum">    1497 </span><span class="lineNoCov">          0 :   AnnotateAndSetOutOfMemory(&amp;mLargeAllocationFailureState, aNewState);</span>
+<span class="lineNum">    1498 </span><span class="lineNoCov">          0 : }</span>
+<a name="1499"><span class="lineNum">    1499 </span>            : </a>
+<span class="lineNum">    1500 </span>            : void
+<span class="lineNum">    1501 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::PrepareWaitingZonesForGC()</span>
+<span class="lineNum">    1502 </span>            : {
+<span class="lineNum">    1503 </span><span class="lineNoCov">          0 :   JSContext* cx = CycleCollectedJSContext::Get()-&gt;Context();</span>
+<span class="lineNum">    1504 </span><span class="lineNoCov">          0 :   if (mZonesWaitingForGC.Count() == 0) {</span>
+<span class="lineNum">    1505 </span><span class="lineNoCov">          0 :     JS::PrepareForFullGC(cx);</span>
+<span class="lineNum">    1506 </span>            :   } else {
+<span class="lineNum">    1507 </span><span class="lineNoCov">          0 :     for (auto iter = mZonesWaitingForGC.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">    1508 </span><span class="lineNoCov">          0 :       JS::PrepareZoneForGC(iter.Get()-&gt;GetKey());</span>
+<span class="lineNum">    1509 </span>            :     }
+<span class="lineNum">    1510 </span><span class="lineNoCov">          0 :     mZonesWaitingForGC.Clear();</span>
+<span class="lineNum">    1511 </span>            :   }
+<span class="lineNum">    1512 </span><span class="lineNoCov">          0 : }</span>
+<a name="1513"><span class="lineNum">    1513 </span>            : </a>
+<span class="lineNum">    1514 </span>            : void
+<span class="lineNum">    1515 </span><span class="lineNoCov">          0 : CycleCollectedJSRuntime::EnvironmentPreparer::invoke(JS::HandleObject scope,</span>
+<span class="lineNum">    1516 </span>            :                                                      js::ScriptEnvironmentPreparer::Closure&amp; closure)
+<span class="lineNum">    1517 </span>            : {
+<span class="lineNum">    1518 </span><span class="lineNoCov">          0 :   nsIGlobalObject* global = xpc::NativeGlobal(scope);</span>
+<span class="lineNum">    1519 </span>            : 
+<span class="lineNum">    1520 </span>            :   // Not much we can do if we simply don't have a usable global here...
+<span class="lineNum">    1521 </span><span class="lineNoCov">          0 :   NS_ENSURE_TRUE_VOID(global &amp;&amp; global-&gt;GetGlobalJSObject());</span>
+<span class="lineNum">    1522 </span>            : 
+<span class="lineNum">    1523 </span><span class="lineNoCov">          0 :   AutoEntryScript aes(global, &quot;JS-engine-initiated execution&quot;);</span>
+<span class="lineNum">    1524 </span>            : 
+<span class="lineNum">    1525 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!JS_IsExceptionPending(aes.cx()));</span>
+<span class="lineNum">    1526 </span>            : 
+<span class="lineNum">    1527 </span><span class="lineNoCov">          0 :   DebugOnly&lt;bool&gt; ok = closure(aes.cx());</span>
+<span class="lineNum">    1528 </span>            : 
+<span class="lineNum">    1529 </span><span class="lineNoCov">          0 :   MOZ_ASSERT_IF(ok, !JS_IsExceptionPending(aes.cx()));</span>
+<span class="lineNum">    1530 </span>            : 
+<span class="lineNum">    1531 </span>            :   // The AutoEntryScript will check for JS_IsExceptionPending on the
+<span class="lineNum">    1532 </span>            :   // JSContext and report it as needed as it comes off the stack.
+<span class="lineNum">    1533 </span>            : }
+<a name="1534"><span class="lineNum">    1534 </span>            : </a>
+<span class="lineNum">    1535 </span>            : /* static */ CycleCollectedJSRuntime*
+<span class="lineNum">    1536 </span><span class="lineCov">       3946 : CycleCollectedJSRuntime::Get()</span>
+<span class="lineNum">    1537 </span>            : {
+<span class="lineNum">    1538 </span><span class="lineCov">       3946 :   auto context = CycleCollectedJSContext::Get();</span>
+<span class="lineNum">    1539 </span><span class="lineCov">       3946 :   if (context) {</span>
+<span class="lineNum">    1540 </span><span class="lineCov">       3946 :     return context-&gt;Runtime();</span>
+<span class="lineNum">    1541 </span>            :   }
+<span class="lineNum">    1542 </span><span class="lineNoCov">          0 :   return nullptr;</span>
+<span class="lineNum">    1543 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,802 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - gfx/skia/skia/src/core/SkLinearBitmapPipeline.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../index.html">top level</a> - <a href="index.html">gfx/skia/skia/src/core</a> - SkLinearBitmapPipeline.cpp<span style="font-size: 80%;"> (source / <a href="SkLinearBitmapPipeline.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">324</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">196</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * Copyright 2016 Google Inc.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * Use of this source code is governed by a BSD-style license that can be
+<span class="lineNum">       5 </span>            :  * found in the LICENSE file.
+<span class="lineNum">       6 </span>            :  */
+<span class="lineNum">       7 </span>            : 
+<span class="lineNum">       8 </span>            : #include &quot;SkLinearBitmapPipeline.h&quot;
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      11 </span>            : #include &lt;cmath&gt;
+<span class="lineNum">      12 </span>            : #include &lt;limits&gt;
+<span class="lineNum">      13 </span>            : #include &lt;tuple&gt;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #include &quot;SkArenaAlloc.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;SkLinearBitmapPipeline_core.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;SkLinearBitmapPipeline_matrix.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;SkLinearBitmapPipeline_tile.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;SkLinearBitmapPipeline_sample.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;SkNx.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;SkOpts.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;SkPM4f.h&quot;
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : namespace  {
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : ////////////////////////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">      27 </span>            : // Matrix Stage
+<span class="lineNum">      28 </span>            : // PointProcessor uses a strategy to help complete the work of the different stages. The strategy
+<span class="lineNum">      29 </span>            : // must implement the following methods:
+<span class="lineNum">      30 </span>            : // * processPoints(xs, ys) - must mutate the xs and ys for the stage.
+<span class="lineNum">      31 </span>            : // * maybeProcessSpan(span, next) - This represents a horizontal series of pixels
+<span class="lineNum">      32 </span>            : //   to work over.
+<span class="lineNum">      33 </span>            : //   span - encapsulation of span.
+<span class="lineNum">      34 </span>            : //   next - a pointer to the next stage.
+<span class="lineNum">      35 </span>            : //   maybeProcessSpan - returns false if it can not process the span and needs to fallback to
+<a name="36"><span class="lineNum">      36 </span>            : //                      point lists for processing.</a>
+<span class="lineNum">      37 </span>            : template&lt;typename Strategy, typename Next&gt;
+<span class="lineNum">      38 </span><span class="lineNoCov">          0 : class MatrixStage final : public SkLinearBitmapPipeline::PointProcessorInterface {</span>
+<a name="39"><span class="lineNum">      39 </span>            : public:</a>
+<span class="lineNum">      40 </span>            :     template &lt;typename... Args&gt;
+<span class="lineNum">      41 </span><span class="lineNoCov">          0 :     MatrixStage(Next* next, Args&amp;&amp;... args)</span>
+<span class="lineNum">      42 </span>            :         : fNext{next}
+<a name="43"><span class="lineNum">      43 </span><span class="lineNoCov">          0 :         , fStrategy{std::forward&lt;Args&gt;(args)...}{ }</span></a>
+<span class="lineNum">      44 </span>            : 
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 :     MatrixStage(Next* next, MatrixStage* stage)</span>
+<span class="lineNum">      46 </span>            :         : fNext{next}
+<a name="47"><span class="lineNum">      47 </span><span class="lineNoCov">          0 :         , fStrategy{stage-&gt;fStrategy} { }</span></a>
+<span class="lineNum">      48 </span>            : 
+<span class="lineNum">      49 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL pointListFew(int n, Sk4s xs, Sk4s ys) override {</span>
+<span class="lineNum">      50 </span><span class="lineNoCov">          0 :         fStrategy.processPoints(&amp;xs, &amp;ys);</span>
+<span class="lineNum">      51 </span><span class="lineNoCov">          0 :         fNext-&gt;pointListFew(n, xs, ys);</span>
+<a name="52"><span class="lineNum">      52 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL pointList4(Sk4s xs, Sk4s ys) override {</span>
+<span class="lineNum">      55 </span><span class="lineNoCov">          0 :         fStrategy.processPoints(&amp;xs, &amp;ys);</span>
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :         fNext-&gt;pointList4(xs, ys);</span>
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :     }</span>
+<a name="58"><span class="lineNum">      58 </span>            : </a>
+<span class="lineNum">      59 </span>            :     // The span you pass must not be empty.
+<span class="lineNum">      60 </span><span class="lineNoCov">          0 :     void pointSpan(Span span) override {</span>
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 :         SkASSERT(!span.isEmpty());</span>
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :         if (!fStrategy.maybeProcessSpan(span, fNext)) {</span>
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :             span_fallback(span, this);</span>
+<span class="lineNum">      64 </span>            :         }
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">      66 </span>            : 
+<span class="lineNum">      67 </span>            : private:
+<span class="lineNum">      68 </span>            :     Next* const fNext;
+<span class="lineNum">      69 </span>            :     Strategy fStrategy;
+<span class="lineNum">      70 </span>            : };
+<span class="lineNum">      71 </span>            : 
+<span class="lineNum">      72 </span>            : template &lt;typename Next = SkLinearBitmapPipeline::PointProcessorInterface&gt;
+<span class="lineNum">      73 </span>            : using TranslateMatrix = MatrixStage&lt;TranslateMatrixStrategy, Next&gt;;
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span>            : template &lt;typename Next = SkLinearBitmapPipeline::PointProcessorInterface&gt;
+<span class="lineNum">      76 </span>            : using ScaleMatrix = MatrixStage&lt;ScaleMatrixStrategy, Next&gt;;
+<span class="lineNum">      77 </span>            : 
+<span class="lineNum">      78 </span>            : template &lt;typename Next = SkLinearBitmapPipeline::PointProcessorInterface&gt;
+<span class="lineNum">      79 </span>            : using AffineMatrix = MatrixStage&lt;AffineMatrixStrategy, Next&gt;;
+<span class="lineNum">      80 </span>            : 
+<span class="lineNum">      81 </span>            : template &lt;typename Next = SkLinearBitmapPipeline::PointProcessorInterface&gt;
+<span class="lineNum">      82 </span>            : using PerspectiveMatrix = MatrixStage&lt;PerspectiveMatrixStrategy, Next&gt;;
+<span class="lineNum">      83 </span>            : 
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span>            : ////////////////////////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">      86 </span>            : // Tile Stage
+<a name="87"><span class="lineNum">      87 </span>            : </a>
+<span class="lineNum">      88 </span>            : template&lt;typename XStrategy, typename YStrategy, typename Next&gt;
+<a name="89"><span class="lineNum">      89 </span><span class="lineNoCov">          0 : class CombinedTileStage final : public SkLinearBitmapPipeline::PointProcessorInterface {</span></a>
+<span class="lineNum">      90 </span>            : public:
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :     CombinedTileStage(Next* next, SkISize dimensions)</span>
+<span class="lineNum">      92 </span>            :         : fNext{next}
+<span class="lineNum">      93 </span>            :         , fXStrategy{dimensions.width()}
+<a name="94"><span class="lineNum">      94 </span><span class="lineNoCov">          0 :         , fYStrategy{dimensions.height()}{ }</span></a>
+<span class="lineNum">      95 </span>            : 
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :     CombinedTileStage(Next* next, CombinedTileStage* stage)</span>
+<span class="lineNum">      97 </span>            :         : fNext{next}
+<span class="lineNum">      98 </span>            :         , fXStrategy{stage-&gt;fXStrategy}
+<a name="99"><span class="lineNum">      99 </span><span class="lineNoCov">          0 :         , fYStrategy{stage-&gt;fYStrategy} { }</span></a>
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL pointListFew(int n, Sk4s xs, Sk4s ys) override {</span>
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :         fXStrategy.tileXPoints(&amp;xs);</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :         fYStrategy.tileYPoints(&amp;ys);</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :         fNext-&gt;pointListFew(n, xs, ys);</span>
+<a name="105"><span class="lineNum">     105 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL pointList4(Sk4s xs, Sk4s ys) override {</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :         fXStrategy.tileXPoints(&amp;xs);</span>
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :         fYStrategy.tileYPoints(&amp;ys);</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :         fNext-&gt;pointList4(xs, ys);</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :     }</span>
+<a name="112"><span class="lineNum">     112 </span>            : </a>
+<span class="lineNum">     113 </span>            :     // The span you pass must not be empty.
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :     void pointSpan(Span span) override {</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :         SkASSERT(!span.isEmpty());</span>
+<span class="lineNum">     116 </span>            :         SkPoint start; SkScalar length; int count;
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :         std::tie(start, length, count) = span;</span>
+<span class="lineNum">     118 </span>            : 
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :         if (span.count() == 1) {</span>
+<span class="lineNum">     120 </span>            :             // DANGER:
+<span class="lineNum">     121 </span>            :             // The explicit casts from float to Sk4f are not usually necessary, but are here to
+<span class="lineNum">     122 </span>            :             // work around an MSVC 2015u2 c++ code generation bug. This is tracked using skia bug
+<span class="lineNum">     123 </span>            :             // 5566.
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :             this-&gt;pointListFew(1, Sk4f{span.startX()}, Sk4f{span.startY()});</span>
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     126 </span>            :         }
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :         SkScalar x = X(start);</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :         SkScalar y = fYStrategy.tileY(Y(start));</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :         Span yAdjustedSpan{{x, y}, length, count};</span>
+<span class="lineNum">     131 </span>            : 
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :         if (!fXStrategy.maybeProcessSpan(yAdjustedSpan, fNext)) {</span>
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :             span_fallback(span, this);</span>
+<span class="lineNum">     134 </span>            :         }
+<span class="lineNum">     135 </span>            :     }
+<span class="lineNum">     136 </span>            : 
+<span class="lineNum">     137 </span>            : private:
+<span class="lineNum">     138 </span>            :     Next* const fNext;
+<span class="lineNum">     139 </span>            :     XStrategy fXStrategy;
+<span class="lineNum">     140 </span>            :     YStrategy fYStrategy;
+<span class="lineNum">     141 </span>            : };
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span>            : ////////////////////////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     144 </span>            : // Specialized Samplers
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span>            : // RGBA8888UnitRepeatSrc - A sampler that takes advantage of the fact the the src and destination
+<a name="147"><span class="lineNum">     147 </span>            : // are the same format and do not need in transformations in pixel space. Therefore, there is no</a>
+<span class="lineNum">     148 </span>            : // need to convert them to HiFi pixel format.
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 : class RGBA8888UnitRepeatSrc final : public SkLinearBitmapPipeline::SampleProcessorInterface,</span>
+<a name="150"><span class="lineNum">     150 </span>            :                                     public SkLinearBitmapPipeline::DestinationInterface {</a>
+<span class="lineNum">     151 </span>            : public:
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :     RGBA8888UnitRepeatSrc(const uint32_t* src, int32_t width)</span>
+<a name="153"><span class="lineNum">     153 </span><span class="lineNoCov">          0 :         : fSrc{src}, fWidth{width} { }</span></a>
+<span class="lineNum">     154 </span>            : 
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL pointListFew(int n, Sk4s xs, Sk4s ys) override {</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :         SkASSERT(fDest + n &lt;= fEnd);</span>
+<span class="lineNum">     157 </span>            :         // At this point xs and ys should be &gt;= 0, so trunc is the same as floor.
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :         Sk4i iXs = SkNx_cast&lt;int&gt;(xs);</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :         Sk4i iYs = SkNx_cast&lt;int&gt;(ys);</span>
+<span class="lineNum">     160 </span>            : 
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :         if (n &gt;= 1) *fDest++ = *this-&gt;pixelAddress(iXs[0], iYs[0]);</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :         if (n &gt;= 2) *fDest++ = *this-&gt;pixelAddress(iXs[1], iYs[1]);</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :         if (n &gt;= 3) *fDest++ = *this-&gt;pixelAddress(iXs[2], iYs[2]);</span>
+<a name="164"><span class="lineNum">     164 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     165 </span>            : 
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL pointList4(Sk4s xs, Sk4s ys) override {</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :         SkASSERT(fDest + 4 &lt;= fEnd);</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :         Sk4i iXs = SkNx_cast&lt;int&gt;(xs);</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :         Sk4i iYs = SkNx_cast&lt;int&gt;(ys);</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :         *fDest++ = *this-&gt;pixelAddress(iXs[0], iYs[0]);</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :         *fDest++ = *this-&gt;pixelAddress(iXs[1], iYs[1]);</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :         *fDest++ = *this-&gt;pixelAddress(iXs[2], iYs[2]);</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :         *fDest++ = *this-&gt;pixelAddress(iXs[3], iYs[3]);</span>
+<a name="174"><span class="lineNum">     174 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     175 </span>            : 
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :     void pointSpan(Span span) override {</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :         SkASSERT(fDest + span.count() &lt;= fEnd);</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :         if (span.length() != 0.0f) {</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :             int32_t x = SkScalarTruncToInt(span.startX());</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :             int32_t y = SkScalarTruncToInt(span.startY());</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :             const uint32_t* src = this-&gt;pixelAddress(x, y);</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :             memmove(fDest, src, span.count() * sizeof(uint32_t));</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :             fDest += span.count();</span>
+<span class="lineNum">     184 </span>            :         }
+<a name="185"><span class="lineNum">     185 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     186 </span>            : 
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :     void repeatSpan(Span span, int32_t repeatCount) override {</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :         SkASSERT(fDest + span.count() * repeatCount &lt;= fEnd);</span>
+<span class="lineNum">     189 </span>            : 
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :         int32_t x = SkScalarTruncToInt(span.startX());</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :         int32_t y = SkScalarTruncToInt(span.startY());</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :         const uint32_t* src = this-&gt;pixelAddress(x, y);</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :         uint32_t* dest = fDest;</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :         while (repeatCount --&gt; 0) {</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :             memmove(dest, src, span.count() * sizeof(uint32_t));</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :             dest += span.count();</span>
+<span class="lineNum">     197 </span>            :         }
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :         fDest = dest;</span>
+<a name="199"><span class="lineNum">     199 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :     void setDestination(void* dst, int count) override  {</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :         fDest = static_cast&lt;uint32_t*&gt;(dst);</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :         fEnd = fDest + count;</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :     }</span>
+<a name="205"><span class="lineNum">     205 </span>            : </a>
+<span class="lineNum">     206 </span>            : private:
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :     const uint32_t* pixelAddress(int32_t x, int32_t y) {</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :         return &amp;fSrc[fWidth * y + x];</span>
+<span class="lineNum">     209 </span>            :     }
+<span class="lineNum">     210 </span>            :     const uint32_t* const fSrc;
+<span class="lineNum">     211 </span>            :     const int32_t         fWidth;
+<span class="lineNum">     212 </span>            :     uint32_t*             fDest;
+<span class="lineNum">     213 </span>            :     uint32_t*             fEnd;
+<span class="lineNum">     214 </span>            : };
+<span class="lineNum">     215 </span>            : 
+<span class="lineNum">     216 </span>            : // RGBA8888UnitRepeatSrc - A sampler that takes advantage of the fact the the src and destination
+<a name="217"><span class="lineNum">     217 </span>            : // are the same format and do not need in transformations in pixel space. Therefore, there is no</a>
+<span class="lineNum">     218 </span>            : // need to convert them to HiFi pixel format.
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 : class RGBA8888UnitRepeatSrcOver final : public SkLinearBitmapPipeline::SampleProcessorInterface,</span>
+<a name="220"><span class="lineNum">     220 </span>            :                                         public SkLinearBitmapPipeline::DestinationInterface {</a>
+<span class="lineNum">     221 </span>            : public:
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :     RGBA8888UnitRepeatSrcOver(const uint32_t* src, int32_t width)</span>
+<a name="223"><span class="lineNum">     223 </span><span class="lineNoCov">          0 :         : fSrc{src}, fWidth{width} { }</span></a>
+<span class="lineNum">     224 </span>            : 
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL pointListFew(int n, Sk4s xs, Sk4s ys) override {</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :         SkASSERT(fDest + n &lt;= fEnd);</span>
+<span class="lineNum">     227 </span>            :         // At this point xs and ys should be &gt;= 0, so trunc is the same as floor.
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :         Sk4i iXs = SkNx_cast&lt;int&gt;(xs);</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :         Sk4i iYs = SkNx_cast&lt;int&gt;(ys);</span>
+<span class="lineNum">     230 </span>            : 
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :         if (n &gt;= 1) blendPixelAt(iXs[0], iYs[0]);</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :         if (n &gt;= 2) blendPixelAt(iXs[1], iYs[1]);</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :         if (n &gt;= 3) blendPixelAt(iXs[2], iYs[2]);</span>
+<a name="234"><span class="lineNum">     234 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     235 </span>            : 
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL pointList4(Sk4s xs, Sk4s ys) override {</span>
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :         SkASSERT(fDest + 4 &lt;= fEnd);</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :         Sk4i iXs = SkNx_cast&lt;int&gt;(xs);</span>
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :         Sk4i iYs = SkNx_cast&lt;int&gt;(ys);</span>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :         blendPixelAt(iXs[0], iYs[0]);</span>
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :         blendPixelAt(iXs[1], iYs[1]);</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :         blendPixelAt(iXs[2], iYs[2]);</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :         blendPixelAt(iXs[3], iYs[3]);</span>
+<a name="244"><span class="lineNum">     244 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     245 </span>            : 
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :     void pointSpan(Span span) override {</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :         if (span.length() != 0.0f) {</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :             this-&gt;repeatSpan(span, 1);</span>
+<span class="lineNum">     249 </span>            :         }
+<a name="250"><span class="lineNum">     250 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     251 </span>            : 
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     void repeatSpan(Span span, int32_t repeatCount) override {</span>
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :         SkASSERT(fDest + span.count() * repeatCount &lt;= fEnd);</span>
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :         SkASSERT(span.count() &gt; 0);</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :         SkASSERT(repeatCount &gt; 0);</span>
+<span class="lineNum">     256 </span>            : 
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :         int32_t x = (int32_t)span.startX();</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :         int32_t y = (int32_t)span.startY();</span>
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :         const uint32_t* beginSpan = this-&gt;pixelAddress(x, y);</span>
+<span class="lineNum">     260 </span>            : 
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :         SkOpts::srcover_srgb_srgb(fDest, beginSpan, span.count() * repeatCount, span.count());</span>
+<span class="lineNum">     262 </span>            : 
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :         fDest += span.count() * repeatCount;</span>
+<span class="lineNum">     264 </span>            : 
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :         SkASSERT(fDest &lt;= fEnd);</span>
+<a name="266"><span class="lineNum">     266 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     267 </span>            : 
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :     void setDestination(void* dst, int count) override  {</span>
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :         SkASSERT(count &gt; 0);</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :         fDest = static_cast&lt;uint32_t*&gt;(dst);</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :         fEnd = fDest + count;</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :     }</span>
+<a name="273"><span class="lineNum">     273 </span>            : </a>
+<span class="lineNum">     274 </span>            : private:
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :     const uint32_t* pixelAddress(int32_t x, int32_t y) {</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :         return &amp;fSrc[fWidth * y + x];</span>
+<a name="277"><span class="lineNum">     277 </span>            :     }</a>
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :     void blendPixelAt(int32_t x, int32_t y) {</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :         const uint32_t* src = this-&gt;pixelAddress(x, y);</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :         SkOpts::srcover_srgb_srgb(fDest, src, 1, 1);</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :         fDest += 1;</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span>            :     const uint32_t* const fSrc;
+<span class="lineNum">     286 </span>            :     const int32_t         fWidth;
+<span class="lineNum">     287 </span>            :     uint32_t*             fDest;
+<span class="lineNum">     288 </span>            :     uint32_t*             fEnd;
+<span class="lineNum">     289 </span>            : };
+<span class="lineNum">     290 </span>            : 
+<span class="lineNum">     291 </span>            : using Blender = SkLinearBitmapPipeline::BlendProcessorInterface;
+<span class="lineNum">     292 </span>            : 
+<span class="lineNum">     293 </span>            : ////////////////////////////////////////////////////////////////////////////////////////////////////
+<a name="294"><span class="lineNum">     294 </span>            : // Pixel Blender Stage</a>
+<span class="lineNum">     295 </span>            : template &lt;SkAlphaType alphaType&gt;
+<a name="296"><span class="lineNum">     296 </span><span class="lineNoCov">          0 : class SrcFPPixel final : public Blender {</span></a>
+<span class="lineNum">     297 </span>            : public:
+<a name="298"><span class="lineNum">     298 </span><span class="lineNoCov">          0 :     SrcFPPixel(float postAlpha) : fPostAlpha{postAlpha} { }</span></a>
+<span class="lineNum">     299 </span>            :     SrcFPPixel(const SrcFPPixel&amp; Blender) : fPostAlpha(Blender.fPostAlpha) {}
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL blendPixel(Sk4f pixel) override {</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :         SkASSERT(fDst + 1 &lt;= fEnd );</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :         this-&gt;srcPixel(fDst, pixel, 0);</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :         fDst += 1;</span>
+<a name="304"><span class="lineNum">     304 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     305 </span>            : 
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL blend4Pixels(Sk4f p0, Sk4f p1, Sk4f p2, Sk4f p3) override {</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :         SkASSERT(fDst + 4 &lt;= fEnd);</span>
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :         SkPM4f* dst = fDst;</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :         this-&gt;srcPixel(dst, p0, 0);</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :         this-&gt;srcPixel(dst, p1, 1);</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :         this-&gt;srcPixel(dst, p2, 2);</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :         this-&gt;srcPixel(dst, p3, 3);</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :         fDst += 4;</span>
+<a name="314"><span class="lineNum">     314 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     315 </span>            : 
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :     void setDestination(void* dst, int count) override {</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :         fDst = static_cast&lt;SkPM4f*&gt;(dst);</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :         fEnd = fDst + count;</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :     }</span>
+<a name="320"><span class="lineNum">     320 </span>            : </a>
+<span class="lineNum">     321 </span>            : private:
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :     void SK_VECTORCALL srcPixel(SkPM4f* dst, Sk4f pixel, int index) {</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :         check_pixel(pixel);</span>
+<span class="lineNum">     324 </span>            : 
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :         Sk4f newPixel = pixel;</span>
+<span class="lineNum">     326 </span>            :         if (alphaType == kUnpremul_SkAlphaType) {
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :             newPixel = Premultiply(pixel);</span>
+<span class="lineNum">     328 </span>            :         }
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :         newPixel = newPixel * fPostAlpha;</span>
+<a name="330"><span class="lineNum">     330 </span><span class="lineNoCov">          0 :         newPixel.store(dst + index);</span></a>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     static Sk4f SK_VECTORCALL Premultiply(Sk4f pixel) {</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :         float alpha = pixel[3];</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :         return pixel * Sk4f{alpha, alpha, alpha, 1.0f};</span>
+<span class="lineNum">     335 </span>            :     }
+<span class="lineNum">     336 </span>            : 
+<span class="lineNum">     337 </span>            :     SkPM4f* fDst;
+<span class="lineNum">     338 </span>            :     SkPM4f* fEnd;
+<span class="lineNum">     339 </span>            :     float   fPostAlpha;
+<span class="lineNum">     340 </span>            : };
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span>            : }  // namespace
+<span class="lineNum">     343 </span>            : 
+<a name="344"><span class="lineNum">     344 </span>            : ////////////////////////////////////////////////////////////////////////////////////////////////////</a>
+<span class="lineNum">     345 </span>            : // SkLinearBitmapPipeline
+<a name="346"><span class="lineNum">     346 </span><span class="lineNoCov">          0 : SkLinearBitmapPipeline::~SkLinearBitmapPipeline() {}</span></a>
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 : SkLinearBitmapPipeline::SkLinearBitmapPipeline(</span>
+<span class="lineNum">     349 </span>            :     const SkMatrix&amp; inverse,
+<span class="lineNum">     350 </span>            :     SkFilterQuality filterQuality,
+<span class="lineNum">     351 </span>            :     SkShader::TileMode xTile, SkShader::TileMode yTile,
+<span class="lineNum">     352 </span>            :     SkColor paintColor,
+<span class="lineNum">     353 </span>            :     const SkPixmap&amp; srcPixmap,
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :     SkArenaAlloc* allocator)</span>
+<span class="lineNum">     355 </span>            : {
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :     SkISize dimensions = srcPixmap.info().dimensions();</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :     const SkImageInfo&amp; srcImageInfo = srcPixmap.info();</span>
+<span class="lineNum">     358 </span>            : 
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :     SkMatrix adjustedInverse = inverse;</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :     if (filterQuality == kNone_SkFilterQuality) {</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :         if (inverse.getScaleX() &gt;= 0.0f) {</span>
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :             adjustedInverse.setTranslateX(</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :                 nextafterf(inverse.getTranslateX(), std::floor(inverse.getTranslateX())));</span>
+<span class="lineNum">     364 </span>            :         }
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :         if (inverse.getScaleY() &gt;= 0.0f) {</span>
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :             adjustedInverse.setTranslateY(</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :                 nextafterf(inverse.getTranslateY(), std::floor(inverse.getTranslateY())));</span>
+<span class="lineNum">     368 </span>            :         }
+<span class="lineNum">     369 </span>            :     }
+<span class="lineNum">     370 </span>            : 
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :     SkScalar dx = adjustedInverse.getScaleX();</span>
+<span class="lineNum">     372 </span>            : 
+<span class="lineNum">     373 </span>            :     // If it is an index 8 color type, the sampler converts to unpremul for better fidelity.
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :     SkAlphaType alphaType = srcImageInfo.alphaType();</span>
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :     if (srcPixmap.colorType() == kIndex_8_SkColorType) {</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :         alphaType = kUnpremul_SkAlphaType;</span>
+<span class="lineNum">     377 </span>            :     }
+<span class="lineNum">     378 </span>            : 
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :     float postAlpha = SkColorGetA(paintColor) * (1.0f / 255.0f);</span>
+<span class="lineNum">     380 </span>            :     // As the stages are built, the chooser function may skip a stage. For example, with the
+<span class="lineNum">     381 </span>            :     // identity matrix, the matrix stage is skipped, and the tilerStage is the first stage.
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :     auto blenderStage = this-&gt;chooseBlenderForShading(alphaType, postAlpha, allocator);</span>
+<span class="lineNum">     383 </span>            :     auto samplerStage = this-&gt;chooseSampler(
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :         blenderStage, filterQuality, xTile, yTile, srcPixmap, paintColor, allocator);</span>
+<span class="lineNum">     385 </span>            :     auto tilerStage   = this-&gt;chooseTiler(
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :         samplerStage, dimensions, xTile, yTile, filterQuality, dx, allocator);</span>
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :     fFirstStage       = this-&gt;chooseMatrix(tilerStage, adjustedInverse, allocator);</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :     fLastStage        = blenderStage;</span>
+<a name="389"><span class="lineNum">     389 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     390 </span>            : 
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 : SkLinearBitmapPipeline::SkLinearBitmapPipeline(</span>
+<span class="lineNum">     392 </span>            :     const SkLinearBitmapPipeline&amp; pipeline,
+<span class="lineNum">     393 </span>            :     const SkPixmap&amp; srcPixmap,
+<span class="lineNum">     394 </span>            :     SkBlendMode mode,
+<span class="lineNum">     395 </span>            :     const SkImageInfo&amp; dstInfo,
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :     SkArenaAlloc* allocator)</span>
+<span class="lineNum">     397 </span>            : {
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :     SkASSERT(mode == SkBlendMode::kSrc || mode == SkBlendMode::kSrcOver);</span>
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :     SkASSERT(srcPixmap.info().colorType() == dstInfo.colorType()</span>
+<span class="lineNum">     400 </span>            :              &amp;&amp; srcPixmap.info().colorType() == kRGBA_8888_SkColorType);
+<span class="lineNum">     401 </span>            : 
+<span class="lineNum">     402 </span>            :     SampleProcessorInterface* sampleStage;
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :     if (mode == SkBlendMode::kSrc) {</span>
+<span class="lineNum">     404 </span>            :         auto sampler = allocator-&gt;make&lt;RGBA8888UnitRepeatSrc&gt;(
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :             srcPixmap.writable_addr32(0, 0), srcPixmap.rowBytes() / 4);</span>
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :         sampleStage = sampler;</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :         fLastStage = sampler;</span>
+<span class="lineNum">     408 </span>            :     } else {
+<span class="lineNum">     409 </span>            :         auto sampler = allocator-&gt;make&lt;RGBA8888UnitRepeatSrcOver&gt;(
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :             srcPixmap.writable_addr32(0, 0), srcPixmap.rowBytes() / 4);</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :         sampleStage = sampler;</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :         fLastStage = sampler;</span>
+<span class="lineNum">     413 </span>            :     }
+<span class="lineNum">     414 </span>            : 
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :     auto tilerStage = pipeline.fTileStageCloner(sampleStage, allocator);</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :     auto matrixStage = pipeline.fMatrixStageCloner(tilerStage, allocator);</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :     fFirstStage = matrixStage;</span>
+<a name="418"><span class="lineNum">     418 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     419 </span>            : 
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 : SkLinearBitmapPipeline* SkLinearBitmapPipeline::ClonePipelineForBlitting(</span>
+<span class="lineNum">     421 </span>            :     const SkLinearBitmapPipeline&amp; pipeline,
+<span class="lineNum">     422 </span>            :     SkMatrix::TypeMask matrixMask,
+<span class="lineNum">     423 </span>            :     SkFilterQuality filterQuality,
+<span class="lineNum">     424 </span>            :     const SkPixmap&amp; srcPixmap,
+<span class="lineNum">     425 </span>            :     float finalAlpha,
+<span class="lineNum">     426 </span>            :     SkBlendMode blendMode,
+<span class="lineNum">     427 </span>            :     const SkImageInfo&amp; dstInfo,
+<span class="lineNum">     428 </span>            :     SkArenaAlloc* allocator)
+<span class="lineNum">     429 </span>            : {
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :     if (blendMode == SkBlendMode::kSrcOver &amp;&amp; srcPixmap.info().alphaType() == kOpaque_SkAlphaType) {</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :         blendMode = SkBlendMode::kSrc;</span>
+<span class="lineNum">     432 </span>            :     }
+<span class="lineNum">     433 </span>            : 
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :     if (matrixMask &amp; ~SkMatrix::kTranslate_Mask ) { return nullptr; }</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :     if (filterQuality != SkFilterQuality::kNone_SkFilterQuality) { return nullptr; }</span>
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :     if (finalAlpha != 1.0f) { return nullptr; }</span>
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :     if (srcPixmap.info().colorType() != kRGBA_8888_SkColorType</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :         || dstInfo.colorType() != kRGBA_8888_SkColorType) { return nullptr; }</span>
+<span class="lineNum">     439 </span>            : 
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :     if (!srcPixmap.info().gammaCloseToSRGB() || !dstInfo.gammaCloseToSRGB()) {</span>
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     442 </span>            :     }
+<span class="lineNum">     443 </span>            : 
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :     if (blendMode != SkBlendMode::kSrc &amp;&amp; blendMode != SkBlendMode::kSrcOver) {</span>
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     446 </span>            :     }
+<span class="lineNum">     447 </span>            : 
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :     return allocator-&gt;make&lt;SkLinearBitmapPipeline&gt;(</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :         pipeline, srcPixmap, blendMode, dstInfo, allocator);</span>
+<a name="450"><span class="lineNum">     450 </span>            : }</a>
+<span class="lineNum">     451 </span>            : 
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 : void SkLinearBitmapPipeline::shadeSpan4f(int x, int y, SkPM4f* dst, int count) {</span>
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :     SkASSERT(count &gt; 0);</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :     this-&gt;blitSpan(x, y, dst, count);</span>
+<a name="455"><span class="lineNum">     455 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     456 </span>            : 
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 : void SkLinearBitmapPipeline::blitSpan(int x, int y, void* dst, int count) {</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :     SkASSERT(count &gt; 0);</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :     fLastStage-&gt;setDestination(dst, count);</span>
+<span class="lineNum">     460 </span>            : 
+<span class="lineNum">     461 </span>            :     // The count and length arguments start out in a precise relation in order to keep the
+<span class="lineNum">     462 </span>            :     // math correct through the different stages. Count is the number of pixel to produce.
+<span class="lineNum">     463 </span>            :     // Since the code samples at pixel centers, length is the distance from the center of the
+<span class="lineNum">     464 </span>            :     // first pixel to the center of the last pixel. This implies that length is count-1.
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :     fFirstStage-&gt;pointSpan(Span{{x + 0.5f, y + 0.5f}, count - 1.0f, count});</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 : }</span>
+<a name="467"><span class="lineNum">     467 </span>            : </a>
+<span class="lineNum">     468 </span>            : SkLinearBitmapPipeline::PointProcessorInterface*
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 : SkLinearBitmapPipeline::chooseMatrix(</span>
+<span class="lineNum">     470 </span>            :     PointProcessorInterface* next,
+<span class="lineNum">     471 </span>            :     const SkMatrix&amp; inverse,
+<span class="lineNum">     472 </span>            :     SkArenaAlloc* allocator)
+<span class="lineNum">     473 </span>            : {
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :     if (inverse.hasPerspective()) {</span>
+<span class="lineNum">     475 </span>            :         auto matrixStage = allocator-&gt;make&lt;PerspectiveMatrix&lt;&gt;&gt;(
+<span class="lineNum">     476 </span>            :             next,
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :             SkVector{inverse.getTranslateX(), inverse.getTranslateY()},</span>
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :             SkVector{inverse.getScaleX(), inverse.getScaleY()},</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :             SkVector{inverse.getSkewX(), inverse.getSkewY()},</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :             SkVector{inverse.getPerspX(), inverse.getPerspY()},</span>
+<a name="481"><span class="lineNum">     481 </span><span class="lineNoCov">          0 :             inverse.get(SkMatrix::kMPersp2));</span></a>
+<span class="lineNum">     482 </span>            :         fMatrixStageCloner =
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :             [matrixStage](PointProcessorInterface* cloneNext, SkArenaAlloc* memory) {</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :                 return memory-&gt;make&lt;PerspectiveMatrix&lt;&gt;&gt;(cloneNext, matrixStage);</span>
+<span class="lineNum">     485 </span><span class="lineNoCov">          0 :             };</span>
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :         return matrixStage;</span>
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :     } else if (inverse.getSkewX() != 0.0f || inverse.getSkewY() != 0.0f) {</span>
+<span class="lineNum">     488 </span>            :         auto matrixStage = allocator-&gt;make&lt;AffineMatrix&lt;&gt;&gt;(
+<span class="lineNum">     489 </span>            :             next,
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :             SkVector{inverse.getTranslateX(), inverse.getTranslateY()},</span>
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :             SkVector{inverse.getScaleX(), inverse.getScaleY()},</span>
+<a name="492"><span class="lineNum">     492 </span><span class="lineNoCov">          0 :             SkVector{inverse.getSkewX(), inverse.getSkewY()});</span></a>
+<span class="lineNum">     493 </span>            :         fMatrixStageCloner =
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :             [matrixStage](PointProcessorInterface* cloneNext, SkArenaAlloc* memory) {</span>
+<span class="lineNum">     495 </span><span class="lineNoCov">          0 :                 return memory-&gt;make&lt;AffineMatrix&lt;&gt;&gt;(cloneNext, matrixStage);</span>
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :             };</span>
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 :         return matrixStage;</span>
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :     } else if (inverse.getScaleX() != 1.0f || inverse.getScaleY() != 1.0f) {</span>
+<span class="lineNum">     499 </span>            :         auto matrixStage = allocator-&gt;make&lt;ScaleMatrix&lt;&gt;&gt;(
+<span class="lineNum">     500 </span>            :             next,
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :             SkVector{inverse.getTranslateX(), inverse.getTranslateY()},</span>
+<a name="502"><span class="lineNum">     502 </span><span class="lineNoCov">          0 :             SkVector{inverse.getScaleX(), inverse.getScaleY()});</span></a>
+<span class="lineNum">     503 </span>            :         fMatrixStageCloner =
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :             [matrixStage](PointProcessorInterface* cloneNext, SkArenaAlloc* memory) {</span>
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :                 return memory-&gt;make&lt;ScaleMatrix&lt;&gt;&gt;(cloneNext, matrixStage);</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :             };</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :         return matrixStage;</span>
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :     } else if (inverse.getTranslateX() != 0.0f || inverse.getTranslateY() != 0.0f) {</span>
+<span class="lineNum">     509 </span>            :         auto matrixStage = allocator-&gt;make&lt;TranslateMatrix&lt;&gt;&gt;(
+<span class="lineNum">     510 </span>            :             next,
+<a name="511"><span class="lineNum">     511 </span><span class="lineNoCov">          0 :             SkVector{inverse.getTranslateX(), inverse.getTranslateY()});</span></a>
+<span class="lineNum">     512 </span>            :         fMatrixStageCloner =
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :             [matrixStage](PointProcessorInterface* cloneNext, SkArenaAlloc* memory) {</span>
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 :                 return memory-&gt;make&lt;TranslateMatrix&lt;&gt;&gt;(cloneNext, matrixStage);</span>
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :             };</span>
+<a name="516"><span class="lineNum">     516 </span><span class="lineNoCov">          0 :         return matrixStage;</span></a>
+<span class="lineNum">     517 </span>            :     } else {
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :         fMatrixStageCloner = [](PointProcessorInterface* cloneNext, SkArenaAlloc* memory) {</span>
+<span class="lineNum">     519 </span>            :             return cloneNext;
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :         };</span>
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :         return next;</span>
+<span class="lineNum">     522 </span>            :     }
+<span class="lineNum">     523 </span>            : }
+<a name="524"><span class="lineNum">     524 </span>            : </a>
+<span class="lineNum">     525 </span>            : template &lt;typename Tiler&gt;
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 : SkLinearBitmapPipeline::PointProcessorInterface* SkLinearBitmapPipeline::createTiler(</span>
+<span class="lineNum">     527 </span>            :     SampleProcessorInterface* next,
+<span class="lineNum">     528 </span>            :     SkISize dimensions,
+<span class="lineNum">     529 </span>            :     SkArenaAlloc* allocator)
+<span class="lineNum">     530 </span>            : {
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :     auto tilerStage = allocator-&gt;make&lt;Tiler&gt;(next, dimensions);</span>
+<a name="532"><span class="lineNum">     532 </span><span class="lineNoCov">          0 :     fTileStageCloner =</span></a>
+<span class="lineNum">     533 </span>            :         [tilerStage](SampleProcessorInterface* cloneNext,
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :                      SkArenaAlloc* memory) -&gt; PointProcessorInterface* {</span>
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 :             return memory-&gt;make&lt;Tiler&gt;(cloneNext, tilerStage);</span>
+<span class="lineNum">     536 </span>            :         };
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :     return tilerStage;</span>
+<span class="lineNum">     538 </span>            : }
+<a name="539"><span class="lineNum">     539 </span>            : </a>
+<span class="lineNum">     540 </span>            : template &lt;typename XStrategy&gt;
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 : SkLinearBitmapPipeline::PointProcessorInterface* SkLinearBitmapPipeline::chooseTilerYMode(</span>
+<span class="lineNum">     542 </span>            :     SampleProcessorInterface* next,
+<span class="lineNum">     543 </span>            :     SkShader::TileMode yMode,
+<span class="lineNum">     544 </span>            :     SkISize dimensions,
+<span class="lineNum">     545 </span>            :     SkArenaAlloc* allocator)
+<span class="lineNum">     546 </span>            : {
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :     switch (yMode) {</span>
+<span class="lineNum">     548 </span>            :         case SkShader::kClamp_TileMode: {
+<span class="lineNum">     549 </span>            :             using Tiler = CombinedTileStage&lt;XStrategy, YClampStrategy, SampleProcessorInterface&gt;;
+<span class="lineNum">     550 </span><span class="lineNoCov">          0 :             return this-&gt;createTiler&lt;Tiler&gt;(next, dimensions, allocator);</span>
+<span class="lineNum">     551 </span>            :         }
+<span class="lineNum">     552 </span>            :         case SkShader::kRepeat_TileMode: {
+<span class="lineNum">     553 </span>            :             using Tiler = CombinedTileStage&lt;XStrategy, YRepeatStrategy, SampleProcessorInterface&gt;;
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :             return this-&gt;createTiler&lt;Tiler&gt;(next, dimensions, allocator);</span>
+<span class="lineNum">     555 </span>            :         }
+<span class="lineNum">     556 </span>            :         case SkShader::kMirror_TileMode: {
+<span class="lineNum">     557 </span>            :             using Tiler = CombinedTileStage&lt;XStrategy, YMirrorStrategy, SampleProcessorInterface&gt;;
+<span class="lineNum">     558 </span><span class="lineNoCov">          0 :             return this-&gt;createTiler&lt;Tiler&gt;(next, dimensions, allocator);</span>
+<span class="lineNum">     559 </span>            :         }
+<span class="lineNum">     560 </span>            :     }
+<span class="lineNum">     561 </span>            : 
+<span class="lineNum">     562 </span>            :     // Should never get here.
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :     SkFAIL(&quot;Not all Y tile cases covered.&quot;);</span>
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<a name="565"><span class="lineNum">     565 </span>            : }</a>
+<span class="lineNum">     566 </span>            : 
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 : SkLinearBitmapPipeline::PointProcessorInterface* SkLinearBitmapPipeline::chooseTiler(</span>
+<span class="lineNum">     568 </span>            :     SampleProcessorInterface* next,
+<span class="lineNum">     569 </span>            :     SkISize dimensions,
+<span class="lineNum">     570 </span>            :     SkShader::TileMode xMode,
+<span class="lineNum">     571 </span>            :     SkShader::TileMode yMode,
+<span class="lineNum">     572 </span>            :     SkFilterQuality filterQuality,
+<span class="lineNum">     573 </span>            :     SkScalar dx,
+<span class="lineNum">     574 </span>            :     SkArenaAlloc* allocator)
+<span class="lineNum">     575 </span>            : {
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :     switch (xMode) {</span>
+<span class="lineNum">     577 </span>            :         case SkShader::kClamp_TileMode:
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :             return this-&gt;chooseTilerYMode&lt;XClampStrategy&gt;(next, yMode, dimensions, allocator);</span>
+<span class="lineNum">     579 </span>            :         case SkShader::kRepeat_TileMode:
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :             if (dx == 1.0f &amp;&amp; filterQuality == kNone_SkFilterQuality) {</span>
+<span class="lineNum">     581 </span>            :                 return this-&gt;chooseTilerYMode&lt;XRepeatUnitScaleStrategy&gt;(
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :                     next, yMode, dimensions, allocator);</span>
+<span class="lineNum">     583 </span>            :             } else {
+<span class="lineNum">     584 </span>            :                 return this-&gt;chooseTilerYMode&lt;XRepeatStrategy&gt;(
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :                     next, yMode, dimensions, allocator);</span>
+<span class="lineNum">     586 </span>            :             }
+<span class="lineNum">     587 </span>            :         case SkShader::kMirror_TileMode:
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :             return this-&gt;chooseTilerYMode&lt;XMirrorStrategy&gt;(next, yMode, dimensions, allocator);</span>
+<span class="lineNum">     589 </span>            :     }
+<span class="lineNum">     590 </span>            : 
+<span class="lineNum">     591 </span>            :     // Should never get here.
+<span class="lineNum">     592 </span><span class="lineNoCov">          0 :     SkFAIL(&quot;Not all X tile cases covered.&quot;);</span>
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<span class="lineNum">     594 </span>            : }
+<span class="lineNum">     595 </span>            : 
+<a name="596"><span class="lineNum">     596 </span>            : template &lt;SkColorType colorType&gt;</a>
+<span class="lineNum">     597 </span>            : SkLinearBitmapPipeline::PixelAccessorInterface*
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :     SkLinearBitmapPipeline::chooseSpecificAccessor(</span>
+<span class="lineNum">     599 </span>            :     const SkPixmap&amp; srcPixmap,
+<span class="lineNum">     600 </span>            :     SkArenaAlloc* allocator)
+<span class="lineNum">     601 </span>            : {
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :     if (srcPixmap.info().gammaCloseToSRGB()) {</span>
+<span class="lineNum">     603 </span>            :         using Accessor = PixelAccessor&lt;colorType, kSRGB_SkGammaType&gt;;
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :         return allocator-&gt;make&lt;Accessor&gt;(srcPixmap);</span>
+<span class="lineNum">     605 </span>            :     } else {
+<span class="lineNum">     606 </span>            :         using Accessor = PixelAccessor&lt;colorType, kLinear_SkGammaType&gt;;
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :         return allocator-&gt;make&lt;Accessor&gt;(srcPixmap);</span>
+<span class="lineNum">     608 </span>            :     }
+<a name="609"><span class="lineNum">     609 </span>            : }</a>
+<span class="lineNum">     610 </span>            : 
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 : SkLinearBitmapPipeline::PixelAccessorInterface* SkLinearBitmapPipeline::choosePixelAccessor(</span>
+<span class="lineNum">     612 </span>            :     const SkPixmap&amp; srcPixmap,
+<span class="lineNum">     613 </span>            :     const SkColor A8TintColor,
+<span class="lineNum">     614 </span>            :     SkArenaAlloc* allocator)
+<span class="lineNum">     615 </span>            : {
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 :     const SkImageInfo&amp; imageInfo = srcPixmap.info();</span>
+<span class="lineNum">     617 </span>            : 
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 :     switch (imageInfo.colorType()) {</span>
+<span class="lineNum">     619 </span>            :         case kAlpha_8_SkColorType: {
+<span class="lineNum">     620 </span>            :             using Accessor = PixelAccessor&lt;kAlpha_8_SkColorType, kLinear_SkGammaType&gt;;
+<span class="lineNum">     621 </span><span class="lineNoCov">          0 :             return allocator-&gt;make&lt;Accessor&gt;(srcPixmap, A8TintColor);</span>
+<span class="lineNum">     622 </span>            :         }
+<span class="lineNum">     623 </span>            :         case kARGB_4444_SkColorType:
+<span class="lineNum">     624 </span><span class="lineNoCov">          0 :             return this-&gt;chooseSpecificAccessor&lt;kARGB_4444_SkColorType&gt;(srcPixmap, allocator);</span>
+<span class="lineNum">     625 </span>            :         case kRGB_565_SkColorType:
+<span class="lineNum">     626 </span><span class="lineNoCov">          0 :             return this-&gt;chooseSpecificAccessor&lt;kRGB_565_SkColorType&gt;(srcPixmap, allocator);</span>
+<span class="lineNum">     627 </span>            :         case kRGBA_8888_SkColorType:
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :             return this-&gt;chooseSpecificAccessor&lt;kRGBA_8888_SkColorType&gt;(srcPixmap, allocator);</span>
+<span class="lineNum">     629 </span>            :         case kBGRA_8888_SkColorType:
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 :             return this-&gt;chooseSpecificAccessor&lt;kBGRA_8888_SkColorType&gt;(srcPixmap, allocator);</span>
+<span class="lineNum">     631 </span>            :         case kIndex_8_SkColorType:
+<span class="lineNum">     632 </span><span class="lineNoCov">          0 :             return this-&gt;chooseSpecificAccessor&lt;kIndex_8_SkColorType&gt;(srcPixmap, allocator);</span>
+<span class="lineNum">     633 </span>            :         case kGray_8_SkColorType:
+<span class="lineNum">     634 </span><span class="lineNoCov">          0 :             return this-&gt;chooseSpecificAccessor&lt;kGray_8_SkColorType&gt;(srcPixmap, allocator);</span>
+<span class="lineNum">     635 </span>            :         case kRGBA_F16_SkColorType: {
+<span class="lineNum">     636 </span>            :             using Accessor = PixelAccessor&lt;kRGBA_F16_SkColorType, kLinear_SkGammaType&gt;;
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :             return allocator-&gt;make&lt;Accessor&gt;(srcPixmap);</span>
+<span class="lineNum">     638 </span>            :         }
+<span class="lineNum">     639 </span>            :         default:
+<span class="lineNum">     640 </span>            :             // Should never get here.
+<span class="lineNum">     641 </span><span class="lineNoCov">          0 :             SkFAIL(&quot;Pixel source not supported.&quot;);</span>
+<span class="lineNum">     642 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     643 </span>            :     }
+<a name="644"><span class="lineNum">     644 </span>            : }</a>
+<span class="lineNum">     645 </span>            : 
+<span class="lineNum">     646 </span><span class="lineNoCov">          0 : SkLinearBitmapPipeline::SampleProcessorInterface* SkLinearBitmapPipeline::chooseSampler(</span>
+<span class="lineNum">     647 </span>            :     Blender* next,
+<span class="lineNum">     648 </span>            :     SkFilterQuality filterQuality,
+<span class="lineNum">     649 </span>            :     SkShader::TileMode xTile, SkShader::TileMode yTile,
+<span class="lineNum">     650 </span>            :     const SkPixmap&amp; srcPixmap,
+<span class="lineNum">     651 </span>            :     const SkColor A8TintColor,
+<span class="lineNum">     652 </span>            :     SkArenaAlloc* allocator)
+<span class="lineNum">     653 </span>            : {
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 :     const SkImageInfo&amp; imageInfo = srcPixmap.info();</span>
+<span class="lineNum">     655 </span><span class="lineNoCov">          0 :     SkISize dimensions = imageInfo.dimensions();</span>
+<span class="lineNum">     656 </span>            : 
+<span class="lineNum">     657 </span>            :     // Special case samplers with fully expanded templates
+<span class="lineNum">     658 </span><span class="lineNoCov">          0 :     if (imageInfo.gammaCloseToSRGB()) {</span>
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :         if (filterQuality == kNone_SkFilterQuality) {</span>
+<span class="lineNum">     660 </span><span class="lineNoCov">          0 :             switch (imageInfo.colorType()) {</span>
+<span class="lineNum">     661 </span>            :                 case kN32_SkColorType: {
+<span class="lineNum">     662 </span>            :                     using Sampler =
+<span class="lineNum">     663 </span>            :                     NearestNeighborSampler&lt;
+<span class="lineNum">     664 </span>            :                         PixelAccessor&lt;kN32_SkColorType, kSRGB_SkGammaType&gt;, Blender&gt;;
+<span class="lineNum">     665 </span><span class="lineNoCov">          0 :                     return allocator-&gt;make&lt;Sampler&gt;(next, srcPixmap);</span>
+<span class="lineNum">     666 </span>            :                 }
+<span class="lineNum">     667 </span>            :                 case kIndex_8_SkColorType: {
+<span class="lineNum">     668 </span>            :                     using Sampler =
+<span class="lineNum">     669 </span>            :                     NearestNeighborSampler&lt;
+<span class="lineNum">     670 </span>            :                         PixelAccessor&lt;kIndex_8_SkColorType, kSRGB_SkGammaType&gt;, Blender&gt;;
+<span class="lineNum">     671 </span><span class="lineNoCov">          0 :                     return allocator-&gt;make&lt;Sampler&gt;(next, srcPixmap);</span>
+<span class="lineNum">     672 </span>            :                 }
+<span class="lineNum">     673 </span>            :                 default:
+<span class="lineNum">     674 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">     675 </span>            :             }
+<span class="lineNum">     676 </span>            :         } else {
+<span class="lineNum">     677 </span><span class="lineNoCov">          0 :             switch (imageInfo.colorType()) {</span>
+<span class="lineNum">     678 </span>            :                 case kN32_SkColorType: {
+<span class="lineNum">     679 </span>            :                     using Sampler =
+<span class="lineNum">     680 </span>            :                     BilerpSampler&lt;
+<span class="lineNum">     681 </span>            :                         PixelAccessor&lt;kN32_SkColorType, kSRGB_SkGammaType&gt;, Blender&gt;;
+<span class="lineNum">     682 </span><span class="lineNoCov">          0 :                     return allocator-&gt;make&lt;Sampler&gt;(next, dimensions, xTile, yTile, srcPixmap);</span>
+<span class="lineNum">     683 </span>            :                 }
+<span class="lineNum">     684 </span>            :                 case kIndex_8_SkColorType: {
+<span class="lineNum">     685 </span>            :                     using Sampler =
+<span class="lineNum">     686 </span>            :                     BilerpSampler&lt;
+<span class="lineNum">     687 </span>            :                         PixelAccessor&lt;kIndex_8_SkColorType, kSRGB_SkGammaType&gt;, Blender&gt;;
+<span class="lineNum">     688 </span><span class="lineNoCov">          0 :                     return allocator-&gt;make&lt;Sampler&gt;(next, dimensions, xTile, yTile, srcPixmap);</span>
+<span class="lineNum">     689 </span>            :                 }
+<span class="lineNum">     690 </span>            :                 default:
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">     692 </span>            :             }
+<span class="lineNum">     693 </span>            :         }
+<span class="lineNum">     694 </span>            :     }
+<span class="lineNum">     695 </span>            : 
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :     auto pixelAccessor = this-&gt;choosePixelAccessor(srcPixmap, A8TintColor, allocator);</span>
+<span class="lineNum">     697 </span>            :     // General cases.
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :     if (filterQuality == kNone_SkFilterQuality) {</span>
+<span class="lineNum">     699 </span>            :         using Sampler = NearestNeighborSampler&lt;PixelAccessorShim, Blender&gt;;
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :         return allocator-&gt;make&lt;Sampler&gt;(next, pixelAccessor);</span>
+<span class="lineNum">     701 </span>            :     } else {
+<span class="lineNum">     702 </span>            :         using Sampler = BilerpSampler&lt;PixelAccessorShim, Blender&gt;;
+<span class="lineNum">     703 </span><span class="lineNoCov">          0 :         return allocator-&gt;make&lt;Sampler&gt;(next, dimensions, xTile, yTile, pixelAccessor);</span>
+<span class="lineNum">     704 </span>            :     }
+<a name="705"><span class="lineNum">     705 </span>            : }</a>
+<span class="lineNum">     706 </span>            : 
+<span class="lineNum">     707 </span><span class="lineNoCov">          0 : Blender* SkLinearBitmapPipeline::chooseBlenderForShading(</span>
+<span class="lineNum">     708 </span>            :     SkAlphaType alphaType,
+<span class="lineNum">     709 </span>            :     float postAlpha,
+<span class="lineNum">     710 </span>            :     SkArenaAlloc* allocator)
+<span class="lineNum">     711 </span>            : {
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :     if (alphaType == kUnpremul_SkAlphaType) {</span>
+<span class="lineNum">     713 </span><span class="lineNoCov">          0 :         return allocator-&gt;make&lt;SrcFPPixel&lt;kUnpremul_SkAlphaType&gt;&gt;(postAlpha);</span>
+<span class="lineNum">     714 </span>            :     } else {
+<span class="lineNum">     715 </span>            :         // kOpaque_SkAlphaType is treated the same as kPremul_SkAlphaType
+<span class="lineNum">     716 </span><span class="lineNoCov">          0 :         return allocator-&gt;make&lt;SrcFPPixel&lt;kPremul_SkAlphaType&gt;&gt;(postAlpha);</span>
+<span class="lineNum">     717 </span>            :     }
+<span class="lineNum">     718 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,516 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/rtp_rtcp/source/forward_error_correction_internal.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/rtp_rtcp/source</a> - forward_error_correction_internal.cc<span style="font-size: 80%;"> (source / <a href="forward_error_correction_internal.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">129</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">13</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/forward_error_correction_internal.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &lt;assert.h&gt;
+<span class="lineNum">      14 </span>            : #include &lt;string.h&gt;
+<span class="lineNum">      15 </span>            : 
+<span class="lineNum">      16 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/fec_private_tables_bursty.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/fec_private_tables_random.h&quot;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : namespace {
+<span class="lineNum">      23 </span>            : using webrtc::fec_private_tables::kPacketMaskBurstyTbl;
+<span class="lineNum">      24 </span>            : using webrtc::fec_private_tables::kPacketMaskRandomTbl;
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : // Allow for different modes of protection for packets in UEP case.
+<span class="lineNum">      27 </span>            : enum ProtectionMode {
+<span class="lineNum">      28 </span>            :   kModeNoOverlap,
+<span class="lineNum">      29 </span>            :   kModeOverlap,
+<span class="lineNum">      30 </span>            :   kModeBiasFirstPacket,
+<span class="lineNum">      31 </span>            : };
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : // Fits an input mask (sub_mask) to an output mask.
+<span class="lineNum">      34 </span>            : // The mask is a matrix where the rows are the FEC packets,
+<span class="lineNum">      35 </span>            : // and the columns are the source packets the FEC is applied to.
+<span class="lineNum">      36 </span>            : // Each row of the mask is represented by a number of mask bytes.
+<span class="lineNum">      37 </span>            : //
+<span class="lineNum">      38 </span>            : // \param[in]  num_mask_bytes     The number of mask bytes of output mask.
+<span class="lineNum">      39 </span>            : // \param[in]  num_sub_mask_bytes The number of mask bytes of input mask.
+<span class="lineNum">      40 </span>            : // \param[in]  num_rows           The number of rows of the input mask.
+<span class="lineNum">      41 </span>            : // \param[in]  sub_mask           A pointer to hold the input mask, of size
+<span class="lineNum">      42 </span>            : //                                [0, num_rows * num_sub_mask_bytes]
+<a name="43"><span class="lineNum">      43 </span>            : // \param[out] packet_mask        A pointer to hold the output mask, of size</a>
+<span class="lineNum">      44 </span>            : //                                [0, x * num_mask_bytes], where x &gt;= num_rows.
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 : void FitSubMask(int num_mask_bytes,</span>
+<span class="lineNum">      46 </span>            :                 int num_sub_mask_bytes,
+<span class="lineNum">      47 </span>            :                 int num_rows,
+<span class="lineNum">      48 </span>            :                 const uint8_t* sub_mask,
+<span class="lineNum">      49 </span>            :                 uint8_t* packet_mask) {
+<span class="lineNum">      50 </span><span class="lineNoCov">          0 :   if (num_mask_bytes == num_sub_mask_bytes) {</span>
+<span class="lineNum">      51 </span><span class="lineNoCov">          0 :     memcpy(packet_mask, sub_mask, num_rows * num_sub_mask_bytes);</span>
+<span class="lineNum">      52 </span>            :   } else {
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 :     for (int i = 0; i &lt; num_rows; ++i) {</span>
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 :       int pkt_mask_idx = i * num_mask_bytes;</span>
+<span class="lineNum">      55 </span><span class="lineNoCov">          0 :       int pkt_mask_idx2 = i * num_sub_mask_bytes;</span>
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :       for (int j = 0; j &lt; num_sub_mask_bytes; ++j) {</span>
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :         packet_mask[pkt_mask_idx] = sub_mask[pkt_mask_idx2];</span>
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 :         pkt_mask_idx++;</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :         pkt_mask_idx2++;</span>
+<span class="lineNum">      60 </span>            :       }
+<span class="lineNum">      61 </span>            :     }
+<span class="lineNum">      62 </span>            :   }
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">      64 </span>            : 
+<span class="lineNum">      65 </span>            : // Shifts a mask by number of columns (bits), and fits it to an output mask.
+<span class="lineNum">      66 </span>            : // The mask is a matrix where the rows are the FEC packets,
+<span class="lineNum">      67 </span>            : // and the columns are the source packets the FEC is applied to.
+<span class="lineNum">      68 </span>            : // Each row of the mask is represented by a number of mask bytes.
+<span class="lineNum">      69 </span>            : //
+<span class="lineNum">      70 </span>            : // \param[in]  num_mask_bytes     The number of mask bytes of output mask.
+<span class="lineNum">      71 </span>            : // \param[in]  num_sub_mask_bytes The number of mask bytes of input mask.
+<span class="lineNum">      72 </span>            : // \param[in]  num_column_shift   The number columns to be shifted, and
+<span class="lineNum">      73 </span>            : //                                the starting row for the output mask.
+<span class="lineNum">      74 </span>            : // \param[in]  end_row            The ending row for the output mask.
+<span class="lineNum">      75 </span>            : // \param[in]  sub_mask           A pointer to hold the input mask, of size
+<span class="lineNum">      76 </span>            : //                                [0, (end_row_fec - start_row_fec) *
+<span class="lineNum">      77 </span>            : //                                    num_sub_mask_bytes]
+<span class="lineNum">      78 </span>            : // \param[out] packet_mask        A pointer to hold the output mask, of size
+<span class="lineNum">      79 </span>            : //                                [0, x * num_mask_bytes],
+<span class="lineNum">      80 </span>            : //                                where x &gt;= end_row_fec.
+<span class="lineNum">      81 </span>            : // TODO(marpan): This function is doing three things at the same time:
+<a name="82"><span class="lineNum">      82 </span>            : // shift within a byte, byte shift and resizing.</a>
+<span class="lineNum">      83 </span>            : // Split up into subroutines.
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 : void ShiftFitSubMask(int num_mask_bytes,</span>
+<span class="lineNum">      85 </span>            :                      int res_mask_bytes,
+<span class="lineNum">      86 </span>            :                      int num_column_shift,
+<span class="lineNum">      87 </span>            :                      int end_row,
+<span class="lineNum">      88 </span>            :                      const uint8_t* sub_mask,
+<span class="lineNum">      89 </span>            :                      uint8_t* packet_mask) {
+<span class="lineNum">      90 </span>            :   // Number of bit shifts within a byte
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :   const int num_bit_shifts = (num_column_shift % 8);</span>
+<span class="lineNum">      92 </span><span class="lineNoCov">          0 :   const int num_byte_shifts = num_column_shift &gt;&gt; 3;</span>
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span>            :   // Modify new mask with sub-mask21.
+<span class="lineNum">      95 </span>            : 
+<span class="lineNum">      96 </span>            :   // Loop over the remaining FEC packets.
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   for (int i = num_column_shift; i &lt; end_row; ++i) {</span>
+<span class="lineNum">      98 </span>            :     // Byte index of new mask, for row i and column res_mask_bytes,
+<span class="lineNum">      99 </span>            :     // offset by the number of bytes shifts
+<span class="lineNum">     100 </span>            :     int pkt_mask_idx =
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :         i * num_mask_bytes + res_mask_bytes - 1 + num_byte_shifts;</span>
+<span class="lineNum">     102 </span>            :     // Byte index of sub_mask, for row i and column res_mask_bytes
+<span class="lineNum">     103 </span>            :     int pkt_mask_idx2 =
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :         (i - num_column_shift) * res_mask_bytes + res_mask_bytes - 1;</span>
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :     uint8_t shift_right_curr_byte = 0;</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :     uint8_t shift_left_prev_byte = 0;</span>
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :     uint8_t comb_new_byte = 0;</span>
+<span class="lineNum">     109 </span>            : 
+<span class="lineNum">     110 </span>            :     // Handle case of num_mask_bytes &gt; res_mask_bytes:
+<span class="lineNum">     111 </span>            :     // For a given row, copy the rightmost &quot;numBitShifts&quot; bits
+<span class="lineNum">     112 </span>            :     // of the last byte of sub_mask into output mask.
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :     if (num_mask_bytes &gt; res_mask_bytes) {</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :       shift_left_prev_byte = (sub_mask[pkt_mask_idx2] &lt;&lt; (8 - num_bit_shifts));</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :       packet_mask[pkt_mask_idx + 1] = shift_left_prev_byte;</span>
+<span class="lineNum">     116 </span>            :     }
+<span class="lineNum">     117 </span>            : 
+<span class="lineNum">     118 </span>            :     // For each row i (FEC packet), shift the bit-mask of the sub_mask.
+<span class="lineNum">     119 </span>            :     // Each row of the mask contains &quot;resMaskBytes&quot; of bytes.
+<span class="lineNum">     120 </span>            :     // We start from the last byte of the sub_mask and move to first one.
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :     for (int j = res_mask_bytes - 1; j &gt; 0; j--) {</span>
+<span class="lineNum">     122 </span>            :       // Shift current byte of sub21 to the right by &quot;numBitShifts&quot;.
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :       shift_right_curr_byte = sub_mask[pkt_mask_idx2] &gt;&gt; num_bit_shifts;</span>
+<span class="lineNum">     124 </span>            : 
+<span class="lineNum">     125 </span>            :       // Fill in shifted bits with bits from the previous (left) byte:
+<span class="lineNum">     126 </span>            :       // First shift the previous byte to the left by &quot;8-numBitShifts&quot;.
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :       shift_left_prev_byte =</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :           (sub_mask[pkt_mask_idx2 - 1] &lt;&lt; (8 - num_bit_shifts));</span>
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span>            :       // Then combine both shifted bytes into new mask byte.
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :       comb_new_byte = shift_right_curr_byte | shift_left_prev_byte;</span>
+<span class="lineNum">     132 </span>            : 
+<span class="lineNum">     133 </span>            :       // Assign to new mask.
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :       packet_mask[pkt_mask_idx] = comb_new_byte;</span>
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :       pkt_mask_idx--;</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :       pkt_mask_idx2--;</span>
+<span class="lineNum">     137 </span>            :     }
+<span class="lineNum">     138 </span>            :     // For the first byte in the row (j=0 case).
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :     shift_right_curr_byte = sub_mask[pkt_mask_idx2] &gt;&gt; num_bit_shifts;</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     packet_mask[pkt_mask_idx] = shift_right_curr_byte;</span>
+<span class="lineNum">     141 </span>            :   }
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     143 </span>            : }  // namespace
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span>            : namespace webrtc {
+<a name="146"><span class="lineNum">     146 </span>            : namespace internal {</a>
+<span class="lineNum">     147 </span>            : 
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 : PacketMaskTable::PacketMaskTable(FecMaskType fec_mask_type,</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :                                  int num_media_packets)</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :     : fec_mask_type_(InitMaskType(fec_mask_type, num_media_packets)),</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :       fec_packet_mask_table_(InitMaskTable(fec_mask_type_)) {}</span>
+<span class="lineNum">     152 </span>            : 
+<span class="lineNum">     153 </span>            : // Sets |fec_mask_type_| to the type of packet mask selected. The type of
+<span class="lineNum">     154 </span>            : // packet mask selected is based on |fec_mask_type| and |num_media_packets|.
+<a name="155"><span class="lineNum">     155 </span>            : // If |num_media_packets| is larger than the maximum allowed by |fec_mask_type|</a>
+<span class="lineNum">     156 </span>            : // for the bursty type, then the random type is selected.
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 : FecMaskType PacketMaskTable::InitMaskType(FecMaskType fec_mask_type,</span>
+<span class="lineNum">     158 </span>            :                                           int num_media_packets) {
+<span class="lineNum">     159 </span>            :   // The mask should not be bigger than |packetMaskTbl|.
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :   assert(num_media_packets &lt;= static_cast&lt;int&gt;(sizeof(kPacketMaskRandomTbl) /</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :                                                sizeof(*kPacketMaskRandomTbl)));</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   switch (fec_mask_type) {</span>
+<span class="lineNum">     163 </span>            :     case kFecMaskRandom: {
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :       return kFecMaskRandom;</span>
+<span class="lineNum">     165 </span>            :     }
+<span class="lineNum">     166 </span>            :     case kFecMaskBursty: {
+<span class="lineNum">     167 </span>            :       int max_media_packets = static_cast&lt;int&gt;(sizeof(kPacketMaskBurstyTbl) /
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :                                                sizeof(*kPacketMaskBurstyTbl));</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :       if (num_media_packets &gt; max_media_packets) {</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :         return kFecMaskRandom;</span>
+<span class="lineNum">     171 </span>            :       } else {
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :         return kFecMaskBursty;</span>
+<span class="lineNum">     173 </span>            :       }
+<span class="lineNum">     174 </span>            :     }
+<span class="lineNum">     175 </span>            :   }
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :   assert(false);</span>
+<span class="lineNum">     177 </span>            :   return kFecMaskRandom;
+<span class="lineNum">     178 </span>            : }
+<span class="lineNum">     179 </span>            : 
+<a name="180"><span class="lineNum">     180 </span>            : // Returns the pointer to the packet mask tables corresponding to type</a>
+<span class="lineNum">     181 </span>            : // |fec_mask_type|.
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 : const uint8_t*** PacketMaskTable::InitMaskTable(FecMaskType fec_mask_type) {</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :   switch (fec_mask_type) {</span>
+<span class="lineNum">     184 </span>            :     case kFecMaskRandom: {
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :       return kPacketMaskRandomTbl;</span>
+<span class="lineNum">     186 </span>            :     }
+<span class="lineNum">     187 </span>            :     case kFecMaskBursty: {
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :       return kPacketMaskBurstyTbl;</span>
+<span class="lineNum">     189 </span>            :     }
+<span class="lineNum">     190 </span>            :   }
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :   assert(false);</span>
+<span class="lineNum">     192 </span>            :   return kPacketMaskRandomTbl;
+<span class="lineNum">     193 </span>            : }
+<a name="194"><span class="lineNum">     194 </span>            : </a>
+<span class="lineNum">     195 </span>            : // Remaining protection after important (first partition) packet protection
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 : void RemainingPacketProtection(int num_media_packets,</span>
+<span class="lineNum">     197 </span>            :                                int num_fec_remaining,
+<span class="lineNum">     198 </span>            :                                int num_fec_for_imp_packets,
+<span class="lineNum">     199 </span>            :                                int num_mask_bytes,
+<span class="lineNum">     200 </span>            :                                ProtectionMode mode,
+<span class="lineNum">     201 </span>            :                                uint8_t* packet_mask,
+<span class="lineNum">     202 </span>            :                                const PacketMaskTable&amp; mask_table) {
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :   if (mode == kModeNoOverlap) {</span>
+<span class="lineNum">     204 </span>            :     // sub_mask21
+<span class="lineNum">     205 </span>            : 
+<span class="lineNum">     206 </span>            :     const int res_mask_bytes =
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :         PacketMaskSize(num_media_packets - num_fec_for_imp_packets);</span>
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span>            :     const uint8_t* packet_mask_sub_21 =
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :         mask_table.fec_packet_mask_table()[num_media_packets -</span>
+<span class="lineNum">     211 </span>            :                                            num_fec_for_imp_packets -
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :                                            1][num_fec_remaining - 1];</span>
+<span class="lineNum">     213 </span>            : 
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :     ShiftFitSubMask(num_mask_bytes, res_mask_bytes, num_fec_for_imp_packets,</span>
+<span class="lineNum">     215 </span>            :                     (num_fec_for_imp_packets + num_fec_remaining),
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :                     packet_mask_sub_21, packet_mask);</span>
+<span class="lineNum">     217 </span>            : 
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :   } else if (mode == kModeOverlap || mode == kModeBiasFirstPacket) {</span>
+<span class="lineNum">     219 </span>            :     // sub_mask22
+<span class="lineNum">     220 </span>            : 
+<span class="lineNum">     221 </span>            :     const uint8_t* packet_mask_sub_22 =
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :         mask_table.fec_packet_mask_table()[num_media_packets -</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :                                            1][num_fec_remaining - 1];</span>
+<span class="lineNum">     224 </span>            : 
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :     FitSubMask(num_mask_bytes, num_mask_bytes, num_fec_remaining,</span>
+<span class="lineNum">     226 </span>            :                packet_mask_sub_22,
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :                &amp;packet_mask[num_fec_for_imp_packets * num_mask_bytes]);</span>
+<span class="lineNum">     228 </span>            : 
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     if (mode == kModeBiasFirstPacket) {</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :       for (int i = 0; i &lt; num_fec_remaining; ++i) {</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :         int pkt_mask_idx = i * num_mask_bytes;</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :         packet_mask[pkt_mask_idx] = packet_mask[pkt_mask_idx] | (1 &lt;&lt; 7);</span>
+<span class="lineNum">     233 </span>            :       }
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     235 </span>            :   } else {
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :     assert(false);</span>
+<span class="lineNum">     237 </span>            :   }
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 : }</span>
+<a name="239"><span class="lineNum">     239 </span>            : </a>
+<span class="lineNum">     240 </span>            : // Protection for important (first partition) packets
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 : void ImportantPacketProtection(int num_fec_for_imp_packets,</span>
+<span class="lineNum">     242 </span>            :                                int num_imp_packets,
+<span class="lineNum">     243 </span>            :                                int num_mask_bytes,
+<span class="lineNum">     244 </span>            :                                uint8_t* packet_mask,
+<span class="lineNum">     245 </span>            :                                const PacketMaskTable&amp; mask_table) {
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   const int num_imp_mask_bytes = PacketMaskSize(num_imp_packets);</span>
+<span class="lineNum">     247 </span>            : 
+<span class="lineNum">     248 </span>            :   // Get sub_mask1 from table
+<span class="lineNum">     249 </span>            :   const uint8_t* packet_mask_sub_1 =
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :       mask_table.fec_packet_mask_table()[num_imp_packets -</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :                                          1][num_fec_for_imp_packets - 1];</span>
+<span class="lineNum">     252 </span>            : 
+<span class="lineNum">     253 </span>            :   FitSubMask(num_mask_bytes, num_imp_mask_bytes, num_fec_for_imp_packets,
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 :              packet_mask_sub_1, packet_mask);</span>
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     256 </span>            : 
+<span class="lineNum">     257 </span>            : // This function sets the protection allocation: i.e., how many FEC packets
+<a name="258"><span class="lineNum">     258 </span>            : // to use for num_imp (1st partition) packets, given the: number of media</a>
+<span class="lineNum">     259 </span>            : // packets, number of FEC packets, and number of 1st partition packets.
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 : int SetProtectionAllocation(int num_media_packets,</span>
+<span class="lineNum">     261 </span>            :                             int num_fec_packets,
+<span class="lineNum">     262 </span>            :                             int num_imp_packets) {
+<span class="lineNum">     263 </span>            :   // TODO(marpan): test different cases for protection allocation:
+<span class="lineNum">     264 </span>            : 
+<span class="lineNum">     265 </span>            :   // Use at most (alloc_par * num_fec_packets) for important packets.
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :   float alloc_par = 0.5;</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :   int max_num_fec_for_imp = alloc_par * num_fec_packets;</span>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span>            :   int num_fec_for_imp_packets = (num_imp_packets &lt; max_num_fec_for_imp)
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :                                     ? num_imp_packets</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :                                     : max_num_fec_for_imp;</span>
+<span class="lineNum">     272 </span>            : 
+<span class="lineNum">     273 </span>            :   // Fall back to equal protection in this case
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :   if (num_fec_packets == 1 &amp;&amp; (num_media_packets &gt; 2 * num_imp_packets)) {</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :     num_fec_for_imp_packets = 0;</span>
+<span class="lineNum">     276 </span>            :   }
+<span class="lineNum">     277 </span>            : 
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :   return num_fec_for_imp_packets;</span>
+<span class="lineNum">     279 </span>            : }
+<span class="lineNum">     280 </span>            : 
+<span class="lineNum">     281 </span>            : // Modification for UEP: reuse the off-line tables for the packet masks.
+<span class="lineNum">     282 </span>            : // Note: these masks were designed for equal packet protection case,
+<span class="lineNum">     283 </span>            : // assuming random packet loss.
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span>            : // Current version has 3 modes (options) to build UEP mask from existing ones.
+<span class="lineNum">     286 </span>            : // Various other combinations may be added in future versions.
+<span class="lineNum">     287 </span>            : // Longer-term, we may add another set of tables specifically for UEP cases.
+<span class="lineNum">     288 </span>            : // TODO(marpan): also consider modification of masks for bursty loss cases.
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span>            : // Mask is characterized as (#packets_to_protect, #fec_for_protection).
+<span class="lineNum">     291 </span>            : // Protection factor defined as: (#fec_for_protection / #packets_to_protect).
+<span class="lineNum">     292 </span>            : 
+<span class="lineNum">     293 </span>            : // Let k=num_media_packets, n=total#packets, (n-k)=num_fec_packets,
+<span class="lineNum">     294 </span>            : // m=num_imp_packets.
+<span class="lineNum">     295 </span>            : 
+<span class="lineNum">     296 </span>            : // For ProtectionMode 0 and 1:
+<span class="lineNum">     297 </span>            : // one mask (sub_mask1) is used for 1st partition packets,
+<span class="lineNum">     298 </span>            : // the other mask (sub_mask21/22, for 0/1) is for the remaining FEC packets.
+<span class="lineNum">     299 </span>            : 
+<span class="lineNum">     300 </span>            : // In both mode 0 and 1, the packets of 1st partition (num_imp_packets) are
+<span class="lineNum">     301 </span>            : // treated equally important, and are afforded more protection than the
+<span class="lineNum">     302 </span>            : // residual partition packets.
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span>            : // For num_imp_packets:
+<span class="lineNum">     305 </span>            : // sub_mask1 = (m, t): protection = t/(m), where t=F(k,n-k,m).
+<span class="lineNum">     306 </span>            : // t=F(k,n-k,m) is the number of packets used to protect first partition in
+<span class="lineNum">     307 </span>            : // sub_mask1. This is determined from the function SetProtectionAllocation().
+<span class="lineNum">     308 </span>            : 
+<span class="lineNum">     309 </span>            : // For the left-over protection:
+<span class="lineNum">     310 </span>            : // Mode 0: sub_mask21 = (k-m,n-k-t): protection = (n-k-t)/(k-m)
+<span class="lineNum">     311 </span>            : // mode 0 has no protection overlap between the two partitions.
+<span class="lineNum">     312 </span>            : // For mode 0, we would typically set t = min(m, n-k).
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span>            : // Mode 1: sub_mask22 = (k, n-k-t), with protection (n-k-t)/(k)
+<span class="lineNum">     315 </span>            : // mode 1 has protection overlap between the two partitions (preferred).
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span>            : // For ProtectionMode 2:
+<span class="lineNum">     318 </span>            : // This gives 1st packet of list (which is 1st packet of 1st partition) more
+<span class="lineNum">     319 </span>            : // protection. In mode 2, the equal protection mask (which is obtained from
+<span class="lineNum">     320 </span>            : // mode 1 for t=0) is modified (more &quot;1s&quot; added in 1st column of packet mask)
+<span class="lineNum">     321 </span>            : // to bias higher protection for the 1st source packet.
+<span class="lineNum">     322 </span>            : 
+<span class="lineNum">     323 </span>            : // Protection Mode 2 may be extended for a sort of sliding protection
+<a name="324"><span class="lineNum">     324 </span>            : // (i.e., vary the number/density of &quot;1s&quot; across columns) across packets.</a>
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 : void UnequalProtectionMask(int num_media_packets,</span>
+<span class="lineNum">     327 </span>            :                            int num_fec_packets,
+<span class="lineNum">     328 </span>            :                            int num_imp_packets,
+<span class="lineNum">     329 </span>            :                            int num_mask_bytes,
+<span class="lineNum">     330 </span>            :                            uint8_t* packet_mask,
+<span class="lineNum">     331 </span>            :                            const PacketMaskTable&amp; mask_table) {
+<span class="lineNum">     332 </span>            :   // Set Protection type and allocation
+<span class="lineNum">     333 </span>            :   // TODO(marpan): test/update for best mode and some combinations thereof.
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :   ProtectionMode mode = kModeOverlap;</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :   int num_fec_for_imp_packets = 0;</span>
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :   if (mode != kModeBiasFirstPacket) {</span>
+<span class="lineNum">     339 </span>            :     num_fec_for_imp_packets = SetProtectionAllocation(
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :         num_media_packets, num_fec_packets, num_imp_packets);</span>
+<span class="lineNum">     341 </span>            :   }
+<span class="lineNum">     342 </span>            : 
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :   int num_fec_remaining = num_fec_packets - num_fec_for_imp_packets;</span>
+<span class="lineNum">     344 </span>            :   // Done with setting protection type and allocation
+<span class="lineNum">     345 </span>            : 
+<span class="lineNum">     346 </span>            :   //
+<span class="lineNum">     347 </span>            :   // Generate sub_mask1
+<span class="lineNum">     348 </span>            :   //
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :   if (num_fec_for_imp_packets &gt; 0) {</span>
+<span class="lineNum">     350 </span>            :     ImportantPacketProtection(num_fec_for_imp_packets, num_imp_packets,
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :                               num_mask_bytes, packet_mask, mask_table);</span>
+<span class="lineNum">     352 </span>            :   }
+<span class="lineNum">     353 </span>            : 
+<span class="lineNum">     354 </span>            :   //
+<span class="lineNum">     355 </span>            :   // Generate sub_mask2
+<span class="lineNum">     356 </span>            :   //
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :   if (num_fec_remaining &gt; 0) {</span>
+<span class="lineNum">     358 </span>            :     RemainingPacketProtection(num_media_packets, num_fec_remaining,
+<span class="lineNum">     359 </span>            :                               num_fec_for_imp_packets, num_mask_bytes, mode,
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :                               packet_mask, mask_table);</span>
+<span class="lineNum">     361 </span>            :   }
+<a name="362"><span class="lineNum">     362 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 : void GeneratePacketMasks(int num_media_packets,</span>
+<span class="lineNum">     365 </span>            :                          int num_fec_packets,
+<span class="lineNum">     366 </span>            :                          int num_imp_packets,
+<span class="lineNum">     367 </span>            :                          bool use_unequal_protection,
+<span class="lineNum">     368 </span>            :                          const PacketMaskTable&amp; mask_table,
+<span class="lineNum">     369 </span>            :                          uint8_t* packet_mask) {
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :   assert(num_media_packets &gt; 0);</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :   assert(num_fec_packets &lt;= num_media_packets &amp;&amp; num_fec_packets &gt; 0);</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :   assert(num_imp_packets &lt;= num_media_packets &amp;&amp; num_imp_packets &gt;= 0);</span>
+<span class="lineNum">     373 </span>            : 
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :   const int num_mask_bytes = PacketMaskSize(num_media_packets);</span>
+<span class="lineNum">     375 </span>            : 
+<span class="lineNum">     376 </span>            :   // Equal-protection for these cases.
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :   if (!use_unequal_protection || num_imp_packets == 0) {</span>
+<span class="lineNum">     378 </span>            :     // Retrieve corresponding mask table directly:for equal-protection case.
+<span class="lineNum">     379 </span>            :     // Mask = (k,n-k), with protection factor = (n-k)/k,
+<span class="lineNum">     380 </span>            :     // where k = num_media_packets, n=total#packets, (n-k)=num_fec_packets.
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :     memcpy(packet_mask,</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :            mask_table.fec_packet_mask_table()[num_media_packets -</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :                                               1][num_fec_packets - 1],</span>
+<span class="lineNum">     384 </span><span class="lineNoCov">          0 :            num_fec_packets * num_mask_bytes);</span>
+<span class="lineNum">     385 </span>            :   } else {  // UEP case
+<span class="lineNum">     386 </span>            :     UnequalProtectionMask(num_media_packets, num_fec_packets, num_imp_packets,
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :                           num_mask_bytes, packet_mask, mask_table);</span>
+<span class="lineNum">     388 </span>            :   }  // End of UEP modification
+<a name="389"><span class="lineNum">     389 </span><span class="lineNoCov">          0 : }  // End of GetPacketMasks</span></a>
+<span class="lineNum">     390 </span>            : 
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 : size_t PacketMaskSize(size_t num_sequence_numbers) {</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(num_sequence_numbers, 8 * kUlpfecPacketMaskSizeLBitSet);</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :   if (num_sequence_numbers &gt; 8 * kUlpfecPacketMaskSizeLBitClear) {</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :     return kUlpfecPacketMaskSizeLBitSet;</span>
+<span class="lineNum">     395 </span>            :   }
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :   return kUlpfecPacketMaskSizeLBitClear;</span>
+<a name="397"><span class="lineNum">     397 </span>            : }</a>
+<span class="lineNum">     398 </span>            : 
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 : void InsertZeroColumns(int num_zeros,</span>
+<span class="lineNum">     400 </span>            :                        uint8_t* new_mask,
+<span class="lineNum">     401 </span>            :                        int new_mask_bytes,
+<span class="lineNum">     402 </span>            :                        int num_fec_packets,
+<span class="lineNum">     403 </span>            :                        int new_bit_index) {
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :   for (uint16_t row = 0; row &lt; num_fec_packets; ++row) {</span>
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :     const int new_byte_index = row * new_mask_bytes + new_bit_index / 8;</span>
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :     const int max_shifts = (7 - (new_bit_index % 8));</span>
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :     new_mask[new_byte_index] &lt;&lt;= std::min(num_zeros, max_shifts);</span>
+<span class="lineNum">     408 </span>            :   }
+<a name="409"><span class="lineNum">     409 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     410 </span>            : 
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 : void CopyColumn(uint8_t* new_mask,</span>
+<span class="lineNum">     412 </span>            :                 int new_mask_bytes,
+<span class="lineNum">     413 </span>            :                 uint8_t* old_mask,
+<span class="lineNum">     414 </span>            :                 int old_mask_bytes,
+<span class="lineNum">     415 </span>            :                 int num_fec_packets,
+<span class="lineNum">     416 </span>            :                 int new_bit_index,
+<span class="lineNum">     417 </span>            :                 int old_bit_index) {
+<span class="lineNum">     418 </span>            :   // Copy column from the old mask to the beginning of the new mask and shift it
+<span class="lineNum">     419 </span>            :   // out from the old mask.
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :   for (uint16_t row = 0; row &lt; num_fec_packets; ++row) {</span>
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :     int new_byte_index = row * new_mask_bytes + new_bit_index / 8;</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :     int old_byte_index = row * old_mask_bytes + old_bit_index / 8;</span>
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :     new_mask[new_byte_index] |= ((old_mask[old_byte_index] &amp; 0x80) &gt;&gt; 7);</span>
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :     if (new_bit_index % 8 != 7) {</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :       new_mask[new_byte_index] &lt;&lt;= 1;</span>
+<span class="lineNum">     426 </span>            :     }
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :     old_mask[old_byte_index] &lt;&lt;= 1;</span>
+<span class="lineNum">     428 </span>            :   }
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     430 </span>            : 
+<span class="lineNum">     431 </span>            : }  // namespace internal
+<span class="lineNum">     432 </span>            : }  // namespace webrtc
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

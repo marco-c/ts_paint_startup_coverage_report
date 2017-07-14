@@ -1,0 +1,429 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/bitrate_controller/send_side_bandwidth_estimation.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/bitrate_controller</a> - send_side_bandwidth_estimation.cc<span style="font-size: 80%;"> (source / <a href="send_side_bandwidth_estimation.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">160</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">16</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;webrtc/modules/bitrate_controller/send_side_bandwidth_estimation.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      14 </span>            : #include &lt;cmath&gt;
+<span class="lineNum">      15 </span>            : 
+<span class="lineNum">      16 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;webrtc/base/logging.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;webrtc/logging/rtc_event_log/rtc_event_log.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;webrtc/modules/remote_bitrate_estimator/include/bwe_defines.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;webrtc/system_wrappers/include/field_trial.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;webrtc/system_wrappers/include/metrics.h&quot;
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : namespace webrtc {
+<span class="lineNum">      24 </span>            : namespace {
+<span class="lineNum">      25 </span>            : const int64_t kBweIncreaseIntervalMs = 1000;
+<span class="lineNum">      26 </span>            : const int64_t kBweDecreaseIntervalMs = 300;
+<span class="lineNum">      27 </span>            : const int64_t kStartPhaseMs = 2000;
+<span class="lineNum">      28 </span>            : const int64_t kBweConverganceTimeMs = 20000;
+<span class="lineNum">      29 </span>            : const int kLimitNumPackets = 20;
+<span class="lineNum">      30 </span>            : const int kDefaultMaxBitrateBps = 1000000000;
+<span class="lineNum">      31 </span>            : const int64_t kLowBitrateLogPeriodMs = 10000;
+<span class="lineNum">      32 </span>            : const int64_t kRtcEventLogPeriodMs = 5000;
+<span class="lineNum">      33 </span>            : // Expecting that RTCP feedback is sent uniformly within [0.5, 1.5]s intervals.
+<span class="lineNum">      34 </span>            : const int64_t kFeedbackIntervalMs = 1500;
+<span class="lineNum">      35 </span>            : const int64_t kFeedbackTimeoutIntervals = 3;
+<span class="lineNum">      36 </span>            : const int64_t kTimeoutIntervalMs = 1000;
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            : struct UmaRampUpMetric {
+<span class="lineNum">      39 </span>            :   const char* metric_name;
+<span class="lineNum">      40 </span>            :   int bitrate_kbps;
+<span class="lineNum">      41 </span>            : };
+<span class="lineNum">      42 </span>            : 
+<span class="lineNum">      43 </span>            : const UmaRampUpMetric kUmaRampupMetrics[] = {
+<span class="lineNum">      44 </span>            :     {&quot;WebRTC.BWE.RampUpTimeTo500kbpsInMs&quot;, 500},
+<span class="lineNum">      45 </span>            :     {&quot;WebRTC.BWE.RampUpTimeTo1000kbpsInMs&quot;, 1000},
+<span class="lineNum">      46 </span>            :     {&quot;WebRTC.BWE.RampUpTimeTo2000kbpsInMs&quot;, 2000}};
+<span class="lineNum">      47 </span>            : const size_t kNumUmaRampupMetrics =
+<span class="lineNum">      48 </span>            :     sizeof(kUmaRampupMetrics) / sizeof(kUmaRampupMetrics[0]);
+<span class="lineNum">      49 </span>            : 
+<a name="50"><span class="lineNum">      50 </span>            : }  // namespace</a>
+<span class="lineNum">      51 </span>            : 
+<span class="lineNum">      52 </span><span class="lineNoCov">          0 : SendSideBandwidthEstimation::SendSideBandwidthEstimation(RtcEventLog* event_log)</span>
+<span class="lineNum">      53 </span>            :     : lost_packets_since_last_loss_update_Q8_(0),
+<span class="lineNum">      54 </span>            :       expected_packets_since_last_loss_update_(0),
+<span class="lineNum">      55 </span>            :       bitrate_(0),
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :       min_bitrate_configured_(congestion_controller::GetMinBitrateBps()),</span>
+<span class="lineNum">      57 </span>            :       max_bitrate_configured_(kDefaultMaxBitrateBps),
+<span class="lineNum">      58 </span>            :       last_low_bitrate_log_ms_(-1),
+<span class="lineNum">      59 </span>            :       has_decreased_since_last_fraction_loss_(false),
+<span class="lineNum">      60 </span>            :       last_feedback_ms_(-1),
+<span class="lineNum">      61 </span>            :       last_packet_report_ms_(-1),
+<span class="lineNum">      62 </span>            :       last_timeout_ms_(-1),
+<span class="lineNum">      63 </span>            :       last_fraction_loss_(0),
+<span class="lineNum">      64 </span>            :       last_logged_fraction_loss_(0),
+<span class="lineNum">      65 </span>            :       last_round_trip_time_ms_(0),
+<span class="lineNum">      66 </span>            :       bwe_incoming_(0),
+<span class="lineNum">      67 </span>            :       delay_based_bitrate_bps_(0),
+<span class="lineNum">      68 </span>            :       time_last_decrease_ms_(0),
+<span class="lineNum">      69 </span>            :       first_report_time_ms_(-1),
+<span class="lineNum">      70 </span>            :       initially_lost_packets_(0),
+<span class="lineNum">      71 </span>            :       bitrate_at_2_seconds_kbps_(0),
+<span class="lineNum">      72 </span>            :       uma_update_state_(kNoUpdate),
+<span class="lineNum">      73 </span>            :       rampup_uma_stats_updated_(kNumUmaRampupMetrics, false),
+<span class="lineNum">      74 </span>            :       event_log_(event_log),
+<span class="lineNum">      75 </span>            :       last_rtc_event_log_ms_(-1),
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :       in_timeout_experiment_(webrtc::field_trial::FindFullName(</span>
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :                                  &quot;WebRTC-FeedbackTimeout&quot;) == &quot;Enabled&quot;) {</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :   RTC_DCHECK(event_log);</span>
+<a name="79"><span class="lineNum">      79 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      80 </span>            : 
+<a name="81"><span class="lineNum">      81 </span><span class="lineNoCov">          0 : SendSideBandwidthEstimation::~SendSideBandwidthEstimation() {}</span></a>
+<span class="lineNum">      82 </span>            : 
+<span class="lineNum">      83 </span><span class="lineNoCov">          0 : void SendSideBandwidthEstimation::SetBitrates(int send_bitrate,</span>
+<span class="lineNum">      84 </span>            :                                               int min_bitrate,
+<span class="lineNum">      85 </span>            :                                               int max_bitrate) {
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :   if (send_bitrate &gt; 0)</span>
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :     SetSendBitrate(send_bitrate);</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :   SetMinMaxBitrate(min_bitrate, max_bitrate);</span>
+<a name="89"><span class="lineNum">      89 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      90 </span>            : 
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 : void SendSideBandwidthEstimation::SetSendBitrate(int bitrate) {</span>
+<span class="lineNum">      92 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GT(bitrate, 0);</span>
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :   bitrate_ = bitrate;</span>
+<span class="lineNum">      94 </span>            : 
+<span class="lineNum">      95 </span>            :   // Clear last sent bitrate history so the new value can be used directly
+<span class="lineNum">      96 </span>            :   // and not capped.
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   min_bitrate_history_.clear();</span>
+<a name="98"><span class="lineNum">      98 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      99 </span>            : 
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 : void SendSideBandwidthEstimation::SetMinMaxBitrate(int min_bitrate,</span>
+<span class="lineNum">     101 </span>            :                                                    int max_bitrate) {
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GE(min_bitrate, 0);</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :   min_bitrate_configured_ =</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :       std::max(min_bitrate, congestion_controller::GetMinBitrateBps());</span>
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :   if (max_bitrate &gt; 0) {</span>
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :     max_bitrate_configured_ =</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :         std::max&lt;uint32_t&gt;(min_bitrate_configured_, max_bitrate);</span>
+<span class="lineNum">     108 </span>            :   } else {
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :     max_bitrate_configured_ = kDefaultMaxBitrateBps;</span>
+<span class="lineNum">     110 </span>            :   }
+<a name="111"><span class="lineNum">     111 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     112 </span>            : 
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 : int SendSideBandwidthEstimation::GetMinBitrate() const {</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :   return min_bitrate_configured_;</span>
+<a name="115"><span class="lineNum">     115 </span>            : }</a>
+<span class="lineNum">     116 </span>            : 
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 : void SendSideBandwidthEstimation::CurrentEstimate(int* bitrate,</span>
+<span class="lineNum">     118 </span>            :                                                   uint8_t* loss,
+<span class="lineNum">     119 </span>            :                                                   int64_t* rtt) const {
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :   *bitrate = bitrate_;</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :   *loss = last_fraction_loss_;</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :   *rtt = last_round_trip_time_ms_;</span>
+<a name="123"><span class="lineNum">     123 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     124 </span>            : 
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 : void SendSideBandwidthEstimation::UpdateReceiverEstimate(</span>
+<span class="lineNum">     126 </span>            :     int64_t now_ms, uint32_t bandwidth) {
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :   bwe_incoming_ = bandwidth;</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :   bitrate_ = CapBitrateToThresholds(now_ms, bitrate_);</span>
+<a name="129"><span class="lineNum">     129 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     130 </span>            : 
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 : void SendSideBandwidthEstimation::UpdateDelayBasedEstimate(</span>
+<span class="lineNum">     132 </span>            :     int64_t now_ms,
+<span class="lineNum">     133 </span>            :     uint32_t bitrate_bps) {
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :   delay_based_bitrate_bps_ = bitrate_bps;</span>
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :   bitrate_ = CapBitrateToThresholds(now_ms, bitrate_);</span>
+<a name="136"><span class="lineNum">     136 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     137 </span>            : 
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 : void SendSideBandwidthEstimation::UpdateReceiverBlock(uint8_t fraction_loss,</span>
+<span class="lineNum">     139 </span>            :                                                       int64_t rtt,
+<span class="lineNum">     140 </span>            :                                                       int number_of_packets,
+<span class="lineNum">     141 </span>            :                                                       int64_t now_ms) {
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   last_feedback_ms_ = now_ms;</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :   if (first_report_time_ms_ == -1)</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :     first_report_time_ms_ = now_ms;</span>
+<span class="lineNum">     145 </span>            : 
+<span class="lineNum">     146 </span>            :   // Update RTT.
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :   last_round_trip_time_ms_ = rtt;</span>
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span>            :   // Check sequence number diff and weight loss report
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :   if (number_of_packets &gt; 0) {</span>
+<span class="lineNum">     151 </span>            :     // Calculate number of lost packets.
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :     const int num_lost_packets_Q8 = fraction_loss * number_of_packets;</span>
+<span class="lineNum">     153 </span>            :     // Accumulate reports.
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :     lost_packets_since_last_loss_update_Q8_ += num_lost_packets_Q8;</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :     expected_packets_since_last_loss_update_ += number_of_packets;</span>
+<span class="lineNum">     156 </span>            : 
+<span class="lineNum">     157 </span>            :     // Don't generate a loss rate until it can be based on enough packets.
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     if (expected_packets_since_last_loss_update_ &lt; kLimitNumPackets)</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">     160 </span>            : 
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :     has_decreased_since_last_fraction_loss_ = false;</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :     last_fraction_loss_ = lost_packets_since_last_loss_update_Q8_ /</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :                           expected_packets_since_last_loss_update_;</span>
+<span class="lineNum">     164 </span>            : 
+<span class="lineNum">     165 </span>            :     // Reset accumulators.
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     lost_packets_since_last_loss_update_Q8_ = 0;</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :     expected_packets_since_last_loss_update_ = 0;</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :     last_packet_report_ms_ = now_ms;</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :     UpdateEstimate(now_ms);</span>
+<span class="lineNum">     170 </span>            :   }
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :   UpdateUmaStats(now_ms, rtt, (fraction_loss * number_of_packets) &gt;&gt; 8);</span>
+<a name="172"><span class="lineNum">     172 </span>            : }</a>
+<span class="lineNum">     173 </span>            : 
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 : void SendSideBandwidthEstimation::UpdateUmaStats(int64_t now_ms,</span>
+<span class="lineNum">     175 </span>            :                                                  int64_t rtt,
+<span class="lineNum">     176 </span>            :                                                  int lost_packets) {
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :   int bitrate_kbps = static_cast&lt;int&gt;((bitrate_ + 500) / 1000);</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :   for (size_t i = 0; i &lt; kNumUmaRampupMetrics; ++i) {</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :     if (!rampup_uma_stats_updated_[i] &amp;&amp;</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :         bitrate_kbps &gt;= kUmaRampupMetrics[i].bitrate_kbps) {</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :       RTC_HISTOGRAMS_COUNTS_100000(i, kUmaRampupMetrics[i].metric_name,</span>
+<span class="lineNum">     182 </span>            :                                    now_ms - first_report_time_ms_);
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :       rampup_uma_stats_updated_[i] = true;</span>
+<span class="lineNum">     184 </span>            :     }
+<span class="lineNum">     185 </span>            :   }
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :   if (IsInStartPhase(now_ms)) {</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :     initially_lost_packets_ += lost_packets;</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   } else if (uma_update_state_ == kNoUpdate) {</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :     uma_update_state_ = kFirstDone;</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :     bitrate_at_2_seconds_kbps_ = bitrate_kbps;</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :     RTC_HISTOGRAM_COUNTS(&quot;WebRTC.BWE.InitiallyLostPackets&quot;,</span>
+<span class="lineNum">     192 </span>            :                          initially_lost_packets_, 0, 100, 50);
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :     RTC_HISTOGRAM_COUNTS(&quot;WebRTC.BWE.InitialRtt&quot;, static_cast&lt;int&gt;(rtt), 0,</span>
+<span class="lineNum">     194 </span>            :                          2000, 50);
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :     RTC_HISTOGRAM_COUNTS(&quot;WebRTC.BWE.InitialBandwidthEstimate&quot;,</span>
+<span class="lineNum">     196 </span>            :                          bitrate_at_2_seconds_kbps_, 0, 2000, 50);
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   } else if (uma_update_state_ == kFirstDone &amp;&amp;</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :              now_ms - first_report_time_ms_ &gt;= kBweConverganceTimeMs) {</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :     uma_update_state_ = kDone;</span>
+<span class="lineNum">     200 </span>            :     int bitrate_diff_kbps =
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :         std::max(bitrate_at_2_seconds_kbps_ - bitrate_kbps, 0);</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :     RTC_HISTOGRAM_COUNTS(&quot;WebRTC.BWE.InitialVsConvergedDiff&quot;, bitrate_diff_kbps,</span>
+<span class="lineNum">     203 </span>            :                          0, 2000, 50);
+<span class="lineNum">     204 </span>            :   }
+<a name="205"><span class="lineNum">     205 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     206 </span>            : 
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 : void SendSideBandwidthEstimation::UpdateEstimate(int64_t now_ms) {</span>
+<span class="lineNum">     208 </span>            :   // We trust the REMB and/or delay-based estimate during the first 2 seconds if
+<span class="lineNum">     209 </span>            :   // we haven't had any packet loss reported, to allow startup bitrate probing.
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :   if (last_fraction_loss_ == 0 &amp;&amp; IsInStartPhase(now_ms)) {</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :     uint32_t prev_bitrate = bitrate_;</span>
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :     if (bwe_incoming_ &gt; bitrate_)</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :       bitrate_ = CapBitrateToThresholds(now_ms, bwe_incoming_);</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :     if (delay_based_bitrate_bps_ &gt; bitrate_) {</span>
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :       bitrate_ = CapBitrateToThresholds(now_ms, delay_based_bitrate_bps_);</span>
+<span class="lineNum">     216 </span>            :     }
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :     if (bitrate_ != prev_bitrate) {</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :       min_bitrate_history_.clear();</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :       min_bitrate_history_.push_back(std::make_pair(now_ms, bitrate_));</span>
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">     221 </span>            :     }
+<span class="lineNum">     222 </span>            :   }
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :   UpdateMinHistory(now_ms);</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :   if (last_packet_report_ms_ == -1) {</span>
+<span class="lineNum">     225 </span>            :     // No feedback received.
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :     bitrate_ = CapBitrateToThresholds(now_ms, bitrate_);</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     228 </span>            :   }
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :   int64_t time_since_packet_report_ms = now_ms - last_packet_report_ms_;</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :   int64_t time_since_feedback_ms = now_ms - last_feedback_ms_;</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :   if (time_since_packet_report_ms &lt; 1.2 * kFeedbackIntervalMs) {</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :     if (last_fraction_loss_ &lt;= 5) {</span>
+<span class="lineNum">     233 </span>            :       // Loss &lt; 2%: Increase rate by 8% of the min bitrate in the last
+<span class="lineNum">     234 </span>            :       // kBweIncreaseIntervalMs.
+<span class="lineNum">     235 </span>            :       // Note that by remembering the bitrate over the last second one can
+<span class="lineNum">     236 </span>            :       // rampup up one second faster than if only allowed to start ramping
+<span class="lineNum">     237 </span>            :       // at 8% per second rate now. E.g.:
+<span class="lineNum">     238 </span>            :       //   If sending a constant 100kbps it can rampup immediatly to 108kbps
+<span class="lineNum">     239 </span>            :       //   whenever a receiver report is received with lower packet loss.
+<span class="lineNum">     240 </span>            :       //   If instead one would do: bitrate_ *= 1.08^(delta time), it would
+<span class="lineNum">     241 </span>            :       //   take over one second since the lower packet loss to achieve
+<span class="lineNum">     242 </span>            :       //   108kbps.
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :       bitrate_ = static_cast&lt;uint32_t&gt;(</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :           min_bitrate_history_.front().second * 1.08 + 0.5);</span>
+<span class="lineNum">     245 </span>            : 
+<span class="lineNum">     246 </span>            :       // Add 1 kbps extra, just to make sure that we do not get stuck
+<span class="lineNum">     247 </span>            :       // (gives a little extra increase at low rates, negligible at higher
+<span class="lineNum">     248 </span>            :       // rates).
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :       bitrate_ += 1000;</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :     } else if (last_fraction_loss_ &lt;= 26) {</span>
+<span class="lineNum">     251 </span>            :       // Loss between 2% - 10%: Do nothing.
+<span class="lineNum">     252 </span>            :     } else {
+<span class="lineNum">     253 </span>            :       // Loss &gt; 10%: Limit the rate decreases to once a kBweDecreaseIntervalMs
+<span class="lineNum">     254 </span>            :       // + rtt.
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :       if (!has_decreased_since_last_fraction_loss_ &amp;&amp;</span>
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :           (now_ms - time_last_decrease_ms_) &gt;=</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :               (kBweDecreaseIntervalMs + last_round_trip_time_ms_)) {</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :         time_last_decrease_ms_ = now_ms;</span>
+<span class="lineNum">     259 </span>            : 
+<span class="lineNum">     260 </span>            :         // Reduce rate:
+<span class="lineNum">     261 </span>            :         //   newRate = rate * (1 - 0.5*lossRate);
+<span class="lineNum">     262 </span>            :         //   where packetLoss = 256*lossRate;
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :         bitrate_ = static_cast&lt;uint32_t&gt;(</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :             (bitrate_ * static_cast&lt;double&gt;(512 - last_fraction_loss_)) /</span>
+<span class="lineNum">     265 </span>            :             512.0);
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :         has_decreased_since_last_fraction_loss_ = true;</span>
+<span class="lineNum">     267 </span>            :       }
+<span class="lineNum">     268 </span>            :     }
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :   } else if (time_since_feedback_ms &gt;</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :                  kFeedbackTimeoutIntervals * kFeedbackIntervalMs &amp;&amp;</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :              (last_timeout_ms_ == -1 ||</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :               now_ms - last_timeout_ms_ &gt; kTimeoutIntervalMs)) {</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :     if (in_timeout_experiment_) {</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :       LOG(LS_WARNING) &lt;&lt; &quot;Feedback timed out (&quot; &lt;&lt; time_since_feedback_ms</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :                       &lt;&lt; &quot; ms), reducing bitrate.&quot;;</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :       bitrate_ *= 0.8;</span>
+<span class="lineNum">     277 </span>            :       // Reset accumulators since we've already acted on missing feedback and
+<span class="lineNum">     278 </span>            :       // shouldn't to act again on these old lost packets.
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :       lost_packets_since_last_loss_update_Q8_ = 0;</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :       expected_packets_since_last_loss_update_ = 0;</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :       last_timeout_ms_ = now_ms;</span>
+<span class="lineNum">     282 </span>            :     }
+<span class="lineNum">     283 </span>            :   }
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :   uint32_t capped_bitrate = CapBitrateToThresholds(now_ms, bitrate_);</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :   if (capped_bitrate != bitrate_ ||</span>
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :       last_fraction_loss_ != last_logged_fraction_loss_ ||</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :       last_rtc_event_log_ms_ == -1 ||</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :       now_ms - last_rtc_event_log_ms_ &gt; kRtcEventLogPeriodMs) {</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :     event_log_-&gt;LogBwePacketLossEvent(capped_bitrate, last_fraction_loss_,</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :                                       expected_packets_since_last_loss_update_);</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :     last_logged_fraction_loss_ = last_fraction_loss_;</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :     last_rtc_event_log_ms_ = now_ms;</span>
+<span class="lineNum">     293 </span>            :   }
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :   bitrate_ = capped_bitrate;</span>
+<a name="295"><span class="lineNum">     295 </span>            : }</a>
+<span class="lineNum">     296 </span>            : 
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 : bool SendSideBandwidthEstimation::IsInStartPhase(int64_t now_ms) const {</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :   return first_report_time_ms_ == -1 ||</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :          now_ms - first_report_time_ms_ &lt; kStartPhaseMs;</span>
+<a name="300"><span class="lineNum">     300 </span>            : }</a>
+<span class="lineNum">     301 </span>            : 
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 : void SendSideBandwidthEstimation::UpdateMinHistory(int64_t now_ms) {</span>
+<span class="lineNum">     303 </span>            :   // Remove old data points from history.
+<span class="lineNum">     304 </span>            :   // Since history precision is in ms, add one so it is able to increase
+<span class="lineNum">     305 </span>            :   // bitrate if it is off by as little as 0.5ms.
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   while (!min_bitrate_history_.empty() &amp;&amp;</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :          now_ms - min_bitrate_history_.front().first + 1 &gt;</span>
+<span class="lineNum">     308 </span>            :              kBweIncreaseIntervalMs) {
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     min_bitrate_history_.pop_front();</span>
+<span class="lineNum">     310 </span>            :   }
+<span class="lineNum">     311 </span>            : 
+<span class="lineNum">     312 </span>            :   // Typical minimum sliding-window algorithm: Pop values higher than current
+<span class="lineNum">     313 </span>            :   // bitrate before pushing it.
+<span class="lineNum">     314 </span><span class="lineNoCov">          0 :   while (!min_bitrate_history_.empty() &amp;&amp;</span>
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :          bitrate_ &lt;= min_bitrate_history_.back().second) {</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :     min_bitrate_history_.pop_back();</span>
+<span class="lineNum">     317 </span>            :   }
+<span class="lineNum">     318 </span>            : 
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :   min_bitrate_history_.push_back(std::make_pair(now_ms, bitrate_));</span>
+<a name="320"><span class="lineNum">     320 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 : uint32_t SendSideBandwidthEstimation::CapBitrateToThresholds(</span>
+<span class="lineNum">     323 </span>            :     int64_t now_ms, uint32_t bitrate) {
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :   if (bwe_incoming_ &gt; 0 &amp;&amp; bitrate &gt; bwe_incoming_) {</span>
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :     bitrate = bwe_incoming_;</span>
+<span class="lineNum">     326 </span>            :   }
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :   if (delay_based_bitrate_bps_ &gt; 0 &amp;&amp; bitrate &gt; delay_based_bitrate_bps_) {</span>
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :     bitrate = delay_based_bitrate_bps_;</span>
+<span class="lineNum">     329 </span>            :   }
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :   if (bitrate &gt; max_bitrate_configured_) {</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :     bitrate = max_bitrate_configured_;</span>
+<span class="lineNum">     332 </span>            :   }
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :   if (bitrate &lt; min_bitrate_configured_) {</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :     if (last_low_bitrate_log_ms_ == -1 ||</span>
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :         now_ms - last_low_bitrate_log_ms_ &gt; kLowBitrateLogPeriodMs) {</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :       LOG(LS_WARNING) &lt;&lt; &quot;Estimated available bandwidth &quot; &lt;&lt; bitrate / 1000</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :                       &lt;&lt; &quot; kbps is below configured min bitrate &quot;</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :                       &lt;&lt; min_bitrate_configured_ / 1000 &lt;&lt; &quot; kbps.&quot;;</span>
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :       last_low_bitrate_log_ms_ = now_ms;</span>
+<span class="lineNum">     340 </span>            :     }
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :     bitrate = min_bitrate_configured_;</span>
+<span class="lineNum">     342 </span>            :   }
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :   return bitrate;</span>
+<span class="lineNum">     344 </span>            : }
+<span class="lineNum">     345 </span>            : }  // namespace webrtc
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

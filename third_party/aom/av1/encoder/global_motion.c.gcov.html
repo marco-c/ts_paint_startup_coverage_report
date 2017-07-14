@@ -1,0 +1,403 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - third_party/aom/av1/encoder/global_motion.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">third_party/aom/av1/encoder</a> - global_motion.c<span style="font-size: 80%;"> (source / <a href="global_motion.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">143</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * Copyright (c) 2016, Alliance for Open Media. All rights reserved
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * This source code is subject to the terms of the BSD 2 Clause License and
+<span class="lineNum">       5 </span>            :  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
+<span class="lineNum">       6 </span>            :  * was not distributed with this source code in the LICENSE file, you can
+<span class="lineNum">       7 </span>            :  * obtain it at www.aomedia.org/license/software. If the Alliance for Open
+<span class="lineNum">       8 </span>            :  * Media Patent License 1.0 was not distributed with this source code in the
+<span class="lineNum">       9 </span>            :  * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
+<span class="lineNum">      10 </span>            :  */
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : #include &lt;stdio.h&gt;
+<span class="lineNum">      13 </span>            : #include &lt;stdlib.h&gt;
+<span class="lineNum">      14 </span>            : #include &lt;memory.h&gt;
+<span class="lineNum">      15 </span>            : #include &lt;math.h&gt;
+<span class="lineNum">      16 </span>            : #include &lt;assert.h&gt;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : #include &quot;av1/encoder/global_motion.h&quot;
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : #include &quot;av1/common/warped_motion.h&quot;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : #include &quot;av1/encoder/segmentation.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;av1/encoder/corner_detect.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;av1/encoder/corner_match.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;av1/encoder/ransac.h&quot;
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : #define MAX_CORNERS 4096
+<span class="lineNum">      28 </span>            : #define MIN_INLIER_PROB 0.1
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : #define MIN_TRANS_THRESH (1 * GM_TRANS_DECODE_FACTOR)
+<span class="lineNum">      31 </span>            : 
+<span class="lineNum">      32 </span>            : // Border over which to compute the global motion
+<span class="lineNum">      33 </span>            : #define ERRORADV_BORDER 0
+<span class="lineNum">      34 </span>            : 
+<span class="lineNum">      35 </span>            : #define ERRORADV_MAX_THRESH 0.995
+<a name="36"><span class="lineNum">      36 </span>            : #define ERRORADV_COST_PRODUCT_THRESH 26000</a>
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span><span class="lineNoCov">          0 : int is_enough_erroradvantage(double best_erroradvantage, int params_cost) {</span>
+<span class="lineNum">      39 </span><span class="lineNoCov">          0 :   return best_erroradvantage &lt; ERRORADV_MAX_THRESH &amp;&amp;</span>
+<span class="lineNum">      40 </span><span class="lineNoCov">          0 :          best_erroradvantage * params_cost &lt; ERRORADV_COST_PRODUCT_THRESH;</span>
+<a name="41"><span class="lineNum">      41 </span>            : }</a>
+<span class="lineNum">      42 </span>            : 
+<span class="lineNum">      43 </span><span class="lineNoCov">          0 : static void convert_to_params(const double *params, int32_t *model) {</span>
+<span class="lineNum">      44 </span>            :   int i;
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 :   int alpha_present = 0;</span>
+<span class="lineNum">      46 </span><span class="lineNoCov">          0 :   model[0] = (int32_t)floor(params[0] * (1 &lt;&lt; GM_TRANS_PREC_BITS) + 0.5);</span>
+<span class="lineNum">      47 </span><span class="lineNoCov">          0 :   model[1] = (int32_t)floor(params[1] * (1 &lt;&lt; GM_TRANS_PREC_BITS) + 0.5);</span>
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 :   model[0] = (int32_t)clamp(model[0], GM_TRANS_MIN, GM_TRANS_MAX) *</span>
+<span class="lineNum">      49 </span>            :              GM_TRANS_DECODE_FACTOR;
+<span class="lineNum">      50 </span><span class="lineNoCov">          0 :   model[1] = (int32_t)clamp(model[1], GM_TRANS_MIN, GM_TRANS_MAX) *</span>
+<span class="lineNum">      51 </span>            :              GM_TRANS_DECODE_FACTOR;
+<span class="lineNum">      52 </span>            : 
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 :   for (i = 2; i &lt; 6; ++i) {</span>
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 :     const int diag_value = ((i == 2 || i == 5) ? (1 &lt;&lt; GM_ALPHA_PREC_BITS) : 0);</span>
+<span class="lineNum">      55 </span><span class="lineNoCov">          0 :     model[i] = (int32_t)floor(params[i] * (1 &lt;&lt; GM_ALPHA_PREC_BITS) + 0.5);</span>
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :     model[i] =</span>
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :         (int32_t)clamp(model[i] - diag_value, GM_ALPHA_MIN, GM_ALPHA_MAX);</span>
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 :     alpha_present |= (model[i] != 0);</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :     model[i] = (model[i] + diag_value) * GM_ALPHA_DECODE_FACTOR;</span>
+<span class="lineNum">      60 </span>            :   }
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 :   for (; i &lt; 8; ++i) {</span>
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :     model[i] = (int32_t)floor(params[i] * (1 &lt;&lt; GM_ROW3HOMO_PREC_BITS) + 0.5);</span>
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :     model[i] = (int32_t)clamp(model[i], GM_ROW3HOMO_MIN, GM_ROW3HOMO_MAX) *</span>
+<span class="lineNum">      64 </span>            :                GM_ROW3HOMO_DECODE_FACTOR;
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :     alpha_present |= (model[i] != 0);</span>
+<span class="lineNum">      66 </span>            :   }
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :   if (!alpha_present) {</span>
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :     if (abs(model[0]) &lt; MIN_TRANS_THRESH &amp;&amp; abs(model[1]) &lt; MIN_TRANS_THRESH) {</span>
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :       model[0] = 0;</span>
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :       model[1] = 0;</span>
+<span class="lineNum">      72 </span>            :     }
+<span class="lineNum">      73 </span>            :   }
+<a name="74"><span class="lineNum">      74 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      75 </span>            : 
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 : void convert_model_to_params(const double *params, WarpedMotionParams *model) {</span>
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :   convert_to_params(params, model-&gt;wmmat);</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :   model-&gt;wmtype = get_gmtype(model);</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">      80 </span>            : 
+<span class="lineNum">      81 </span>            : // Adds some offset to a global motion parameter and handles
+<a name="82"><span class="lineNum">      82 </span>            : // all of the necessary precision shifts, clamping, and</a>
+<span class="lineNum">      83 </span>            : // zero-centering.
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 : static int32_t add_param_offset(int param_index, int32_t param_value,</span>
+<span class="lineNum">      85 </span>            :                                 int32_t offset) {
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :   const int scale_vals[3] = { GM_TRANS_PREC_DIFF, GM_ALPHA_PREC_DIFF,</span>
+<span class="lineNum">      87 </span>            :                               GM_ROW3HOMO_PREC_DIFF };
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :   const int clamp_vals[3] = { GM_TRANS_MAX, GM_ALPHA_MAX, GM_ROW3HOMO_MAX };</span>
+<span class="lineNum">      89 </span>            :   // type of param: 0 - translation, 1 - affine, 2 - homography
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :   const int param_type = (param_index &lt; 2 ? 0 : (param_index &lt; 6 ? 1 : 2));</span>
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :   const int is_one_centered = (param_index == 2 || param_index == 5);</span>
+<span class="lineNum">      92 </span>            : 
+<span class="lineNum">      93 </span>            :   // Make parameter zero-centered and offset the shift that was done to make
+<span class="lineNum">      94 </span>            :   // it compatible with the warped model
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :   param_value = (param_value - (is_one_centered &lt;&lt; WARPEDMODEL_PREC_BITS)) &gt;&gt;</span>
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :                 scale_vals[param_type];</span>
+<span class="lineNum">      97 </span>            :   // Add desired offset to the rescaled/zero-centered parameter
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :   param_value += offset;</span>
+<span class="lineNum">      99 </span>            :   // Clamp the parameter so it does not overflow the number of bits allotted
+<span class="lineNum">     100 </span>            :   // to it in the bitstream
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :   param_value = (int32_t)clamp(param_value, -clamp_vals[param_type],</span>
+<span class="lineNum">     102 </span>            :                                clamp_vals[param_type]);
+<span class="lineNum">     103 </span>            :   // Rescale the parameter to WARPEDMODEL_PRECISION_BITS so it is compatible
+<span class="lineNum">     104 </span>            :   // with the warped motion library
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :   param_value *= (1 &lt;&lt; scale_vals[param_type]);</span>
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span>            :   // Undo the zero-centering step if necessary
+<span class="lineNum">     108 </span><span class="lineNoCov">          0 :   return param_value + (is_one_centered &lt;&lt; WARPEDMODEL_PREC_BITS);</span>
+<a name="109"><span class="lineNum">     109 </span>            : }</a>
+<span class="lineNum">     110 </span>            : 
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 : static void force_wmtype(WarpedMotionParams *wm, TransformationType wmtype) {</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :   switch (wmtype) {</span>
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :     case IDENTITY: wm-&gt;wmmat[0] = 0; wm-&gt;wmmat[1] = 0;</span>
+<span class="lineNum">     114 </span>            :     case TRANSLATION:
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :       wm-&gt;wmmat[2] = 1 &lt;&lt; WARPEDMODEL_PREC_BITS;</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :       wm-&gt;wmmat[3] = 0;</span>
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :     case ROTZOOM: wm-&gt;wmmat[4] = -wm-&gt;wmmat[3]; wm-&gt;wmmat[5] = wm-&gt;wmmat[2];</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :     case AFFINE: wm-&gt;wmmat[6] = wm-&gt;wmmat[7] = 0; break;</span>
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :     case HORTRAPEZOID: wm-&gt;wmmat[6] = wm-&gt;wmmat[4] = 0; break;</span>
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :     case VERTRAPEZOID: wm-&gt;wmmat[7] = wm-&gt;wmmat[3] = 0; break;</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :     case HOMOGRAPHY: break;</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :     default: assert(0);</span>
+<span class="lineNum">     123 </span>            :   }
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :   wm-&gt;wmtype = wmtype;</span>
+<a name="125"><span class="lineNum">     125 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     126 </span>            : 
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 : int64_t refine_integerized_param(WarpedMotionParams *wm,</span>
+<span class="lineNum">     128 </span>            :                                  TransformationType wmtype,
+<span class="lineNum">     129 </span>            : #if CONFIG_HIGHBITDEPTH
+<span class="lineNum">     130 </span>            :                                  int use_hbd, int bd,
+<span class="lineNum">     131 </span>            : #endif  // CONFIG_HIGHBITDEPTH
+<span class="lineNum">     132 </span>            :                                  uint8_t *ref, int r_width, int r_height,
+<span class="lineNum">     133 </span>            :                                  int r_stride, uint8_t *dst, int d_width,
+<span class="lineNum">     134 </span>            :                                  int d_height, int d_stride,
+<span class="lineNum">     135 </span>            :                                  int n_refinements) {
+<span class="lineNum">     136 </span>            :   static const int max_trans_model_params[TRANS_TYPES] = {
+<span class="lineNum">     137 </span>            :     0, 2, 4, 6, 8, 8, 8
+<span class="lineNum">     138 </span>            :   };
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   const int border = ERRORADV_BORDER;</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :   int i = 0, p;</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :   int n_params = max_trans_model_params[wmtype];</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   int32_t *param_mat = wm-&gt;wmmat;</span>
+<span class="lineNum">     143 </span>            :   int64_t step_error, best_error;
+<span class="lineNum">     144 </span>            :   int32_t step;
+<span class="lineNum">     145 </span>            :   int32_t *param;
+<span class="lineNum">     146 </span>            :   int32_t curr_param;
+<span class="lineNum">     147 </span>            :   int32_t best_param;
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :   force_wmtype(wm, wmtype);</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :   best_error = av1_warp_error(wm,</span>
+<span class="lineNum">     151 </span>            : #if CONFIG_HIGHBITDEPTH
+<span class="lineNum">     152 </span>            :                               use_hbd, bd,
+<span class="lineNum">     153 </span>            : #endif  // CONFIG_HIGHBITDEPTH
+<span class="lineNum">     154 </span>            :                               ref, r_width, r_height, r_stride,
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :                               dst + border * d_stride + border, border, border,</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :                               d_width - 2 * border, d_height - 2 * border,</span>
+<span class="lineNum">     157 </span>            :                               d_stride, 0, 0, 16, 16);
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :   step = 1 &lt;&lt; (n_refinements + 1);</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; n_refinements; i++, step &gt;&gt;= 1) {</span>
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :     for (p = 0; p &lt; n_params; ++p) {</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :       int step_dir = 0;</span>
+<span class="lineNum">     162 </span>            :       // Skip searches for parameters that are forced to be 0
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :       if (wmtype == HORTRAPEZOID &amp;&amp; (p == 4 || p == 6)) continue;</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :       if (wmtype == VERTRAPEZOID &amp;&amp; (p == 3 || p == 7)) continue;</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :       param = param_mat + p;</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :       curr_param = *param;</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :       best_param = curr_param;</span>
+<span class="lineNum">     168 </span>            :       // look to the left
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :       *param = add_param_offset(p, curr_param, -step);</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :       step_error = av1_warp_error(</span>
+<span class="lineNum">     171 </span>            :           wm,
+<span class="lineNum">     172 </span>            : #if CONFIG_HIGHBITDEPTH
+<span class="lineNum">     173 </span>            :           use_hbd, bd,
+<span class="lineNum">     174 </span>            : #endif  // CONFIG_HIGHBITDEPTH
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :           ref, r_width, r_height, r_stride, dst + border * d_stride + border,</span>
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :           border, border, d_width - 2 * border, d_height - 2 * border, d_stride,</span>
+<span class="lineNum">     177 </span>            :           0, 0, 16, 16);
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :       if (step_error &lt; best_error) {</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :         best_error = step_error;</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :         best_param = *param;</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :         step_dir = -1;</span>
+<span class="lineNum">     182 </span>            :       }
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span>            :       // look to the right
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :       *param = add_param_offset(p, curr_param, step);</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :       step_error = av1_warp_error(</span>
+<span class="lineNum">     187 </span>            :           wm,
+<span class="lineNum">     188 </span>            : #if CONFIG_HIGHBITDEPTH
+<span class="lineNum">     189 </span>            :           use_hbd, bd,
+<span class="lineNum">     190 </span>            : #endif  // CONFIG_HIGHBITDEPTH
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :           ref, r_width, r_height, r_stride, dst + border * d_stride + border,</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :           border, border, d_width - 2 * border, d_height - 2 * border, d_stride,</span>
+<span class="lineNum">     193 </span>            :           0, 0, 16, 16);
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :       if (step_error &lt; best_error) {</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :         best_error = step_error;</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :         best_param = *param;</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :         step_dir = 1;</span>
+<span class="lineNum">     198 </span>            :       }
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :       *param = best_param;</span>
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span>            :       // look to the direction chosen above repeatedly until error increases
+<span class="lineNum">     202 </span>            :       // for the biggest step size
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :       while (step_dir) {</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :         *param = add_param_offset(p, best_param, step * step_dir);</span>
+<span class="lineNum">     205 </span><span class="lineNoCov">          0 :         step_error = av1_warp_error(</span>
+<span class="lineNum">     206 </span>            :             wm,
+<span class="lineNum">     207 </span>            : #if CONFIG_HIGHBITDEPTH
+<span class="lineNum">     208 </span>            :             use_hbd, bd,
+<span class="lineNum">     209 </span>            : #endif  // CONFIG_HIGHBITDEPTH
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :             ref, r_width, r_height, r_stride, dst + border * d_stride + border,</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :             border, border, d_width - 2 * border, d_height - 2 * border,</span>
+<span class="lineNum">     212 </span>            :             d_stride, 0, 0, 16, 16);
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :         if (step_error &lt; best_error) {</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :           best_error = step_error;</span>
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :           best_param = *param;</span>
+<span class="lineNum">     216 </span>            :         } else {
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :           *param = best_param;</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :           step_dir = 0;</span>
+<span class="lineNum">     219 </span>            :         }
+<span class="lineNum">     220 </span>            :       }
+<span class="lineNum">     221 </span>            :     }
+<span class="lineNum">     222 </span>            :   }
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :   force_wmtype(wm, wmtype);</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :   wm-&gt;wmtype = get_gmtype(wm);</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :   return best_error;</span>
+<a name="226"><span class="lineNum">     226 </span>            : }</a>
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 : static INLINE RansacFunc get_ransac_type(TransformationType type) {</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :   switch (type) {</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :     case HOMOGRAPHY: return ransac_homography;</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     case HORTRAPEZOID: return ransac_hortrapezoid;</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :     case VERTRAPEZOID: return ransac_vertrapezoid;</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :     case AFFINE: return ransac_affine;</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :     case ROTZOOM: return ransac_rotzoom;</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :     case TRANSLATION: return ransac_translation;</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :     default: assert(0); return NULL;</span>
+<span class="lineNum">     237 </span>            :   }
+<span class="lineNum">     238 </span>            : }
+<a name="239"><span class="lineNum">     239 </span>            : </a>
+<span class="lineNum">     240 </span>            : #if CONFIG_HIGHBITDEPTH
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 : static unsigned char *downconvert_frame(YV12_BUFFER_CONFIG *frm,</span>
+<span class="lineNum">     242 </span>            :                                         int bit_depth) {
+<span class="lineNum">     243 </span>            :   int i, j;
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   uint16_t *orig_buf = CONVERT_TO_SHORTPTR(frm-&gt;y_buffer);</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :   uint8_t *buf = malloc(frm-&gt;y_height * frm-&gt;y_stride * sizeof(*buf));</span>
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; frm-&gt;y_height; ++i)</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :     for (j = 0; j &lt; frm-&gt;y_width; ++j)</span>
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :       buf[i * frm-&gt;y_stride + j] =</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :           orig_buf[i * frm-&gt;y_stride + j] &gt;&gt; (bit_depth - 8);</span>
+<span class="lineNum">     251 </span>            : 
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :   return buf;</span>
+<span class="lineNum">     253 </span>            : }
+<a name="254"><span class="lineNum">     254 </span>            : #endif</a>
+<span class="lineNum">     255 </span>            : 
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 : int compute_global_motion_feature_based(</span>
+<span class="lineNum">     257 </span>            :     TransformationType type, YV12_BUFFER_CONFIG *frm, YV12_BUFFER_CONFIG *ref,
+<span class="lineNum">     258 </span>            : #if CONFIG_HIGHBITDEPTH
+<span class="lineNum">     259 </span>            :     int bit_depth,
+<span class="lineNum">     260 </span>            : #endif
+<span class="lineNum">     261 </span>            :     int *num_inliers_by_motion, double *params_by_motion, int num_motions) {
+<span class="lineNum">     262 </span>            :   int i;
+<span class="lineNum">     263 </span>            :   int num_frm_corners, num_ref_corners;
+<span class="lineNum">     264 </span>            :   int num_correspondences;
+<span class="lineNum">     265 </span>            :   int *correspondences;
+<span class="lineNum">     266 </span>            :   int frm_corners[2 * MAX_CORNERS], ref_corners[2 * MAX_CORNERS];
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :   unsigned char *frm_buffer = frm-&gt;y_buffer;</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :   unsigned char *ref_buffer = ref-&gt;y_buffer;</span>
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :   RansacFunc ransac = get_ransac_type(type);</span>
+<span class="lineNum">     270 </span>            : 
+<span class="lineNum">     271 </span>            : #if CONFIG_HIGHBITDEPTH
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :   if (frm-&gt;flags &amp; YV12_FLAG_HIGHBITDEPTH) {</span>
+<span class="lineNum">     273 </span>            :     // The frame buffer is 16-bit, so we need to convert to 8 bits for the
+<span class="lineNum">     274 </span>            :     // following code. We cache the result until the frame is released.
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :     if (frm-&gt;y_buffer_8bit)</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :       frm_buffer = frm-&gt;y_buffer_8bit;</span>
+<span class="lineNum">     277 </span>            :     else
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :       frm_buffer = frm-&gt;y_buffer_8bit = downconvert_frame(frm, bit_depth);</span>
+<span class="lineNum">     279 </span>            :   }
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :   if (ref-&gt;flags &amp; YV12_FLAG_HIGHBITDEPTH) {</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     if (ref-&gt;y_buffer_8bit)</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :       ref_buffer = ref-&gt;y_buffer_8bit;</span>
+<span class="lineNum">     283 </span>            :     else
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :       ref_buffer = ref-&gt;y_buffer_8bit = downconvert_frame(ref, bit_depth);</span>
+<span class="lineNum">     285 </span>            :   }
+<span class="lineNum">     286 </span>            : #endif
+<span class="lineNum">     287 </span>            : 
+<span class="lineNum">     288 </span>            :   // compute interest points in images using FAST features
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   num_frm_corners = fast_corner_detect(frm_buffer, frm-&gt;y_width, frm-&gt;y_height,</span>
+<span class="lineNum">     290 </span>            :                                        frm-&gt;y_stride, frm_corners, MAX_CORNERS);
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :   num_ref_corners = fast_corner_detect(ref_buffer, ref-&gt;y_width, ref-&gt;y_height,</span>
+<span class="lineNum">     292 </span>            :                                        ref-&gt;y_stride, ref_corners, MAX_CORNERS);
+<span class="lineNum">     293 </span>            : 
+<span class="lineNum">     294 </span>            :   // find correspondences between the two images
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :   correspondences =</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :       (int *)malloc(num_frm_corners * 4 * sizeof(*correspondences));</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :   num_correspondences = determine_correspondence(</span>
+<span class="lineNum">     298 </span>            :       frm_buffer, (int *)frm_corners, num_frm_corners, ref_buffer,
+<span class="lineNum">     299 </span>            :       (int *)ref_corners, num_ref_corners, frm-&gt;y_width, frm-&gt;y_height,
+<span class="lineNum">     300 </span>            :       frm-&gt;y_stride, ref-&gt;y_stride, correspondences);
+<span class="lineNum">     301 </span>            : 
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :   ransac(correspondences, num_correspondences, num_inliers_by_motion,</span>
+<span class="lineNum">     303 </span>            :          params_by_motion, num_motions);
+<span class="lineNum">     304 </span>            : 
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :   free(correspondences);</span>
+<span class="lineNum">     306 </span>            : 
+<span class="lineNum">     307 </span>            :   // Set num_inliers = 0 for motions with too few inliers so they are ignored.
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; num_motions; ++i) {</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     if (num_inliers_by_motion[i] &lt; MIN_INLIER_PROB * num_correspondences) {</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :       num_inliers_by_motion[i] = 0;</span>
+<span class="lineNum">     311 </span>            :     }
+<span class="lineNum">     312 </span>            :   }
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span>            :   // Return true if any one of the motions has inliers.
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :   for (i = 0; i &lt; num_motions; ++i) {</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :     if (num_inliers_by_motion[i] &gt; 0) return 1;</span>
+<span class="lineNum">     317 </span>            :   }
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :   return 0;</span>
+<span class="lineNum">     319 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

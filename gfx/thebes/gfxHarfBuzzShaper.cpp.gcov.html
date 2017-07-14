@@ -1,0 +1,1913 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - gfx/thebes/gfxHarfBuzzShaper.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">gfx/thebes</a> - gfxHarfBuzzShaper.cpp<span style="font-size: 80%;"> (source / <a href="gfxHarfBuzzShaper.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">174</td>
+            <td class="headerCovTableEntry">734</td>
+            <td class="headerCovTableEntryLo">23.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">8</td>
+            <td class="headerCovTableEntry">36</td>
+            <td class="headerCovTableEntryLo">22.2 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 4 -*- */</a>
+<span class="lineNum">       2 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       3 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       4 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       5 </span>            : 
+<span class="lineNum">       6 </span>            : #include &quot;nsString.h&quot;
+<span class="lineNum">       7 </span>            : #include &quot;gfxContext.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;gfxFontConstants.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;gfxHarfBuzzShaper.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;gfxFontUtils.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;gfxTextRun.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/Sprintf.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;nsUnicodeProperties.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nsUnicodeScriptCodes.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsUnicodeNormalizer.h&quot;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : #include &quot;harfbuzz/hb.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;harfbuzz/hb-ot.h&quot;
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : #if ENABLE_INTL_API // ICU is available: we'll use it for Unicode composition
+<span class="lineNum">      21 </span>            :                     // and decomposition in preference to nsUnicodeNormalizer.
+<span class="lineNum">      22 </span>            : #include &quot;unicode/unorm.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;unicode/utext.h&quot;
+<span class="lineNum">      24 </span>            : #define MOZ_HB_SHAPER_USE_ICU_NORMALIZATION 1
+<span class="lineNum">      25 </span>            : static const UNormalizer2 * sNormalizer = nullptr;
+<span class="lineNum">      26 </span>            : #else
+<span class="lineNum">      27 </span>            : #undef MOZ_HB_SHAPER_USE_ICU_NORMALIZATION
+<span class="lineNum">      28 </span>            : #endif
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      31 </span>            : 
+<span class="lineNum">      32 </span>            : #define FloatToFixed(f) (65536 * (f))
+<span class="lineNum">      33 </span>            : #define FixedToFloat(f) ((f) * (1.0 / 65536.0))
+<span class="lineNum">      34 </span>            : // Right shifts of negative (signed) integers are undefined, as are overflows
+<span class="lineNum">      35 </span>            : // when converting unsigned to negative signed integers.
+<span class="lineNum">      36 </span>            : // (If speed were an issue we could make some 2's complement assumptions.)
+<span class="lineNum">      37 </span>            : #define FixedToIntRound(f) ((f) &gt; 0 ?  ((32768 + (f)) &gt;&gt; 16) \
+<span class="lineNum">      38 </span>            :                                     : -((32767 - (f)) &gt;&gt; 16))
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span>            : using namespace mozilla; // for AutoSwap_* types
+<span class="lineNum">      41 </span>            : using namespace mozilla::unicode; // for Unicode property lookup
+<span class="lineNum">      42 </span>            : 
+<span class="lineNum">      43 </span>            : /*
+<span class="lineNum">      44 </span>            :  * Creation and destruction; on deletion, release any font tables we're holding
+<a name="45"><span class="lineNum">      45 </span>            :  */</a>
+<span class="lineNum">      46 </span>            : 
+<span class="lineNum">      47 </span><span class="lineCov">          2 : gfxHarfBuzzShaper::gfxHarfBuzzShaper(gfxFont *aFont)</span>
+<span class="lineNum">      48 </span>            :     : gfxFontShaper(aFont),
+<span class="lineNum">      49 </span><span class="lineCov">          2 :       mHBFace(aFont-&gt;GetFontEntry()-&gt;GetHBFace()),</span>
+<span class="lineNum">      50 </span>            :       mHBFont(nullptr),
+<span class="lineNum">      51 </span>            :       mBuffer(nullptr),
+<span class="lineNum">      52 </span>            :       mKernTable(nullptr),
+<span class="lineNum">      53 </span>            :       mHmtxTable(nullptr),
+<span class="lineNum">      54 </span>            :       mVmtxTable(nullptr),
+<span class="lineNum">      55 </span>            :       mVORGTable(nullptr),
+<span class="lineNum">      56 </span>            :       mLocaTable(nullptr),
+<span class="lineNum">      57 </span>            :       mGlyfTable(nullptr),
+<span class="lineNum">      58 </span>            :       mCmapTable(nullptr),
+<span class="lineNum">      59 </span>            :       mCmapFormat(-1),
+<span class="lineNum">      60 </span>            :       mSubtableOffset(0),
+<span class="lineNum">      61 </span>            :       mUVSTableOffset(0),
+<span class="lineNum">      62 </span>            :       mNumLongHMetrics(0),
+<span class="lineNum">      63 </span>            :       mNumLongVMetrics(0),
+<span class="lineNum">      64 </span><span class="lineCov">          2 :       mUseFontGetGlyph(aFont-&gt;ProvidesGetGlyph()),</span>
+<span class="lineNum">      65 </span>            :       mUseFontGlyphWidths(false),
+<span class="lineNum">      66 </span>            :       mInitialized(false),
+<span class="lineNum">      67 </span>            :       mVerticalInitialized(false),
+<span class="lineNum">      68 </span>            :       mLoadedLocaGlyf(false),
+<span class="lineNum">      69 </span><span class="lineCov">          6 :       mLocaLongOffsets(false)</span>
+<span class="lineNum">      70 </span>            : {
+<a name="71"><span class="lineNum">      71 </span><span class="lineCov">          2 : }</span></a>
+<span class="lineNum">      72 </span>            : 
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::~gfxHarfBuzzShaper()</span>
+<span class="lineNum">      74 </span>            : {
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 :     if (mCmapTable) {</span>
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :         hb_blob_destroy(mCmapTable);</span>
+<span class="lineNum">      77 </span>            :     }
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :     if (mHmtxTable) {</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :         hb_blob_destroy(mHmtxTable);</span>
+<span class="lineNum">      80 </span>            :     }
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :     if (mKernTable) {</span>
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :         hb_blob_destroy(mKernTable);</span>
+<span class="lineNum">      83 </span>            :     }
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :     if (mVmtxTable) {</span>
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :         hb_blob_destroy(mVmtxTable);</span>
+<span class="lineNum">      86 </span>            :     }
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :     if (mVORGTable) {</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :         hb_blob_destroy(mVORGTable);</span>
+<span class="lineNum">      89 </span>            :     }
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :     if (mLocaTable) {</span>
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :         hb_blob_destroy(mLocaTable);</span>
+<span class="lineNum">      92 </span>            :     }
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :     if (mGlyfTable) {</span>
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :         hb_blob_destroy(mGlyfTable);</span>
+<span class="lineNum">      95 </span>            :     }
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :     if (mHBFont) {</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :         hb_font_destroy(mHBFont);</span>
+<span class="lineNum">      98 </span>            :     }
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :     if (mHBFace) {</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :         hb_face_destroy(mHBFace);</span>
+<span class="lineNum">     101 </span>            :     }
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :     if (mBuffer) {</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :         hb_buffer_destroy(mBuffer);</span>
+<span class="lineNum">     104 </span>            :     }
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span>            : #define UNICODE_BMP_LIMIT 0x10000
+<a name="108"><span class="lineNum">     108 </span>            : </a>
+<span class="lineNum">     109 </span>            : hb_codepoint_t
+<span class="lineNum">     110 </span><span class="lineCov">        265 : gfxHarfBuzzShaper::GetNominalGlyph(hb_codepoint_t unicode) const</span>
+<span class="lineNum">     111 </span>            : {
+<span class="lineNum">     112 </span><span class="lineCov">        265 :     hb_codepoint_t gid = 0;</span>
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span><span class="lineCov">        265 :     if (mUseFontGetGlyph) {</span>
+<span class="lineNum">     115 </span><span class="lineCov">        265 :         gid = mFont-&gt;GetGlyph(unicode, 0);</span>
+<span class="lineNum">     116 </span>            :     } else {
+<span class="lineNum">     117 </span>            :         // we only instantiate a harfbuzz shaper if there's a cmap available
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :         NS_ASSERTION(mFont-&gt;GetFontEntry()-&gt;HasCmapTable(),</span>
+<span class="lineNum">     119 </span>            :                      &quot;we cannot be using this font!&quot;);
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :         NS_ASSERTION(mCmapTable &amp;&amp; (mCmapFormat &gt; 0) &amp;&amp; (mSubtableOffset &gt; 0),</span>
+<span class="lineNum">     122 </span>            :                      &quot;cmap data not correctly set up, expect disaster&quot;);
+<span class="lineNum">     123 </span>            : 
+<span class="lineNum">     124 </span>            :         const uint8_t* data =
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :             (const uint8_t*)hb_blob_get_data(mCmapTable, nullptr);</span>
+<span class="lineNum">     126 </span>            : 
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :         switch (mCmapFormat) {</span>
+<span class="lineNum">     128 </span>            :         case 4:
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :             gid = unicode &lt; UNICODE_BMP_LIMIT ?</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :                 gfxFontUtils::MapCharToGlyphFormat4(data + mSubtableOffset,</span>
+<span class="lineNum">     131 </span>            :                                                     unicode) : 0;
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     133 </span>            :         case 10:
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :             gid = gfxFontUtils::MapCharToGlyphFormat10(data + mSubtableOffset,</span>
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :                                                        unicode);</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     137 </span>            :         case 12:
+<span class="lineNum">     138 </span>            :         case 13:
+<span class="lineNum">     139 </span>            :             gid =
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :                 gfxFontUtils::MapCharToGlyphFormat12or13(data + mSubtableOffset,</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :                                                          unicode);</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     143 </span>            :         default:
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :             NS_WARNING(&quot;unsupported cmap format, glyphs will be missing&quot;);</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     146 </span>            :         }
+<span class="lineNum">     147 </span>            :     }
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span><span class="lineCov">        265 :     if (!gid) {</span>
+<span class="lineNum">     150 </span>            :         // if there's no glyph for &amp;nbsp;, just use the space glyph instead
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :         if (unicode == 0xA0) {</span>
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :             gid = mFont-&gt;GetSpaceGlyph();</span>
+<span class="lineNum">     153 </span>            :         }
+<span class="lineNum">     154 </span>            :     }
+<span class="lineNum">     155 </span>            : 
+<span class="lineNum">     156 </span><span class="lineCov">        265 :     return gid;</span>
+<span class="lineNum">     157 </span>            : }
+<a name="158"><span class="lineNum">     158 </span>            : </a>
+<span class="lineNum">     159 </span>            : hb_codepoint_t
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::GetVariationGlyph(hb_codepoint_t unicode,</span>
+<span class="lineNum">     161 </span>            :                                      hb_codepoint_t variation_selector) const
+<span class="lineNum">     162 </span>            : {
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :     if (mUseFontGetGlyph) {</span>
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :         return mFont-&gt;GetGlyph(unicode, variation_selector);</span>
+<span class="lineNum">     165 </span>            :     }
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mFont-&gt;GetFontEntry()-&gt;HasCmapTable(),</span>
+<span class="lineNum">     168 </span>            :                  &quot;we cannot be using this font!&quot;);
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mCmapTable &amp;&amp; (mCmapFormat &gt; 0) &amp;&amp; (mSubtableOffset &gt; 0),</span>
+<span class="lineNum">     170 </span>            :                  &quot;cmap data not correctly set up, expect disaster&quot;);
+<span class="lineNum">     171 </span>            : 
+<span class="lineNum">     172 </span>            :     const uint8_t* data =
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :         (const uint8_t*)hb_blob_get_data(mCmapTable, nullptr);</span>
+<span class="lineNum">     174 </span>            : 
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :     if (mUVSTableOffset) {</span>
+<span class="lineNum">     176 </span>            :         hb_codepoint_t gid =
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :             gfxFontUtils::MapUVSToGlyphFormat14(data + mUVSTableOffset,</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :                                                 unicode, variation_selector);</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :         if (gid) {</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :             return gid;</span>
+<span class="lineNum">     181 </span>            :         }
+<span class="lineNum">     182 </span>            :     }
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span>            :     uint32_t compat =
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :         gfxFontUtils::GetUVSFallback(unicode, variation_selector);</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :     if (compat) {</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :         switch (mCmapFormat) {</span>
+<span class="lineNum">     188 </span>            :         case 4:
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :             if (compat &lt; UNICODE_BMP_LIMIT) {</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :                 return gfxFontUtils::MapCharToGlyphFormat4(data + mSubtableOffset,</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :                                                            compat);</span>
+<span class="lineNum">     192 </span>            :             }
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     194 </span>            :         case 10:
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :             return gfxFontUtils::MapCharToGlyphFormat10(data + mSubtableOffset,</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :                                                         compat);</span>
+<span class="lineNum">     197 </span>            :             break;
+<span class="lineNum">     198 </span>            :         case 12:
+<span class="lineNum">     199 </span>            :         case 13:
+<span class="lineNum">     200 </span>            :             return
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :                 gfxFontUtils::MapCharToGlyphFormat12or13(data + mSubtableOffset,</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :                                                          compat);</span>
+<span class="lineNum">     203 </span>            :             break;
+<span class="lineNum">     204 </span>            :         }
+<span class="lineNum">     205 </span>            :     }
+<span class="lineNum">     206 </span>            : 
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     208 </span>            : }
+<a name="209"><span class="lineNum">     209 </span>            : </a>
+<span class="lineNum">     210 </span>            : static int
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 : VertFormsGlyphCompare(const void* aKey, const void* aElem)</span>
+<span class="lineNum">     212 </span>            : {
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     return int(*((hb_codepoint_t*)(aKey))) - int(*((uint16_t*)(aElem)));</span>
+<span class="lineNum">     214 </span>            : }
+<span class="lineNum">     215 </span>            : 
+<span class="lineNum">     216 </span>            : // Return a vertical presentation-form codepoint corresponding to the
+<a name="217"><span class="lineNum">     217 </span>            : // given Unicode value, or 0 if no such form is available.</a>
+<span class="lineNum">     218 </span>            : static hb_codepoint_t
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 : GetVerticalPresentationForm(hb_codepoint_t unicode)</span>
+<span class="lineNum">     220 </span>            : {
+<span class="lineNum">     221 </span>            :     static const uint16_t sVerticalForms[][2] = {
+<span class="lineNum">     222 </span>            :         { 0x2013, 0xfe32 }, // EN DASH
+<span class="lineNum">     223 </span>            :         { 0x2014, 0xfe31 }, // EM DASH
+<span class="lineNum">     224 </span>            :         { 0x2025, 0xfe30 }, // TWO DOT LEADER
+<span class="lineNum">     225 </span>            :         { 0x2026, 0xfe19 }, // HORIZONTAL ELLIPSIS
+<span class="lineNum">     226 </span>            :         { 0x3001, 0xfe11 }, // IDEOGRAPHIC COMMA
+<span class="lineNum">     227 </span>            :         { 0x3002, 0xfe12 }, // IDEOGRAPHIC FULL STOP
+<span class="lineNum">     228 </span>            :         { 0x3008, 0xfe3f }, // LEFT ANGLE BRACKET
+<span class="lineNum">     229 </span>            :         { 0x3009, 0xfe40 }, // RIGHT ANGLE BRACKET
+<span class="lineNum">     230 </span>            :         { 0x300a, 0xfe3d }, // LEFT DOUBLE ANGLE BRACKET
+<span class="lineNum">     231 </span>            :         { 0x300b, 0xfe3e }, // RIGHT DOUBLE ANGLE BRACKET
+<span class="lineNum">     232 </span>            :         { 0x300c, 0xfe41 }, // LEFT CORNER BRACKET
+<span class="lineNum">     233 </span>            :         { 0x300d, 0xfe42 }, // RIGHT CORNER BRACKET
+<span class="lineNum">     234 </span>            :         { 0x300e, 0xfe43 }, // LEFT WHITE CORNER BRACKET
+<span class="lineNum">     235 </span>            :         { 0x300f, 0xfe44 }, // RIGHT WHITE CORNER BRACKET
+<span class="lineNum">     236 </span>            :         { 0x3010, 0xfe3b }, // LEFT BLACK LENTICULAR BRACKET
+<span class="lineNum">     237 </span>            :         { 0x3011, 0xfe3c }, // RIGHT BLACK LENTICULAR BRACKET
+<span class="lineNum">     238 </span>            :         { 0x3014, 0xfe39 }, // LEFT TORTOISE SHELL BRACKET
+<span class="lineNum">     239 </span>            :         { 0x3015, 0xfe3a }, // RIGHT TORTOISE SHELL BRACKET
+<span class="lineNum">     240 </span>            :         { 0x3016, 0xfe17 }, // LEFT WHITE LENTICULAR BRACKET
+<span class="lineNum">     241 </span>            :         { 0x3017, 0xfe18 }, // RIGHT WHITE LENTICULAR BRACKET
+<span class="lineNum">     242 </span>            :         { 0xfe4f, 0xfe34 }, // WAVY LOW LINE
+<span class="lineNum">     243 </span>            :         { 0xff01, 0xfe15 }, // FULLWIDTH EXCLAMATION MARK
+<span class="lineNum">     244 </span>            :         { 0xff08, 0xfe35 }, // FULLWIDTH LEFT PARENTHESIS
+<span class="lineNum">     245 </span>            :         { 0xff09, 0xfe36 }, // FULLWIDTH RIGHT PARENTHESIS
+<span class="lineNum">     246 </span>            :         { 0xff0c, 0xfe10 }, // FULLWIDTH COMMA
+<span class="lineNum">     247 </span>            :         { 0xff1a, 0xfe13 }, // FULLWIDTH COLON
+<span class="lineNum">     248 </span>            :         { 0xff1b, 0xfe14 }, // FULLWIDTH SEMICOLON
+<span class="lineNum">     249 </span>            :         { 0xff1f, 0xfe16 }, // FULLWIDTH QUESTION MARK
+<span class="lineNum">     250 </span>            :         { 0xff3b, 0xfe47 }, // FULLWIDTH LEFT SQUARE BRACKET
+<span class="lineNum">     251 </span>            :         { 0xff3d, 0xfe48 }, // FULLWIDTH RIGHT SQUARE BRACKET
+<span class="lineNum">     252 </span>            :         { 0xff3f, 0xfe33 }, // FULLWIDTH LOW LINE
+<span class="lineNum">     253 </span>            :         { 0xff5b, 0xfe37 }, // FULLWIDTH LEFT CURLY BRACKET
+<span class="lineNum">     254 </span>            :         { 0xff5d, 0xfe38 }  // FULLWIDTH RIGHT CURLY BRACKET
+<span class="lineNum">     255 </span>            :     };
+<span class="lineNum">     256 </span>            :     const uint16_t* charPair =
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :         static_cast&lt;const uint16_t*&gt;(bsearch(&amp;unicode,</span>
+<span class="lineNum">     258 </span>            :                                              sVerticalForms,
+<span class="lineNum">     259 </span>            :                                              ArrayLength(sVerticalForms),
+<span class="lineNum">     260 </span>            :                                              sizeof(sVerticalForms[0]),
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :                                              VertFormsGlyphCompare));</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :     return charPair ? charPair[1] : 0;</span>
+<span class="lineNum">     263 </span>            : }
+<a name="264"><span class="lineNum">     264 </span>            : </a>
+<span class="lineNum">     265 </span>            : static hb_bool_t
+<span class="lineNum">     266 </span><span class="lineCov">        265 : HBGetNominalGlyph(hb_font_t *font, void *font_data,</span>
+<span class="lineNum">     267 </span>            :                   hb_codepoint_t unicode,
+<span class="lineNum">     268 </span>            :                   hb_codepoint_t *glyph,
+<span class="lineNum">     269 </span>            :                   void *user_data)
+<span class="lineNum">     270 </span>            : {
+<span class="lineNum">     271 </span>            :     const gfxHarfBuzzShaper::FontCallbackData *fcd =
+<span class="lineNum">     272 </span><span class="lineCov">        265 :         static_cast&lt;const gfxHarfBuzzShaper::FontCallbackData*&gt;(font_data);</span>
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span><span class="lineCov">        265 :     if (fcd-&gt;mShaper-&gt;UseVerticalPresentationForms()) {</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :         hb_codepoint_t verticalForm = GetVerticalPresentationForm(unicode);</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :         if (verticalForm) {</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :             *glyph = fcd-&gt;mShaper-&gt;GetNominalGlyph(verticalForm);</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :             if (*glyph != 0) {</span>
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :                 return true;</span>
+<span class="lineNum">     280 </span>            :             }
+<span class="lineNum">     281 </span>            :         }
+<span class="lineNum">     282 </span>            :         // fall back to the non-vertical form if we didn't find an alternate
+<span class="lineNum">     283 </span>            :     }
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span><span class="lineCov">        265 :     *glyph = fcd-&gt;mShaper-&gt;GetNominalGlyph(unicode);</span>
+<span class="lineNum">     286 </span><span class="lineCov">        265 :     return *glyph != 0;</span>
+<span class="lineNum">     287 </span>            : }
+<a name="288"><span class="lineNum">     288 </span>            : </a>
+<span class="lineNum">     289 </span>            : static hb_bool_t
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 : HBGetVariationGlyph(hb_font_t *font, void *font_data,</span>
+<span class="lineNum">     291 </span>            :                     hb_codepoint_t unicode, hb_codepoint_t variation_selector,
+<span class="lineNum">     292 </span>            :                     hb_codepoint_t *glyph,
+<span class="lineNum">     293 </span>            :                     void *user_data)
+<span class="lineNum">     294 </span>            : {
+<span class="lineNum">     295 </span>            :     const gfxHarfBuzzShaper::FontCallbackData *fcd =
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :         static_cast&lt;const gfxHarfBuzzShaper::FontCallbackData*&gt;(font_data);</span>
+<span class="lineNum">     297 </span>            : 
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :     if (fcd-&gt;mShaper-&gt;UseVerticalPresentationForms()) {</span>
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :         hb_codepoint_t verticalForm = GetVerticalPresentationForm(unicode);</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :         if (verticalForm) {</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :             *glyph = fcd-&gt;mShaper-&gt;GetVariationGlyph(verticalForm,</span>
+<span class="lineNum">     302 </span>            :                                                      variation_selector);
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :             if (*glyph != 0) {</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :                 return true;</span>
+<span class="lineNum">     305 </span>            :             }
+<span class="lineNum">     306 </span>            :         }
+<span class="lineNum">     307 </span>            :         // fall back to the non-vertical form if we didn't find an alternate
+<span class="lineNum">     308 </span>            :     }
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     *glyph = fcd-&gt;mShaper-&gt;GetVariationGlyph(unicode, variation_selector);</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :     return *glyph != 0;</span>
+<span class="lineNum">     312 </span>            : }
+<span class="lineNum">     313 </span>            : 
+<span class="lineNum">     314 </span>            : // Glyph metrics structures, shared (with appropriate reinterpretation of
+<span class="lineNum">     315 </span>            : // field names) by horizontal and vertical metrics tables.
+<span class="lineNum">     316 </span>            : struct LongMetric {
+<span class="lineNum">     317 </span>            :     AutoSwap_PRUint16    advanceWidth; // or advanceHeight, when vertical
+<span class="lineNum">     318 </span>            :     AutoSwap_PRInt16     lsb;          // or tsb, when vertical
+<span class="lineNum">     319 </span>            : };
+<span class="lineNum">     320 </span>            : 
+<span class="lineNum">     321 </span>            : struct GlyphMetrics {
+<span class="lineNum">     322 </span>            :     LongMetric           metrics[1]; // actually numberOfLongMetrics
+<span class="lineNum">     323 </span>            : // the variable-length metrics[] array is immediately followed by:
+<span class="lineNum">     324 </span>            : //  AutoSwap_PRUint16    leftSideBearing[];
+<span class="lineNum">     325 </span>            : };
+<a name="326"><span class="lineNum">     326 </span>            : </a>
+<span class="lineNum">     327 </span>            : hb_position_t
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::GetGlyphHAdvance(hb_codepoint_t glyph) const</span>
+<span class="lineNum">     329 </span>            : {
+<span class="lineNum">     330 </span>            :     // font did not implement GetGlyphWidth, so get an unhinted value
+<span class="lineNum">     331 </span>            :     // directly from the font tables
+<span class="lineNum">     332 </span>            : 
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :     NS_ASSERTION((mNumLongHMetrics &gt; 0) &amp;&amp; mHmtxTable != nullptr,</span>
+<span class="lineNum">     334 </span>            :                  &quot;font is lacking metrics, we shouldn't be here&quot;);
+<span class="lineNum">     335 </span>            : 
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :     if (glyph &gt;= uint32_t(mNumLongHMetrics)) {</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :         glyph = mNumLongHMetrics - 1;</span>
+<span class="lineNum">     338 </span>            :     }
+<span class="lineNum">     339 </span>            : 
+<span class="lineNum">     340 </span>            :     // glyph must be valid now, because we checked during initialization
+<span class="lineNum">     341 </span>            :     // that mNumLongHMetrics is &gt; 0, and that the metrics table is large enough
+<span class="lineNum">     342 </span>            :     // to contain mNumLongHMetrics records
+<span class="lineNum">     343 </span>            :     const ::GlyphMetrics* metrics =
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :         reinterpret_cast&lt;const ::GlyphMetrics*&gt;(hb_blob_get_data(mHmtxTable,</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :                                                                  nullptr));</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :     return FloatToFixed(mFont-&gt;FUnitsToDevUnitsFactor() *</span>
+<span class="lineNum">     347 </span>            :                         uint16_t(metrics-&gt;metrics[glyph].advanceWidth));
+<span class="lineNum">     348 </span>            : }
+<a name="349"><span class="lineNum">     349 </span>            : </a>
+<span class="lineNum">     350 </span>            : hb_position_t
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::GetGlyphVAdvance(hb_codepoint_t glyph) const</span>
+<span class="lineNum">     352 </span>            : {
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     if (!mVmtxTable) {</span>
+<span class="lineNum">     354 </span>            :         // Must be a &quot;vertical&quot; font that doesn't actually have vertical metrics;
+<span class="lineNum">     355 </span>            :         // use a fixed advance.
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :         return FloatToFixed(mFont-&gt;GetMetrics(gfxFont::eVertical).aveCharWidth);</span>
+<span class="lineNum">     357 </span>            :     }
+<span class="lineNum">     358 </span>            : 
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :     NS_ASSERTION(mNumLongVMetrics &gt; 0,</span>
+<span class="lineNum">     360 </span>            :                  &quot;font is lacking metrics, we shouldn't be here&quot;);
+<span class="lineNum">     361 </span>            : 
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :     if (glyph &gt;= uint32_t(mNumLongVMetrics)) {</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :         glyph = mNumLongVMetrics - 1;</span>
+<span class="lineNum">     364 </span>            :     }
+<span class="lineNum">     365 </span>            : 
+<span class="lineNum">     366 </span>            :     // glyph must be valid now, because we checked during initialization
+<span class="lineNum">     367 </span>            :     // that mNumLongVMetrics is &gt; 0, and that the metrics table is large enough
+<span class="lineNum">     368 </span>            :     // to contain mNumLongVMetrics records
+<span class="lineNum">     369 </span>            :     const ::GlyphMetrics* metrics =
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :         reinterpret_cast&lt;const ::GlyphMetrics*&gt;(hb_blob_get_data(mVmtxTable,</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :                                                                  nullptr));</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :     return FloatToFixed(mFont-&gt;FUnitsToDevUnitsFactor() *</span>
+<span class="lineNum">     373 </span>            :                         uint16_t(metrics-&gt;metrics[glyph].advanceWidth));
+<span class="lineNum">     374 </span>            : }
+<span class="lineNum">     375 </span>            : 
+<a name="376"><span class="lineNum">     376 </span>            : /* static */</a>
+<span class="lineNum">     377 </span>            : hb_position_t
+<span class="lineNum">     378 </span><span class="lineCov">        265 : gfxHarfBuzzShaper::HBGetGlyphHAdvance(hb_font_t *font, void *font_data,</span>
+<span class="lineNum">     379 </span>            :                                       hb_codepoint_t glyph, void *user_data)
+<span class="lineNum">     380 </span>            : {
+<span class="lineNum">     381 </span>            :     const gfxHarfBuzzShaper::FontCallbackData *fcd =
+<span class="lineNum">     382 </span><span class="lineCov">        265 :         static_cast&lt;const gfxHarfBuzzShaper::FontCallbackData*&gt;(font_data);</span>
+<span class="lineNum">     383 </span><span class="lineCov">        265 :     gfxFont *gfxfont = fcd-&gt;mShaper-&gt;GetFont();</span>
+<span class="lineNum">     384 </span><span class="lineCov">        265 :     if (gfxfont-&gt;ProvidesGlyphWidths()) {</span>
+<span class="lineNum">     385 </span><span class="lineCov">        265 :         return gfxfont-&gt;GetGlyphWidth(*fcd-&gt;mDrawTarget, glyph);</span>
+<span class="lineNum">     386 </span>            :     }
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :     return fcd-&gt;mShaper-&gt;GetGlyphHAdvance(glyph);</span>
+<span class="lineNum">     388 </span>            : }
+<span class="lineNum">     389 </span>            : 
+<a name="390"><span class="lineNum">     390 </span>            : /* static */</a>
+<span class="lineNum">     391 </span>            : hb_position_t
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::HBGetGlyphVAdvance(hb_font_t *font, void *font_data,</span>
+<span class="lineNum">     393 </span>            :                                       hb_codepoint_t glyph, void *user_data)
+<span class="lineNum">     394 </span>            : {
+<span class="lineNum">     395 </span>            :     const gfxHarfBuzzShaper::FontCallbackData *fcd =
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :         static_cast&lt;const gfxHarfBuzzShaper::FontCallbackData*&gt;(font_data);</span>
+<span class="lineNum">     397 </span>            :     // Currently, we don't offer gfxFont subclasses a method to override this
+<span class="lineNum">     398 </span>            :     // and provide hinted platform-specific vertical advances (analogous to the
+<span class="lineNum">     399 </span>            :     // GetGlyphWidth method for horizontal advances). If that proves necessary,
+<span class="lineNum">     400 </span>            :     // we'll add a new gfxFont method and call it from here.
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :     return fcd-&gt;mShaper-&gt;GetGlyphVAdvance(glyph);</span>
+<span class="lineNum">     402 </span>            : }
+<span class="lineNum">     403 </span>            : 
+<span class="lineNum">     404 </span>            : struct VORG {
+<span class="lineNum">     405 </span>            :     AutoSwap_PRUint16 majorVersion;
+<span class="lineNum">     406 </span>            :     AutoSwap_PRUint16 minorVersion;
+<span class="lineNum">     407 </span>            :     AutoSwap_PRInt16  defaultVertOriginY;
+<span class="lineNum">     408 </span>            :     AutoSwap_PRUint16 numVertOriginYMetrics;
+<span class="lineNum">     409 </span>            : };
+<span class="lineNum">     410 </span>            : 
+<span class="lineNum">     411 </span>            : struct VORGrec {
+<span class="lineNum">     412 </span>            :     AutoSwap_PRUint16 glyphIndex;
+<span class="lineNum">     413 </span>            :     AutoSwap_PRInt16  vertOriginY;
+<span class="lineNum">     414 </span>            : };
+<span class="lineNum">     415 </span>            : 
+<a name="416"><span class="lineNum">     416 </span>            : /* static */</a>
+<span class="lineNum">     417 </span>            : hb_bool_t
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::HBGetGlyphVOrigin(hb_font_t *font, void *font_data,</span>
+<span class="lineNum">     419 </span>            :                                      hb_codepoint_t glyph,
+<span class="lineNum">     420 </span>            :                                      hb_position_t *x, hb_position_t *y,
+<span class="lineNum">     421 </span>            :                                      void *user_data)
+<span class="lineNum">     422 </span>            : {
+<span class="lineNum">     423 </span>            :     const gfxHarfBuzzShaper::FontCallbackData *fcd =
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :         static_cast&lt;const gfxHarfBuzzShaper::FontCallbackData*&gt;(font_data);</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :     fcd-&gt;mShaper-&gt;GetGlyphVOrigin(glyph, x, y);</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     427 </span>            : }
+<a name="428"><span class="lineNum">     428 </span>            : </a>
+<span class="lineNum">     429 </span>            : void
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::GetGlyphVOrigin(hb_codepoint_t aGlyph,</span>
+<span class="lineNum">     431 </span>            :                                    hb_position_t *aX, hb_position_t *aY) const
+<span class="lineNum">     432 </span>            : {
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :     *aX = -0.5 * GetGlyphHAdvance(aGlyph);</span>
+<span class="lineNum">     434 </span>            : 
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :     if (mVORGTable) {</span>
+<span class="lineNum">     436 </span>            :         // We checked in Initialize() that the VORG table is safely readable,
+<span class="lineNum">     437 </span>            :         // so no length/bounds-check needed here.
+<span class="lineNum">     438 </span>            :         const VORG* vorg =
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :             reinterpret_cast&lt;const VORG*&gt;(hb_blob_get_data(mVORGTable, nullptr));</span>
+<span class="lineNum">     440 </span>            : 
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :         const VORGrec *lo = reinterpret_cast&lt;const VORGrec*&gt;(vorg + 1);</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :         const VORGrec *hi = lo + uint16_t(vorg-&gt;numVertOriginYMetrics);</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :         const VORGrec *limit = hi;</span>
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :         while (lo &lt; hi) {</span>
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :             const VORGrec *mid = lo + (hi - lo) / 2;</span>
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :             if (uint16_t(mid-&gt;glyphIndex) &lt; aGlyph) {</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :                 lo = mid + 1;</span>
+<span class="lineNum">     448 </span>            :             } else {
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :                 hi = mid;</span>
+<span class="lineNum">     450 </span>            :             }
+<span class="lineNum">     451 </span>            :         }
+<span class="lineNum">     452 </span>            : 
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :         if (lo &lt; limit &amp;&amp; uint16_t(lo-&gt;glyphIndex) == aGlyph) {</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :             *aY = -FloatToFixed(GetFont()-&gt;FUnitsToDevUnitsFactor() *</span>
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :                                 int16_t(lo-&gt;vertOriginY));</span>
+<span class="lineNum">     456 </span>            :         } else {
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :             *aY = -FloatToFixed(GetFont()-&gt;FUnitsToDevUnitsFactor() *</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :                                 int16_t(vorg-&gt;defaultVertOriginY));</span>
+<span class="lineNum">     459 </span>            :         }
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     461 </span>            :     }
+<span class="lineNum">     462 </span>            : 
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :     if (mVmtxTable) {</span>
+<span class="lineNum">     464 </span>            :         bool emptyGlyf;
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :         const Glyf *glyf = FindGlyf(aGlyph, &amp;emptyGlyf);</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :         if (glyf) {</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :             if (emptyGlyf) {</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :                 *aY = 0;</span>
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :                 return;</span>
+<span class="lineNum">     470 </span>            :             }
+<span class="lineNum">     471 </span>            : 
+<span class="lineNum">     472 </span>            :             const ::GlyphMetrics* metrics =
+<span class="lineNum">     473 </span>            :                 reinterpret_cast&lt;const ::GlyphMetrics*&gt;
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :                     (hb_blob_get_data(mVmtxTable, nullptr));</span>
+<span class="lineNum">     475 </span>            :             int16_t lsb;
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :             if (aGlyph &lt; hb_codepoint_t(mNumLongVMetrics)) {</span>
+<span class="lineNum">     477 </span>            :                 // Glyph is covered by the first (advance &amp; sidebearing) array
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :                 lsb = int16_t(metrics-&gt;metrics[aGlyph].lsb);</span>
+<span class="lineNum">     479 </span>            :             } else {
+<span class="lineNum">     480 </span>            :                 // Glyph is covered by the second (sidebearing-only) array
+<span class="lineNum">     481 </span>            :                 const AutoSwap_PRInt16* sidebearings =
+<span class="lineNum">     482 </span>            :                     reinterpret_cast&lt;const AutoSwap_PRInt16*&gt;
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :                         (&amp;metrics-&gt;metrics[mNumLongVMetrics]);</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :                 lsb = int16_t(sidebearings[aGlyph - mNumLongVMetrics]);</span>
+<span class="lineNum">     485 </span>            :             }
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :             *aY = -FloatToFixed(mFont-&gt;FUnitsToDevUnitsFactor() *</span>
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :                                 (lsb + int16_t(glyf-&gt;yMax)));</span>
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     489 </span>            :         } else {
+<span class="lineNum">     490 </span>            :             // XXX TODO: not a truetype font; need to get glyph extents
+<span class="lineNum">     491 </span>            :             // via some other API?
+<span class="lineNum">     492 </span>            :             // For now, fall through to default code below.
+<span class="lineNum">     493 </span>            :         }
+<span class="lineNum">     494 </span>            :     }
+<span class="lineNum">     495 </span>            : 
+<span class="lineNum">     496 </span>            :     // XXX should we consider using OS/2 sTypo* metrics if available?
+<span class="lineNum">     497 </span>            : 
+<span class="lineNum">     498 </span>            :     gfxFontEntry::AutoTable hheaTable(GetFont()-&gt;GetFontEntry(),
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :                                       TRUETYPE_TAG('h','h','e','a'));</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :     if (hheaTable) {</span>
+<span class="lineNum">     501 </span>            :         uint32_t len;
+<span class="lineNum">     502 </span>            :         const MetricsHeader* hhea =
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :             reinterpret_cast&lt;const MetricsHeader*&gt;(hb_blob_get_data(hheaTable,</span>
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :                                                                     &amp;len));</span>
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :         if (len &gt;= sizeof(MetricsHeader)) {</span>
+<span class="lineNum">     506 </span>            :             // divide up the default advance we're using (1em) in proportion
+<span class="lineNum">     507 </span>            :             // to ascender:descender from the hhea table
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :             int16_t a = int16_t(hhea-&gt;ascender);</span>
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :             int16_t d = int16_t(hhea-&gt;descender);</span>
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :             *aY = -FloatToFixed(GetFont()-&gt;GetAdjustedSize() * a / (a - d));</span>
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     512 </span>            :         }
+<span class="lineNum">     513 </span>            :     }
+<span class="lineNum">     514 </span>            : 
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :     NS_NOTREACHED(&quot;we shouldn't be here!&quot;);</span>
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :     *aY = -FloatToFixed(GetFont()-&gt;GetAdjustedSize() / 2);</span>
+<span class="lineNum">     517 </span>            : }
+<a name="518"><span class="lineNum">     518 </span>            : </a>
+<span class="lineNum">     519 </span>            : static hb_bool_t
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 : HBGetGlyphExtents(hb_font_t *font, void *font_data,</span>
+<span class="lineNum">     521 </span>            :                   hb_codepoint_t glyph,
+<span class="lineNum">     522 </span>            :                   hb_glyph_extents_t *extents,
+<span class="lineNum">     523 </span>            :                   void *user_data)
+<span class="lineNum">     524 </span>            : {
+<span class="lineNum">     525 </span>            :     const gfxHarfBuzzShaper::FontCallbackData *fcd =
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :         static_cast&lt;const gfxHarfBuzzShaper::FontCallbackData*&gt;(font_data);</span>
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :     return fcd-&gt;mShaper-&gt;GetGlyphExtents(glyph, extents);</span>
+<span class="lineNum">     528 </span>            : }
+<span class="lineNum">     529 </span>            : 
+<span class="lineNum">     530 </span>            : // Find the data for glyph ID |aGlyph| in the 'glyf' table, if present.
+<span class="lineNum">     531 </span>            : // Returns null if not found, otherwise pointer to the beginning of the
+<span class="lineNum">     532 </span>            : // glyph's data. Sets aEmptyGlyf true if there is no actual data;
+<a name="533"><span class="lineNum">     533 </span>            : // otherwise, it's guaranteed that we can read at least the bounding box.</a>
+<span class="lineNum">     534 </span>            : const gfxHarfBuzzShaper::Glyf*
+<span class="lineNum">     535 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::FindGlyf(hb_codepoint_t aGlyph, bool *aEmptyGlyf) const</span>
+<span class="lineNum">     536 </span>            : {
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :     if (!mLoadedLocaGlyf) {</span>
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :         mLoadedLocaGlyf = true; // only try this once; if it fails, this</span>
+<span class="lineNum">     539 </span>            :                                 // isn't a truetype font
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :         gfxFontEntry *entry = mFont-&gt;GetFontEntry();</span>
+<span class="lineNum">     541 </span>            :         uint32_t len;
+<span class="lineNum">     542 </span>            :         gfxFontEntry::AutoTable headTable(entry,
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :                                           TRUETYPE_TAG('h','e','a','d'));</span>
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :         if (!headTable) {</span>
+<span class="lineNum">     545 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     546 </span>            :         }
+<span class="lineNum">     547 </span>            :         const HeadTable* head =
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :             reinterpret_cast&lt;const HeadTable*&gt;(hb_blob_get_data(headTable,</span>
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :                                                                 &amp;len));</span>
+<span class="lineNum">     550 </span><span class="lineNoCov">          0 :         if (len &lt; sizeof(HeadTable)) {</span>
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     552 </span>            :         }
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :         mLocaLongOffsets = int16_t(head-&gt;indexToLocFormat) &gt; 0;</span>
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :         mLocaTable = entry-&gt;GetFontTable(TRUETYPE_TAG('l','o','c','a'));</span>
+<span class="lineNum">     555 </span><span class="lineNoCov">          0 :         mGlyfTable = entry-&gt;GetFontTable(TRUETYPE_TAG('g','l','y','f'));</span>
+<span class="lineNum">     556 </span>            :     }
+<span class="lineNum">     557 </span>            : 
+<span class="lineNum">     558 </span><span class="lineNoCov">          0 :     if (!mLocaTable || !mGlyfTable) {</span>
+<span class="lineNum">     559 </span>            :         // it's not a truetype font
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     561 </span>            :     }
+<span class="lineNum">     562 </span>            : 
+<span class="lineNum">     563 </span>            :     uint32_t offset; // offset of glyph record in the 'glyf' table
+<span class="lineNum">     564 </span>            :     uint32_t len;
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :     const char* data = hb_blob_get_data(mLocaTable, &amp;len);</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :     if (mLocaLongOffsets) {</span>
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :         if ((aGlyph + 1) * sizeof(AutoSwap_PRUint32) &gt; len) {</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     569 </span>            :         }
+<span class="lineNum">     570 </span>            :         const AutoSwap_PRUint32* offsets =
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :             reinterpret_cast&lt;const AutoSwap_PRUint32*&gt;(data);</span>
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :         offset = offsets[aGlyph];</span>
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :         *aEmptyGlyf = (offset == uint16_t(offsets[aGlyph + 1]));</span>
+<span class="lineNum">     574 </span>            :     } else {
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :         if ((aGlyph + 1) * sizeof(AutoSwap_PRUint16) &gt; len) {</span>
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :             return nullptr;</span>
+<span class="lineNum">     577 </span>            :         }
+<span class="lineNum">     578 </span>            :         const AutoSwap_PRUint16* offsets =
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :             reinterpret_cast&lt;const AutoSwap_PRUint16*&gt;(data);</span>
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :         offset = uint16_t(offsets[aGlyph]);</span>
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :         *aEmptyGlyf = (offset == uint16_t(offsets[aGlyph + 1]));</span>
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :         offset *= 2;</span>
+<span class="lineNum">     583 </span>            :     }
+<span class="lineNum">     584 </span>            : 
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :     data = hb_blob_get_data(mGlyfTable, &amp;len);</span>
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :     if (offset + sizeof(Glyf) &gt; len) {</span>
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     588 </span>            :     }
+<span class="lineNum">     589 </span>            : 
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :     return reinterpret_cast&lt;const Glyf*&gt;(data + offset);</span>
+<span class="lineNum">     591 </span>            : }
+<a name="592"><span class="lineNum">     592 </span>            : </a>
+<span class="lineNum">     593 </span>            : hb_bool_t
+<span class="lineNum">     594 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::GetGlyphExtents(hb_codepoint_t aGlyph,</span>
+<span class="lineNum">     595 </span>            :                                    hb_glyph_extents_t *aExtents) const
+<span class="lineNum">     596 </span>            : {
+<span class="lineNum">     597 </span>            :     bool emptyGlyf;
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :     const Glyf *glyf = FindGlyf(aGlyph, &amp;emptyGlyf);</span>
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :     if (!glyf) {</span>
+<span class="lineNum">     600 </span>            :         // TODO: for non-truetype fonts, get extents some other way?
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     602 </span>            :     }
+<span class="lineNum">     603 </span>            : 
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 :     if (emptyGlyf) {</span>
+<span class="lineNum">     605 </span><span class="lineNoCov">          0 :         aExtents-&gt;x_bearing = 0;</span>
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :         aExtents-&gt;y_bearing = 0;</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :         aExtents-&gt;width = 0;</span>
+<span class="lineNum">     608 </span><span class="lineNoCov">          0 :         aExtents-&gt;height = 0;</span>
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     610 </span>            :     }
+<span class="lineNum">     611 </span>            : 
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :     double f = mFont-&gt;FUnitsToDevUnitsFactor();</span>
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 :     aExtents-&gt;x_bearing = FloatToFixed(int16_t(glyf-&gt;xMin) * f);</span>
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :     aExtents-&gt;width =</span>
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :         FloatToFixed((int16_t(glyf-&gt;xMax) - int16_t(glyf-&gt;xMin)) * f);</span>
+<span class="lineNum">     616 </span>            : 
+<span class="lineNum">     617 </span>            :     // Our y-coordinates are positive-downwards, whereas harfbuzz assumes
+<span class="lineNum">     618 </span>            :     // positive-upwards; hence the apparently-reversed subtractions here.
+<span class="lineNum">     619 </span><span class="lineNoCov">          0 :     aExtents-&gt;y_bearing =</span>
+<span class="lineNum">     620 </span><span class="lineNoCov">          0 :         FloatToFixed(int16_t(glyf-&gt;yMax) * f -</span>
+<span class="lineNum">     621 </span><span class="lineNoCov">          0 :                      mFont-&gt;GetHorizontalMetrics().emAscent);</span>
+<span class="lineNum">     622 </span><span class="lineNoCov">          0 :     aExtents-&gt;height =</span>
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 :         FloatToFixed((int16_t(glyf-&gt;yMin) - int16_t(glyf-&gt;yMax)) * f);</span>
+<span class="lineNum">     624 </span>            : 
+<span class="lineNum">     625 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     626 </span>            : }
+<a name="627"><span class="lineNum">     627 </span>            : </a>
+<span class="lineNum">     628 </span>            : static hb_bool_t
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 : HBGetContourPoint(hb_font_t *font, void *font_data,</span>
+<span class="lineNum">     630 </span>            :                   unsigned int point_index, hb_codepoint_t glyph,
+<span class="lineNum">     631 </span>            :                   hb_position_t *x, hb_position_t *y,
+<span class="lineNum">     632 </span>            :                   void *user_data)
+<span class="lineNum">     633 </span>            : {
+<span class="lineNum">     634 </span>            :     /* not yet implemented - no support for used of hinted contour points
+<span class="lineNum">     635 </span>            :        to fine-tune anchor positions in GPOS AnchorFormat2 */
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     637 </span>            : }
+<span class="lineNum">     638 </span>            : 
+<span class="lineNum">     639 </span>            : struct KernHeaderFmt0 {
+<span class="lineNum">     640 </span>            :     AutoSwap_PRUint16 nPairs;
+<span class="lineNum">     641 </span>            :     AutoSwap_PRUint16 searchRange;
+<span class="lineNum">     642 </span>            :     AutoSwap_PRUint16 entrySelector;
+<span class="lineNum">     643 </span>            :     AutoSwap_PRUint16 rangeShift;
+<span class="lineNum">     644 </span>            : };
+<span class="lineNum">     645 </span>            : 
+<span class="lineNum">     646 </span>            : struct KernPair {
+<span class="lineNum">     647 </span>            :     AutoSwap_PRUint16 left;
+<span class="lineNum">     648 </span>            :     AutoSwap_PRUint16 right;
+<span class="lineNum">     649 </span>            :     AutoSwap_PRInt16  value;
+<span class="lineNum">     650 </span>            : };
+<span class="lineNum">     651 </span>            : 
+<span class="lineNum">     652 </span>            : // Find a kern pair in a Format 0 subtable.
+<span class="lineNum">     653 </span>            : // The aSubtable parameter points to the subtable itself, NOT its header,
+<span class="lineNum">     654 </span>            : // as the header structure differs between Windows and Mac (v0 and v1.0)
+<span class="lineNum">     655 </span>            : // versions of the 'kern' table.
+<span class="lineNum">     656 </span>            : // aSubtableLen is the length of the subtable EXCLUDING its header.
+<span class="lineNum">     657 </span>            : // If the pair &lt;aFirstGlyph,aSecondGlyph&gt; is found, the kerning value is
+<span class="lineNum">     658 </span>            : // added to aValue, so that multiple subtables can accumulate a total
+<a name="659"><span class="lineNum">     659 </span>            : // kerning value for a given pair.</a>
+<span class="lineNum">     660 </span>            : static void
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 : GetKernValueFmt0(const void* aSubtable,</span>
+<span class="lineNum">     662 </span>            :                  uint32_t aSubtableLen,
+<span class="lineNum">     663 </span>            :                  uint16_t aFirstGlyph,
+<span class="lineNum">     664 </span>            :                  uint16_t aSecondGlyph,
+<span class="lineNum">     665 </span>            :                  int32_t&amp; aValue,
+<span class="lineNum">     666 </span>            :                  bool     aIsOverride = false,
+<span class="lineNum">     667 </span>            :                  bool     aIsMinimum = false)
+<span class="lineNum">     668 </span>            : {
+<span class="lineNum">     669 </span>            :     const KernHeaderFmt0* hdr =
+<span class="lineNum">     670 </span><span class="lineNoCov">          0 :         reinterpret_cast&lt;const KernHeaderFmt0*&gt;(aSubtable);</span>
+<span class="lineNum">     671 </span>            : 
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :     const KernPair *lo = reinterpret_cast&lt;const KernPair*&gt;(hdr + 1);</span>
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :     const KernPair *hi = lo + uint16_t(hdr-&gt;nPairs);</span>
+<span class="lineNum">     674 </span><span class="lineNoCov">          0 :     const KernPair *limit = hi;</span>
+<span class="lineNum">     675 </span>            : 
+<span class="lineNum">     676 </span><span class="lineNoCov">          0 :     if (reinterpret_cast&lt;const char*&gt;(aSubtable) + aSubtableLen &lt;</span>
+<span class="lineNum">     677 </span>            :         reinterpret_cast&lt;const char*&gt;(hi)) {
+<span class="lineNum">     678 </span>            :         // subtable is not large enough to contain the claimed number
+<span class="lineNum">     679 </span>            :         // of kern pairs, so just ignore it
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     681 </span>            :     }
+<span class="lineNum">     682 </span>            : 
+<span class="lineNum">     683 </span>            : #define KERN_PAIR_KEY(l,r) (uint32_t((uint16_t(l) &lt;&lt; 16) + uint16_t(r)))
+<span class="lineNum">     684 </span>            : 
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :     uint32_t key = KERN_PAIR_KEY(aFirstGlyph, aSecondGlyph);</span>
+<span class="lineNum">     686 </span><span class="lineNoCov">          0 :     while (lo &lt; hi) {</span>
+<span class="lineNum">     687 </span><span class="lineNoCov">          0 :         const KernPair *mid = lo + (hi - lo) / 2;</span>
+<span class="lineNum">     688 </span><span class="lineNoCov">          0 :         if (KERN_PAIR_KEY(mid-&gt;left, mid-&gt;right) &lt; key) {</span>
+<span class="lineNum">     689 </span><span class="lineNoCov">          0 :             lo = mid + 1;</span>
+<span class="lineNum">     690 </span>            :         } else {
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :             hi = mid;</span>
+<span class="lineNum">     692 </span>            :         }
+<span class="lineNum">     693 </span>            :     }
+<span class="lineNum">     694 </span>            : 
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :     if (lo &lt; limit &amp;&amp; KERN_PAIR_KEY(lo-&gt;left, lo-&gt;right) == key) {</span>
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :         if (aIsOverride) {</span>
+<span class="lineNum">     697 </span><span class="lineNoCov">          0 :             aValue = int16_t(lo-&gt;value);</span>
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :         } else if (aIsMinimum) {</span>
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :             aValue = std::max(aValue, int32_t(lo-&gt;value));</span>
+<span class="lineNum">     700 </span>            :         } else {
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :             aValue += int16_t(lo-&gt;value);</span>
+<span class="lineNum">     702 </span>            :         }
+<span class="lineNum">     703 </span>            :     }
+<span class="lineNum">     704 </span>            : }
+<span class="lineNum">     705 </span>            : 
+<span class="lineNum">     706 </span>            : // Get kerning value from Apple (version 1.0) kern table,
+<span class="lineNum">     707 </span>            : // subtable format 2 (simple N x M array of kerning values)
+<span class="lineNum">     708 </span>            : 
+<span class="lineNum">     709 </span>            : // See http://developer.apple.com/fonts/TTRefMan/RM06/Chap6kern.html
+<span class="lineNum">     710 </span>            : // for details of version 1.0 format 2 subtable.
+<span class="lineNum">     711 </span>            : 
+<span class="lineNum">     712 </span>            : struct KernHeaderVersion1Fmt2 {
+<span class="lineNum">     713 </span>            :     KernTableSubtableHeaderVersion1 header;
+<span class="lineNum">     714 </span>            :     AutoSwap_PRUint16 rowWidth;
+<span class="lineNum">     715 </span>            :     AutoSwap_PRUint16 leftOffsetTable;
+<span class="lineNum">     716 </span>            :     AutoSwap_PRUint16 rightOffsetTable;
+<span class="lineNum">     717 </span>            :     AutoSwap_PRUint16 array;
+<span class="lineNum">     718 </span>            : };
+<span class="lineNum">     719 </span>            : 
+<span class="lineNum">     720 </span>            : struct KernClassTableHdr {
+<span class="lineNum">     721 </span>            :     AutoSwap_PRUint16 firstGlyph;
+<span class="lineNum">     722 </span>            :     AutoSwap_PRUint16 nGlyphs;
+<span class="lineNum">     723 </span>            :     AutoSwap_PRUint16 offsets[1]; // actually an array of nGlyphs entries
+<span class="lineNum">     724 </span>            : };
+<a name="725"><span class="lineNum">     725 </span>            : </a>
+<span class="lineNum">     726 </span>            : static int16_t
+<span class="lineNum">     727 </span><span class="lineNoCov">          0 : GetKernValueVersion1Fmt2(const void* aSubtable,</span>
+<span class="lineNum">     728 </span>            :                          uint32_t aSubtableLen,
+<span class="lineNum">     729 </span>            :                          uint16_t aFirstGlyph,
+<span class="lineNum">     730 </span>            :                          uint16_t aSecondGlyph)
+<span class="lineNum">     731 </span>            : {
+<span class="lineNum">     732 </span><span class="lineNoCov">          0 :     if (aSubtableLen &lt; sizeof(KernHeaderVersion1Fmt2)) {</span>
+<span class="lineNum">     733 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     734 </span>            :     }
+<span class="lineNum">     735 </span>            : 
+<span class="lineNum">     736 </span><span class="lineNoCov">          0 :     const char* base = reinterpret_cast&lt;const char*&gt;(aSubtable);</span>
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :     const char* subtableEnd = base + aSubtableLen;</span>
+<span class="lineNum">     738 </span>            : 
+<span class="lineNum">     739 </span>            :     const KernHeaderVersion1Fmt2* h =
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :         reinterpret_cast&lt;const KernHeaderVersion1Fmt2*&gt;(aSubtable);</span>
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 :     uint32_t offset = h-&gt;array;</span>
+<span class="lineNum">     742 </span>            : 
+<span class="lineNum">     743 </span>            :     const KernClassTableHdr* leftClassTable =
+<span class="lineNum">     744 </span>            :         reinterpret_cast&lt;const KernClassTableHdr*&gt;(base +
+<span class="lineNum">     745 </span><span class="lineNoCov">          0 :                                                    uint16_t(h-&gt;leftOffsetTable));</span>
+<span class="lineNum">     746 </span><span class="lineNoCov">          0 :     if (reinterpret_cast&lt;const char*&gt;(leftClassTable) +</span>
+<span class="lineNum">     747 </span>            :         sizeof(KernClassTableHdr) &gt; subtableEnd) {
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     749 </span>            :     }
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :     if (aFirstGlyph &gt;= uint16_t(leftClassTable-&gt;firstGlyph)) {</span>
+<span class="lineNum">     751 </span><span class="lineNoCov">          0 :         aFirstGlyph -= uint16_t(leftClassTable-&gt;firstGlyph);</span>
+<span class="lineNum">     752 </span><span class="lineNoCov">          0 :         if (aFirstGlyph &lt; uint16_t(leftClassTable-&gt;nGlyphs)) {</span>
+<span class="lineNum">     753 </span><span class="lineNoCov">          0 :             if (reinterpret_cast&lt;const char*&gt;(leftClassTable) +</span>
+<span class="lineNum">     754 </span><span class="lineNoCov">          0 :                 sizeof(KernClassTableHdr) +</span>
+<span class="lineNum">     755 </span><span class="lineNoCov">          0 :                 aFirstGlyph * sizeof(uint16_t) &gt;= subtableEnd) {</span>
+<span class="lineNum">     756 </span><span class="lineNoCov">          0 :                 return 0;</span>
+<span class="lineNum">     757 </span>            :             }
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :             offset = uint16_t(leftClassTable-&gt;offsets[aFirstGlyph]);</span>
+<span class="lineNum">     759 </span>            :         }
+<span class="lineNum">     760 </span>            :     }
+<span class="lineNum">     761 </span>            : 
+<span class="lineNum">     762 </span>            :     const KernClassTableHdr* rightClassTable =
+<span class="lineNum">     763 </span>            :         reinterpret_cast&lt;const KernClassTableHdr*&gt;(base +
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 :                                                    uint16_t(h-&gt;rightOffsetTable));</span>
+<span class="lineNum">     765 </span><span class="lineNoCov">          0 :     if (reinterpret_cast&lt;const char*&gt;(rightClassTable) +</span>
+<span class="lineNum">     766 </span>            :         sizeof(KernClassTableHdr) &gt; subtableEnd) {
+<span class="lineNum">     767 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     768 </span>            :     }
+<span class="lineNum">     769 </span><span class="lineNoCov">          0 :     if (aSecondGlyph &gt;= uint16_t(rightClassTable-&gt;firstGlyph)) {</span>
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :         aSecondGlyph -= uint16_t(rightClassTable-&gt;firstGlyph);</span>
+<span class="lineNum">     771 </span><span class="lineNoCov">          0 :         if (aSecondGlyph &lt; uint16_t(rightClassTable-&gt;nGlyphs)) {</span>
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 :             if (reinterpret_cast&lt;const char*&gt;(rightClassTable) +</span>
+<span class="lineNum">     773 </span><span class="lineNoCov">          0 :                 sizeof(KernClassTableHdr) +</span>
+<span class="lineNum">     774 </span><span class="lineNoCov">          0 :                 aSecondGlyph * sizeof(uint16_t) &gt;= subtableEnd) {</span>
+<span class="lineNum">     775 </span><span class="lineNoCov">          0 :                 return 0;</span>
+<span class="lineNum">     776 </span>            :             }
+<span class="lineNum">     777 </span><span class="lineNoCov">          0 :             offset += uint16_t(rightClassTable-&gt;offsets[aSecondGlyph]);</span>
+<span class="lineNum">     778 </span>            :         }
+<span class="lineNum">     779 </span>            :     }
+<span class="lineNum">     780 </span>            : 
+<span class="lineNum">     781 </span>            :     const AutoSwap_PRInt16* pval =
+<span class="lineNum">     782 </span><span class="lineNoCov">          0 :         reinterpret_cast&lt;const AutoSwap_PRInt16*&gt;(base + offset);</span>
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :     if (reinterpret_cast&lt;const char*&gt;(pval + 1) &gt;= subtableEnd) {</span>
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     785 </span>            :     }
+<span class="lineNum">     786 </span><span class="lineNoCov">          0 :     return *pval;</span>
+<span class="lineNum">     787 </span>            : }
+<span class="lineNum">     788 </span>            : 
+<span class="lineNum">     789 </span>            : // Get kerning value from Apple (version 1.0) kern table,
+<span class="lineNum">     790 </span>            : // subtable format 3 (simple N x M array of kerning values)
+<span class="lineNum">     791 </span>            : 
+<span class="lineNum">     792 </span>            : // See http://developer.apple.com/fonts/TTRefMan/RM06/Chap6kern.html
+<span class="lineNum">     793 </span>            : // for details of version 1.0 format 3 subtable.
+<span class="lineNum">     794 </span>            : 
+<span class="lineNum">     795 </span>            : struct KernHeaderVersion1Fmt3 {
+<span class="lineNum">     796 </span>            :     KernTableSubtableHeaderVersion1 header;
+<span class="lineNum">     797 </span>            :     AutoSwap_PRUint16 glyphCount;
+<span class="lineNum">     798 </span>            :     uint8_t kernValueCount;
+<span class="lineNum">     799 </span>            :     uint8_t leftClassCount;
+<span class="lineNum">     800 </span>            :     uint8_t rightClassCount;
+<span class="lineNum">     801 </span>            :     uint8_t flags;
+<span class="lineNum">     802 </span>            : };
+<a name="803"><span class="lineNum">     803 </span>            : </a>
+<span class="lineNum">     804 </span>            : static int16_t
+<span class="lineNum">     805 </span><span class="lineNoCov">          0 : GetKernValueVersion1Fmt3(const void* aSubtable,</span>
+<span class="lineNum">     806 </span>            :                          uint32_t aSubtableLen,
+<span class="lineNum">     807 </span>            :                          uint16_t aFirstGlyph,
+<span class="lineNum">     808 </span>            :                          uint16_t aSecondGlyph)
+<span class="lineNum">     809 </span>            : {
+<span class="lineNum">     810 </span>            :     // check that we can safely read the header fields
+<span class="lineNum">     811 </span><span class="lineNoCov">          0 :     if (aSubtableLen &lt; sizeof(KernHeaderVersion1Fmt3)) {</span>
+<span class="lineNum">     812 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     813 </span>            :     }
+<span class="lineNum">     814 </span>            : 
+<span class="lineNum">     815 </span>            :     const KernHeaderVersion1Fmt3* hdr =
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 :         reinterpret_cast&lt;const KernHeaderVersion1Fmt3*&gt;(aSubtable);</span>
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :     if (hdr-&gt;flags != 0) {</span>
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     819 </span>            :     }
+<span class="lineNum">     820 </span>            : 
+<span class="lineNum">     821 </span><span class="lineNoCov">          0 :     uint16_t glyphCount = hdr-&gt;glyphCount;</span>
+<span class="lineNum">     822 </span>            : 
+<span class="lineNum">     823 </span>            :     // check that table is large enough for the arrays
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :     if (sizeof(KernHeaderVersion1Fmt3) +</span>
+<span class="lineNum">     825 </span><span class="lineNoCov">          0 :         hdr-&gt;kernValueCount * sizeof(int16_t) +</span>
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 :         glyphCount + glyphCount +</span>
+<span class="lineNum">     827 </span><span class="lineNoCov">          0 :         hdr-&gt;leftClassCount * hdr-&gt;rightClassCount &gt; aSubtableLen) {</span>
+<span class="lineNum">     828 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     829 </span>            :     }
+<span class="lineNum">     830 </span>            :         
+<span class="lineNum">     831 </span><span class="lineNoCov">          0 :     if (aFirstGlyph &gt;= glyphCount || aSecondGlyph &gt;= glyphCount) {</span>
+<span class="lineNum">     832 </span>            :         // glyphs are out of range for the class tables
+<span class="lineNum">     833 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     834 </span>            :     }
+<span class="lineNum">     835 </span>            : 
+<span class="lineNum">     836 </span>            :     // get pointers to the four arrays within the subtable
+<span class="lineNum">     837 </span>            :     const AutoSwap_PRInt16* kernValue =
+<span class="lineNum">     838 </span><span class="lineNoCov">          0 :         reinterpret_cast&lt;const AutoSwap_PRInt16*&gt;(hdr + 1);</span>
+<span class="lineNum">     839 </span>            :     const uint8_t* leftClass =
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :         reinterpret_cast&lt;const uint8_t*&gt;(kernValue + hdr-&gt;kernValueCount);</span>
+<span class="lineNum">     841 </span><span class="lineNoCov">          0 :     const uint8_t* rightClass = leftClass + glyphCount;</span>
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :     const uint8_t* kernIndex = rightClass + glyphCount;</span>
+<span class="lineNum">     843 </span>            : 
+<span class="lineNum">     844 </span><span class="lineNoCov">          0 :     uint8_t lc = leftClass[aFirstGlyph];</span>
+<span class="lineNum">     845 </span><span class="lineNoCov">          0 :     uint8_t rc = rightClass[aSecondGlyph];</span>
+<span class="lineNum">     846 </span><span class="lineNoCov">          0 :     if (lc &gt;= hdr-&gt;leftClassCount || rc &gt;= hdr-&gt;rightClassCount) {</span>
+<span class="lineNum">     847 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     848 </span>            :     }
+<span class="lineNum">     849 </span>            : 
+<span class="lineNum">     850 </span><span class="lineNoCov">          0 :     uint8_t ki = kernIndex[leftClass[aFirstGlyph] * hdr-&gt;rightClassCount +</span>
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :                            rightClass[aSecondGlyph]];</span>
+<span class="lineNum">     852 </span><span class="lineNoCov">          0 :     if (ki &gt;= hdr-&gt;kernValueCount) {</span>
+<span class="lineNum">     853 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     854 </span>            :     }
+<span class="lineNum">     855 </span>            : 
+<span class="lineNum">     856 </span><span class="lineNoCov">          0 :     return kernValue[ki];</span>
+<span class="lineNum">     857 </span>            : }
+<span class="lineNum">     858 </span>            : 
+<span class="lineNum">     859 </span>            : #define KERN0_COVERAGE_HORIZONTAL   0x0001
+<span class="lineNum">     860 </span>            : #define KERN0_COVERAGE_MINIMUM      0x0002
+<span class="lineNum">     861 </span>            : #define KERN0_COVERAGE_CROSS_STREAM 0x0004
+<span class="lineNum">     862 </span>            : #define KERN0_COVERAGE_OVERRIDE     0x0008
+<span class="lineNum">     863 </span>            : #define KERN0_COVERAGE_RESERVED     0x00F0
+<span class="lineNum">     864 </span>            : 
+<span class="lineNum">     865 </span>            : #define KERN1_COVERAGE_VERTICAL     0x8000
+<span class="lineNum">     866 </span>            : #define KERN1_COVERAGE_CROSS_STREAM 0x4000
+<span class="lineNum">     867 </span>            : #define KERN1_COVERAGE_VARIATION    0x2000
+<span class="lineNum">     868 </span>            : #define KERN1_COVERAGE_RESERVED     0x1F00
+<a name="869"><span class="lineNum">     869 </span>            : </a>
+<span class="lineNum">     870 </span>            : hb_position_t
+<span class="lineNum">     871 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::GetHKerning(uint16_t aFirstGlyph,</span>
+<span class="lineNum">     872 </span>            :                                uint16_t aSecondGlyph) const
+<span class="lineNum">     873 </span>            : {
+<span class="lineNum">     874 </span>            :     // We want to ignore any kern pairs involving &lt;space&gt;, because we are
+<span class="lineNum">     875 </span>            :     // handling words in isolation, the only space characters seen here are
+<span class="lineNum">     876 </span>            :     // the ones artificially added by the textRun code.
+<span class="lineNum">     877 </span><span class="lineNoCov">          0 :     uint32_t spaceGlyph = mFont-&gt;GetSpaceGlyph();</span>
+<span class="lineNum">     878 </span><span class="lineNoCov">          0 :     if (aFirstGlyph == spaceGlyph || aSecondGlyph == spaceGlyph) {</span>
+<span class="lineNum">     879 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     880 </span>            :     }
+<span class="lineNum">     881 </span>            : 
+<span class="lineNum">     882 </span><span class="lineNoCov">          0 :     if (!mKernTable) {</span>
+<span class="lineNum">     883 </span><span class="lineNoCov">          0 :         mKernTable = mFont-&gt;GetFontEntry()-&gt;GetFontTable(TRUETYPE_TAG('k','e','r','n'));</span>
+<span class="lineNum">     884 </span><span class="lineNoCov">          0 :         if (!mKernTable) {</span>
+<span class="lineNum">     885 </span><span class="lineNoCov">          0 :             mKernTable = hb_blob_get_empty();</span>
+<span class="lineNum">     886 </span>            :         }
+<span class="lineNum">     887 </span>            :     }
+<span class="lineNum">     888 </span>            : 
+<span class="lineNum">     889 </span>            :     uint32_t len;
+<span class="lineNum">     890 </span><span class="lineNoCov">          0 :     const char* base = hb_blob_get_data(mKernTable, &amp;len);</span>
+<span class="lineNum">     891 </span><span class="lineNoCov">          0 :     if (len &lt; sizeof(KernTableVersion0)) {</span>
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :         return 0;</span>
+<span class="lineNum">     893 </span>            :     }
+<span class="lineNum">     894 </span><span class="lineNoCov">          0 :     int32_t value = 0;</span>
+<span class="lineNum">     895 </span>            : 
+<span class="lineNum">     896 </span>            :     // First try to interpret as &quot;version 0&quot; kern table
+<span class="lineNum">     897 </span>            :     // (see http://www.microsoft.com/typography/otspec/kern.htm)
+<span class="lineNum">     898 </span>            :     const KernTableVersion0* kern0 =
+<span class="lineNum">     899 </span><span class="lineNoCov">          0 :         reinterpret_cast&lt;const KernTableVersion0*&gt;(base);</span>
+<span class="lineNum">     900 </span><span class="lineNoCov">          0 :     if (uint16_t(kern0-&gt;version) == 0) {</span>
+<span class="lineNum">     901 </span><span class="lineNoCov">          0 :         uint16_t nTables = kern0-&gt;nTables;</span>
+<span class="lineNum">     902 </span><span class="lineNoCov">          0 :         uint32_t offs = sizeof(KernTableVersion0);</span>
+<span class="lineNum">     903 </span><span class="lineNoCov">          0 :         for (uint16_t i = 0; i &lt; nTables; ++i) {</span>
+<span class="lineNum">     904 </span><span class="lineNoCov">          0 :             if (offs + sizeof(KernTableSubtableHeaderVersion0) &gt; len) {</span>
+<span class="lineNum">     905 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     906 </span>            :             }
+<span class="lineNum">     907 </span>            :             const KernTableSubtableHeaderVersion0* st0 =
+<span class="lineNum">     908 </span>            :                 reinterpret_cast&lt;const KernTableSubtableHeaderVersion0*&gt;
+<span class="lineNum">     909 </span><span class="lineNoCov">          0 :                                 (base + offs);</span>
+<span class="lineNum">     910 </span><span class="lineNoCov">          0 :             uint16_t subtableLen = uint16_t(st0-&gt;length);</span>
+<span class="lineNum">     911 </span><span class="lineNoCov">          0 :             if (offs + subtableLen &gt; len) {</span>
+<span class="lineNum">     912 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     913 </span>            :             }
+<span class="lineNum">     914 </span><span class="lineNoCov">          0 :             offs += subtableLen;</span>
+<span class="lineNum">     915 </span><span class="lineNoCov">          0 :             uint16_t coverage = st0-&gt;coverage;</span>
+<span class="lineNum">     916 </span><span class="lineNoCov">          0 :             if (!(coverage &amp; KERN0_COVERAGE_HORIZONTAL)) {</span>
+<span class="lineNum">     917 </span>            :                 // we only care about horizontal kerning (for now)
+<span class="lineNum">     918 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     919 </span>            :             }
+<span class="lineNum">     920 </span><span class="lineNoCov">          0 :             if (coverage &amp;</span>
+<span class="lineNum">     921 </span>            :                 (KERN0_COVERAGE_CROSS_STREAM | KERN0_COVERAGE_RESERVED)) {
+<span class="lineNum">     922 </span>            :                 // we don't support cross-stream kerning, and
+<span class="lineNum">     923 </span>            :                 // reserved bits should be zero;
+<span class="lineNum">     924 </span>            :                 // ignore the subtable if not
+<span class="lineNum">     925 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     926 </span>            :             }
+<span class="lineNum">     927 </span><span class="lineNoCov">          0 :             uint8_t format = (coverage &gt;&gt; 8);</span>
+<span class="lineNum">     928 </span><span class="lineNoCov">          0 :             switch (format) {</span>
+<span class="lineNum">     929 </span>            :             case 0:
+<span class="lineNum">     930 </span><span class="lineNoCov">          0 :                 GetKernValueFmt0(st0 + 1, subtableLen - sizeof(*st0),</span>
+<span class="lineNum">     931 </span>            :                                  aFirstGlyph, aSecondGlyph, value,
+<span class="lineNum">     932 </span><span class="lineNoCov">          0 :                                  (coverage &amp; KERN0_COVERAGE_OVERRIDE) != 0,</span>
+<span class="lineNum">     933 </span><span class="lineNoCov">          0 :                                  (coverage &amp; KERN0_COVERAGE_MINIMUM) != 0);</span>
+<span class="lineNum">     934 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     935 </span>            :             default:
+<span class="lineNum">     936 </span>            :                 // TODO: implement support for other formats,
+<span class="lineNum">     937 </span>            :                 // if they're ever used in practice
+<span class="lineNum">     938 </span>            : #if DEBUG
+<span class="lineNum">     939 </span>            :                 {
+<span class="lineNum">     940 </span>            :                     char buf[1024];
+<span class="lineNum">     941 </span><span class="lineNoCov">          0 :                     SprintfLiteral(buf, &quot;unknown kern subtable in %s: &quot;</span>
+<span class="lineNum">     942 </span>            :                                         &quot;ver 0 format %d\n&quot;,
+<span class="lineNum">     943 </span><span class="lineNoCov">          0 :                                    NS_ConvertUTF16toUTF8(mFont-&gt;GetName()).get(),</span>
+<span class="lineNum">     944 </span><span class="lineNoCov">          0 :                                    format);</span>
+<span class="lineNum">     945 </span><span class="lineNoCov">          0 :                     NS_WARNING(buf);</span>
+<span class="lineNum">     946 </span>            :                 }
+<span class="lineNum">     947 </span>            : #endif
+<span class="lineNum">     948 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     949 </span>            :             }
+<span class="lineNum">     950 </span>            :         }
+<span class="lineNum">     951 </span>            :     } else {
+<span class="lineNum">     952 </span>            :         // It wasn't a &quot;version 0&quot; table; check if it is Apple version 1.0
+<span class="lineNum">     953 </span>            :         // (see http://developer.apple.com/fonts/TTRefMan/RM06/Chap6kern.html)
+<span class="lineNum">     954 </span>            :         const KernTableVersion1* kern1 =
+<span class="lineNum">     955 </span><span class="lineNoCov">          0 :             reinterpret_cast&lt;const KernTableVersion1*&gt;(base);</span>
+<span class="lineNum">     956 </span><span class="lineNoCov">          0 :         if (uint32_t(kern1-&gt;version) == 0x00010000) {</span>
+<span class="lineNum">     957 </span><span class="lineNoCov">          0 :             uint32_t nTables = kern1-&gt;nTables;</span>
+<span class="lineNum">     958 </span><span class="lineNoCov">          0 :             uint32_t offs = sizeof(KernTableVersion1);</span>
+<span class="lineNum">     959 </span><span class="lineNoCov">          0 :             for (uint32_t i = 0; i &lt; nTables; ++i) {</span>
+<span class="lineNum">     960 </span><span class="lineNoCov">          0 :                 if (offs + sizeof(KernTableSubtableHeaderVersion1) &gt; len) {</span>
+<span class="lineNum">     961 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">     962 </span>            :                 }
+<span class="lineNum">     963 </span>            :                 const KernTableSubtableHeaderVersion1* st1 =
+<span class="lineNum">     964 </span>            :                     reinterpret_cast&lt;const KernTableSubtableHeaderVersion1*&gt;
+<span class="lineNum">     965 </span><span class="lineNoCov">          0 :                                     (base + offs);</span>
+<span class="lineNum">     966 </span><span class="lineNoCov">          0 :                 uint32_t subtableLen = uint32_t(st1-&gt;length);</span>
+<span class="lineNum">     967 </span><span class="lineNoCov">          0 :                 offs += subtableLen;</span>
+<span class="lineNum">     968 </span><span class="lineNoCov">          0 :                 uint16_t coverage = st1-&gt;coverage;</span>
+<span class="lineNum">     969 </span><span class="lineNoCov">          0 :                 if (coverage &amp;</span>
+<span class="lineNum">     970 </span>            :                     (KERN1_COVERAGE_VERTICAL     |
+<span class="lineNum">     971 </span>            :                      KERN1_COVERAGE_CROSS_STREAM |
+<span class="lineNum">     972 </span>            :                      KERN1_COVERAGE_VARIATION    |
+<span class="lineNum">     973 </span>            :                      KERN1_COVERAGE_RESERVED)) {
+<span class="lineNum">     974 </span>            :                     // we only care about horizontal kerning (for now),
+<span class="lineNum">     975 </span>            :                     // we don't support cross-stream kerning,
+<span class="lineNum">     976 </span>            :                     // we don't support variations,
+<span class="lineNum">     977 </span>            :                     // reserved bits should be zero;
+<span class="lineNum">     978 </span>            :                     // ignore the subtable if not
+<span class="lineNum">     979 </span><span class="lineNoCov">          0 :                     continue;</span>
+<span class="lineNum">     980 </span>            :                 }
+<span class="lineNum">     981 </span><span class="lineNoCov">          0 :                 uint8_t format = (coverage &amp; 0xff);</span>
+<span class="lineNum">     982 </span><span class="lineNoCov">          0 :                 switch (format) {</span>
+<span class="lineNum">     983 </span>            :                 case 0:
+<span class="lineNum">     984 </span><span class="lineNoCov">          0 :                     GetKernValueFmt0(st1 + 1, subtableLen - sizeof(*st1),</span>
+<span class="lineNum">     985 </span><span class="lineNoCov">          0 :                                      aFirstGlyph, aSecondGlyph, value);</span>
+<span class="lineNum">     986 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">     987 </span>            :                 case 2:
+<span class="lineNum">     988 </span><span class="lineNoCov">          0 :                     value = GetKernValueVersion1Fmt2(st1, subtableLen,</span>
+<span class="lineNum">     989 </span>            :                                                      aFirstGlyph, aSecondGlyph);
+<span class="lineNum">     990 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">     991 </span>            :                 case 3:
+<span class="lineNum">     992 </span><span class="lineNoCov">          0 :                     value = GetKernValueVersion1Fmt3(st1, subtableLen,</span>
+<span class="lineNum">     993 </span>            :                                                      aFirstGlyph, aSecondGlyph);
+<span class="lineNum">     994 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">     995 </span>            :                 default:
+<span class="lineNum">     996 </span>            :                     // TODO: implement support for other formats.
+<span class="lineNum">     997 </span>            :                     // Note that format 1 cannot be supported here,
+<span class="lineNum">     998 </span>            :                     // as it requires the full glyph array to run the FSM,
+<span class="lineNum">     999 </span>            :                     // not just the current glyph pair.
+<span class="lineNum">    1000 </span>            : #if DEBUG
+<span class="lineNum">    1001 </span>            :                     {
+<span class="lineNum">    1002 </span>            :                         char buf[1024];
+<span class="lineNum">    1003 </span><span class="lineNoCov">          0 :                         SprintfLiteral(buf, &quot;unknown kern subtable in %s: &quot;</span>
+<span class="lineNum">    1004 </span>            :                                             &quot;ver 0 format %d\n&quot;,
+<span class="lineNum">    1005 </span><span class="lineNoCov">          0 :                                        NS_ConvertUTF16toUTF8(mFont-&gt;GetName()).get(),</span>
+<span class="lineNum">    1006 </span><span class="lineNoCov">          0 :                                        format);</span>
+<span class="lineNum">    1007 </span><span class="lineNoCov">          0 :                         NS_WARNING(buf);</span>
+<span class="lineNum">    1008 </span>            :                     }
+<span class="lineNum">    1009 </span>            : #endif
+<span class="lineNum">    1010 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">    1011 </span>            :                 }
+<span class="lineNum">    1012 </span>            :             }
+<span class="lineNum">    1013 </span>            :         }
+<span class="lineNum">    1014 </span>            :     }
+<span class="lineNum">    1015 </span>            : 
+<span class="lineNum">    1016 </span><span class="lineNoCov">          0 :     if (value != 0) {</span>
+<span class="lineNum">    1017 </span><span class="lineNoCov">          0 :         return FloatToFixed(mFont-&gt;FUnitsToDevUnitsFactor() * value);</span>
+<span class="lineNum">    1018 </span>            :     }
+<span class="lineNum">    1019 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">    1020 </span>            : }
+<a name="1021"><span class="lineNum">    1021 </span>            : </a>
+<span class="lineNum">    1022 </span>            : static hb_position_t
+<span class="lineNum">    1023 </span><span class="lineNoCov">          0 : HBGetHKerning(hb_font_t *font, void *font_data,</span>
+<span class="lineNum">    1024 </span>            :               hb_codepoint_t first_glyph, hb_codepoint_t second_glyph,
+<span class="lineNum">    1025 </span>            :               void *user_data)
+<span class="lineNum">    1026 </span>            : {
+<span class="lineNum">    1027 </span>            :     const gfxHarfBuzzShaper::FontCallbackData *fcd =
+<span class="lineNum">    1028 </span><span class="lineNoCov">          0 :         static_cast&lt;const gfxHarfBuzzShaper::FontCallbackData*&gt;(font_data);</span>
+<span class="lineNum">    1029 </span><span class="lineNoCov">          0 :     return fcd-&gt;mShaper-&gt;GetHKerning(first_glyph, second_glyph);</span>
+<span class="lineNum">    1030 </span>            : }
+<span class="lineNum">    1031 </span>            : 
+<span class="lineNum">    1032 </span>            : /*
+<span class="lineNum">    1033 </span>            :  * HarfBuzz unicode property callbacks
+<span class="lineNum">    1034 </span>            :  */
+<a name="1035"><span class="lineNum">    1035 </span>            : </a>
+<span class="lineNum">    1036 </span>            : static hb_codepoint_t
+<span class="lineNum">    1037 </span><span class="lineNoCov">          0 : HBGetMirroring(hb_unicode_funcs_t *ufuncs, hb_codepoint_t aCh,</span>
+<span class="lineNum">    1038 </span>            :                void *user_data)
+<span class="lineNum">    1039 </span>            : {
+<span class="lineNum">    1040 </span><span class="lineNoCov">          0 :     return GetMirroredChar(aCh);</span>
+<span class="lineNum">    1041 </span>            : }
+<a name="1042"><span class="lineNum">    1042 </span>            : </a>
+<span class="lineNum">    1043 </span>            : static hb_unicode_general_category_t
+<span class="lineNum">    1044 </span><span class="lineCov">        265 : HBGetGeneralCategory(hb_unicode_funcs_t *ufuncs, hb_codepoint_t aCh,</span>
+<span class="lineNum">    1045 </span>            :                      void *user_data)
+<span class="lineNum">    1046 </span>            : {
+<span class="lineNum">    1047 </span><span class="lineCov">        265 :     return hb_unicode_general_category_t(GetGeneralCategory(aCh));</span>
+<span class="lineNum">    1048 </span>            : }
+<a name="1049"><span class="lineNum">    1049 </span>            : </a>
+<span class="lineNum">    1050 </span>            : static hb_script_t
+<span class="lineNum">    1051 </span><span class="lineNoCov">          0 : HBGetScript(hb_unicode_funcs_t *ufuncs, hb_codepoint_t aCh, void *user_data)</span>
+<span class="lineNum">    1052 </span>            : {
+<span class="lineNum">    1053 </span><span class="lineNoCov">          0 :     return hb_script_t(GetScriptTagForCode(GetScriptCode(aCh)));</span>
+<span class="lineNum">    1054 </span>            : }
+<a name="1055"><span class="lineNum">    1055 </span>            : </a>
+<span class="lineNum">    1056 </span>            : static hb_unicode_combining_class_t
+<span class="lineNum">    1057 </span><span class="lineNoCov">          0 : HBGetCombiningClass(hb_unicode_funcs_t *ufuncs, hb_codepoint_t aCh,</span>
+<span class="lineNum">    1058 </span>            :                     void *user_data)
+<span class="lineNum">    1059 </span>            : {
+<span class="lineNum">    1060 </span><span class="lineNoCov">          0 :     return hb_unicode_combining_class_t(GetCombiningClass(aCh));</span>
+<span class="lineNum">    1061 </span>            : }
+<span class="lineNum">    1062 </span>            : 
+<span class="lineNum">    1063 </span>            : // Hebrew presentation forms with dagesh, for characters 0x05D0..0x05EA;
+<span class="lineNum">    1064 </span>            : // note that some letters do not have a dagesh presForm encoded
+<span class="lineNum">    1065 </span>            : static const char16_t sDageshForms[0x05EA - 0x05D0 + 1] = {
+<span class="lineNum">    1066 </span>            :     0xFB30, // ALEF
+<span class="lineNum">    1067 </span>            :     0xFB31, // BET
+<span class="lineNum">    1068 </span>            :     0xFB32, // GIMEL
+<span class="lineNum">    1069 </span>            :     0xFB33, // DALET
+<span class="lineNum">    1070 </span>            :     0xFB34, // HE
+<span class="lineNum">    1071 </span>            :     0xFB35, // VAV
+<span class="lineNum">    1072 </span>            :     0xFB36, // ZAYIN
+<span class="lineNum">    1073 </span>            :     0, // HET
+<span class="lineNum">    1074 </span>            :     0xFB38, // TET
+<span class="lineNum">    1075 </span>            :     0xFB39, // YOD
+<span class="lineNum">    1076 </span>            :     0xFB3A, // FINAL KAF
+<span class="lineNum">    1077 </span>            :     0xFB3B, // KAF
+<span class="lineNum">    1078 </span>            :     0xFB3C, // LAMED
+<span class="lineNum">    1079 </span>            :     0, // FINAL MEM
+<span class="lineNum">    1080 </span>            :     0xFB3E, // MEM
+<span class="lineNum">    1081 </span>            :     0, // FINAL NUN
+<span class="lineNum">    1082 </span>            :     0xFB40, // NUN
+<span class="lineNum">    1083 </span>            :     0xFB41, // SAMEKH
+<span class="lineNum">    1084 </span>            :     0, // AYIN
+<span class="lineNum">    1085 </span>            :     0xFB43, // FINAL PE
+<span class="lineNum">    1086 </span>            :     0xFB44, // PE
+<span class="lineNum">    1087 </span>            :     0, // FINAL TSADI
+<span class="lineNum">    1088 </span>            :     0xFB46, // TSADI
+<span class="lineNum">    1089 </span>            :     0xFB47, // QOF
+<span class="lineNum">    1090 </span>            :     0xFB48, // RESH
+<span class="lineNum">    1091 </span>            :     0xFB49, // SHIN
+<span class="lineNum">    1092 </span>            :     0xFB4A // TAV
+<span class="lineNum">    1093 </span>            : };
+<a name="1094"><span class="lineNum">    1094 </span>            : </a>
+<span class="lineNum">    1095 </span>            : static hb_bool_t
+<span class="lineNum">    1096 </span><span class="lineNoCov">          0 : HBUnicodeCompose(hb_unicode_funcs_t *ufuncs,</span>
+<span class="lineNum">    1097 </span>            :                  hb_codepoint_t      a,
+<span class="lineNum">    1098 </span>            :                  hb_codepoint_t      b,
+<span class="lineNum">    1099 </span>            :                  hb_codepoint_t     *ab,
+<span class="lineNum">    1100 </span>            :                  void               *user_data)
+<span class="lineNum">    1101 </span>            : {
+<span class="lineNum">    1102 </span>            : #if MOZ_HB_SHAPER_USE_ICU_NORMALIZATION
+<span class="lineNum">    1103 </span>            : 
+<span class="lineNum">    1104 </span><span class="lineNoCov">          0 :     if (sNormalizer) {</span>
+<span class="lineNum">    1105 </span><span class="lineNoCov">          0 :         UChar32 ch = unorm2_composePair(sNormalizer, a, b);</span>
+<span class="lineNum">    1106 </span><span class="lineNoCov">          0 :         if (ch &gt;= 0) {</span>
+<span class="lineNum">    1107 </span><span class="lineNoCov">          0 :             *ab = ch;</span>
+<span class="lineNum">    1108 </span><span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">    1109 </span>            :         }
+<span class="lineNum">    1110 </span>            :     }
+<span class="lineNum">    1111 </span>            : 
+<span class="lineNum">    1112 </span>            : #else // no ICU available, use the old nsUnicodeNormalizer
+<span class="lineNum">    1113 </span>            : 
+<span class="lineNum">    1114 </span>            :     if (nsUnicodeNormalizer::Compose(a, b, ab)) {
+<span class="lineNum">    1115 </span>            :         return true;
+<span class="lineNum">    1116 </span>            :     }
+<span class="lineNum">    1117 </span>            : 
+<span class="lineNum">    1118 </span>            : #endif
+<span class="lineNum">    1119 </span>            : 
+<span class="lineNum">    1120 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">    1121 </span>            : }
+<a name="1122"><span class="lineNum">    1122 </span>            : </a>
+<span class="lineNum">    1123 </span>            : static hb_bool_t
+<span class="lineNum">    1124 </span><span class="lineNoCov">          0 : HBUnicodeDecompose(hb_unicode_funcs_t *ufuncs,</span>
+<span class="lineNum">    1125 </span>            :                    hb_codepoint_t      ab,
+<span class="lineNum">    1126 </span>            :                    hb_codepoint_t     *a,
+<span class="lineNum">    1127 </span>            :                    hb_codepoint_t     *b,
+<span class="lineNum">    1128 </span>            :                    void               *user_data)
+<span class="lineNum">    1129 </span>            : {
+<span class="lineNum">    1130 </span>            : #ifdef MOZ_WIDGET_ANDROID
+<span class="lineNum">    1131 </span>            :     // Hack for the SamsungDevanagari font, bug 1012365:
+<span class="lineNum">    1132 </span>            :     // support U+0972 by decomposing it.
+<span class="lineNum">    1133 </span>            :     if (ab == 0x0972) {
+<span class="lineNum">    1134 </span>            :         *a = 0x0905;
+<span class="lineNum">    1135 </span>            :         *b = 0x0945;
+<span class="lineNum">    1136 </span>            :         return true;
+<span class="lineNum">    1137 </span>            :     }
+<span class="lineNum">    1138 </span>            : #endif
+<span class="lineNum">    1139 </span>            : 
+<span class="lineNum">    1140 </span>            : #if MOZ_HB_SHAPER_USE_ICU_NORMALIZATION
+<span class="lineNum">    1141 </span>            : 
+<span class="lineNum">    1142 </span><span class="lineNoCov">          0 :     if (!sNormalizer) {</span>
+<span class="lineNum">    1143 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1144 </span>            :     }
+<span class="lineNum">    1145 </span>            : 
+<span class="lineNum">    1146 </span>            :     // Canonical decompositions are never more than two characters,
+<span class="lineNum">    1147 </span>            :     // or a maximum of 4 utf-16 code units.
+<span class="lineNum">    1148 </span><span class="lineNoCov">          0 :     const unsigned MAX_DECOMP_LENGTH = 4;</span>
+<span class="lineNum">    1149 </span>            : 
+<span class="lineNum">    1150 </span><span class="lineNoCov">          0 :     UErrorCode error = U_ZERO_ERROR;</span>
+<span class="lineNum">    1151 </span>            :     UChar decomp[MAX_DECOMP_LENGTH];
+<span class="lineNum">    1152 </span><span class="lineNoCov">          0 :     int32_t len = unorm2_getRawDecomposition(sNormalizer, ab, decomp,</span>
+<span class="lineNum">    1153 </span><span class="lineNoCov">          0 :                                              MAX_DECOMP_LENGTH, &amp;error);</span>
+<span class="lineNum">    1154 </span><span class="lineNoCov">          0 :     if (U_FAILURE(error) || len &lt; 0) {</span>
+<span class="lineNum">    1155 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1156 </span>            :     }
+<span class="lineNum">    1157 </span>            : 
+<span class="lineNum">    1158 </span><span class="lineNoCov">          0 :     UText text = UTEXT_INITIALIZER;</span>
+<span class="lineNum">    1159 </span><span class="lineNoCov">          0 :     utext_openUChars(&amp;text, decomp, len, &amp;error);</span>
+<span class="lineNum">    1160 </span><span class="lineNoCov">          0 :     NS_ASSERTION(U_SUCCESS(error), &quot;UText failure?&quot;);</span>
+<span class="lineNum">    1161 </span>            : 
+<span class="lineNum">    1162 </span><span class="lineNoCov">          0 :     UChar32 ch = UTEXT_NEXT32(&amp;text);</span>
+<span class="lineNum">    1163 </span><span class="lineNoCov">          0 :     if (ch != U_SENTINEL) {</span>
+<span class="lineNum">    1164 </span><span class="lineNoCov">          0 :         *a = ch;</span>
+<span class="lineNum">    1165 </span>            :     }
+<span class="lineNum">    1166 </span><span class="lineNoCov">          0 :     ch = UTEXT_NEXT32(&amp;text);</span>
+<span class="lineNum">    1167 </span><span class="lineNoCov">          0 :     if (ch != U_SENTINEL) {</span>
+<span class="lineNum">    1168 </span><span class="lineNoCov">          0 :         *b = ch;</span>
+<span class="lineNum">    1169 </span>            :     }
+<span class="lineNum">    1170 </span><span class="lineNoCov">          0 :     utext_close(&amp;text);</span>
+<span class="lineNum">    1171 </span>            : 
+<span class="lineNum">    1172 </span><span class="lineNoCov">          0 :     return *b != 0 || *a != ab;</span>
+<span class="lineNum">    1173 </span>            : 
+<span class="lineNum">    1174 </span>            : #else // no ICU available, use the old nsUnicodeNormalizer
+<span class="lineNum">    1175 </span>            : 
+<span class="lineNum">    1176 </span>            :     return nsUnicodeNormalizer::DecomposeNonRecursively(ab, a, b);
+<span class="lineNum">    1177 </span>            : 
+<span class="lineNum">    1178 </span>            : #endif
+<span class="lineNum">    1179 </span>            : }
+<a name="1180"><span class="lineNum">    1180 </span>            : </a>
+<span class="lineNum">    1181 </span>            : static void
+<span class="lineNum">    1182 </span><span class="lineNoCov">          0 : AddOpenTypeFeature(const uint32_t&amp; aTag, uint32_t&amp; aValue, void *aUserArg)</span>
+<span class="lineNum">    1183 </span>            : {
+<span class="lineNum">    1184 </span><span class="lineNoCov">          0 :     nsTArray&lt;hb_feature_t&gt;* features = static_cast&lt;nsTArray&lt;hb_feature_t&gt;*&gt; (aUserArg);</span>
+<span class="lineNum">    1185 </span>            : 
+<span class="lineNum">    1186 </span><span class="lineNoCov">          0 :     hb_feature_t feat = { 0, 0, 0, UINT_MAX };</span>
+<span class="lineNum">    1187 </span><span class="lineNoCov">          0 :     feat.tag = aTag;</span>
+<span class="lineNum">    1188 </span><span class="lineNoCov">          0 :     feat.value = aValue;</span>
+<span class="lineNum">    1189 </span><span class="lineNoCov">          0 :     features-&gt;AppendElement(feat);</span>
+<span class="lineNum">    1190 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">    1191 </span>            : 
+<span class="lineNum">    1192 </span>            : /*
+<span class="lineNum">    1193 </span>            :  * gfxFontShaper override to initialize the text run using HarfBuzz
+<span class="lineNum">    1194 </span>            :  */
+<span class="lineNum">    1195 </span>            : 
+<span class="lineNum">    1196 </span>            : static hb_font_funcs_t * sHBFontFuncs = nullptr;
+<span class="lineNum">    1197 </span>            : static hb_unicode_funcs_t * sHBUnicodeFuncs = nullptr;
+<span class="lineNum">    1198 </span><span class="lineCov">          3 : static const hb_script_t sMathScript =</span>
+<span class="lineNum">    1199 </span><span class="lineCov">          3 :     hb_ot_tag_to_script(HB_TAG('m','a','t','h'));</span>
+<a name="1200"><span class="lineNum">    1200 </span>            : </a>
+<span class="lineNum">    1201 </span>            : bool
+<span class="lineNum">    1202 </span><span class="lineCov">         34 : gfxHarfBuzzShaper::Initialize()</span>
+<span class="lineNum">    1203 </span>            : {
+<span class="lineNum">    1204 </span><span class="lineCov">         34 :     if (mInitialized) {</span>
+<span class="lineNum">    1205 </span><span class="lineCov">         32 :         return mHBFont != nullptr;</span>
+<span class="lineNum">    1206 </span>            :     }
+<span class="lineNum">    1207 </span><span class="lineCov">          2 :     mInitialized = true;</span>
+<span class="lineNum">    1208 </span><span class="lineCov">          2 :     mCallbackData.mShaper = this;</span>
+<span class="lineNum">    1209 </span>            : 
+<span class="lineNum">    1210 </span><span class="lineCov">          2 :     mUseFontGlyphWidths = mFont-&gt;ProvidesGlyphWidths();</span>
+<span class="lineNum">    1211 </span>            : 
+<span class="lineNum">    1212 </span><span class="lineCov">          2 :     if (!sHBFontFuncs) {</span>
+<span class="lineNum">    1213 </span>            :         // static function callback pointers, initialized by the first
+<span class="lineNum">    1214 </span>            :         // harfbuzz shaper used
+<span class="lineNum">    1215 </span><span class="lineCov">          2 :         sHBFontFuncs = hb_font_funcs_create();</span>
+<span class="lineNum">    1216 </span>            :         hb_font_funcs_set_nominal_glyph_func(sHBFontFuncs,
+<span class="lineNum">    1217 </span>            :                                              HBGetNominalGlyph,
+<span class="lineNum">    1218 </span><span class="lineCov">          2 :                                              nullptr, nullptr);</span>
+<span class="lineNum">    1219 </span>            :         hb_font_funcs_set_variation_glyph_func(sHBFontFuncs,
+<span class="lineNum">    1220 </span>            :                                                HBGetVariationGlyph,
+<span class="lineNum">    1221 </span><span class="lineCov">          2 :                                                nullptr, nullptr);</span>
+<span class="lineNum">    1222 </span>            :         hb_font_funcs_set_glyph_h_advance_func(sHBFontFuncs,
+<span class="lineNum">    1223 </span>            :                                                HBGetGlyphHAdvance,
+<span class="lineNum">    1224 </span><span class="lineCov">          2 :                                                nullptr, nullptr);</span>
+<span class="lineNum">    1225 </span>            :         hb_font_funcs_set_glyph_v_advance_func(sHBFontFuncs,
+<span class="lineNum">    1226 </span>            :                                                HBGetGlyphVAdvance,
+<span class="lineNum">    1227 </span><span class="lineCov">          2 :                                                nullptr, nullptr);</span>
+<span class="lineNum">    1228 </span>            :         hb_font_funcs_set_glyph_v_origin_func(sHBFontFuncs,
+<span class="lineNum">    1229 </span>            :                                               HBGetGlyphVOrigin,
+<span class="lineNum">    1230 </span><span class="lineCov">          2 :                                               nullptr, nullptr);</span>
+<span class="lineNum">    1231 </span>            :         hb_font_funcs_set_glyph_extents_func(sHBFontFuncs,
+<span class="lineNum">    1232 </span>            :                                              HBGetGlyphExtents,
+<span class="lineNum">    1233 </span><span class="lineCov">          2 :                                              nullptr, nullptr);</span>
+<span class="lineNum">    1234 </span>            :         hb_font_funcs_set_glyph_contour_point_func(sHBFontFuncs,
+<span class="lineNum">    1235 </span>            :                                                    HBGetContourPoint,
+<span class="lineNum">    1236 </span><span class="lineCov">          2 :                                                    nullptr, nullptr);</span>
+<span class="lineNum">    1237 </span>            :         hb_font_funcs_set_glyph_h_kerning_func(sHBFontFuncs,
+<span class="lineNum">    1238 </span>            :                                                HBGetHKerning,
+<span class="lineNum">    1239 </span><span class="lineCov">          2 :                                                nullptr, nullptr);</span>
+<span class="lineNum">    1240 </span>            : 
+<span class="lineNum">    1241 </span><span class="lineCov">          2 :         sHBUnicodeFuncs =</span>
+<span class="lineNum">    1242 </span><span class="lineCov">          2 :             hb_unicode_funcs_create(hb_unicode_funcs_get_empty());</span>
+<span class="lineNum">    1243 </span>            :         hb_unicode_funcs_set_mirroring_func(sHBUnicodeFuncs,
+<span class="lineNum">    1244 </span>            :                                             HBGetMirroring,
+<span class="lineNum">    1245 </span><span class="lineCov">          2 :                                             nullptr, nullptr);</span>
+<span class="lineNum">    1246 </span>            :         hb_unicode_funcs_set_script_func(sHBUnicodeFuncs, HBGetScript,
+<span class="lineNum">    1247 </span><span class="lineCov">          2 :                                          nullptr, nullptr);</span>
+<span class="lineNum">    1248 </span>            :         hb_unicode_funcs_set_general_category_func(sHBUnicodeFuncs,
+<span class="lineNum">    1249 </span>            :                                                    HBGetGeneralCategory,
+<span class="lineNum">    1250 </span><span class="lineCov">          2 :                                                    nullptr, nullptr);</span>
+<span class="lineNum">    1251 </span>            :         hb_unicode_funcs_set_combining_class_func(sHBUnicodeFuncs,
+<span class="lineNum">    1252 </span>            :                                                   HBGetCombiningClass,
+<span class="lineNum">    1253 </span><span class="lineCov">          2 :                                                   nullptr, nullptr);</span>
+<span class="lineNum">    1254 </span>            :         hb_unicode_funcs_set_compose_func(sHBUnicodeFuncs,
+<span class="lineNum">    1255 </span>            :                                           HBUnicodeCompose,
+<span class="lineNum">    1256 </span><span class="lineCov">          2 :                                           nullptr, nullptr);</span>
+<span class="lineNum">    1257 </span>            :         hb_unicode_funcs_set_decompose_func(sHBUnicodeFuncs,
+<span class="lineNum">    1258 </span>            :                                             HBUnicodeDecompose,
+<span class="lineNum">    1259 </span><span class="lineCov">          2 :                                             nullptr, nullptr);</span>
+<span class="lineNum">    1260 </span>            : 
+<span class="lineNum">    1261 </span>            : #if MOZ_HB_SHAPER_USE_ICU_NORMALIZATION
+<span class="lineNum">    1262 </span><span class="lineCov">          2 :         UErrorCode error = U_ZERO_ERROR;</span>
+<span class="lineNum">    1263 </span><span class="lineCov">          2 :         sNormalizer = unorm2_getNFCInstance(&amp;error);</span>
+<span class="lineNum">    1264 </span><span class="lineCov">          2 :         NS_ASSERTION(U_SUCCESS(error), &quot;failed to get ICU normalizer&quot;);</span>
+<span class="lineNum">    1265 </span>            : #endif
+<span class="lineNum">    1266 </span>            :     }
+<span class="lineNum">    1267 </span>            : 
+<span class="lineNum">    1268 </span><span class="lineCov">          2 :     gfxFontEntry *entry = mFont-&gt;GetFontEntry();</span>
+<span class="lineNum">    1269 </span><span class="lineCov">          2 :     if (!mUseFontGetGlyph) {</span>
+<span class="lineNum">    1270 </span>            :         // get the cmap table and find offset to our subtable
+<span class="lineNum">    1271 </span><span class="lineNoCov">          0 :         mCmapTable = entry-&gt;GetFontTable(TRUETYPE_TAG('c','m','a','p'));</span>
+<span class="lineNum">    1272 </span><span class="lineNoCov">          0 :         if (!mCmapTable) {</span>
+<span class="lineNum">    1273 </span><span class="lineNoCov">          0 :             NS_WARNING(&quot;failed to load cmap, glyphs will be missing&quot;);</span>
+<span class="lineNum">    1274 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">    1275 </span>            :         }
+<span class="lineNum">    1276 </span>            :         uint32_t len;
+<span class="lineNum">    1277 </span><span class="lineNoCov">          0 :         const uint8_t* data = (const uint8_t*)hb_blob_get_data(mCmapTable, &amp;len);</span>
+<span class="lineNum">    1278 </span>            :         bool symbol;
+<span class="lineNum">    1279 </span><span class="lineNoCov">          0 :         mCmapFormat = gfxFontUtils::</span>
+<span class="lineNum">    1280 </span><span class="lineNoCov">          0 :             FindPreferredSubtable(data, len,</span>
+<span class="lineNum">    1281 </span>            :                                   &amp;mSubtableOffset, &amp;mUVSTableOffset,
+<span class="lineNum">    1282 </span>            :                                   &amp;symbol);
+<span class="lineNum">    1283 </span><span class="lineNoCov">          0 :         if (mCmapFormat &lt;= 0) {</span>
+<span class="lineNum">    1284 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">    1285 </span>            :         }
+<span class="lineNum">    1286 </span>            :     }
+<span class="lineNum">    1287 </span>            : 
+<span class="lineNum">    1288 </span><span class="lineCov">          2 :     if (!mUseFontGlyphWidths) {</span>
+<span class="lineNum">    1289 </span>            :         // If font doesn't implement GetGlyphWidth, we will be reading
+<span class="lineNum">    1290 </span>            :         // the metrics table directly, so make sure we can load it.
+<span class="lineNum">    1291 </span><span class="lineNoCov">          0 :         if (!LoadHmtxTable()) {</span>
+<span class="lineNum">    1292 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">    1293 </span>            :         }
+<span class="lineNum">    1294 </span>            :     }
+<span class="lineNum">    1295 </span>            : 
+<span class="lineNum">    1296 </span><span class="lineCov">          2 :     mBuffer = hb_buffer_create();</span>
+<span class="lineNum">    1297 </span><span class="lineCov">          2 :     hb_buffer_set_unicode_funcs(mBuffer, sHBUnicodeFuncs);</span>
+<span class="lineNum">    1298 </span><span class="lineCov">          2 :     hb_buffer_set_cluster_level(mBuffer,</span>
+<span class="lineNum">    1299 </span><span class="lineCov">          2 :                                 HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);</span>
+<span class="lineNum">    1300 </span>            : 
+<span class="lineNum">    1301 </span><span class="lineCov">          2 :     mHBFont = hb_font_create(mHBFace);</span>
+<span class="lineNum">    1302 </span><span class="lineCov">          2 :     hb_font_set_funcs(mHBFont, sHBFontFuncs, &amp;mCallbackData, nullptr);</span>
+<span class="lineNum">    1303 </span><span class="lineCov">          2 :     hb_font_set_ppem(mHBFont, mFont-&gt;GetAdjustedSize(), mFont-&gt;GetAdjustedSize());</span>
+<span class="lineNum">    1304 </span><span class="lineCov">          2 :     uint32_t scale = FloatToFixed(mFont-&gt;GetAdjustedSize()); // 16.16 fixed-point</span>
+<span class="lineNum">    1305 </span><span class="lineCov">          2 :     hb_font_set_scale(mHBFont, scale, scale);</span>
+<span class="lineNum">    1306 </span>            : 
+<span class="lineNum">    1307 </span><span class="lineCov">          2 :     return true;</span>
+<span class="lineNum">    1308 </span>            : }
+<a name="1309"><span class="lineNum">    1309 </span>            : </a>
+<span class="lineNum">    1310 </span>            : bool
+<span class="lineNum">    1311 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::LoadHmtxTable()</span>
+<span class="lineNum">    1312 </span>            : {
+<span class="lineNum">    1313 </span>            :     // Read mNumLongHMetrics from metrics-head table without caching its
+<span class="lineNum">    1314 </span>            :     // blob, and preload/cache the metrics table.
+<span class="lineNum">    1315 </span><span class="lineNoCov">          0 :     gfxFontEntry *entry = mFont-&gt;GetFontEntry();</span>
+<span class="lineNum">    1316 </span><span class="lineNoCov">          0 :     gfxFontEntry::AutoTable hheaTable(entry, TRUETYPE_TAG('h','h','e','a'));</span>
+<span class="lineNum">    1317 </span><span class="lineNoCov">          0 :     if (hheaTable) {</span>
+<span class="lineNum">    1318 </span>            :         uint32_t len;
+<span class="lineNum">    1319 </span>            :         const MetricsHeader* hhea =
+<span class="lineNum">    1320 </span>            :             reinterpret_cast&lt;const MetricsHeader*&gt;
+<span class="lineNum">    1321 </span><span class="lineNoCov">          0 :             (hb_blob_get_data(hheaTable, &amp;len));</span>
+<span class="lineNum">    1322 </span><span class="lineNoCov">          0 :         if (len &gt;= sizeof(MetricsHeader)) {</span>
+<span class="lineNum">    1323 </span><span class="lineNoCov">          0 :             mNumLongHMetrics = hhea-&gt;numOfLongMetrics;</span>
+<span class="lineNum">    1324 </span><span class="lineNoCov">          0 :             if (mNumLongHMetrics &gt; 0 &amp;&amp;</span>
+<span class="lineNum">    1325 </span><span class="lineNoCov">          0 :                 int16_t(hhea-&gt;metricDataFormat) == 0) {</span>
+<span class="lineNum">    1326 </span>            :                 // no point reading metrics if number of entries is zero!
+<span class="lineNum">    1327 </span>            :                 // in that case, we won't be able to use this font
+<span class="lineNum">    1328 </span>            :                 // (this method will return FALSE below if mHmtxTable
+<span class="lineNum">    1329 </span>            :                 // is null)
+<span class="lineNum">    1330 </span><span class="lineNoCov">          0 :                 mHmtxTable = entry-&gt;GetFontTable(TRUETYPE_TAG('h','m','t','x'));</span>
+<span class="lineNum">    1331 </span><span class="lineNoCov">          0 :                 if (mHmtxTable &amp;&amp; hb_blob_get_length(mHmtxTable) &lt;</span>
+<span class="lineNum">    1332 </span><span class="lineNoCov">          0 :                     mNumLongHMetrics * sizeof(LongMetric)) {</span>
+<span class="lineNum">    1333 </span>            :                     // metrics table is not large enough for the claimed
+<span class="lineNum">    1334 </span>            :                     // number of entries: invalid, do not use.
+<span class="lineNum">    1335 </span><span class="lineNoCov">          0 :                     hb_blob_destroy(mHmtxTable);</span>
+<span class="lineNum">    1336 </span><span class="lineNoCov">          0 :                     mHmtxTable = nullptr;</span>
+<span class="lineNum">    1337 </span>            :                 }
+<span class="lineNum">    1338 </span>            :             }
+<span class="lineNum">    1339 </span>            :         }
+<span class="lineNum">    1340 </span>            :     }
+<span class="lineNum">    1341 </span><span class="lineNoCov">          0 :     if (!mHmtxTable) {</span>
+<span class="lineNum">    1342 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1343 </span>            :     }
+<span class="lineNum">    1344 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">    1345 </span>            : }
+<a name="1346"><span class="lineNum">    1346 </span>            : </a>
+<span class="lineNum">    1347 </span>            : bool
+<span class="lineNum">    1348 </span><span class="lineNoCov">          0 : gfxHarfBuzzShaper::InitializeVertical()</span>
+<span class="lineNum">    1349 </span>            : {
+<span class="lineNum">    1350 </span>            :     // We only try this once. If we don't have a mHmtxTable after that,
+<span class="lineNum">    1351 </span>            :     // this font can't handle vertical shaping, so return false.
+<span class="lineNum">    1352 </span><span class="lineNoCov">          0 :     if (mVerticalInitialized) {</span>
+<span class="lineNum">    1353 </span><span class="lineNoCov">          0 :         return mHmtxTable != nullptr;</span>
+<span class="lineNum">    1354 </span>            :     }
+<span class="lineNum">    1355 </span><span class="lineNoCov">          0 :     mVerticalInitialized = true;</span>
+<span class="lineNum">    1356 </span>            : 
+<span class="lineNum">    1357 </span><span class="lineNoCov">          0 :     if (!mHmtxTable) {</span>
+<span class="lineNum">    1358 </span><span class="lineNoCov">          0 :         if (!LoadHmtxTable()) {</span>
+<span class="lineNum">    1359 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">    1360 </span>            :         }
+<span class="lineNum">    1361 </span>            :     }
+<span class="lineNum">    1362 </span>            : 
+<span class="lineNum">    1363 </span>            :     // Load vertical metrics if present in the font; if not, we'll synthesize
+<span class="lineNum">    1364 </span>            :     // vertical glyph advances based on (horizontal) ascent/descent metrics.
+<span class="lineNum">    1365 </span><span class="lineNoCov">          0 :     gfxFontEntry *entry = mFont-&gt;GetFontEntry();</span>
+<span class="lineNum">    1366 </span><span class="lineNoCov">          0 :     gfxFontEntry::AutoTable vheaTable(entry, TRUETYPE_TAG('v','h','e','a'));</span>
+<span class="lineNum">    1367 </span><span class="lineNoCov">          0 :     if (vheaTable) {</span>
+<span class="lineNum">    1368 </span>            :         uint32_t len;
+<span class="lineNum">    1369 </span>            :         const MetricsHeader* vhea =
+<span class="lineNum">    1370 </span>            :             reinterpret_cast&lt;const MetricsHeader*&gt;
+<span class="lineNum">    1371 </span><span class="lineNoCov">          0 :             (hb_blob_get_data(vheaTable, &amp;len));</span>
+<span class="lineNum">    1372 </span><span class="lineNoCov">          0 :         if (len &gt;= sizeof(MetricsHeader)) {</span>
+<span class="lineNum">    1373 </span><span class="lineNoCov">          0 :             mNumLongVMetrics = vhea-&gt;numOfLongMetrics;</span>
+<span class="lineNum">    1374 </span>            :             gfxFontEntry::AutoTable
+<span class="lineNum">    1375 </span><span class="lineNoCov">          0 :                 maxpTable(entry, TRUETYPE_TAG('m','a','x','p'));</span>
+<span class="lineNum">    1376 </span><span class="lineNoCov">          0 :             int numGlyphs = -1; // invalid if we fail to read 'maxp'</span>
+<span class="lineNum">    1377 </span><span class="lineNoCov">          0 :             if (maxpTable &amp;&amp;</span>
+<span class="lineNum">    1378 </span><span class="lineNoCov">          0 :                 hb_blob_get_length(maxpTable) &gt;= sizeof(MaxpTableHeader)) {</span>
+<span class="lineNum">    1379 </span>            :                 const MaxpTableHeader* maxp =
+<span class="lineNum">    1380 </span>            :                     reinterpret_cast&lt;const MaxpTableHeader*&gt;
+<span class="lineNum">    1381 </span><span class="lineNoCov">          0 :                     (hb_blob_get_data(maxpTable, nullptr));</span>
+<span class="lineNum">    1382 </span><span class="lineNoCov">          0 :                 numGlyphs = uint16_t(maxp-&gt;numGlyphs);</span>
+<span class="lineNum">    1383 </span>            :             }
+<span class="lineNum">    1384 </span><span class="lineNoCov">          0 :             if (mNumLongVMetrics &gt; 0 &amp;&amp; mNumLongVMetrics &lt;= numGlyphs &amp;&amp;</span>
+<span class="lineNum">    1385 </span><span class="lineNoCov">          0 :                 int16_t(vhea-&gt;metricDataFormat) == 0) {</span>
+<span class="lineNum">    1386 </span><span class="lineNoCov">          0 :                 mVmtxTable = entry-&gt;GetFontTable(TRUETYPE_TAG('v','m','t','x'));</span>
+<span class="lineNum">    1387 </span><span class="lineNoCov">          0 :                 if (mVmtxTable &amp;&amp; hb_blob_get_length(mVmtxTable) &lt;</span>
+<span class="lineNum">    1388 </span><span class="lineNoCov">          0 :                     mNumLongVMetrics * sizeof(LongMetric) +</span>
+<span class="lineNum">    1389 </span><span class="lineNoCov">          0 :                     (numGlyphs - mNumLongVMetrics) * sizeof(int16_t)) {</span>
+<span class="lineNum">    1390 </span>            :                     // metrics table is not large enough for the claimed
+<span class="lineNum">    1391 </span>            :                     // number of entries: invalid, do not use.
+<span class="lineNum">    1392 </span><span class="lineNoCov">          0 :                     hb_blob_destroy(mVmtxTable);</span>
+<span class="lineNum">    1393 </span><span class="lineNoCov">          0 :                     mVmtxTable = nullptr;</span>
+<span class="lineNum">    1394 </span>            :                 }
+<span class="lineNum">    1395 </span>            :             }
+<span class="lineNum">    1396 </span>            :         }
+<span class="lineNum">    1397 </span>            :     }
+<span class="lineNum">    1398 </span>            : 
+<span class="lineNum">    1399 </span>            :     // For CFF fonts only, load a VORG table if present.
+<span class="lineNum">    1400 </span><span class="lineNoCov">          0 :     if (entry-&gt;HasFontTable(TRUETYPE_TAG('C','F','F',' '))) {</span>
+<span class="lineNum">    1401 </span><span class="lineNoCov">          0 :         mVORGTable = entry-&gt;GetFontTable(TRUETYPE_TAG('V','O','R','G'));</span>
+<span class="lineNum">    1402 </span><span class="lineNoCov">          0 :         if (mVORGTable) {</span>
+<span class="lineNum">    1403 </span>            :             uint32_t len;
+<span class="lineNum">    1404 </span>            :             const VORG* vorg =
+<span class="lineNum">    1405 </span><span class="lineNoCov">          0 :                 reinterpret_cast&lt;const VORG*&gt;(hb_blob_get_data(mVORGTable,</span>
+<span class="lineNum">    1406 </span><span class="lineNoCov">          0 :                                                                &amp;len));</span>
+<span class="lineNum">    1407 </span><span class="lineNoCov">          0 :             if (len &lt; sizeof(VORG) ||</span>
+<span class="lineNum">    1408 </span><span class="lineNoCov">          0 :                 uint16_t(vorg-&gt;majorVersion) != 1 ||</span>
+<span class="lineNum">    1409 </span><span class="lineNoCov">          0 :                 uint16_t(vorg-&gt;minorVersion) != 0 ||</span>
+<span class="lineNum">    1410 </span><span class="lineNoCov">          0 :                 len &lt; sizeof(VORG) + uint16_t(vorg-&gt;numVertOriginYMetrics) *</span>
+<span class="lineNum">    1411 </span>            :                               sizeof(VORGrec)) {
+<span class="lineNum">    1412 </span>            :                 // VORG table is an unknown version, or not large enough
+<span class="lineNum">    1413 </span>            :                 // to be valid -- discard it.
+<span class="lineNum">    1414 </span><span class="lineNoCov">          0 :                 NS_WARNING(&quot;discarding invalid VORG table&quot;);</span>
+<span class="lineNum">    1415 </span><span class="lineNoCov">          0 :                 hb_blob_destroy(mVORGTable);</span>
+<span class="lineNum">    1416 </span><span class="lineNoCov">          0 :                 mVORGTable = nullptr;</span>
+<span class="lineNum">    1417 </span>            :             }
+<span class="lineNum">    1418 </span>            :         }
+<span class="lineNum">    1419 </span>            :     }
+<span class="lineNum">    1420 </span>            : 
+<span class="lineNum">    1421 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">    1422 </span>            : }
+<a name="1423"><span class="lineNum">    1423 </span>            : </a>
+<span class="lineNum">    1424 </span>            : bool
+<span class="lineNum">    1425 </span><span class="lineCov">         34 : gfxHarfBuzzShaper::ShapeText(DrawTarget      *aDrawTarget,</span>
+<span class="lineNum">    1426 </span>            :                              const char16_t *aText,
+<span class="lineNum">    1427 </span>            :                              uint32_t         aOffset,
+<span class="lineNum">    1428 </span>            :                              uint32_t         aLength,
+<span class="lineNum">    1429 </span>            :                              Script           aScript,
+<span class="lineNum">    1430 </span>            :                              bool             aVertical,
+<span class="lineNum">    1431 </span>            :                              RoundingFlags    aRounding,
+<span class="lineNum">    1432 </span>            :                              gfxShapedText   *aShapedText)
+<span class="lineNum">    1433 </span>            : {
+<span class="lineNum">    1434 </span>            :     // some font back-ends require this in order to get proper hinted metrics
+<span class="lineNum">    1435 </span><span class="lineCov">         34 :     if (!mFont-&gt;SetupCairoFont(aDrawTarget)) {</span>
+<span class="lineNum">    1436 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1437 </span>            :     }
+<span class="lineNum">    1438 </span>            : 
+<span class="lineNum">    1439 </span><span class="lineCov">         34 :     mCallbackData.mDrawTarget = aDrawTarget;</span>
+<span class="lineNum">    1440 </span><span class="lineCov">         34 :     mUseVerticalPresentationForms = false;</span>
+<span class="lineNum">    1441 </span>            : 
+<span class="lineNum">    1442 </span><span class="lineCov">         34 :     if (!Initialize()) {</span>
+<span class="lineNum">    1443 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">    1444 </span>            :     }
+<span class="lineNum">    1445 </span>            : 
+<span class="lineNum">    1446 </span><span class="lineCov">         34 :     if (aVertical) {</span>
+<span class="lineNum">    1447 </span><span class="lineNoCov">          0 :         if (!InitializeVertical()) {</span>
+<span class="lineNum">    1448 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">    1449 </span>            :         }
+<span class="lineNum">    1450 </span><span class="lineNoCov">          0 :         if (!mFont-&gt;GetFontEntry()-&gt;</span>
+<span class="lineNum">    1451 </span><span class="lineNoCov">          0 :             SupportsOpenTypeFeature(aScript, HB_TAG('v','e','r','t'))) {</span>
+<span class="lineNum">    1452 </span><span class="lineNoCov">          0 :             mUseVerticalPresentationForms = true;</span>
+<span class="lineNum">    1453 </span>            :         }
+<span class="lineNum">    1454 </span>            :     }
+<span class="lineNum">    1455 </span>            : 
+<span class="lineNum">    1456 </span><span class="lineCov">         34 :     const gfxFontStyle *style = mFont-&gt;GetStyle();</span>
+<span class="lineNum">    1457 </span>            : 
+<span class="lineNum">    1458 </span>            :     // determine whether petite-caps falls back to small-caps
+<span class="lineNum">    1459 </span><span class="lineCov">         34 :     bool addSmallCaps = false;</span>
+<span class="lineNum">    1460 </span><span class="lineCov">         34 :     if (style-&gt;variantCaps != NS_FONT_VARIANT_CAPS_NORMAL) {</span>
+<span class="lineNum">    1461 </span><span class="lineNoCov">          0 :         switch (style-&gt;variantCaps) {</span>
+<span class="lineNum">    1462 </span>            :             case NS_FONT_VARIANT_CAPS_ALLPETITE:
+<span class="lineNum">    1463 </span>            :             case NS_FONT_VARIANT_CAPS_PETITECAPS:
+<span class="lineNum">    1464 </span>            :                 bool synLower, synUpper;
+<span class="lineNum">    1465 </span><span class="lineNoCov">          0 :                 mFont-&gt;SupportsVariantCaps(aScript, style-&gt;variantCaps,</span>
+<span class="lineNum">    1466 </span><span class="lineNoCov">          0 :                                            addSmallCaps, synLower, synUpper);</span>
+<span class="lineNum">    1467 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">    1468 </span>            :             default:
+<span class="lineNum">    1469 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">    1470 </span>            :         }
+<span class="lineNum">    1471 </span>            :     }
+<span class="lineNum">    1472 </span>            : 
+<span class="lineNum">    1473 </span><span class="lineCov">         34 :     gfxFontEntry *entry = mFont-&gt;GetFontEntry();</span>
+<span class="lineNum">    1474 </span>            : 
+<span class="lineNum">    1475 </span>            :     // insert any merged features into hb_feature array
+<span class="lineNum">    1476 </span><span class="lineCov">         68 :     AutoTArray&lt;hb_feature_t,20&gt; features;</span>
+<span class="lineNum">    1477 </span><span class="lineCov">        102 :     MergeFontFeatures(style,</span>
+<span class="lineNum">    1478 </span>            :                       entry-&gt;mFeatureSettings,
+<span class="lineNum">    1479 </span><span class="lineCov">         34 :                       aShapedText-&gt;DisableLigatures(),</span>
+<span class="lineNum">    1480 </span><span class="lineCov">         34 :                       entry-&gt;FamilyName(),</span>
+<span class="lineNum">    1481 </span>            :                       addSmallCaps,
+<span class="lineNum">    1482 </span>            :                       AddOpenTypeFeature,
+<span class="lineNum">    1483 </span><span class="lineCov">         34 :                       &amp;features);</span>
+<span class="lineNum">    1484 </span>            : 
+<span class="lineNum">    1485 </span><span class="lineCov">         34 :     bool isRightToLeft = aShapedText-&gt;IsRightToLeft();</span>
+<span class="lineNum">    1486 </span>            : 
+<span class="lineNum">    1487 </span><span class="lineCov">         68 :     hb_buffer_set_direction(mBuffer,</span>
+<span class="lineNum">    1488 </span>            :                             aVertical ? HB_DIRECTION_TTB :
+<span class="lineNum">    1489 </span><span class="lineCov">         34 :                                         (isRightToLeft ? HB_DIRECTION_RTL :</span>
+<span class="lineNum">    1490 </span><span class="lineCov">         34 :                                                          HB_DIRECTION_LTR));</span>
+<span class="lineNum">    1491 </span>            :     hb_script_t scriptTag;
+<span class="lineNum">    1492 </span><span class="lineCov">         34 :     if (aShapedText-&gt;GetFlags() &amp; gfx::ShapedTextFlags::TEXT_USE_MATH_SCRIPT) {</span>
+<span class="lineNum">    1493 </span><span class="lineNoCov">          0 :         scriptTag = sMathScript;</span>
+<span class="lineNum">    1494 </span>            :     } else {
+<span class="lineNum">    1495 </span><span class="lineCov">         34 :         scriptTag = GetHBScriptUsedForShaping(aScript);</span>
+<span class="lineNum">    1496 </span>            :     }
+<span class="lineNum">    1497 </span><span class="lineCov">         34 :     hb_buffer_set_script(mBuffer, scriptTag);</span>
+<span class="lineNum">    1498 </span>            : 
+<span class="lineNum">    1499 </span>            :     hb_language_t language;
+<span class="lineNum">    1500 </span><span class="lineCov">         34 :     if (style-&gt;languageOverride) {</span>
+<span class="lineNum">    1501 </span><span class="lineNoCov">          0 :         language = hb_ot_tag_to_language(style-&gt;languageOverride);</span>
+<span class="lineNum">    1502 </span><span class="lineCov">         34 :     } else if (entry-&gt;mLanguageOverride) {</span>
+<span class="lineNum">    1503 </span><span class="lineNoCov">          0 :         language = hb_ot_tag_to_language(entry-&gt;mLanguageOverride);</span>
+<span class="lineNum">    1504 </span><span class="lineCov">         34 :     } else if (style-&gt;explicitLanguage) {</span>
+<span class="lineNum">    1505 </span><span class="lineNoCov">          0 :         nsCString langString;</span>
+<span class="lineNum">    1506 </span><span class="lineNoCov">          0 :         style-&gt;language-&gt;ToUTF8String(langString);</span>
+<span class="lineNum">    1507 </span>            :         language =
+<span class="lineNum">    1508 </span><span class="lineNoCov">          0 :             hb_language_from_string(langString.get(), langString.Length());</span>
+<span class="lineNum">    1509 </span>            :     } else {
+<span class="lineNum">    1510 </span><span class="lineCov">         34 :         language = hb_ot_tag_to_language(HB_OT_TAG_DEFAULT_LANGUAGE);</span>
+<span class="lineNum">    1511 </span>            :     }
+<span class="lineNum">    1512 </span><span class="lineCov">         34 :     hb_buffer_set_language(mBuffer, language);</span>
+<span class="lineNum">    1513 </span>            : 
+<span class="lineNum">    1514 </span><span class="lineCov">         34 :     uint32_t length = aLength;</span>
+<span class="lineNum">    1515 </span><span class="lineCov">         34 :     hb_buffer_add_utf16(mBuffer,</span>
+<span class="lineNum">    1516 </span>            :                         reinterpret_cast&lt;const uint16_t*&gt;(aText),
+<span class="lineNum">    1517 </span><span class="lineCov">         34 :                         length, 0, length);</span>
+<span class="lineNum">    1518 </span>            : 
+<span class="lineNum">    1519 </span><span class="lineCov">         34 :     hb_shape(mHBFont, mBuffer, features.Elements(), features.Length());</span>
+<span class="lineNum">    1520 </span>            : 
+<span class="lineNum">    1521 </span><span class="lineCov">         34 :     if (isRightToLeft) {</span>
+<span class="lineNum">    1522 </span><span class="lineNoCov">          0 :         hb_buffer_reverse(mBuffer);</span>
+<span class="lineNum">    1523 </span>            :     }
+<span class="lineNum">    1524 </span>            : 
+<span class="lineNum">    1525 </span><span class="lineCov">         34 :     nsresult rv = SetGlyphsFromRun(aShapedText, aOffset, aLength,</span>
+<span class="lineNum">    1526 </span><span class="lineCov">         34 :                                    aText, aVertical, aRounding);</span>
+<span class="lineNum">    1527 </span>            : 
+<span class="lineNum">    1528 </span><span class="lineCov">         34 :     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),</span>
+<span class="lineNum">    1529 </span>            :                          &quot;failed to store glyphs into gfxShapedWord&quot;);
+<span class="lineNum">    1530 </span><span class="lineCov">         34 :     hb_buffer_clear_contents(mBuffer);</span>
+<span class="lineNum">    1531 </span>            : 
+<span class="lineNum">    1532 </span><span class="lineCov">         34 :     return NS_SUCCEEDED(rv);</span>
+<span class="lineNum">    1533 </span>            : }
+<span class="lineNum">    1534 </span>            : 
+<span class="lineNum">    1535 </span>            : #define SMALL_GLYPH_RUN 128 // some testing indicates that 90%+ of text runs
+<span class="lineNum">    1536 </span>            :                             // will fit without requiring separate allocation
+<span class="lineNum">    1537 </span>            :                             // for charToGlyphArray
+<a name="1538"><span class="lineNum">    1538 </span>            : </a>
+<span class="lineNum">    1539 </span>            : nsresult
+<span class="lineNum">    1540 </span><span class="lineCov">         34 : gfxHarfBuzzShaper::SetGlyphsFromRun(gfxShapedText  *aShapedText,</span>
+<span class="lineNum">    1541 </span>            :                                     uint32_t        aOffset,
+<span class="lineNum">    1542 </span>            :                                     uint32_t        aLength,
+<span class="lineNum">    1543 </span>            :                                     const char16_t *aText,
+<span class="lineNum">    1544 </span>            :                                     bool            aVertical,
+<span class="lineNum">    1545 </span>            :                                     RoundingFlags   aRounding)
+<span class="lineNum">    1546 </span>            : {
+<span class="lineNum">    1547 </span>            :     uint32_t numGlyphs;
+<span class="lineNum">    1548 </span><span class="lineCov">         34 :     const hb_glyph_info_t *ginfo = hb_buffer_get_glyph_infos(mBuffer, &amp;numGlyphs);</span>
+<span class="lineNum">    1549 </span><span class="lineCov">         34 :     if (numGlyphs == 0) {</span>
+<span class="lineNum">    1550 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">    1551 </span>            :     }
+<span class="lineNum">    1552 </span>            : 
+<span class="lineNum">    1553 </span><span class="lineCov">         68 :     AutoTArray&lt;gfxTextRun::DetailedGlyph,1&gt; detailedGlyphs;</span>
+<span class="lineNum">    1554 </span>            : 
+<span class="lineNum">    1555 </span><span class="lineCov">         34 :     uint32_t wordLength = aLength;</span>
+<span class="lineNum">    1556 </span>            :     static const int32_t NO_GLYPH = -1;
+<span class="lineNum">    1557 </span><span class="lineCov">         68 :     AutoTArray&lt;int32_t,SMALL_GLYPH_RUN&gt; charToGlyphArray;</span>
+<span class="lineNum">    1558 </span><span class="lineCov">         34 :     if (!charToGlyphArray.SetLength(wordLength, fallible)) {</span>
+<span class="lineNum">    1559 </span><span class="lineNoCov">          0 :         return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">    1560 </span>            :     }
+<span class="lineNum">    1561 </span>            : 
+<span class="lineNum">    1562 </span><span class="lineCov">         34 :     int32_t *charToGlyph = charToGlyphArray.Elements();</span>
+<span class="lineNum">    1563 </span><span class="lineCov">        299 :     for (uint32_t offset = 0; offset &lt; wordLength; ++offset) {</span>
+<span class="lineNum">    1564 </span><span class="lineCov">        265 :         charToGlyph[offset] = NO_GLYPH;</span>
+<span class="lineNum">    1565 </span>            :     }
+<span class="lineNum">    1566 </span>            : 
+<span class="lineNum">    1567 </span><span class="lineCov">        299 :     for (uint32_t i = 0; i &lt; numGlyphs; ++i) {</span>
+<span class="lineNum">    1568 </span><span class="lineCov">        265 :         uint32_t loc = ginfo[i].cluster;</span>
+<span class="lineNum">    1569 </span><span class="lineCov">        265 :         if (loc &lt; wordLength) {</span>
+<span class="lineNum">    1570 </span><span class="lineCov">        265 :             charToGlyph[loc] = i;</span>
+<span class="lineNum">    1571 </span>            :         }
+<span class="lineNum">    1572 </span>            :     }
+<span class="lineNum">    1573 </span>            : 
+<span class="lineNum">    1574 </span><span class="lineCov">         34 :     int32_t glyphStart = 0; // looking for a clump that starts at this glyph</span>
+<span class="lineNum">    1575 </span><span class="lineCov">         34 :     int32_t charStart = 0; // and this char index within the range of the run</span>
+<span class="lineNum">    1576 </span>            : 
+<span class="lineNum">    1577 </span>            :     bool roundI, roundB;
+<span class="lineNum">    1578 </span><span class="lineCov">         34 :     if (aVertical) {</span>
+<span class="lineNum">    1579 </span><span class="lineNoCov">          0 :         roundI = bool(aRounding &amp; RoundingFlags::kRoundY);</span>
+<span class="lineNum">    1580 </span><span class="lineNoCov">          0 :         roundB = bool(aRounding &amp; RoundingFlags::kRoundX);</span>
+<span class="lineNum">    1581 </span>            :     } else {
+<span class="lineNum">    1582 </span><span class="lineCov">         34 :         roundI = bool(aRounding &amp; RoundingFlags::kRoundX);</span>
+<span class="lineNum">    1583 </span><span class="lineCov">         34 :         roundB = bool(aRounding &amp; RoundingFlags::kRoundY);</span>
+<span class="lineNum">    1584 </span>            :     }
+<span class="lineNum">    1585 </span>            : 
+<span class="lineNum">    1586 </span><span class="lineCov">         34 :     int32_t appUnitsPerDevUnit = aShapedText-&gt;GetAppUnitsPerDevUnit();</span>
+<span class="lineNum">    1587 </span>            :     gfxShapedText::CompressedGlyph *charGlyphs =
+<span class="lineNum">    1588 </span><span class="lineCov">         34 :         aShapedText-&gt;GetCharacterGlyphs() + aOffset;</span>
+<span class="lineNum">    1589 </span>            : 
+<span class="lineNum">    1590 </span>            :     // factor to convert 16.16 fixed-point pixels to app units
+<span class="lineNum">    1591 </span>            :     // (only used if not rounding)
+<span class="lineNum">    1592 </span><span class="lineCov">         34 :     double hb2appUnits = FixedToFloat(aShapedText-&gt;GetAppUnitsPerDevUnit());</span>
+<span class="lineNum">    1593 </span>            : 
+<span class="lineNum">    1594 </span>            :     // Residual from rounding of previous advance, for use in rounding the
+<span class="lineNum">    1595 </span>            :     // subsequent offset or advance appropriately.  16.16 fixed-point
+<span class="lineNum">    1596 </span>            :     //
+<span class="lineNum">    1597 </span>            :     // When rounding, the goal is to make the distance between glyphs and
+<span class="lineNum">    1598 </span>            :     // their base glyph equal to the integral number of pixels closest to that
+<span class="lineNum">    1599 </span>            :     // suggested by that shaper.
+<span class="lineNum">    1600 </span>            :     // i.e. posInfo[n].x_advance - posInfo[n].x_offset + posInfo[n+1].x_offset
+<span class="lineNum">    1601 </span>            :     //
+<span class="lineNum">    1602 </span>            :     // The value of the residual is the part of the desired distance that has
+<span class="lineNum">    1603 </span>            :     // not been included in integer offsets.
+<span class="lineNum">    1604 </span><span class="lineCov">         34 :     hb_position_t residual = 0;</span>
+<span class="lineNum">    1605 </span>            : 
+<span class="lineNum">    1606 </span>            :     // keep track of y-position to set glyph offsets if needed
+<span class="lineNum">    1607 </span><span class="lineCov">         34 :     nscoord bPos = 0;</span>
+<span class="lineNum">    1608 </span>            : 
+<span class="lineNum">    1609 </span>            :     const hb_glyph_position_t *posInfo =
+<span class="lineNum">    1610 </span><span class="lineCov">         34 :         hb_buffer_get_glyph_positions(mBuffer, nullptr);</span>
+<span class="lineNum">    1611 </span>            : 
+<span class="lineNum">    1612 </span><span class="lineCov">        564 :     while (glyphStart &lt; int32_t(numGlyphs)) {</span>
+<span class="lineNum">    1613 </span>            : 
+<span class="lineNum">    1614 </span><span class="lineCov">        265 :         int32_t charEnd = ginfo[glyphStart].cluster;</span>
+<span class="lineNum">    1615 </span><span class="lineCov">        265 :         int32_t glyphEnd = glyphStart;</span>
+<span class="lineNum">    1616 </span><span class="lineCov">        265 :         int32_t charLimit = wordLength;</span>
+<span class="lineNum">    1617 </span><span class="lineCov">        265 :         while (charEnd &lt; charLimit) {</span>
+<span class="lineNum">    1618 </span>            :             // This is normally executed once for each iteration of the outer loop,
+<span class="lineNum">    1619 </span>            :             // but in unusual cases where the character/glyph association is complex,
+<span class="lineNum">    1620 </span>            :             // the initial character range might correspond to a non-contiguous
+<span class="lineNum">    1621 </span>            :             // glyph range with &quot;holes&quot; in it. If so, we will repeat this loop to
+<span class="lineNum">    1622 </span>            :             // extend the character range until we have a contiguous glyph sequence.
+<span class="lineNum">    1623 </span><span class="lineCov">        265 :             charEnd += 1;</span>
+<span class="lineNum">    1624 </span><span class="lineCov">        265 :             while (charEnd != charLimit &amp;&amp; charToGlyph[charEnd] == NO_GLYPH) {</span>
+<span class="lineNum">    1625 </span><span class="lineNoCov">          0 :                 charEnd += 1;</span>
+<span class="lineNum">    1626 </span>            :             }
+<span class="lineNum">    1627 </span>            : 
+<span class="lineNum">    1628 </span>            :             // find the maximum glyph index covered by the clump so far
+<span class="lineNum">    1629 </span><span class="lineCov">        530 :             for (int32_t i = charStart; i &lt; charEnd; ++i) {</span>
+<span class="lineNum">    1630 </span><span class="lineCov">        265 :                 if (charToGlyph[i] != NO_GLYPH) {</span>
+<span class="lineNum">    1631 </span><span class="lineCov">        265 :                     glyphEnd = std::max(glyphEnd, charToGlyph[i] + 1);</span>
+<span class="lineNum">    1632 </span>            :                     // update extent of glyph range
+<span class="lineNum">    1633 </span>            :                 }
+<span class="lineNum">    1634 </span>            :             }
+<span class="lineNum">    1635 </span>            : 
+<span class="lineNum">    1636 </span><span class="lineCov">        265 :             if (glyphEnd == glyphStart + 1) {</span>
+<span class="lineNum">    1637 </span>            :                 // for the common case of a single-glyph clump,
+<span class="lineNum">    1638 </span>            :                 // we can skip the following checks
+<span class="lineNum">    1639 </span><span class="lineCov">        265 :                 break;</span>
+<span class="lineNum">    1640 </span>            :             }
+<span class="lineNum">    1641 </span>            : 
+<span class="lineNum">    1642 </span><span class="lineNoCov">          0 :             if (glyphEnd == glyphStart) {</span>
+<span class="lineNum">    1643 </span>            :                 // no glyphs, try to extend the clump
+<span class="lineNum">    1644 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">    1645 </span>            :             }
+<span class="lineNum">    1646 </span>            : 
+<span class="lineNum">    1647 </span>            :             // check whether all glyphs in the range are associated with the characters
+<span class="lineNum">    1648 </span>            :             // in our clump; if not, we have a discontinuous range, and should extend it
+<span class="lineNum">    1649 </span>            :             // unless we've reached the end of the text
+<span class="lineNum">    1650 </span><span class="lineNoCov">          0 :             bool allGlyphsAreWithinCluster = true;</span>
+<span class="lineNum">    1651 </span><span class="lineNoCov">          0 :             for (int32_t i = glyphStart; i &lt; glyphEnd; ++i) {</span>
+<span class="lineNum">    1652 </span><span class="lineNoCov">          0 :                 int32_t glyphCharIndex = ginfo[i].cluster;</span>
+<span class="lineNum">    1653 </span><span class="lineNoCov">          0 :                 if (glyphCharIndex &lt; charStart || glyphCharIndex &gt;= charEnd) {</span>
+<span class="lineNum">    1654 </span><span class="lineNoCov">          0 :                     allGlyphsAreWithinCluster = false;</span>
+<span class="lineNum">    1655 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">    1656 </span>            :                 }
+<span class="lineNum">    1657 </span>            :             }
+<span class="lineNum">    1658 </span><span class="lineNoCov">          0 :             if (allGlyphsAreWithinCluster) {</span>
+<span class="lineNum">    1659 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">    1660 </span>            :             }
+<span class="lineNum">    1661 </span>            :         }
+<span class="lineNum">    1662 </span>            : 
+<span class="lineNum">    1663 </span><span class="lineCov">        265 :         NS_ASSERTION(glyphStart &lt; glyphEnd,</span>
+<span class="lineNum">    1664 </span>            :                      &quot;character/glyph clump contains no glyphs!&quot;);
+<span class="lineNum">    1665 </span><span class="lineCov">        265 :         NS_ASSERTION(charStart != charEnd,</span>
+<span class="lineNum">    1666 </span>            :                      &quot;character/glyph clump contains no characters!&quot;);
+<span class="lineNum">    1667 </span>            : 
+<span class="lineNum">    1668 </span>            :         // Now charStart..charEnd is a ligature clump, corresponding to glyphStart..glyphEnd;
+<span class="lineNum">    1669 </span>            :         // Set baseCharIndex to the char we'll actually attach the glyphs to (1st of ligature),
+<span class="lineNum">    1670 </span>            :         // and endCharIndex to the limit (position beyond the last char),
+<span class="lineNum">    1671 </span>            :         // adjusting for the offset of the stringRange relative to the textRun.
+<span class="lineNum">    1672 </span>            :         int32_t baseCharIndex, endCharIndex;
+<span class="lineNum">    1673 </span><span class="lineCov">        265 :         while (charEnd &lt; int32_t(wordLength) &amp;&amp; charToGlyph[charEnd] == NO_GLYPH)</span>
+<span class="lineNum">    1674 </span><span class="lineNoCov">          0 :             charEnd++;</span>
+<span class="lineNum">    1675 </span><span class="lineCov">        265 :         baseCharIndex = charStart;</span>
+<span class="lineNum">    1676 </span><span class="lineCov">        265 :         endCharIndex = charEnd;</span>
+<span class="lineNum">    1677 </span>            : 
+<span class="lineNum">    1678 </span>            :         // Then we check if the clump falls outside our actual string range;
+<span class="lineNum">    1679 </span>            :         // if so, just go to the next.
+<span class="lineNum">    1680 </span><span class="lineCov">        265 :         if (baseCharIndex &gt;= int32_t(wordLength)) {</span>
+<span class="lineNum">    1681 </span><span class="lineNoCov">          0 :             glyphStart = glyphEnd;</span>
+<span class="lineNum">    1682 </span><span class="lineNoCov">          0 :             charStart = charEnd;</span>
+<span class="lineNum">    1683 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">    1684 </span>            :         }
+<span class="lineNum">    1685 </span>            :         // Ensure we won't try to go beyond the valid length of the textRun's text
+<span class="lineNum">    1686 </span><span class="lineCov">        265 :         endCharIndex = std::min&lt;int32_t&gt;(endCharIndex, wordLength);</span>
+<span class="lineNum">    1687 </span>            : 
+<span class="lineNum">    1688 </span>            :         // Now we're ready to set the glyph info in the textRun
+<span class="lineNum">    1689 </span><span class="lineCov">        265 :         int32_t glyphsInClump = glyphEnd - glyphStart;</span>
+<span class="lineNum">    1690 </span>            : 
+<span class="lineNum">    1691 </span>            :         // Check for default-ignorable char that didn't get filtered, combined,
+<span class="lineNum">    1692 </span>            :         // etc by the shaping process, and remove from the run.
+<span class="lineNum">    1693 </span>            :         // (This may be done within harfbuzz eventually.)
+<span class="lineNum">    1694 </span><span class="lineCov">        530 :         if (glyphsInClump == 1 &amp;&amp; baseCharIndex + 1 == endCharIndex &amp;&amp;</span>
+<span class="lineNum">    1695 </span><span class="lineCov">        265 :             aShapedText-&gt;FilterIfIgnorable(aOffset + baseCharIndex,</span>
+<span class="lineNum">    1696 </span><span class="lineCov">        265 :                                            aText[baseCharIndex])) {</span>
+<span class="lineNum">    1697 </span><span class="lineNoCov">          0 :             glyphStart = glyphEnd;</span>
+<span class="lineNum">    1698 </span><span class="lineNoCov">          0 :             charStart = charEnd;</span>
+<span class="lineNum">    1699 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">    1700 </span>            :         }
+<span class="lineNum">    1701 </span>            : 
+<span class="lineNum">    1702 </span>            :         // HarfBuzz gives us physical x- and y-coordinates, but we will store
+<span class="lineNum">    1703 </span>            :         // them as logical inline- and block-direction values in the textrun.
+<span class="lineNum">    1704 </span>            : 
+<span class="lineNum">    1705 </span>            :         hb_position_t i_offset, i_advance; // inline-direction offset/advance
+<span class="lineNum">    1706 </span>            :         hb_position_t b_offset, b_advance; // block-direction offset/advance
+<span class="lineNum">    1707 </span><span class="lineCov">        265 :         if (aVertical) {</span>
+<span class="lineNum">    1708 </span><span class="lineNoCov">          0 :             i_offset = posInfo[glyphStart].y_offset;</span>
+<span class="lineNum">    1709 </span><span class="lineNoCov">          0 :             i_advance = posInfo[glyphStart].y_advance;</span>
+<span class="lineNum">    1710 </span><span class="lineNoCov">          0 :             b_offset = posInfo[glyphStart].x_offset;</span>
+<span class="lineNum">    1711 </span><span class="lineNoCov">          0 :             b_advance = posInfo[glyphStart].x_advance;</span>
+<span class="lineNum">    1712 </span>            :         } else {
+<span class="lineNum">    1713 </span><span class="lineCov">        265 :             i_offset = posInfo[glyphStart].x_offset;</span>
+<span class="lineNum">    1714 </span><span class="lineCov">        265 :             i_advance = posInfo[glyphStart].x_advance;</span>
+<span class="lineNum">    1715 </span><span class="lineCov">        265 :             b_offset = posInfo[glyphStart].y_offset;</span>
+<span class="lineNum">    1716 </span><span class="lineCov">        265 :             b_advance = posInfo[glyphStart].y_advance;</span>
+<span class="lineNum">    1717 </span>            :         }
+<span class="lineNum">    1718 </span>            : 
+<span class="lineNum">    1719 </span>            :         nscoord iOffset, advance;
+<span class="lineNum">    1720 </span><span class="lineCov">        265 :         if (roundI) {</span>
+<span class="lineNum">    1721 </span><span class="lineCov">        265 :             iOffset =</span>
+<span class="lineNum">    1722 </span><span class="lineCov">        265 :                 appUnitsPerDevUnit * FixedToIntRound(i_offset + residual);</span>
+<span class="lineNum">    1723 </span>            :             // Desired distance from the base glyph to the next reference point.
+<span class="lineNum">    1724 </span><span class="lineCov">        265 :             hb_position_t width = i_advance - i_offset;</span>
+<span class="lineNum">    1725 </span><span class="lineCov">        265 :             int intWidth = FixedToIntRound(width);</span>
+<span class="lineNum">    1726 </span><span class="lineCov">        265 :             residual = width - FloatToFixed(intWidth);</span>
+<span class="lineNum">    1727 </span><span class="lineCov">        265 :             advance = appUnitsPerDevUnit * intWidth + iOffset;</span>
+<span class="lineNum">    1728 </span>            :         } else {
+<span class="lineNum">    1729 </span><span class="lineNoCov">          0 :             iOffset = floor(hb2appUnits * i_offset + 0.5);</span>
+<span class="lineNum">    1730 </span><span class="lineNoCov">          0 :             advance = floor(hb2appUnits * i_advance + 0.5);</span>
+<span class="lineNum">    1731 </span>            :         }
+<span class="lineNum">    1732 </span>            :         // Check if it's a simple one-to-one mapping
+<span class="lineNum">    1733 </span><span class="lineCov">        530 :         if (glyphsInClump == 1 &amp;&amp;</span>
+<span class="lineNum">    1734 </span><span class="lineCov">        530 :             gfxTextRun::CompressedGlyph::IsSimpleGlyphID(ginfo[glyphStart].codepoint) &amp;&amp;</span>
+<span class="lineNum">    1735 </span><span class="lineCov">        530 :             gfxTextRun::CompressedGlyph::IsSimpleAdvance(advance) &amp;&amp;</span>
+<span class="lineNum">    1736 </span><span class="lineCov">        530 :             charGlyphs[baseCharIndex].IsClusterStart() &amp;&amp;</span>
+<span class="lineNum">    1737 </span><span class="lineCov">        265 :             iOffset == 0 &amp;&amp; b_offset == 0 &amp;&amp;</span>
+<span class="lineNum">    1738 </span><span class="lineCov">        530 :             b_advance == 0 &amp;&amp; bPos == 0)</span>
+<span class="lineNum">    1739 </span>            :         {
+<span class="lineNum">    1740 </span><span class="lineCov">        265 :             charGlyphs[baseCharIndex].SetSimpleGlyph(advance,</span>
+<span class="lineNum">    1741 </span><span class="lineCov">        530 :                                                      ginfo[glyphStart].codepoint);</span>
+<span class="lineNum">    1742 </span>            :         } else {
+<span class="lineNum">    1743 </span>            :             // Collect all glyphs in a list to be assigned to the first char;
+<span class="lineNum">    1744 </span>            :             // there must be at least one in the clump, and we already measured
+<span class="lineNum">    1745 </span>            :             // its advance, hence the placement of the loop-exit test and the
+<span class="lineNum">    1746 </span>            :             // measurement of the next glyph.
+<span class="lineNum">    1747 </span>            :             // For vertical orientation, we add a &quot;base offset&quot; to compensate
+<span class="lineNum">    1748 </span>            :             // for the positioning within the cluster being based on horizontal
+<span class="lineNum">    1749 </span>            :             // glyph origin/offset.
+<span class="lineNum">    1750 </span>            :             hb_position_t baseIOffset, baseBOffset;
+<span class="lineNum">    1751 </span><span class="lineNoCov">          0 :             if (aVertical) {</span>
+<span class="lineNum">    1752 </span><span class="lineNoCov">          0 :                 baseIOffset = 2 * (i_offset - i_advance);</span>
+<span class="lineNum">    1753 </span><span class="lineNoCov">          0 :                 baseBOffset = GetGlyphHAdvance(ginfo[glyphStart].codepoint);</span>
+<span class="lineNum">    1754 </span>            :             }
+<span class="lineNum">    1755 </span>            :             while (1) {
+<span class="lineNum">    1756 </span>            :                 gfxTextRun::DetailedGlyph* details =
+<span class="lineNum">    1757 </span><span class="lineNoCov">          0 :                     detailedGlyphs.AppendElement();</span>
+<span class="lineNum">    1758 </span><span class="lineNoCov">          0 :                 details-&gt;mGlyphID = ginfo[glyphStart].codepoint;</span>
+<span class="lineNum">    1759 </span>            : 
+<span class="lineNum">    1760 </span><span class="lineNoCov">          0 :                 details-&gt;mXOffset = iOffset;</span>
+<span class="lineNum">    1761 </span><span class="lineNoCov">          0 :                 details-&gt;mAdvance = advance;</span>
+<span class="lineNum">    1762 </span>            : 
+<span class="lineNum">    1763 </span><span class="lineNoCov">          0 :                 details-&gt;mYOffset = bPos -</span>
+<span class="lineNum">    1764 </span><span class="lineNoCov">          0 :                     (roundB ? appUnitsPerDevUnit * FixedToIntRound(b_offset)</span>
+<span class="lineNum">    1765 </span><span class="lineNoCov">          0 :                      : floor(hb2appUnits * b_offset + 0.5));</span>
+<span class="lineNum">    1766 </span>            : 
+<span class="lineNum">    1767 </span><span class="lineNoCov">          0 :                 if (b_advance != 0) {</span>
+<span class="lineNum">    1768 </span><span class="lineNoCov">          0 :                     bPos -=</span>
+<span class="lineNum">    1769 </span><span class="lineNoCov">          0 :                         roundB ? appUnitsPerDevUnit * FixedToIntRound(b_advance)</span>
+<span class="lineNum">    1770 </span><span class="lineNoCov">          0 :                         : floor(hb2appUnits * b_advance + 0.5);</span>
+<span class="lineNum">    1771 </span>            :                 }
+<span class="lineNum">    1772 </span><span class="lineNoCov">          0 :                 if (++glyphStart &gt;= glyphEnd) {</span>
+<span class="lineNum">    1773 </span><span class="lineNoCov">          0 :                     break;</span>
+<span class="lineNum">    1774 </span>            :                 }
+<span class="lineNum">    1775 </span>            : 
+<span class="lineNum">    1776 </span><span class="lineNoCov">          0 :                 if (aVertical) {</span>
+<span class="lineNum">    1777 </span><span class="lineNoCov">          0 :                     i_offset = baseIOffset - posInfo[glyphStart].y_offset;</span>
+<span class="lineNum">    1778 </span><span class="lineNoCov">          0 :                     i_advance = posInfo[glyphStart].y_advance;</span>
+<span class="lineNum">    1779 </span><span class="lineNoCov">          0 :                     b_offset = baseBOffset - posInfo[glyphStart].x_offset;</span>
+<span class="lineNum">    1780 </span><span class="lineNoCov">          0 :                     b_advance = posInfo[glyphStart].x_advance;</span>
+<span class="lineNum">    1781 </span>            :                 } else {
+<span class="lineNum">    1782 </span><span class="lineNoCov">          0 :                     i_offset = posInfo[glyphStart].x_offset;</span>
+<span class="lineNum">    1783 </span><span class="lineNoCov">          0 :                     i_advance = posInfo[glyphStart].x_advance;</span>
+<span class="lineNum">    1784 </span><span class="lineNoCov">          0 :                     b_offset = posInfo[glyphStart].y_offset;</span>
+<span class="lineNum">    1785 </span><span class="lineNoCov">          0 :                     b_advance = posInfo[glyphStart].y_advance;</span>
+<span class="lineNum">    1786 </span>            :                 }
+<span class="lineNum">    1787 </span>            : 
+<span class="lineNum">    1788 </span><span class="lineNoCov">          0 :                 if (roundI) {</span>
+<span class="lineNum">    1789 </span><span class="lineNoCov">          0 :                     iOffset = appUnitsPerDevUnit *</span>
+<span class="lineNum">    1790 </span><span class="lineNoCov">          0 :                         FixedToIntRound(i_offset + residual);</span>
+<span class="lineNum">    1791 </span>            :                     // Desired distance to the next reference point.  The
+<span class="lineNum">    1792 </span>            :                     // residual is considered here, and includes the residual
+<span class="lineNum">    1793 </span>            :                     // from the base glyph offset and subsequent advances, so
+<span class="lineNum">    1794 </span>            :                     // that the distance from the base glyph is optimized
+<span class="lineNum">    1795 </span>            :                     // rather than the distance from combining marks.
+<span class="lineNum">    1796 </span><span class="lineNoCov">          0 :                     i_advance += residual;</span>
+<span class="lineNum">    1797 </span><span class="lineNoCov">          0 :                     int intAdvance = FixedToIntRound(i_advance);</span>
+<span class="lineNum">    1798 </span><span class="lineNoCov">          0 :                     residual = i_advance - FloatToFixed(intAdvance);</span>
+<span class="lineNum">    1799 </span><span class="lineNoCov">          0 :                     advance = appUnitsPerDevUnit * intAdvance;</span>
+<span class="lineNum">    1800 </span>            :                 } else {
+<span class="lineNum">    1801 </span><span class="lineNoCov">          0 :                     iOffset = floor(hb2appUnits * i_offset + 0.5);</span>
+<span class="lineNum">    1802 </span><span class="lineNoCov">          0 :                     advance = floor(hb2appUnits * i_advance + 0.5);</span>
+<span class="lineNum">    1803 </span>            :                 }
+<span class="lineNum">    1804 </span><span class="lineNoCov">          0 :             }</span>
+<span class="lineNum">    1805 </span>            : 
+<span class="lineNum">    1806 </span><span class="lineNoCov">          0 :             gfxShapedText::CompressedGlyph g;</span>
+<span class="lineNum">    1807 </span><span class="lineNoCov">          0 :             g.SetComplex(charGlyphs[baseCharIndex].IsClusterStart(),</span>
+<span class="lineNum">    1808 </span><span class="lineNoCov">          0 :                          true, detailedGlyphs.Length());</span>
+<span class="lineNum">    1809 </span><span class="lineNoCov">          0 :             aShapedText-&gt;SetGlyphs(aOffset + baseCharIndex,</span>
+<span class="lineNum">    1810 </span><span class="lineNoCov">          0 :                                    g, detailedGlyphs.Elements());</span>
+<span class="lineNum">    1811 </span>            : 
+<span class="lineNum">    1812 </span><span class="lineNoCov">          0 :             detailedGlyphs.Clear();</span>
+<span class="lineNum">    1813 </span>            :         }
+<span class="lineNum">    1814 </span>            : 
+<span class="lineNum">    1815 </span>            :         // the rest of the chars in the group are ligature continuations,
+<span class="lineNum">    1816 </span>            :         // no associated glyphs
+<span class="lineNum">    1817 </span><span class="lineCov">        265 :         while (++baseCharIndex != endCharIndex &amp;&amp;</span>
+<span class="lineNum">    1818 </span><span class="lineNoCov">          0 :                baseCharIndex &lt; int32_t(wordLength)) {</span>
+<span class="lineNum">    1819 </span><span class="lineNoCov">          0 :             gfxShapedText::CompressedGlyph &amp;g = charGlyphs[baseCharIndex];</span>
+<span class="lineNum">    1820 </span><span class="lineNoCov">          0 :             NS_ASSERTION(!g.IsSimpleGlyph(), &quot;overwriting a simple glyph&quot;);</span>
+<span class="lineNum">    1821 </span><span class="lineNoCov">          0 :             g.SetComplex(g.IsClusterStart(), false, 0);</span>
+<span class="lineNum">    1822 </span>            :         }
+<span class="lineNum">    1823 </span>            : 
+<span class="lineNum">    1824 </span><span class="lineCov">        265 :         glyphStart = glyphEnd;</span>
+<span class="lineNum">    1825 </span><span class="lineCov">        265 :         charStart = charEnd;</span>
+<span class="lineNum">    1826 </span>            :     }
+<span class="lineNum">    1827 </span>            : 
+<span class="lineNum">    1828 </span><span class="lineCov">         34 :     return NS_OK;</span>
+<span class="lineNum">    1829 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

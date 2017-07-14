@@ -1,0 +1,376 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - xpcom/threads/TaskDispatcher.h</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">xpcom/threads</a> - TaskDispatcher.h<span style="font-size: 80%;"> (source / <a href="TaskDispatcher.h.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">90</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">23</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #if !defined(TaskDispatcher_h_)
+<span class="lineNum">       8 </span>            : #define TaskDispatcher_h_
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/AbstractThread.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/Maybe.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/UniquePtr.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/Unused.h&quot;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #include &quot;nsISupportsImpl.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;nsTArray.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      18 </span>            : 
+<span class="lineNum">      19 </span>            : #include &lt;queue&gt;
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : namespace mozilla {
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : /*
+<span class="lineNum">      24 </span>            :  * A classic approach to cross-thread communication is to dispatch asynchronous
+<span class="lineNum">      25 </span>            :  * runnables to perform updates on other threads. This generally works well, but
+<span class="lineNum">      26 </span>            :  * there are sometimes reasons why we might want to delay the actual dispatch of
+<span class="lineNum">      27 </span>            :  * these tasks until a specified moment. At present, this is primarily useful to
+<span class="lineNum">      28 </span>            :  * ensure that mirrored state gets updated atomically - but there may be other
+<span class="lineNum">      29 </span>            :  * applications as well.
+<span class="lineNum">      30 </span>            :  *
+<span class="lineNum">      31 </span>            :  * TaskDispatcher is a general abstract class that accepts tasks and dispatches
+<span class="lineNum">      32 </span>            :  * them at some later point. These groups of tasks are per-target-thread, and
+<span class="lineNum">      33 </span>            :  * contain separate queues for several kinds of tasks (see comments  below). - &quot;state change tasks&quot; (which
+<span class="lineNum">      34 </span>            :  * run first, and are intended to be used to update the value held by mirrors),
+<span class="lineNum">      35 </span>            :  * and regular tasks, which are other arbitrary operations that the are gated
+<span class="lineNum">      36 </span>            :  * to run after all the state changes have completed.
+<span class="lineNum">      37 </span>            :  */
+<span class="lineNum">      38 </span>            : class TaskDispatcher
+<a name="39"><span class="lineNum">      39 </span>            : {</a>
+<a name="40"><span class="lineNum">      40 </span>            : public:</a>
+<span class="lineNum">      41 </span><span class="lineNoCov">          0 :   TaskDispatcher() {}</span>
+<span class="lineNum">      42 </span><span class="lineNoCov">          0 :   virtual ~TaskDispatcher() {}</span>
+<span class="lineNum">      43 </span>            : 
+<span class="lineNum">      44 </span>            :   // Direct tasks are run directly (rather than dispatched asynchronously) when
+<span class="lineNum">      45 </span>            :   // the tail dispatcher fires. A direct task may cause other tasks to be added
+<span class="lineNum">      46 </span>            :   // to the tail dispatcher.
+<span class="lineNum">      47 </span>            :   virtual void AddDirectTask(already_AddRefed&lt;nsIRunnable&gt; aRunnable) = 0;
+<span class="lineNum">      48 </span>            : 
+<span class="lineNum">      49 </span>            :   // State change tasks are dispatched asynchronously always run before regular
+<span class="lineNum">      50 </span>            :   // tasks. They are intended to be used to update the value held by mirrors
+<span class="lineNum">      51 </span>            :   // before any other dispatched tasks are run on the target thread.
+<span class="lineNum">      52 </span>            :   virtual void AddStateChangeTask(AbstractThread* aThread,
+<span class="lineNum">      53 </span>            :                                   already_AddRefed&lt;nsIRunnable&gt; aRunnable) = 0;
+<span class="lineNum">      54 </span>            : 
+<span class="lineNum">      55 </span>            :   // Regular tasks are dispatched asynchronously, and run after state change
+<span class="lineNum">      56 </span>            :   // tasks.
+<span class="lineNum">      57 </span>            :   virtual void AddTask(AbstractThread* aThread,
+<span class="lineNum">      58 </span>            :                        already_AddRefed&lt;nsIRunnable&gt; aRunnable,
+<span class="lineNum">      59 </span>            :                        AbstractThread::DispatchFailureHandling aFailureHandling = AbstractThread::AssertDispatchSuccess) = 0;
+<span class="lineNum">      60 </span>            : 
+<span class="lineNum">      61 </span>            :   virtual void DispatchTasksFor(AbstractThread* aThread) = 0;
+<span class="lineNum">      62 </span>            :   virtual bool HasTasksFor(AbstractThread* aThread) = 0;
+<span class="lineNum">      63 </span>            :   virtual void DrainDirectTasks() = 0;
+<span class="lineNum">      64 </span>            : };
+<span class="lineNum">      65 </span>            : 
+<span class="lineNum">      66 </span>            : /*
+<span class="lineNum">      67 </span>            :  * AutoTaskDispatcher is a stack-scoped TaskDispatcher implementation that fires
+<span class="lineNum">      68 </span>            :  * its queued tasks when it is popped off the stack.
+<span class="lineNum">      69 </span>            :  */
+<span class="lineNum">      70 </span>            : class AutoTaskDispatcher : public TaskDispatcher
+<a name="71"><span class="lineNum">      71 </span>            : {</a>
+<span class="lineNum">      72 </span>            : public:
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :   explicit AutoTaskDispatcher(bool aIsTailDispatcher = false)</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :     : mIsTailDispatcher(aIsTailDispatcher)</span>
+<a name="75"><span class="lineNum">      75 </span><span class="lineNoCov">          0 :   {}</span></a>
+<span class="lineNum">      76 </span>            : 
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :   ~AutoTaskDispatcher()</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :   {</span>
+<span class="lineNum">      79 </span>            :     // Given that direct tasks may trigger other code that uses the tail
+<span class="lineNum">      80 </span>            :     // dispatcher, it's better to avoid processing them in the tail dispatcher's
+<span class="lineNum">      81 </span>            :     // destructor. So we require TailDispatchers to manually invoke
+<span class="lineNum">      82 </span>            :     // DrainDirectTasks before the AutoTaskDispatcher gets destroyed. In truth,
+<span class="lineNum">      83 </span>            :     // this is only necessary in the case where this AutoTaskDispatcher can be
+<span class="lineNum">      84 </span>            :     // accessed by the direct tasks it dispatches (true for TailDispatchers, but
+<span class="lineNum">      85 </span>            :     // potentially not true for other hypothetical AutoTaskDispatchers). Feel
+<span class="lineNum">      86 </span>            :     // free to loosen this restriction to apply only to mIsTailDispatcher if a
+<span class="lineNum">      87 </span>            :     // use-case requires it.
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(!HaveDirectTasks());</span>
+<span class="lineNum">      89 </span>            : 
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :     for (size_t i = 0; i &lt; mTaskGroups.Length(); ++i) {</span>
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :       DispatchTaskGroup(Move(mTaskGroups[i]));</span>
+<span class="lineNum">      92 </span>            :     }
+<a name="93"><span class="lineNum">      93 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">      94 </span>            : 
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :   bool HaveDirectTasks() const</span>
+<span class="lineNum">      96 </span>            :   {
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :     return mDirectTasks.isSome() &amp;&amp; !mDirectTasks-&gt;empty();</span>
+<a name="98"><span class="lineNum">      98 </span>            :   }</a>
+<span class="lineNum">      99 </span>            : 
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :   void DrainDirectTasks() override</span>
+<span class="lineNum">     101 </span>            :   {
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :     while (HaveDirectTasks()) {</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :       nsCOMPtr&lt;nsIRunnable&gt; r = mDirectTasks-&gt;front();</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :       mDirectTasks-&gt;pop();</span>
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :       r-&gt;Run();</span>
+<span class="lineNum">     106 </span>            :     }
+<a name="107"><span class="lineNum">     107 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :   void AddDirectTask(already_AddRefed&lt;nsIRunnable&gt; aRunnable) override</span>
+<span class="lineNum">     110 </span>            :   {
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :     if (mDirectTasks.isNothing()) {</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :       mDirectTasks.emplace();</span>
+<span class="lineNum">     113 </span>            :     }
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :     mDirectTasks-&gt;push(Move(aRunnable));</span>
+<a name="115"><span class="lineNum">     115 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     116 </span>            : 
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :   void AddStateChangeTask(AbstractThread* aThread,</span>
+<span class="lineNum">     118 </span>            :                           already_AddRefed&lt;nsIRunnable&gt; aRunnable) override
+<span class="lineNum">     119 </span>            :   {
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIRunnable&gt; r = aRunnable;</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :     MOZ_RELEASE_ASSERT(r);</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :     EnsureTaskGroup(aThread).mStateChangeTasks.AppendElement(r.forget());</span>
+<a name="123"><span class="lineNum">     123 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     124 </span>            : 
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :   void AddTask(AbstractThread* aThread,</span>
+<span class="lineNum">     126 </span>            :                already_AddRefed&lt;nsIRunnable&gt; aRunnable,
+<span class="lineNum">     127 </span>            :                AbstractThread::DispatchFailureHandling aFailureHandling) override
+<span class="lineNum">     128 </span>            :   {
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIRunnable&gt; r = aRunnable;</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :     MOZ_RELEASE_ASSERT(r);</span>
+<span class="lineNum">     131 </span>            :     // To preserve the event order, we need to append a new group if the last
+<span class="lineNum">     132 </span>            :     // group is not targeted for |aThread|.
+<span class="lineNum">     133 </span>            :     // See https://bugzilla.mozilla.org/show_bug.cgi?id=1318226&amp;mark=0-3#c0
+<span class="lineNum">     134 </span>            :     // for the details of the issue.
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :     if (mTaskGroups.Length() == 0 || mTaskGroups.LastElement()-&gt;mThread != aThread) {</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :       mTaskGroups.AppendElement(new PerThreadTaskGroup(aThread));</span>
+<span class="lineNum">     137 </span>            :     }
+<span class="lineNum">     138 </span>            : 
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :     PerThreadTaskGroup&amp; group = *mTaskGroups.LastElement();</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     group.mRegularTasks.AppendElement(r.forget());</span>
+<span class="lineNum">     141 </span>            : 
+<span class="lineNum">     142 </span>            :     // The task group needs to assert dispatch success if any of the runnables
+<span class="lineNum">     143 </span>            :     // it's dispatching want to assert it.
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :     if (aFailureHandling == AbstractThread::AssertDispatchSuccess) {</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :       group.mFailureHandling = AbstractThread::AssertDispatchSuccess;</span>
+<span class="lineNum">     146 </span>            :     }
+<a name="147"><span class="lineNum">     147 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :   bool HasTasksFor(AbstractThread* aThread) override</span>
+<span class="lineNum">     150 </span>            :   {
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :     return !!GetTaskGroup(aThread) ||</span>
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :            (aThread == AbstractThread::GetCurrent() &amp;&amp; HaveDirectTasks());</span>
+<a name="153"><span class="lineNum">     153 </span>            :   }</a>
+<span class="lineNum">     154 </span>            : 
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :   void DispatchTasksFor(AbstractThread* aThread) override</span>
+<span class="lineNum">     156 </span>            :   {
+<span class="lineNum">     157 </span>            :     // Dispatch all groups that match |aThread|.
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     for (size_t i = 0; i &lt; mTaskGroups.Length(); ++i) {</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :       if (mTaskGroups[i]-&gt;mThread == aThread) {</span>
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :         DispatchTaskGroup(Move(mTaskGroups[i]));</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :         mTaskGroups.RemoveElementAt(i--);</span>
+<span class="lineNum">     162 </span>            :       }
+<span class="lineNum">     163 </span>            :     }
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     165 </span>            : 
+<span class="lineNum">     166 </span>            : private:
+<span class="lineNum">     167 </span>            : 
+<span class="lineNum">     168 </span>            :   struct PerThreadTaskGroup
+<a name="169"><span class="lineNum">     169 </span>            :   {</a>
+<span class="lineNum">     170 </span>            :   public:
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :     explicit PerThreadTaskGroup(AbstractThread* aThread)</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :       : mThread(aThread), mFailureHandling(AbstractThread::DontAssertDispatchSuccess)</span>
+<span class="lineNum">     173 </span>            :     {
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :       MOZ_COUNT_CTOR(PerThreadTaskGroup);</span>
+<a name="175"><span class="lineNum">     175 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     176 </span>            : 
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :     ~PerThreadTaskGroup() { MOZ_COUNT_DTOR(PerThreadTaskGroup); }</span>
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span>            :     RefPtr&lt;AbstractThread&gt; mThread;
+<span class="lineNum">     180 </span>            :     nsTArray&lt;nsCOMPtr&lt;nsIRunnable&gt;&gt; mStateChangeTasks;
+<span class="lineNum">     181 </span>            :     nsTArray&lt;nsCOMPtr&lt;nsIRunnable&gt;&gt; mRegularTasks;
+<span class="lineNum">     182 </span>            :     AbstractThread::DispatchFailureHandling mFailureHandling;
+<a name="183"><span class="lineNum">     183 </span>            :   };</a>
+<span class="lineNum">     184 </span>            : 
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :   class TaskGroupRunnable : public Runnable</span>
+<a name="186"><span class="lineNum">     186 </span>            :   {</a>
+<span class="lineNum">     187 </span>            :     public:
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :       explicit TaskGroupRunnable(UniquePtr&lt;PerThreadTaskGroup&gt;&amp;&amp; aTasks)</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :         : Runnable(&quot;AutoTaskDispatcher::TaskGroupRunnable&quot;)</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :         , mTasks(Move(aTasks))</span>
+<span class="lineNum">     191 </span>            :       {
+<a name="192"><span class="lineNum">     192 </span><span class="lineNoCov">          0 :       }</span></a>
+<span class="lineNum">     193 </span>            : 
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :       NS_IMETHOD Run() override</span>
+<span class="lineNum">     195 </span>            :       {
+<span class="lineNum">     196 </span>            :         // State change tasks get run all together before any code is run, so
+<span class="lineNum">     197 </span>            :         // that all state changes are made in an atomic unit.
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :         for (size_t i = 0; i &lt; mTasks-&gt;mStateChangeTasks.Length(); ++i) {</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :           mTasks-&gt;mStateChangeTasks[i]-&gt;Run();</span>
+<span class="lineNum">     200 </span>            :         }
+<span class="lineNum">     201 </span>            : 
+<span class="lineNum">     202 </span>            :         // Once the state changes have completed, drain any direct tasks
+<span class="lineNum">     203 </span>            :         // generated by those state changes (i.e. watcher notification tasks).
+<span class="lineNum">     204 </span>            :         // This needs to be outside the loop because we don't want to run code
+<span class="lineNum">     205 </span>            :         // that might observe intermediate states.
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :         MaybeDrainDirectTasks();</span>
+<span class="lineNum">     207 </span>            : 
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :         for (size_t i = 0; i &lt; mTasks-&gt;mRegularTasks.Length(); ++i) {</span>
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :           mTasks-&gt;mRegularTasks[i]-&gt;Run();</span>
+<span class="lineNum">     210 </span>            : 
+<span class="lineNum">     211 </span>            :           // Scope direct tasks tightly to the task that generated them.
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :           MaybeDrainDirectTasks();</span>
+<span class="lineNum">     213 </span>            :         }
+<span class="lineNum">     214 </span>            : 
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :         return NS_OK;</span>
+<span class="lineNum">     216 </span>            :       }
+<a name="217"><span class="lineNum">     217 </span>            : </a>
+<span class="lineNum">     218 </span>            :     private:
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :       void MaybeDrainDirectTasks()</span>
+<span class="lineNum">     220 </span>            :       {
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :         AbstractThread* currentThread = AbstractThread::GetCurrent();</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :         if (currentThread) {</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :           currentThread-&gt;TailDispatcher().DrainDirectTasks();</span>
+<span class="lineNum">     224 </span>            :         }
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :       }</span>
+<span class="lineNum">     226 </span>            : 
+<span class="lineNum">     227 </span>            :       UniquePtr&lt;PerThreadTaskGroup&gt; mTasks;
+<a name="228"><span class="lineNum">     228 </span>            :   };</a>
+<span class="lineNum">     229 </span>            : 
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :   PerThreadTaskGroup&amp; EnsureTaskGroup(AbstractThread* aThread)</span>
+<span class="lineNum">     231 </span>            :   {
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :     PerThreadTaskGroup* existing = GetTaskGroup(aThread);</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :     if (existing) {</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :       return *existing;</span>
+<span class="lineNum">     235 </span>            :     }
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :     mTaskGroups.AppendElement(new PerThreadTaskGroup(aThread));</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :     return *mTaskGroups.LastElement();</span>
+<a name="239"><span class="lineNum">     239 </span>            :   }</a>
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :   PerThreadTaskGroup* GetTaskGroup(AbstractThread* aThread)</span>
+<span class="lineNum">     242 </span>            :   {
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :     for (size_t i = 0; i &lt; mTaskGroups.Length(); ++i) {</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :       if (mTaskGroups[i]-&gt;mThread == aThread) {</span>
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :         return mTaskGroups[i].get();</span>
+<span class="lineNum">     246 </span>            :       }
+<span class="lineNum">     247 </span>            :     }
+<span class="lineNum">     248 </span>            : 
+<span class="lineNum">     249 </span>            :     // Not found.
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :     return nullptr;</span>
+<a name="251"><span class="lineNum">     251 </span>            :   }</a>
+<span class="lineNum">     252 </span>            : 
+<span class="lineNum">     253 </span><span class="lineNoCov">          0 :   void DispatchTaskGroup(UniquePtr&lt;PerThreadTaskGroup&gt; aGroup)</span>
+<span class="lineNum">     254 </span>            :   {
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :     RefPtr&lt;AbstractThread&gt; thread = aGroup-&gt;mThread;</span>
+<span class="lineNum">     256 </span>            : 
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :     AbstractThread::DispatchFailureHandling failureHandling = aGroup-&gt;mFailureHandling;</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :     AbstractThread::DispatchReason reason = mIsTailDispatcher ? AbstractThread::TailDispatch</span>
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :                                                               : AbstractThread::NormalDispatch;</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIRunnable&gt; r = new TaskGroupRunnable(Move(aGroup));</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :     thread-&gt;Dispatch(r.forget(), failureHandling, reason);</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     263 </span>            : 
+<span class="lineNum">     264 </span>            :   // Direct tasks. We use a Maybe&lt;&gt; because (a) this class is hot, (b)
+<span class="lineNum">     265 </span>            :   // mDirectTasks often doesn't get anything put into it, and (c) the
+<span class="lineNum">     266 </span>            :   // std::queue implementation in GNU libstdc++ does two largish heap
+<span class="lineNum">     267 </span>            :   // allocations when creating a new std::queue.
+<span class="lineNum">     268 </span>            :   mozilla::Maybe&lt;std::queue&lt;nsCOMPtr&lt;nsIRunnable&gt;&gt;&gt; mDirectTasks;
+<span class="lineNum">     269 </span>            : 
+<span class="lineNum">     270 </span>            :   // Task groups, organized by thread.
+<span class="lineNum">     271 </span>            :   nsTArray&lt;UniquePtr&lt;PerThreadTaskGroup&gt;&gt; mTaskGroups;
+<span class="lineNum">     272 </span>            : 
+<span class="lineNum">     273 </span>            :   // True if this TaskDispatcher represents the tail dispatcher for the thread
+<span class="lineNum">     274 </span>            :   // upon which it runs.
+<span class="lineNum">     275 </span>            :   const bool mIsTailDispatcher;
+<span class="lineNum">     276 </span>            : };
+<span class="lineNum">     277 </span>            : 
+<span class="lineNum">     278 </span>            : // Little utility class to allow declaring AutoTaskDispatcher as a default
+<span class="lineNum">     279 </span>            : // parameter for methods that take a TaskDispatcher&amp;.
+<span class="lineNum">     280 </span>            : template&lt;typename T&gt;
+<span class="lineNum">     281 </span>            : class PassByRef
+<span class="lineNum">     282 </span>            : {
+<span class="lineNum">     283 </span>            : public:
+<span class="lineNum">     284 </span>            :   PassByRef() {}
+<span class="lineNum">     285 </span>            :   operator T&amp;() { return mVal; }
+<span class="lineNum">     286 </span>            : private:
+<span class="lineNum">     287 </span>            :   T mVal;
+<span class="lineNum">     288 </span>            : };
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span>            : } // namespace mozilla
+<span class="lineNum">     291 </span>            : 
+<span class="lineNum">     292 </span>            : #endif
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

@@ -1,0 +1,1194 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - security/manager/ssl/DataStorage.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">security/manager/ssl</a> - DataStorage.cpp<span style="font-size: 80%;"> (source / <a href="DataStorage.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">169</td>
+            <td class="headerCovTableEntry">502</td>
+            <td class="headerCovTableEntryLo">33.7 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">27</td>
+            <td class="headerCovTableEntry">58</td>
+            <td class="headerCovTableEntryLo">46.6 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;DataStorage.h&quot;
+<span class="lineNum">       8 </span>            : 
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/Assertions.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/ClearOnShutdown.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/dom/PContent.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/dom/ContentChild.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/dom/ContentParent.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/Preferences.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;mozilla/Services.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;mozilla/Telemetry.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;mozilla/Unused.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;nsAppDirectoryServiceDefs.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;nsDirectoryServiceUtils.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;nsIMemoryReporter.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;nsIObserverService.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;nsITimer.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;nsNetUtil.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;nsPrintfCString.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;nsStreamUtils.h&quot;
+<span class="lineNum">      26 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : // NB: Read DataStorage.h first.
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : // The default time between data changing and a write, in milliseconds.
+<span class="lineNum">      31 </span>            : static const uint32_t sDataStorageDefaultTimerDelay = 5u * 60u * 1000u;
+<span class="lineNum">      32 </span>            : // The maximum score an entry can have (prevents overflow)
+<span class="lineNum">      33 </span>            : static const uint32_t sMaxScore = UINT32_MAX;
+<span class="lineNum">      34 </span>            : // The maximum number of entries per type of data (limits resource use)
+<span class="lineNum">      35 </span>            : static const uint32_t sMaxDataEntries = 1024;
+<span class="lineNum">      36 </span>            : static const int64_t sOneDayInMicroseconds = int64_t(24 * 60 * 60) *
+<span class="lineNum">      37 </span>            :                                              PR_USEC_PER_SEC;
+<span class="lineNum">      38 </span>            : 
+<a name="39"><span class="lineNum">      39 </span>            : namespace mozilla {</a>
+<span class="lineNum">      40 </span>            : 
+<a name="41"><span class="lineNum">      41 </span><span class="lineCov">          3 : class DataStorageMemoryReporter final : public nsIMemoryReporter</span></a>
+<span class="lineNum">      42 </span>            : {
+<span class="lineNum">      43 </span><span class="lineNoCov">          0 :   MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf)</span>
+<span class="lineNum">      44 </span>            :   ~DataStorageMemoryReporter() = default;
+<span class="lineNum">      45 </span>            : 
+<span class="lineNum">      46 </span>            : public:
+<a name="47"><span class="lineNum">      47 </span>            :   NS_DECL_ISUPPORTS</a>
+<span class="lineNum">      48 </span>            : 
+<span class="lineNum">      49 </span><span class="lineNoCov">          0 :   NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,</span>
+<span class="lineNum">      50 </span>            :                             nsISupports* aData, bool aAnonymize) final
+<span class="lineNum">      51 </span>            :   {
+<span class="lineNum">      52 </span><span class="lineNoCov">          0 :     nsTArray&lt;nsString&gt; fileNames;</span>
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 :     DataStorage::GetAllFileNames(fileNames);</span>
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 :     for (const auto&amp; file: fileNames) {</span>
+<span class="lineNum">      55 </span><span class="lineNoCov">          0 :       RefPtr&lt;DataStorage&gt; ds = DataStorage::GetFromRawFileName(file);</span>
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :       size_t amount = ds-&gt;SizeOfIncludingThis(MallocSizeOf);</span>
+<span class="lineNum">      57 </span>            :       nsPrintfCString path(&quot;explicit/data-storage/%s&quot;,
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 :                            NS_ConvertUTF16toUTF8(file).get());</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :       Unused &lt;&lt; aHandleReport-&gt;Callback(EmptyCString(), path, KIND_HEAP,</span>
+<span class="lineNum">      60 </span>            :         UNITS_BYTES, amount,
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 :         NS_LITERAL_CSTRING(&quot;Memory used by PSM data storage cache.&quot;),</span>
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :         aData);</span>
+<span class="lineNum">      63 </span>            :     }
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">      65 </span>            :   }
+<a name="66"><span class="lineNum">      66 </span>            : };</a>
+<span class="lineNum">      67 </span>            : 
+<a name="68"><span class="lineNum">      68 </span><span class="lineCov">         39 : NS_IMPL_ISUPPORTS(DataStorageMemoryReporter, nsIMemoryReporter)</span></a>
+<span class="lineNum">      69 </span>            : 
+<span class="lineNum">      70 </span><span class="lineCov">        137 : NS_IMPL_ISUPPORTS(DataStorage, nsIObserver)</span>
+<span class="lineNum">      71 </span>            : 
+<a name="72"><span class="lineNum">      72 </span><span class="lineCov">          3 : StaticAutoPtr&lt;DataStorage::DataStorages&gt; DataStorage::sDataStorages;</span></a>
+<span class="lineNum">      73 </span>            : 
+<span class="lineNum">      74 </span><span class="lineCov">          9 : DataStorage::DataStorage(const nsString&amp; aFilename)</span>
+<span class="lineNum">      75 </span>            :   : mMutex(&quot;DataStorage::mMutex&quot;)
+<span class="lineNum">      76 </span>            :   , mPendingWrite(false)
+<span class="lineNum">      77 </span>            :   , mShuttingDown(false)
+<span class="lineNum">      78 </span>            :   , mInitCalled(false)
+<span class="lineNum">      79 </span>            :   , mReadyMonitor(&quot;DataStorage::mReadyMonitor&quot;)
+<span class="lineNum">      80 </span>            :   , mReady(false)
+<span class="lineNum">      81 </span><span class="lineCov">          9 :   , mFilename(aFilename)</span>
+<span class="lineNum">      82 </span>            : {
+<a name="83"><span class="lineNum">      83 </span><span class="lineCov">          9 : }</span></a>
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 : DataStorage::~DataStorage()</span>
+<span class="lineNum">      86 </span>            : {
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">      88 </span>            : 
+<a name="89"><span class="lineNum">      89 </span>            : // static</a>
+<span class="lineNum">      90 </span>            : already_AddRefed&lt;DataStorage&gt;
+<span class="lineNum">      91 </span><span class="lineCov">          5 : DataStorage::Get(DataStorageClass aFilename)</span>
+<span class="lineNum">      92 </span>            : {
+<span class="lineNum">      93 </span><span class="lineCov">          5 :   switch (aFilename) {</span>
+<span class="lineNum">      94 </span>            : #define DATA_STORAGE(_)         \
+<span class="lineNum">      95 </span>            :     case DataStorageClass::_:   \
+<span class="lineNum">      96 </span>            :       return GetFromRawFileName(NS_LITERAL_STRING(#_ &quot;.txt&quot;));
+<span class="lineNum">      97 </span>            : #include &quot;mozilla/DataStorageList.h&quot;
+<span class="lineNum">      98 </span>            : #undef DATA_STORAGE
+<span class="lineNum">      99 </span>            :     default:
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :       MOZ_ASSERT_UNREACHABLE(&quot;Invalid DataStorage type passed?&quot;);</span>
+<span class="lineNum">     101 </span>            :       return nullptr;
+<span class="lineNum">     102 </span>            :   }
+<span class="lineNum">     103 </span>            : }
+<span class="lineNum">     104 </span>            : 
+<a name="105"><span class="lineNum">     105 </span>            : // static</a>
+<span class="lineNum">     106 </span>            : already_AddRefed&lt;DataStorage&gt;
+<span class="lineNum">     107 </span><span class="lineCov">         14 : DataStorage::GetFromRawFileName(const nsString&amp; aFilename)</span>
+<span class="lineNum">     108 </span>            : {
+<span class="lineNum">     109 </span><span class="lineCov">         14 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     110 </span><span class="lineCov">         14 :   if (!sDataStorages) {</span>
+<span class="lineNum">     111 </span><span class="lineCov">          3 :     sDataStorages = new DataStorages();</span>
+<span class="lineNum">     112 </span><span class="lineCov">          3 :     ClearOnShutdown(&amp;sDataStorages);</span>
+<span class="lineNum">     113 </span>            :   }
+<span class="lineNum">     114 </span><span class="lineCov">         28 :   RefPtr&lt;DataStorage&gt; storage;</span>
+<span class="lineNum">     115 </span><span class="lineCov">         14 :   if (!sDataStorages-&gt;Get(aFilename, getter_AddRefs(storage))) {</span>
+<span class="lineNum">     116 </span><span class="lineCov">          9 :     storage = new DataStorage(aFilename);</span>
+<span class="lineNum">     117 </span><span class="lineCov">          9 :     sDataStorages-&gt;Put(aFilename, storage);</span>
+<span class="lineNum">     118 </span>            :   }
+<span class="lineNum">     119 </span><span class="lineCov">         28 :   return storage.forget();</span>
+<span class="lineNum">     120 </span>            : }
+<span class="lineNum">     121 </span>            : 
+<a name="122"><span class="lineNum">     122 </span>            : // static</a>
+<span class="lineNum">     123 </span>            : already_AddRefed&lt;DataStorage&gt;
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 : DataStorage::GetIfExists(DataStorageClass aFilename)</span>
+<span class="lineNum">     125 </span>            : {
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :   if (!sDataStorages) {</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :     sDataStorages = new DataStorages();</span>
+<span class="lineNum">     129 </span>            :   }
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :   nsString name;</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :   switch (aFilename) {</span>
+<span class="lineNum">     132 </span>            : #define DATA_STORAGE(_)              \
+<span class="lineNum">     133 </span>            :     case DataStorageClass::_:        \
+<span class="lineNum">     134 </span>            :       name.AssignLiteral(#_ &quot;.txt&quot;); \
+<span class="lineNum">     135 </span>            :       break;
+<span class="lineNum">     136 </span>            : #include &quot;mozilla/DataStorageList.h&quot;
+<span class="lineNum">     137 </span>            : #undef DATA_STORAGE
+<span class="lineNum">     138 </span>            :     default:
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :       MOZ_ASSERT_UNREACHABLE(&quot;Invalid DataStorages type passed?&quot;);</span>
+<span class="lineNum">     140 </span>            :   }
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :   RefPtr&lt;DataStorage&gt; storage;</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   if (!name.IsEmpty()) {</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :     sDataStorages-&gt;Get(name, getter_AddRefs(storage));</span>
+<span class="lineNum">     144 </span>            :   }
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :   return storage.forget();</span>
+<span class="lineNum">     146 </span>            : }
+<span class="lineNum">     147 </span>            : 
+<a name="148"><span class="lineNum">     148 </span>            : // static</a>
+<span class="lineNum">     149 </span>            : void
+<span class="lineNum">     150 </span><span class="lineCov">          2 : DataStorage::GetAllFileNames(nsTArray&lt;nsString&gt;&amp; aItems)</span>
+<span class="lineNum">     151 </span>            : {
+<span class="lineNum">     152 </span><span class="lineCov">          2 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     153 </span><span class="lineCov">          2 :   if (!sDataStorages) {</span>
+<span class="lineNum">     154 </span><span class="lineCov">          1 :     return;</span>
+<span class="lineNum">     155 </span>            :   }
+<span class="lineNum">     156 </span>            : #define DATA_STORAGE(_)     \
+<span class="lineNum">     157 </span>            :   aItems.AppendElement(NS_LITERAL_STRING(#_ &quot;.txt&quot;));
+<span class="lineNum">     158 </span>            : #include &quot;mozilla/DataStorageList.h&quot;
+<span class="lineNum">     159 </span>            : #undef DATA_STORAGE
+<span class="lineNum">     160 </span>            : }
+<span class="lineNum">     161 </span>            : 
+<a name="162"><span class="lineNum">     162 </span>            : // static</a>
+<span class="lineNum">     163 </span>            : void
+<span class="lineNum">     164 </span><span class="lineCov">          2 : DataStorage::GetAllChildProcessData(</span>
+<span class="lineNum">     165 </span>            :   nsTArray&lt;mozilla::dom::DataStorageEntry&gt;&amp; aEntries)
+<span class="lineNum">     166 </span>            : {
+<span class="lineNum">     167 </span><span class="lineCov">          4 :   nsTArray&lt;nsString&gt; storageFiles;</span>
+<span class="lineNum">     168 </span><span class="lineCov">          2 :   GetAllFileNames(storageFiles);</span>
+<span class="lineNum">     169 </span><span class="lineCov">          5 :   for (auto&amp; file : storageFiles) {</span>
+<span class="lineNum">     170 </span><span class="lineCov">          6 :     dom::DataStorageEntry entry;</span>
+<span class="lineNum">     171 </span><span class="lineCov">          3 :     entry.filename() = file;</span>
+<span class="lineNum">     172 </span><span class="lineCov">          6 :     RefPtr&lt;DataStorage&gt; storage = DataStorage::GetFromRawFileName(file);</span>
+<span class="lineNum">     173 </span><span class="lineCov">          3 :     if (!storage-&gt;mInitCalled) {</span>
+<span class="lineNum">     174 </span>            :       // Perhaps no consumer has initialized the DataStorage object yet,
+<span class="lineNum">     175 </span>            :       // so do that now!
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :       bool dataWillPersist = false;</span>
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :       nsresult rv = storage-&gt;Init(dataWillPersist);</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :       if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     180 </span>            :       }
+<span class="lineNum">     181 </span>            :     }
+<span class="lineNum">     182 </span><span class="lineCov">          3 :     storage-&gt;GetAll(&amp;entry.items());</span>
+<span class="lineNum">     183 </span><span class="lineCov">          3 :     aEntries.AppendElement(Move(entry));</span>
+<span class="lineNum">     184 </span>            :   }
+<span class="lineNum">     185 </span>            : }
+<span class="lineNum">     186 </span>            : 
+<a name="187"><span class="lineNum">     187 </span>            : // static</a>
+<span class="lineNum">     188 </span>            : void
+<span class="lineNum">     189 </span><span class="lineCov">          2 : DataStorage::SetCachedStorageEntries(</span>
+<span class="lineNum">     190 </span>            :   const InfallibleTArray&lt;mozilla::dom::DataStorageEntry&gt;&amp; aEntries)
+<span class="lineNum">     191 </span>            : {
+<span class="lineNum">     192 </span><span class="lineCov">          2 :   MOZ_ASSERT(XRE_IsContentProcess());</span>
+<span class="lineNum">     193 </span>            : 
+<span class="lineNum">     194 </span>            :   // Make sure to initialize all DataStorage classes.
+<span class="lineNum">     195 </span>            :   // For each one, we look through the list of our entries and if we find
+<span class="lineNum">     196 </span>            :   // a matching DataStorage object, we initialize it.
+<span class="lineNum">     197 </span>            :   //
+<span class="lineNum">     198 </span>            :   // Note that this is an O(n^2) operation, but the n here is very small
+<span class="lineNum">     199 </span>            :   // (currently 3).  There is a comment in the DataStorageList.h header
+<span class="lineNum">     200 </span>            :   // about updating the algorithm here to something more fancy if the list
+<span class="lineNum">     201 </span>            :   // of DataStorage items grows some day.
+<span class="lineNum">     202 </span><span class="lineCov">          4 :   nsTArray&lt;dom::DataStorageEntry&gt; entries;</span>
+<span class="lineNum">     203 </span>            : #define DATA_STORAGE(_)                              \
+<span class="lineNum">     204 </span>            :   {                                                  \
+<span class="lineNum">     205 </span>            :     dom::DataStorageEntry entry;                     \
+<span class="lineNum">     206 </span>            :     entry.filename() = NS_LITERAL_STRING(#_ &quot;.txt&quot;); \
+<span class="lineNum">     207 </span>            :     for (auto&amp; e : aEntries) {                       \
+<span class="lineNum">     208 </span>            :       if (entry.filename().Equals(e.filename())) {   \
+<span class="lineNum">     209 </span>            :         entry.items() = Move(e.items());             \
+<span class="lineNum">     210 </span>            :         break;                                       \
+<span class="lineNum">     211 </span>            :       }                                              \
+<span class="lineNum">     212 </span>            :     }                                                \
+<span class="lineNum">     213 </span>            :     entries.AppendElement(Move(entry));              \
+<span class="lineNum">     214 </span>            :   }
+<span class="lineNum">     215 </span>            : #include &quot;mozilla/DataStorageList.h&quot;
+<span class="lineNum">     216 </span>            : #undef DATA_STORAGE
+<span class="lineNum">     217 </span>            : 
+<span class="lineNum">     218 </span><span class="lineCov">          8 :   for (auto&amp; entry : entries) {</span>
+<span class="lineNum">     219 </span>            :     RefPtr&lt;DataStorage&gt; storage =
+<span class="lineNum">     220 </span><span class="lineCov">         12 :       DataStorage::GetFromRawFileName(entry.filename());</span>
+<span class="lineNum">     221 </span><span class="lineCov">          6 :     bool dataWillPersist = false;</span>
+<span class="lineNum">     222 </span><span class="lineCov">          6 :     storage-&gt;Init(dataWillPersist, &amp;entry.items());</span>
+<span class="lineNum">     223 </span>            :   }
+<span class="lineNum">     224 </span><span class="lineCov">          2 : }</span>
+<a name="225"><span class="lineNum">     225 </span>            : </a>
+<span class="lineNum">     226 </span>            : size_t
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 : DataStorage::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const</span>
+<span class="lineNum">     228 </span>            : {
+<span class="lineNum">     229 </span>            :   size_t sizeOfExcludingThis =
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :     mPersistentDataTable.ShallowSizeOfExcludingThis(aMallocSizeOf) +</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     mTemporaryDataTable.ShallowSizeOfExcludingThis(aMallocSizeOf) +</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :     mPrivateDataTable.ShallowSizeOfExcludingThis(aMallocSizeOf) +</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :     mFilename.SizeOfExcludingThisIfUnshared(aMallocSizeOf);</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :   return aMallocSizeOf(this) + sizeOfExcludingThis;</span>
+<span class="lineNum">     235 </span>            : }
+<a name="236"><span class="lineNum">     236 </span>            : </a>
+<span class="lineNum">     237 </span>            : nsresult
+<span class="lineNum">     238 </span><span class="lineCov">         11 : DataStorage::Init(bool&amp; aDataWillPersist,</span>
+<span class="lineNum">     239 </span>            :                   const InfallibleTArray&lt;mozilla::dom::DataStorageItem&gt;* aItems)
+<span class="lineNum">     240 </span>            : {
+<span class="lineNum">     241 </span>            :   // Don't access the observer service or preferences off the main thread.
+<span class="lineNum">     242 </span><span class="lineCov">         11 :   if (!NS_IsMainThread()) {</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :     MOZ_ASSERT_UNREACHABLE(&quot;DataStorage::Init called off main thread&quot;);</span>
+<span class="lineNum">     244 </span>            :     return NS_ERROR_NOT_SAME_THREAD;
+<span class="lineNum">     245 </span>            :   }
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span><span class="lineCov">         22 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     248 </span>            : 
+<span class="lineNum">     249 </span>            :   // Ignore attempts to initialize several times.
+<span class="lineNum">     250 </span><span class="lineCov">         11 :   if (mInitCalled) {</span>
+<span class="lineNum">     251 </span><span class="lineCov">          2 :     return NS_OK;</span>
+<span class="lineNum">     252 </span>            :   }
+<span class="lineNum">     253 </span>            : 
+<span class="lineNum">     254 </span><span class="lineCov">          9 :   mInitCalled = true;</span>
+<span class="lineNum">     255 </span>            : 
+<span class="lineNum">     256 </span>            :   static bool memoryReporterRegistered = false;
+<span class="lineNum">     257 </span><span class="lineCov">          9 :   if (!memoryReporterRegistered) {</span>
+<span class="lineNum">     258 </span>            :     nsresult rv =
+<span class="lineNum">     259 </span><span class="lineCov">          3 :       RegisterStrongMemoryReporter(new DataStorageMemoryReporter());</span>
+<span class="lineNum">     260 </span><span class="lineCov">          3 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     262 </span>            :     }
+<span class="lineNum">     263 </span><span class="lineCov">          3 :     memoryReporterRegistered = true;</span>
+<span class="lineNum">     264 </span>            :   }
+<span class="lineNum">     265 </span>            : 
+<span class="lineNum">     266 </span>            :   nsresult rv;
+<span class="lineNum">     267 </span><span class="lineCov">          9 :   if (XRE_IsParentProcess()) {</span>
+<span class="lineNum">     268 </span><span class="lineCov">          3 :     MOZ_ASSERT(!aItems);</span>
+<span class="lineNum">     269 </span>            : 
+<span class="lineNum">     270 </span><span class="lineCov">          3 :     rv = NS_NewNamedThread(&quot;DataStorage&quot;, getter_AddRefs(mWorkerThread));</span>
+<span class="lineNum">     271 </span><span class="lineCov">          3 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     273 </span>            :     }
+<span class="lineNum">     274 </span>            : 
+<span class="lineNum">     275 </span><span class="lineCov">          3 :     rv = AsyncReadData(aDataWillPersist, lock);</span>
+<span class="lineNum">     276 </span><span class="lineCov">          3 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     278 </span>            :     }
+<span class="lineNum">     279 </span>            :   } else {
+<span class="lineNum">     280 </span>            :     // In the child process, we use the data passed to us by the parent process
+<span class="lineNum">     281 </span>            :     // to initialize.
+<span class="lineNum">     282 </span><span class="lineCov">          6 :     MOZ_ASSERT(XRE_IsContentProcess());</span>
+<span class="lineNum">     283 </span><span class="lineCov">          6 :     MOZ_ASSERT(aItems);</span>
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span><span class="lineCov">          6 :     aDataWillPersist = false;</span>
+<span class="lineNum">     286 </span><span class="lineCov">          6 :     for (auto&amp; item : *aItems) {</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :       Entry entry;</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :       entry.mValue = item.value();</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :       rv = PutInternal(item.key(), entry, item.type(), lock);</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :       if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     292 </span>            :       }
+<span class="lineNum">     293 </span>            :     }
+<span class="lineNum">     294 </span><span class="lineCov">          6 :     mReady = true;</span>
+<span class="lineNum">     295 </span><span class="lineCov">          6 :     NotifyObservers(&quot;data-storage-ready&quot;);</span>
+<span class="lineNum">     296 </span>            :   }
+<span class="lineNum">     297 </span>            : 
+<span class="lineNum">     298 </span><span class="lineCov">         18 :   nsCOMPtr&lt;nsIObserverService&gt; os = services::GetObserverService();</span>
+<span class="lineNum">     299 </span><span class="lineCov">          9 :   if (NS_WARN_IF(!os)) {</span>
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     301 </span>            :   }
+<span class="lineNum">     302 </span>            :   // Clear private data as appropriate.
+<span class="lineNum">     303 </span><span class="lineCov">          9 :   os-&gt;AddObserver(this, &quot;last-pb-context-exited&quot;, false);</span>
+<span class="lineNum">     304 </span>            :   // Observe shutdown; save data and prevent any further writes.
+<span class="lineNum">     305 </span>            :   // In the parent process, we need to write to the profile directory, so
+<span class="lineNum">     306 </span>            :   // we should listen for profile-before-change so that we can safely
+<span class="lineNum">     307 </span>            :   // write to the profile.  In the content process however we don't have
+<span class="lineNum">     308 </span>            :   // access to the profile directory and profile notifications are not
+<span class="lineNum">     309 </span>            :   // dispatched, so we need to clean up on xpcom-shutdown.
+<span class="lineNum">     310 </span><span class="lineCov">          9 :   if (XRE_IsParentProcess()) {</span>
+<span class="lineNum">     311 </span><span class="lineCov">          3 :     os-&gt;AddObserver(this, &quot;profile-before-change&quot;, false);</span>
+<span class="lineNum">     312 </span>            :   }
+<span class="lineNum">     313 </span>            :   // In the Parent process, this is a backstop for xpcshell and other cases
+<span class="lineNum">     314 </span>            :   // where profile-before-change might not get sent.
+<span class="lineNum">     315 </span><span class="lineCov">          9 :   os-&gt;AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);</span>
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span>            :   // For test purposes, we can set the write timer to be very fast.
+<span class="lineNum">     318 </span><span class="lineCov">          9 :   mTimerDelay = Preferences::GetInt(&quot;test.datastorage.write_timer_ms&quot;,</span>
+<span class="lineNum">     319 </span>            :                                     sDataStorageDefaultTimerDelay);
+<span class="lineNum">     320 </span><span class="lineCov">          9 :   rv = Preferences::AddStrongObserver(this, &quot;test.datastorage.write_timer_ms&quot;);</span>
+<span class="lineNum">     321 </span><span class="lineCov">          9 :   if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     323 </span>            :   }
+<span class="lineNum">     324 </span>            : 
+<span class="lineNum">     325 </span><span class="lineCov">          9 :   return NS_OK;</span>
+<span class="lineNum">     326 </span>            : }
+<span class="lineNum">     327 </span>            : 
+<span class="lineNum">     328 </span>            : class DataStorage::Reader : public Runnable
+<a name="329"><span class="lineNum">     329 </span>            : {</a>
+<span class="lineNum">     330 </span>            : public:
+<span class="lineNum">     331 </span><span class="lineCov">          3 :   explicit Reader(DataStorage* aDataStorage)</span>
+<span class="lineNum">     332 </span><span class="lineCov">          3 :     : Runnable(&quot;DataStorage::Reader&quot;)</span>
+<span class="lineNum">     333 </span><span class="lineCov">          3 :     , mDataStorage(aDataStorage)</span>
+<span class="lineNum">     334 </span>            :   {
+<span class="lineNum">     335 </span><span class="lineCov">          3 :   }</span>
+<span class="lineNum">     336 </span>            :   ~Reader();
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span>            : private:
+<span class="lineNum">     339 </span>            :   NS_DECL_NSIRUNNABLE
+<span class="lineNum">     340 </span>            : 
+<span class="lineNum">     341 </span>            :   static nsresult ParseLine(nsDependentCSubstring&amp; aLine, nsCString&amp; aKeyOut,
+<span class="lineNum">     342 </span>            :                             Entry&amp; aEntryOut);
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span>            :   RefPtr&lt;DataStorage&gt; mDataStorage;
+<a name="345"><span class="lineNum">     345 </span>            : };</a>
+<span class="lineNum">     346 </span>            : 
+<span class="lineNum">     347 </span><span class="lineCov">          9 : DataStorage::Reader::~Reader()</span>
+<span class="lineNum">     348 </span>            : {
+<span class="lineNum">     349 </span>            :   // Notify that calls to Get can proceed.
+<span class="lineNum">     350 </span>            :   {
+<span class="lineNum">     351 </span><span class="lineCov">          6 :     MonitorAutoLock readyLock(mDataStorage-&gt;mReadyMonitor);</span>
+<span class="lineNum">     352 </span><span class="lineCov">          3 :     mDataStorage-&gt;mReady = true;</span>
+<span class="lineNum">     353 </span><span class="lineCov">          3 :     nsresult rv = mDataStorage-&gt;mReadyMonitor.NotifyAll();</span>
+<span class="lineNum">     354 </span><span class="lineCov">          3 :     Unused &lt;&lt; NS_WARN_IF(NS_FAILED(rv));</span>
+<span class="lineNum">     355 </span>            :   }
+<span class="lineNum">     356 </span>            : 
+<span class="lineNum">     357 </span>            :   // This is for tests.
+<span class="lineNum">     358 </span>            :   nsCOMPtr&lt;nsIRunnable&gt; job =
+<span class="lineNum">     359 </span><span class="lineCov">          6 :     NewRunnableMethod&lt;const char*&gt;(&quot;DataStorage::NotifyObservers&quot;,</span>
+<span class="lineNum">     360 </span>            :                                    mDataStorage,
+<span class="lineNum">     361 </span>            :                                    &amp;DataStorage::NotifyObservers,
+<span class="lineNum">     362 </span><span class="lineCov">          6 :                                    &quot;data-storage-ready&quot;);</span>
+<span class="lineNum">     363 </span><span class="lineCov">          3 :   nsresult rv = NS_DispatchToMainThread(job, NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     364 </span><span class="lineCov">          3 :   Unused &lt;&lt; NS_WARN_IF(NS_FAILED(rv));</span>
+<span class="lineNum">     365 </span><span class="lineCov">          9 : }</span>
+<a name="366"><span class="lineNum">     366 </span>            : </a>
+<span class="lineNum">     367 </span>            : NS_IMETHODIMP
+<span class="lineNum">     368 </span><span class="lineCov">          3 : DataStorage::Reader::Run()</span>
+<span class="lineNum">     369 </span>            : {
+<span class="lineNum">     370 </span>            :   nsresult rv;
+<span class="lineNum">     371 </span>            :   // Concurrent operations on nsIFile objects are not guaranteed to be safe,
+<span class="lineNum">     372 </span>            :   // so we clone the file while holding the lock and then release the lock.
+<span class="lineNum">     373 </span>            :   // At that point, we can safely operate on the clone.
+<span class="lineNum">     374 </span><span class="lineCov">          6 :   nsCOMPtr&lt;nsIFile&gt; file;</span>
+<span class="lineNum">     375 </span>            :   {
+<span class="lineNum">     376 </span><span class="lineCov">          6 :     MutexAutoLock lock(mDataStorage-&gt;mMutex);</span>
+<span class="lineNum">     377 </span>            :     // If we don't have a profile, bail.
+<span class="lineNum">     378 </span><span class="lineCov">          3 :     if (!mDataStorage-&gt;mBackingFile) {</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :       return NS_OK;</span>
+<span class="lineNum">     380 </span>            :     }
+<span class="lineNum">     381 </span><span class="lineCov">          3 :     rv = mDataStorage-&gt;mBackingFile-&gt;Clone(getter_AddRefs(file));</span>
+<span class="lineNum">     382 </span><span class="lineCov">          3 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     384 </span>            :     }
+<span class="lineNum">     385 </span>            :   }
+<span class="lineNum">     386 </span><span class="lineCov">          6 :   nsCOMPtr&lt;nsIInputStream&gt; fileInputStream;</span>
+<span class="lineNum">     387 </span><span class="lineCov">          3 :   rv = NS_NewLocalFileInputStream(getter_AddRefs(fileInputStream), file);</span>
+<span class="lineNum">     388 </span>            :   // If we failed for some reason other than the file doesn't exist, bail.
+<span class="lineNum">     389 </span><span class="lineCov">          3 :   if (NS_WARN_IF(NS_FAILED(rv) &amp;&amp;</span>
+<span class="lineNum">     390 </span>            :                  rv != NS_ERROR_FILE_TARGET_DOES_NOT_EXIST &amp;&amp;  // on Unix
+<span class="lineNum">     391 </span>            :                  rv != NS_ERROR_FILE_NOT_FOUND)) {             // on Windows
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     393 </span>            :   }
+<span class="lineNum">     394 </span>            : 
+<span class="lineNum">     395 </span>            :   // If there is a file with data in it, read it. If there isn't,
+<span class="lineNum">     396 </span>            :   // we'll essentially fall through to notifying that we're good to go.
+<span class="lineNum">     397 </span><span class="lineCov">          6 :   nsCString data;</span>
+<span class="lineNum">     398 </span><span class="lineCov">          3 :   if (fileInputStream) {</span>
+<span class="lineNum">     399 </span>            :     // Limit to 2MB of data, but only store sMaxDataEntries entries.
+<span class="lineNum">     400 </span><span class="lineCov">          3 :     rv = NS_ConsumeStream(fileInputStream, 1u &lt;&lt; 21, data);</span>
+<span class="lineNum">     401 </span><span class="lineCov">          3 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     403 </span>            :     }
+<span class="lineNum">     404 </span>            :   }
+<span class="lineNum">     405 </span>            : 
+<span class="lineNum">     406 </span>            :   // Atomically parse the data and insert the entries read.
+<span class="lineNum">     407 </span>            :   // Don't clear existing entries - they may have been inserted between when
+<span class="lineNum">     408 </span>            :   // this read was kicked-off and when it was run.
+<span class="lineNum">     409 </span>            :   {
+<span class="lineNum">     410 </span><span class="lineCov">          6 :     MutexAutoLock lock(mDataStorage-&gt;mMutex);</span>
+<span class="lineNum">     411 </span>            :     // The backing file consists of a list of
+<span class="lineNum">     412 </span>            :     //   &lt;key&gt;\t&lt;score&gt;\t&lt;last accessed time&gt;\t&lt;value&gt;\n
+<span class="lineNum">     413 </span>            :     // The final \n is not optional; if it is not present the line is assumed
+<span class="lineNum">     414 </span>            :     // to be corrupt.
+<span class="lineNum">     415 </span><span class="lineCov">          3 :     int32_t currentIndex = 0;</span>
+<span class="lineNum">     416 </span><span class="lineCov">          3 :     int32_t newlineIndex = 0;</span>
+<span class="lineNum">     417 </span>            :     do {
+<span class="lineNum">     418 </span><span class="lineCov">          3 :       newlineIndex = data.FindChar('\n', currentIndex);</span>
+<span class="lineNum">     419 </span>            :       // If there are no more newlines or the data table has too many
+<span class="lineNum">     420 </span>            :       // entries, we are done.
+<span class="lineNum">     421 </span><span class="lineCov">          3 :       if (newlineIndex &lt; 0 ||</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :           mDataStorage-&gt;mPersistentDataTable.Count() &gt;= sMaxDataEntries) {</span>
+<span class="lineNum">     423 </span><span class="lineCov">          3 :         break;</span>
+<span class="lineNum">     424 </span>            :       }
+<span class="lineNum">     425 </span>            : 
+<span class="lineNum">     426 </span>            :       nsDependentCSubstring line(data, currentIndex,
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :                                  newlineIndex - currentIndex);</span>
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :       currentIndex = newlineIndex + 1;</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :       nsCString key;</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :       Entry entry;</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :       nsresult parseRV = ParseLine(line, key, entry);</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :       if (NS_SUCCEEDED(parseRV)) {</span>
+<span class="lineNum">     433 </span>            :         // It could be the case that a newer entry was added before
+<span class="lineNum">     434 </span>            :         // we got around to reading the file. Don't overwrite new entries.
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :         Entry newerEntry;</span>
+<span class="lineNum">     436 </span><span class="lineNoCov">          0 :         bool present = mDataStorage-&gt;mPersistentDataTable.Get(key, &amp;newerEntry);</span>
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :         if (!present) {</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :           mDataStorage-&gt;mPersistentDataTable.Put(key, entry);</span>
+<span class="lineNum">     439 </span>            :         }
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :       }</span>
+<span class="lineNum">     441 </span>            :     } while (true);
+<span class="lineNum">     442 </span>            : 
+<span class="lineNum">     443 </span><span class="lineCov">          3 :     Telemetry::Accumulate(Telemetry::DATA_STORAGE_ENTRIES,</span>
+<span class="lineNum">     444 </span><span class="lineCov">          6 :                           mDataStorage-&gt;mPersistentDataTable.Count());</span>
+<span class="lineNum">     445 </span>            :   }
+<span class="lineNum">     446 </span>            : 
+<span class="lineNum">     447 </span><span class="lineCov">          3 :   return NS_OK;</span>
+<span class="lineNum">     448 </span>            : }
+<span class="lineNum">     449 </span>            : 
+<span class="lineNum">     450 </span>            : // The key must be a non-empty string containing no instances of '\t' or '\n',
+<span class="lineNum">     451 </span>            : // and must have a length no more than 256.
+<span class="lineNum">     452 </span>            : // The value must not contain '\n' and must have a length no more than 1024.
+<span class="lineNum">     453 </span>            : // The length limits are to prevent unbounded memory and disk usage.
+<a name="454"><span class="lineNum">     454 </span>            : /* static */</a>
+<span class="lineNum">     455 </span>            : nsresult
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 : DataStorage::ValidateKeyAndValue(const nsCString&amp; aKey, const nsCString&amp; aValue)</span>
+<span class="lineNum">     457 </span>            : {
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :   if (aKey.IsEmpty()) {</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     460 </span>            :   }
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :   if (aKey.Length() &gt; 256) {</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     463 </span>            :   }
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :   int32_t delimiterIndex = aKey.FindChar('\t', 0);</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :   if (delimiterIndex &gt;= 0) {</span>
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     467 </span>            :   }
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :   delimiterIndex = aKey.FindChar('\n', 0);</span>
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :   if (delimiterIndex &gt;= 0) {</span>
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     471 </span>            :   }
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :   delimiterIndex = aValue.FindChar('\n', 0);</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :   if (delimiterIndex &gt;= 0) {</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     475 </span>            :   }
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :   if (aValue.Length() &gt; 1024) {</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     478 </span>            :   }
+<span class="lineNum">     479 </span>            : 
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     481 </span>            : }
+<span class="lineNum">     482 </span>            : 
+<span class="lineNum">     483 </span>            : // Each line is: &lt;key&gt;\t&lt;score&gt;\t&lt;last accessed time&gt;\t&lt;value&gt;
+<span class="lineNum">     484 </span>            : // Where &lt;score&gt; is a uint32_t as a string, &lt;last accessed time&gt; is a
+<span class="lineNum">     485 </span>            : // int32_t as a string, and the rest are strings.
+<span class="lineNum">     486 </span>            : // &lt;value&gt; can contain anything but a newline.
+<span class="lineNum">     487 </span>            : // Returns a successful status if the line can be decoded into a key and entry.
+<span class="lineNum">     488 </span>            : // Otherwise, an error status is returned and the values assigned to the
+<span class="lineNum">     489 </span>            : // output parameters are in an undefined state.
+<a name="490"><span class="lineNum">     490 </span>            : /* static */</a>
+<span class="lineNum">     491 </span>            : nsresult
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 : DataStorage::Reader::ParseLine(nsDependentCSubstring&amp; aLine, nsCString&amp; aKeyOut,</span>
+<span class="lineNum">     493 </span>            :                                Entry&amp; aEntryOut)
+<span class="lineNum">     494 </span>            : {
+<span class="lineNum">     495 </span>            :   // First find the indices to each part of the line.
+<span class="lineNum">     496 </span>            :   int32_t scoreIndex;
+<span class="lineNum">     497 </span><span class="lineNoCov">          0 :   scoreIndex = aLine.FindChar('\t', 0) + 1;</span>
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :   if (scoreIndex &lt;= 0) {</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :     return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     500 </span>            :   }
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :   int32_t accessedIndex = aLine.FindChar('\t', scoreIndex) + 1;</span>
+<span class="lineNum">     502 </span><span class="lineNoCov">          0 :   if (accessedIndex &lt;= 0) {</span>
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :     return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     504 </span>            :   }
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :   int32_t valueIndex = aLine.FindChar('\t', accessedIndex) + 1;</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :   if (valueIndex &lt;= 0) {</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :     return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     508 </span>            :   }
+<span class="lineNum">     509 </span>            : 
+<span class="lineNum">     510 </span>            :   // Now make substrings based on where each part is.
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :   nsDependentCSubstring keyPart(aLine, 0, scoreIndex - 1);</span>
+<span class="lineNum">     512 </span>            :   nsDependentCSubstring scorePart(aLine, scoreIndex,
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :                                   accessedIndex - scoreIndex - 1);</span>
+<span class="lineNum">     514 </span>            :   nsDependentCSubstring accessedPart(aLine, accessedIndex,
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :                                      valueIndex - accessedIndex - 1);</span>
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :   nsDependentCSubstring valuePart(aLine, valueIndex);</span>
+<span class="lineNum">     517 </span>            : 
+<span class="lineNum">     518 </span>            :   nsresult rv;
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :   rv = DataStorage::ValidateKeyAndValue(nsCString(keyPart),</span>
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :                                         nsCString(valuePart));</span>
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :     return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     523 </span>            :   }
+<span class="lineNum">     524 </span>            : 
+<span class="lineNum">     525 </span>            :   // Now attempt to decode the score part as a uint32_t.
+<span class="lineNum">     526 </span>            :   // XXX nsDependentCSubstring doesn't support ToInteger
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :   int32_t integer = nsCString(scorePart).ToInteger(&amp;rv);</span>
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     529 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     530 </span>            :   }
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :   if (integer &lt; 0) {</span>
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :     return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     533 </span>            :   }
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :   aEntryOut.mScore = (uint32_t)integer;</span>
+<span class="lineNum">     535 </span>            : 
+<span class="lineNum">     536 </span><span class="lineNoCov">          0 :   integer = nsCString(accessedPart).ToInteger(&amp;rv);</span>
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     539 </span>            :   }
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :   if (integer &lt; 0) {</span>
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :     return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     542 </span>            :   }
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :   aEntryOut.mLastAccessed = integer;</span>
+<span class="lineNum">     544 </span>            : 
+<span class="lineNum">     545 </span>            :   // Now set the key and value.
+<span class="lineNum">     546 </span><span class="lineNoCov">          0 :   aKeyOut.Assign(keyPart);</span>
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :   aEntryOut.mValue.Assign(valuePart);</span>
+<span class="lineNum">     548 </span>            : 
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     550 </span>            : }
+<a name="551"><span class="lineNum">     551 </span>            : </a>
+<span class="lineNum">     552 </span>            : nsresult
+<span class="lineNum">     553 </span><span class="lineCov">          3 : DataStorage::AsyncReadData(bool&amp; aHaveProfileDir,</span>
+<span class="lineNum">     554 </span>            :                            const MutexAutoLock&amp; /*aProofOfLock*/)
+<span class="lineNum">     555 </span>            : {
+<span class="lineNum">     556 </span><span class="lineCov">          3 :   MOZ_ASSERT(XRE_IsParentProcess());</span>
+<span class="lineNum">     557 </span><span class="lineCov">          3 :   aHaveProfileDir = false;</span>
+<span class="lineNum">     558 </span>            :   // Allocate a Reader so that even if it isn't dispatched,
+<span class="lineNum">     559 </span>            :   // the data-storage-ready notification will be fired and Get
+<span class="lineNum">     560 </span>            :   // will be able to proceed (this happens in its destructor).
+<span class="lineNum">     561 </span><span class="lineCov">          6 :   RefPtr&lt;Reader&gt; job(new Reader(this));</span>
+<span class="lineNum">     562 </span>            :   nsresult rv;
+<span class="lineNum">     563 </span>            :   // If we don't have a profile directory, this will fail.
+<span class="lineNum">     564 </span>            :   // That's okay - it just means there is no persistent state.
+<span class="lineNum">     565 </span><span class="lineCov">          3 :   rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR,</span>
+<span class="lineNum">     566 </span><span class="lineCov">          6 :                               getter_AddRefs(mBackingFile));</span>
+<span class="lineNum">     567 </span><span class="lineCov">          3 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :     mBackingFile = nullptr;</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     570 </span>            :   }
+<span class="lineNum">     571 </span>            : 
+<span class="lineNum">     572 </span><span class="lineCov">          3 :   rv = mBackingFile-&gt;Append(mFilename);</span>
+<span class="lineNum">     573 </span><span class="lineCov">          3 :   if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     574 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     575 </span>            :   }
+<span class="lineNum">     576 </span>            : 
+<span class="lineNum">     577 </span><span class="lineCov">          3 :   rv = mWorkerThread-&gt;Dispatch(job, NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     578 </span><span class="lineCov">          3 :   if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     580 </span>            :   }
+<span class="lineNum">     581 </span>            : 
+<span class="lineNum">     582 </span><span class="lineCov">          3 :   aHaveProfileDir = true;</span>
+<span class="lineNum">     583 </span><span class="lineCov">          3 :   return NS_OK;</span>
+<span class="lineNum">     584 </span>            : }
+<a name="585"><span class="lineNum">     585 </span>            : </a>
+<span class="lineNum">     586 </span>            : void
+<span class="lineNum">     587 </span><span class="lineCov">         25 : DataStorage::WaitForReady()</span>
+<span class="lineNum">     588 </span>            : {
+<span class="lineNum">     589 </span><span class="lineCov">         25 :   MOZ_DIAGNOSTIC_ASSERT(mInitCalled, &quot;Waiting before Init() has been called?&quot;);</span>
+<span class="lineNum">     590 </span>            : 
+<span class="lineNum">     591 </span><span class="lineCov">         50 :   MonitorAutoLock readyLock(mReadyMonitor);</span>
+<span class="lineNum">     592 </span><span class="lineCov">         29 :   while (!mReady) {</span>
+<span class="lineNum">     593 </span><span class="lineCov">          2 :     nsresult rv = readyLock.Wait();</span>
+<span class="lineNum">     594 </span><span class="lineCov">          2 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     596 </span>            :     }
+<span class="lineNum">     597 </span>            :   }
+<span class="lineNum">     598 </span><span class="lineCov">         25 :   MOZ_ASSERT(mReady);</span>
+<span class="lineNum">     599 </span><span class="lineCov">         25 : }</span>
+<a name="600"><span class="lineNum">     600 </span>            : </a>
+<span class="lineNum">     601 </span>            : nsCString
+<span class="lineNum">     602 </span><span class="lineCov">         22 : DataStorage::Get(const nsCString&amp; aKey, DataStorageType aType)</span>
+<span class="lineNum">     603 </span>            : {
+<span class="lineNum">     604 </span><span class="lineCov">         22 :   WaitForReady();</span>
+<span class="lineNum">     605 </span><span class="lineCov">         44 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     606 </span>            : 
+<span class="lineNum">     607 </span><span class="lineCov">         44 :   Entry entry;</span>
+<span class="lineNum">     608 </span><span class="lineCov">         22 :   bool foundValue = GetInternal(aKey, &amp;entry, aType, lock);</span>
+<span class="lineNum">     609 </span><span class="lineCov">         22 :   if (!foundValue) {</span>
+<span class="lineNum">     610 </span><span class="lineCov">         22 :     return EmptyCString();</span>
+<span class="lineNum">     611 </span>            :   }
+<span class="lineNum">     612 </span>            : 
+<span class="lineNum">     613 </span>            :   // If we're here, we found a value. Maybe update its score.
+<span class="lineNum">     614 </span><span class="lineNoCov">          0 :   if (entry.UpdateScore()) {</span>
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :     PutInternal(aKey, entry, aType, lock);</span>
+<span class="lineNum">     616 </span>            :   }
+<span class="lineNum">     617 </span>            : 
+<span class="lineNum">     618 </span><span class="lineNoCov">          0 :   return entry.mValue;</span>
+<span class="lineNum">     619 </span>            : }
+<a name="620"><span class="lineNum">     620 </span>            : </a>
+<span class="lineNum">     621 </span>            : bool
+<span class="lineNum">     622 </span><span class="lineCov">         22 : DataStorage::GetInternal(const nsCString&amp; aKey, Entry* aEntry,</span>
+<span class="lineNum">     623 </span>            :                          DataStorageType aType,
+<span class="lineNum">     624 </span>            :                          const MutexAutoLock&amp; aProofOfLock)
+<span class="lineNum">     625 </span>            : {
+<span class="lineNum">     626 </span><span class="lineCov">         22 :   DataStorageTable&amp; table = GetTableForType(aType, aProofOfLock);</span>
+<span class="lineNum">     627 </span><span class="lineCov">         22 :   bool foundValue = table.Get(aKey, aEntry);</span>
+<span class="lineNum">     628 </span><span class="lineCov">         22 :   return foundValue;</span>
+<span class="lineNum">     629 </span>            : }
+<a name="630"><span class="lineNum">     630 </span>            : </a>
+<span class="lineNum">     631 </span>            : DataStorage::DataStorageTable&amp;
+<span class="lineNum">     632 </span><span class="lineCov">         31 : DataStorage::GetTableForType(DataStorageType aType,</span>
+<span class="lineNum">     633 </span>            :                              const MutexAutoLock&amp; /*aProofOfLock*/)
+<span class="lineNum">     634 </span>            : {
+<span class="lineNum">     635 </span><span class="lineCov">         31 :   switch (aType) {</span>
+<span class="lineNum">     636 </span>            :     case DataStorage_Persistent:
+<span class="lineNum">     637 </span><span class="lineCov">         25 :       return mPersistentDataTable;</span>
+<span class="lineNum">     638 </span>            :     case DataStorage_Temporary:
+<span class="lineNum">     639 </span><span class="lineCov">          3 :       return mTemporaryDataTable;</span>
+<span class="lineNum">     640 </span>            :     case DataStorage_Private:
+<span class="lineNum">     641 </span><span class="lineCov">          3 :       return mPrivateDataTable;</span>
+<span class="lineNum">     642 </span>            :   }
+<span class="lineNum">     643 </span>            : 
+<span class="lineNum">     644 </span><span class="lineNoCov">          0 :   MOZ_CRASH(&quot;given bad DataStorage storage type&quot;);</span>
+<span class="lineNum">     645 </span>            : }
+<a name="646"><span class="lineNum">     646 </span>            : </a>
+<span class="lineNum">     647 </span>            : void
+<span class="lineNum">     648 </span><span class="lineCov">          9 : DataStorage::ReadAllFromTable(DataStorageType aType,</span>
+<span class="lineNum">     649 </span>            :                               InfallibleTArray&lt;dom::DataStorageItem&gt;* aItems,
+<span class="lineNum">     650 </span>            :                               const MutexAutoLock&amp; aProofOfLock)
+<span class="lineNum">     651 </span>            : {
+<span class="lineNum">     652 </span><span class="lineCov">         18 :   for (auto iter = GetTableForType(aType, aProofOfLock).Iter();</span>
+<span class="lineNum">     653 </span><span class="lineCov">          9 :        !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">     654 </span><span class="lineNoCov">          0 :     DataStorageItem* item = aItems-&gt;AppendElement();</span>
+<span class="lineNum">     655 </span><span class="lineNoCov">          0 :     item-&gt;key() = iter.Key();</span>
+<span class="lineNum">     656 </span><span class="lineNoCov">          0 :     item-&gt;value() = iter.Data().mValue;</span>
+<span class="lineNum">     657 </span><span class="lineNoCov">          0 :     item-&gt;type() = aType;</span>
+<span class="lineNum">     658 </span>            :   }
+<span class="lineNum">     659 </span><span class="lineCov">          9 : }</span>
+<a name="660"><span class="lineNum">     660 </span>            : </a>
+<span class="lineNum">     661 </span>            : void
+<span class="lineNum">     662 </span><span class="lineCov">          3 : DataStorage::GetAll(InfallibleTArray&lt;dom::DataStorageItem&gt;* aItems)</span>
+<span class="lineNum">     663 </span>            : {
+<span class="lineNum">     664 </span><span class="lineCov">          3 :   WaitForReady();</span>
+<span class="lineNum">     665 </span><span class="lineCov">          6 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     666 </span>            : 
+<span class="lineNum">     667 </span><span class="lineCov">          9 :   aItems-&gt;SetCapacity(mPersistentDataTable.Count() +</span>
+<span class="lineNum">     668 </span><span class="lineCov">          6 :                       mTemporaryDataTable.Count() +</span>
+<span class="lineNum">     669 </span><span class="lineCov">          6 :                       mPrivateDataTable.Count());</span>
+<span class="lineNum">     670 </span><span class="lineCov">          3 :   ReadAllFromTable(DataStorage_Persistent, aItems, lock);</span>
+<span class="lineNum">     671 </span><span class="lineCov">          3 :   ReadAllFromTable(DataStorage_Temporary, aItems, lock);</span>
+<span class="lineNum">     672 </span><span class="lineCov">          3 :   ReadAllFromTable(DataStorage_Private, aItems, lock);</span>
+<span class="lineNum">     673 </span><span class="lineCov">          3 : }</span>
+<span class="lineNum">     674 </span>            : 
+<span class="lineNum">     675 </span>            : // Limit the number of entries per table. This is to prevent unbounded
+<span class="lineNum">     676 </span>            : // resource use. The eviction strategy is as follows:
+<span class="lineNum">     677 </span>            : // - An entry's score is incremented once for every day it is accessed.
+<span class="lineNum">     678 </span>            : // - Evict an entry with score no more than any other entry in the table
+<span class="lineNum">     679 </span>            : //   (this is the same as saying evict the entry with the lowest score,
+<span class="lineNum">     680 </span>            : //    except for when there are multiple entries with the lowest score,
+<a name="681"><span class="lineNum">     681 </span>            : //    in which case one of them is evicted - which one is not specified).</a>
+<span class="lineNum">     682 </span>            : void
+<span class="lineNum">     683 </span><span class="lineNoCov">          0 : DataStorage::MaybeEvictOneEntry(DataStorageType aType,</span>
+<span class="lineNum">     684 </span>            :                                 const MutexAutoLock&amp; aProofOfLock)
+<span class="lineNum">     685 </span>            : {
+<span class="lineNum">     686 </span><span class="lineNoCov">          0 :   DataStorageTable&amp; table = GetTableForType(aType, aProofOfLock);</span>
+<span class="lineNum">     687 </span><span class="lineNoCov">          0 :   if (table.Count() &gt;= sMaxDataEntries) {</span>
+<span class="lineNum">     688 </span><span class="lineNoCov">          0 :     KeyAndEntry toEvict;</span>
+<span class="lineNum">     689 </span>            :     // If all entries have score sMaxScore, this won't actually remove
+<span class="lineNum">     690 </span>            :     // anything. This will never happen, however, because having that high
+<span class="lineNum">     691 </span>            :     // a score either means someone tampered with the backing file or every
+<span class="lineNum">     692 </span>            :     // entry has been accessed once a day for ~4 billion days.
+<span class="lineNum">     693 </span>            :     // The worst that will happen is there will be 1025 entries in the
+<span class="lineNum">     694 </span>            :     // persistent data table, with the 1025th entry being replaced every time
+<span class="lineNum">     695 </span>            :     // data with a new key is inserted into the table. This is bad but
+<span class="lineNum">     696 </span>            :     // ultimately not that concerning, considering that if an attacker can
+<span class="lineNum">     697 </span>            :     // modify data in the profile, they can cause much worse harm.
+<span class="lineNum">     698 </span><span class="lineNoCov">          0 :     toEvict.mEntry.mScore = sMaxScore;</span>
+<span class="lineNum">     699 </span>            : 
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :     for (auto iter = table.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :       Entry entry = iter.UserData();</span>
+<span class="lineNum">     702 </span><span class="lineNoCov">          0 :       if (entry.mScore &lt; toEvict.mEntry.mScore) {</span>
+<span class="lineNum">     703 </span><span class="lineNoCov">          0 :         toEvict.mKey = iter.Key();</span>
+<span class="lineNum">     704 </span><span class="lineNoCov">          0 :         toEvict.mEntry = entry;</span>
+<span class="lineNum">     705 </span>            :       }
+<span class="lineNum">     706 </span>            :     }
+<span class="lineNum">     707 </span>            : 
+<span class="lineNum">     708 </span><span class="lineNoCov">          0 :     table.Remove(toEvict.mKey);</span>
+<span class="lineNum">     709 </span>            :   }
+<span class="lineNum">     710 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     711 </span>            : 
+<span class="lineNum">     712 </span>            : template &lt;class Functor&gt;
+<a name="713"><span class="lineNum">     713 </span>            : static</a>
+<span class="lineNum">     714 </span>            : void
+<span class="lineNum">     715 </span><span class="lineNoCov">          0 : RunOnAllContentParents(Functor func)</span>
+<span class="lineNum">     716 </span>            : {
+<span class="lineNum">     717 </span><span class="lineNoCov">          0 :   if (!XRE_IsParentProcess()) {</span>
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     719 </span>            :   }
+<span class="lineNum">     720 </span>            :   using dom::ContentParent;
+<span class="lineNum">     721 </span><span class="lineNoCov">          0 :   nsTArray&lt;ContentParent*&gt; parents;</span>
+<span class="lineNum">     722 </span><span class="lineNoCov">          0 :   ContentParent::GetAll(parents);</span>
+<span class="lineNum">     723 </span><span class="lineNoCov">          0 :   for (auto&amp; parent: parents) {</span>
+<span class="lineNum">     724 </span><span class="lineNoCov">          0 :     func(parent);</span>
+<span class="lineNum">     725 </span>            :   }
+<span class="lineNum">     726 </span>            : }
+<a name="727"><span class="lineNum">     727 </span>            : </a>
+<span class="lineNum">     728 </span>            : nsresult
+<span class="lineNum">     729 </span><span class="lineNoCov">          0 : DataStorage::Put(const nsCString&amp; aKey, const nsCString&amp; aValue,</span>
+<span class="lineNum">     730 </span>            :                  DataStorageType aType)
+<span class="lineNum">     731 </span>            : {
+<span class="lineNum">     732 </span><span class="lineNoCov">          0 :   WaitForReady();</span>
+<span class="lineNum">     733 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     734 </span>            : 
+<span class="lineNum">     735 </span>            :   nsresult rv;
+<span class="lineNum">     736 </span><span class="lineNoCov">          0 :   rv = ValidateKeyAndValue(aKey, aValue);</span>
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     738 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     739 </span>            :   }
+<span class="lineNum">     740 </span>            : 
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 :   Entry entry;</span>
+<span class="lineNum">     742 </span><span class="lineNoCov">          0 :   bool exists = GetInternal(aKey, &amp;entry, aType, lock);</span>
+<span class="lineNum">     743 </span><span class="lineNoCov">          0 :   if (exists) {</span>
+<span class="lineNum">     744 </span><span class="lineNoCov">          0 :     entry.UpdateScore();</span>
+<span class="lineNum">     745 </span>            :   } else {
+<span class="lineNum">     746 </span><span class="lineNoCov">          0 :     MaybeEvictOneEntry(aType, lock);</span>
+<span class="lineNum">     747 </span>            :   }
+<span class="lineNum">     748 </span><span class="lineNoCov">          0 :   entry.mValue = aValue;</span>
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :   rv = PutInternal(aKey, entry, aType, lock);</span>
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     751 </span><span class="lineNoCov">          0 :     return rv;</span>
+<a name="752"><span class="lineNum">     752 </span>            :   }</a>
+<span class="lineNum">     753 </span>            : 
+<span class="lineNum">     754 </span><span class="lineNoCov">          0 :   RunOnAllContentParents([&amp;](dom::ContentParent* aParent) {</span>
+<span class="lineNum">     755 </span><span class="lineNoCov">          0 :     DataStorageItem item;</span>
+<span class="lineNum">     756 </span><span class="lineNoCov">          0 :     item.key() = aKey;</span>
+<span class="lineNum">     757 </span><span class="lineNoCov">          0 :     item.value() = aValue;</span>
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :     item.type() = aType;</span>
+<span class="lineNum">     759 </span><span class="lineNoCov">          0 :     Unused &lt;&lt; aParent-&gt;SendDataStoragePut(mFilename, item);</span>
+<span class="lineNum">     760 </span><span class="lineNoCov">          0 :   });</span>
+<span class="lineNum">     761 </span>            : 
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     763 </span>            : }
+<a name="764"><span class="lineNum">     764 </span>            : </a>
+<span class="lineNum">     765 </span>            : nsresult
+<span class="lineNum">     766 </span><span class="lineNoCov">          0 : DataStorage::PutInternal(const nsCString&amp; aKey, Entry&amp; aEntry,</span>
+<span class="lineNum">     767 </span>            :                          DataStorageType aType,
+<span class="lineNum">     768 </span>            :                          const MutexAutoLock&amp; aProofOfLock)
+<span class="lineNum">     769 </span>            : {
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :   DataStorageTable&amp; table = GetTableForType(aType, aProofOfLock);</span>
+<span class="lineNum">     771 </span><span class="lineNoCov">          0 :   table.Put(aKey, aEntry);</span>
+<span class="lineNum">     772 </span>            : 
+<span class="lineNum">     773 </span><span class="lineNoCov">          0 :   if (aType == DataStorage_Persistent &amp;&amp; !mPendingWrite) {</span>
+<span class="lineNum">     774 </span><span class="lineNoCov">          0 :     return AsyncSetTimer(aProofOfLock);</span>
+<span class="lineNum">     775 </span>            :   }
+<span class="lineNum">     776 </span>            : 
+<span class="lineNum">     777 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     778 </span>            : }
+<a name="779"><span class="lineNum">     779 </span>            : </a>
+<span class="lineNum">     780 </span>            : void
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 : DataStorage::Remove(const nsCString&amp; aKey, DataStorageType aType)</span>
+<span class="lineNum">     782 </span>            : {
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :   WaitForReady();</span>
+<span class="lineNum">     784 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     785 </span>            : 
+<span class="lineNum">     786 </span><span class="lineNoCov">          0 :   DataStorageTable&amp; table = GetTableForType(aType, lock);</span>
+<span class="lineNum">     787 </span><span class="lineNoCov">          0 :   table.Remove(aKey);</span>
+<span class="lineNum">     788 </span>            : 
+<span class="lineNum">     789 </span><span class="lineNoCov">          0 :   if (aType == DataStorage_Persistent &amp;&amp; !mPendingWrite) {</span>
+<span class="lineNum">     790 </span><span class="lineNoCov">          0 :     Unused &lt;&lt; AsyncSetTimer(lock);</span>
+<a name="791"><span class="lineNum">     791 </span>            :   }</a>
+<span class="lineNum">     792 </span>            : 
+<span class="lineNum">     793 </span><span class="lineNoCov">          0 :   RunOnAllContentParents([&amp;](dom::ContentParent* aParent) {</span>
+<span class="lineNum">     794 </span><span class="lineNoCov">          0 :     Unused &lt;&lt; aParent-&gt;SendDataStorageRemove(mFilename, aKey, aType);</span>
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :   });</span>
+<a name="796"><span class="lineNum">     796 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     797 </span>            : 
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 : class DataStorage::Writer : public Runnable</span>
+<a name="799"><span class="lineNum">     799 </span>            : {</a>
+<span class="lineNum">     800 </span>            : public:
+<span class="lineNum">     801 </span><span class="lineNoCov">          0 :   Writer(nsCString&amp; aData, DataStorage* aDataStorage)</span>
+<span class="lineNum">     802 </span><span class="lineNoCov">          0 :     : Runnable(&quot;DataStorage::Writer&quot;)</span>
+<span class="lineNum">     803 </span>            :     , mData(aData)
+<span class="lineNum">     804 </span><span class="lineNoCov">          0 :     , mDataStorage(aDataStorage)</span>
+<span class="lineNum">     805 </span>            :   {
+<span class="lineNum">     806 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     807 </span>            : 
+<span class="lineNum">     808 </span>            : private:
+<span class="lineNum">     809 </span>            :   NS_DECL_NSIRUNNABLE
+<span class="lineNum">     810 </span>            : 
+<span class="lineNum">     811 </span>            :   nsCString mData;
+<span class="lineNum">     812 </span>            :   RefPtr&lt;DataStorage&gt; mDataStorage;
+<span class="lineNum">     813 </span>            : };
+<a name="814"><span class="lineNum">     814 </span>            : </a>
+<span class="lineNum">     815 </span>            : NS_IMETHODIMP
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 : DataStorage::Writer::Run()</span>
+<span class="lineNum">     817 </span>            : {
+<span class="lineNum">     818 </span>            :   nsresult rv;
+<span class="lineNum">     819 </span>            :   // Concurrent operations on nsIFile objects are not guaranteed to be safe,
+<span class="lineNum">     820 </span>            :   // so we clone the file while holding the lock and then release the lock.
+<span class="lineNum">     821 </span>            :   // At that point, we can safely operate on the clone.
+<span class="lineNum">     822 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;nsIFile&gt; file;</span>
+<span class="lineNum">     823 </span>            :   {
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :     MutexAutoLock lock(mDataStorage-&gt;mMutex);</span>
+<span class="lineNum">     825 </span>            :     // If we don't have a profile, bail.
+<span class="lineNum">     826 </span><span class="lineNoCov">          0 :     if (!mDataStorage-&gt;mBackingFile) {</span>
+<span class="lineNum">     827 </span><span class="lineNoCov">          0 :       return NS_OK;</span>
+<span class="lineNum">     828 </span>            :     }
+<span class="lineNum">     829 </span><span class="lineNoCov">          0 :     rv = mDataStorage-&gt;mBackingFile-&gt;Clone(getter_AddRefs(file));</span>
+<span class="lineNum">     830 </span><span class="lineNoCov">          0 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     831 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     832 </span>            :     }
+<span class="lineNum">     833 </span>            :   }
+<span class="lineNum">     834 </span>            : 
+<span class="lineNum">     835 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;nsIOutputStream&gt; outputStream;</span>
+<span class="lineNum">     836 </span><span class="lineNoCov">          0 :   rv = NS_NewLocalFileOutputStream(getter_AddRefs(outputStream), file,</span>
+<span class="lineNum">     837 </span><span class="lineNoCov">          0 :                                    PR_CREATE_FILE | PR_TRUNCATE | PR_WRONLY);</span>
+<span class="lineNum">     838 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     839 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     840 </span>            :   }
+<span class="lineNum">     841 </span>            : 
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :   const char* ptr = mData.get();</span>
+<span class="lineNum">     843 </span><span class="lineNoCov">          0 :   int32_t remaining = mData.Length();</span>
+<span class="lineNum">     844 </span><span class="lineNoCov">          0 :   uint32_t written = 0;</span>
+<span class="lineNum">     845 </span><span class="lineNoCov">          0 :   while (remaining &gt; 0) {</span>
+<span class="lineNum">     846 </span><span class="lineNoCov">          0 :     rv = outputStream-&gt;Write(ptr, remaining, &amp;written);</span>
+<span class="lineNum">     847 </span><span class="lineNoCov">          0 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     848 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     849 </span>            :     }
+<span class="lineNum">     850 </span><span class="lineNoCov">          0 :     remaining -= written;</span>
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :     ptr += written;</span>
+<span class="lineNum">     852 </span>            :   }
+<span class="lineNum">     853 </span>            : 
+<span class="lineNum">     854 </span>            :   // Observed by tests.
+<span class="lineNum">     855 </span>            :   nsCOMPtr&lt;nsIRunnable&gt; job =
+<span class="lineNum">     856 </span><span class="lineNoCov">          0 :     NewRunnableMethod&lt;const char*&gt;(&quot;DataStorage::NotifyObservers&quot;,</span>
+<span class="lineNum">     857 </span>            :                                    mDataStorage,
+<span class="lineNum">     858 </span>            :                                    &amp;DataStorage::NotifyObservers,
+<span class="lineNum">     859 </span><span class="lineNoCov">          0 :                                    &quot;data-storage-written&quot;);</span>
+<span class="lineNum">     860 </span><span class="lineNoCov">          0 :   rv = NS_DispatchToMainThread(job, NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     861 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     862 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     863 </span>            :   }
+<span class="lineNum">     864 </span>            : 
+<span class="lineNum">     865 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     866 </span>            : }
+<a name="867"><span class="lineNum">     867 </span>            : </a>
+<span class="lineNum">     868 </span>            : nsresult
+<span class="lineNum">     869 </span><span class="lineNoCov">          0 : DataStorage::AsyncWriteData(const MutexAutoLock&amp; /*aProofOfLock*/)</span>
+<span class="lineNum">     870 </span>            : {
+<span class="lineNum">     871 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(XRE_IsParentProcess());</span>
+<span class="lineNum">     872 </span>            : 
+<span class="lineNum">     873 </span><span class="lineNoCov">          0 :   if (mShuttingDown || !mBackingFile) {</span>
+<span class="lineNum">     874 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     875 </span>            :   }
+<span class="lineNum">     876 </span>            : 
+<span class="lineNum">     877 </span><span class="lineNoCov">          0 :   nsCString output;</span>
+<span class="lineNum">     878 </span><span class="lineNoCov">          0 :   for (auto iter = mPersistentDataTable.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">     879 </span><span class="lineNoCov">          0 :     Entry entry = iter.UserData();</span>
+<span class="lineNum">     880 </span><span class="lineNoCov">          0 :     output.Append(iter.Key());</span>
+<span class="lineNum">     881 </span><span class="lineNoCov">          0 :     output.Append('\t');</span>
+<span class="lineNum">     882 </span><span class="lineNoCov">          0 :     output.AppendInt(entry.mScore);</span>
+<span class="lineNum">     883 </span><span class="lineNoCov">          0 :     output.Append('\t');</span>
+<span class="lineNum">     884 </span><span class="lineNoCov">          0 :     output.AppendInt(entry.mLastAccessed);</span>
+<span class="lineNum">     885 </span><span class="lineNoCov">          0 :     output.Append('\t');</span>
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 :     output.Append(entry.mValue);</span>
+<span class="lineNum">     887 </span><span class="lineNoCov">          0 :     output.Append('\n');</span>
+<span class="lineNum">     888 </span>            :   }
+<span class="lineNum">     889 </span>            : 
+<span class="lineNum">     890 </span><span class="lineNoCov">          0 :   RefPtr&lt;Writer&gt; job(new Writer(output, this));</span>
+<span class="lineNum">     891 </span><span class="lineNoCov">          0 :   nsresult rv = mWorkerThread-&gt;Dispatch(job, NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :   mPendingWrite = false;</span>
+<span class="lineNum">     893 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     894 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     895 </span>            :   }
+<span class="lineNum">     896 </span>            : 
+<span class="lineNum">     897 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     898 </span>            : }
+<a name="899"><span class="lineNum">     899 </span>            : </a>
+<span class="lineNum">     900 </span>            : nsresult
+<span class="lineNum">     901 </span><span class="lineNoCov">          0 : DataStorage::Clear()</span>
+<span class="lineNum">     902 </span>            : {
+<span class="lineNum">     903 </span><span class="lineNoCov">          0 :   WaitForReady();</span>
+<span class="lineNum">     904 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     905 </span><span class="lineNoCov">          0 :   mPersistentDataTable.Clear();</span>
+<span class="lineNum">     906 </span><span class="lineNoCov">          0 :   mTemporaryDataTable.Clear();</span>
+<span class="lineNum">     907 </span><span class="lineNoCov">          0 :   mPrivateDataTable.Clear();</span>
+<span class="lineNum">     908 </span>            : 
+<span class="lineNum">     909 </span><span class="lineNoCov">          0 :   if (XRE_IsParentProcess()) {</span>
+<span class="lineNum">     910 </span>            :     // Asynchronously clear the file. This is similar to the permission manager
+<span class="lineNum">     911 </span>            :     // in that it doesn't wait to synchronously remove the data from its backing
+<span class="lineNum">     912 </span>            :     // storage either.
+<span class="lineNum">     913 </span><span class="lineNoCov">          0 :     nsresult rv = AsyncWriteData(lock);</span>
+<span class="lineNum">     914 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     915 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">     916 </span>            :     }
+<a name="917"><span class="lineNum">     917 </span>            :   }</a>
+<span class="lineNum">     918 </span>            : 
+<span class="lineNum">     919 </span><span class="lineNoCov">          0 :   RunOnAllContentParents([&amp;](dom::ContentParent* aParent) {</span>
+<span class="lineNum">     920 </span><span class="lineNoCov">          0 :     Unused &lt;&lt; aParent-&gt;SendDataStorageClear(mFilename);</span>
+<span class="lineNum">     921 </span><span class="lineNoCov">          0 :   });</span>
+<span class="lineNum">     922 </span>            : 
+<span class="lineNum">     923 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     924 </span>            : }
+<span class="lineNum">     925 </span>            : 
+<a name="926"><span class="lineNum">     926 </span>            : /* static */</a>
+<span class="lineNum">     927 </span>            : void
+<span class="lineNum">     928 </span><span class="lineNoCov">          0 : DataStorage::TimerCallback(nsITimer* aTimer, void* aClosure)</span>
+<span class="lineNum">     929 </span>            : {
+<span class="lineNum">     930 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(XRE_IsParentProcess());</span>
+<span class="lineNum">     931 </span>            : 
+<span class="lineNum">     932 </span><span class="lineNoCov">          0 :   RefPtr&lt;DataStorage&gt; aDataStorage = (DataStorage*)aClosure;</span>
+<span class="lineNum">     933 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(aDataStorage-&gt;mMutex);</span>
+<span class="lineNum">     934 </span><span class="lineNoCov">          0 :   Unused &lt;&lt; aDataStorage-&gt;AsyncWriteData(lock);</span>
+<span class="lineNum">     935 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     936 </span>            : 
+<span class="lineNum">     937 </span>            : // We only initialize the timer on the worker thread because it's not safe
+<a name="938"><span class="lineNum">     938 </span>            : // to mix what threads are operating on the timer.</a>
+<span class="lineNum">     939 </span>            : nsresult
+<span class="lineNum">     940 </span><span class="lineNoCov">          0 : DataStorage::AsyncSetTimer(const MutexAutoLock&amp; /*aProofOfLock*/)</span>
+<span class="lineNum">     941 </span>            : {
+<span class="lineNum">     942 </span><span class="lineNoCov">          0 :   if (mShuttingDown || !XRE_IsParentProcess()) {</span>
+<span class="lineNum">     943 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     944 </span>            :   }
+<span class="lineNum">     945 </span>            : 
+<span class="lineNum">     946 </span><span class="lineNoCov">          0 :   mPendingWrite = true;</span>
+<span class="lineNum">     947 </span>            :   nsCOMPtr&lt;nsIRunnable&gt; job =
+<span class="lineNum">     948 </span><span class="lineNoCov">          0 :     NewRunnableMethod(&quot;DataStorage::SetTimer&quot;, this, &amp;DataStorage::SetTimer);</span>
+<span class="lineNum">     949 </span><span class="lineNoCov">          0 :   nsresult rv = mWorkerThread-&gt;Dispatch(job, NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">     950 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     951 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     952 </span>            :   }
+<span class="lineNum">     953 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     954 </span>            : }
+<a name="955"><span class="lineNum">     955 </span>            : </a>
+<span class="lineNum">     956 </span>            : void
+<span class="lineNum">     957 </span><span class="lineNoCov">          0 : DataStorage::SetTimer()</span>
+<span class="lineNum">     958 </span>            : {
+<span class="lineNum">     959 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!NS_IsMainThread());</span>
+<span class="lineNum">     960 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(XRE_IsParentProcess());</span>
+<span class="lineNum">     961 </span>            : 
+<span class="lineNum">     962 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">     963 </span>            : 
+<span class="lineNum">     964 </span>            :   nsresult rv;
+<span class="lineNum">     965 </span><span class="lineNoCov">          0 :   if (!mTimer) {</span>
+<span class="lineNum">     966 </span><span class="lineNoCov">          0 :     mTimer = do_CreateInstance(&quot;@mozilla.org/timer;1&quot;, &amp;rv);</span>
+<span class="lineNum">     967 </span><span class="lineNoCov">          0 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">     968 </span><span class="lineNoCov">          0 :       return;</span>
+<span class="lineNum">     969 </span>            :     }
+<span class="lineNum">     970 </span>            :   }
+<span class="lineNum">     971 </span>            : 
+<span class="lineNum">     972 </span><span class="lineNoCov">          0 :   rv = mTimer-&gt;InitWithNamedFuncCallback(TimerCallback,</span>
+<span class="lineNum">     973 </span>            :                                          this,
+<span class="lineNum">     974 </span>            :                                          mTimerDelay,
+<span class="lineNum">     975 </span>            :                                          nsITimer::TYPE_ONE_SHOT,
+<span class="lineNum">     976 </span><span class="lineNoCov">          0 :                                          &quot;DataStorage::SetTimer&quot;);</span>
+<span class="lineNum">     977 </span><span class="lineNoCov">          0 :   Unused &lt;&lt; NS_WARN_IF(NS_FAILED(rv));</span>
+<span class="lineNum">     978 </span>            : }
+<a name="979"><span class="lineNum">     979 </span>            : </a>
+<span class="lineNum">     980 </span>            : void
+<span class="lineNum">     981 </span><span class="lineCov">          9 : DataStorage::NotifyObservers(const char* aTopic)</span>
+<span class="lineNum">     982 </span>            : {
+<span class="lineNum">     983 </span>            :   // Don't access the observer service off the main thread.
+<span class="lineNum">     984 </span><span class="lineCov">          9 :   if (!NS_IsMainThread()) {</span>
+<span class="lineNum">     985 </span><span class="lineNoCov">          0 :     MOZ_ASSERT_UNREACHABLE(&quot;DataStorage::NotifyObservers called off main thread&quot;);</span>
+<span class="lineNum">     986 </span>            :     return;
+<span class="lineNum">     987 </span>            :   }
+<span class="lineNum">     988 </span>            : 
+<span class="lineNum">     989 </span><span class="lineCov">         18 :   nsCOMPtr&lt;nsIObserverService&gt; os = services::GetObserverService();</span>
+<span class="lineNum">     990 </span><span class="lineCov">          9 :   if (os) {</span>
+<span class="lineNum">     991 </span><span class="lineCov">          9 :     os-&gt;NotifyObservers(nullptr, aTopic, mFilename.get());</span>
+<span class="lineNum">     992 </span>            :   }
+<span class="lineNum">     993 </span><span class="lineCov">          9 : }</span>
+<a name="994"><span class="lineNum">     994 </span>            : </a>
+<span class="lineNum">     995 </span>            : nsresult
+<span class="lineNum">     996 </span><span class="lineNoCov">          0 : DataStorage::DispatchShutdownTimer(const MutexAutoLock&amp; /*aProofOfLock*/)</span>
+<span class="lineNum">     997 </span>            : {
+<span class="lineNum">     998 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(XRE_IsParentProcess());</span>
+<span class="lineNum">     999 </span>            : 
+<span class="lineNum">    1000 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;nsIRunnable&gt; job = NewRunnableMethod(</span>
+<span class="lineNum">    1001 </span><span class="lineNoCov">          0 :     &quot;DataStorage::ShutdownTimer&quot;, this, &amp;DataStorage::ShutdownTimer);</span>
+<span class="lineNum">    1002 </span><span class="lineNoCov">          0 :   nsresult rv = mWorkerThread-&gt;Dispatch(job, NS_DISPATCH_NORMAL);</span>
+<span class="lineNum">    1003 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">    1004 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">    1005 </span>            :   }
+<span class="lineNum">    1006 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">    1007 </span>            : }
+<a name="1008"><span class="lineNum">    1008 </span>            : </a>
+<span class="lineNum">    1009 </span>            : void
+<span class="lineNum">    1010 </span><span class="lineNoCov">          0 : DataStorage::ShutdownTimer()</span>
+<span class="lineNum">    1011 </span>            : {
+<span class="lineNum">    1012 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(XRE_IsParentProcess());</span>
+<span class="lineNum">    1013 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(!NS_IsMainThread());</span>
+<span class="lineNum">    1014 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">    1015 </span><span class="lineNoCov">          0 :   nsresult rv = mTimer-&gt;Cancel();</span>
+<span class="lineNum">    1016 </span><span class="lineNoCov">          0 :   Unused &lt;&lt; NS_WARN_IF(NS_FAILED(rv));</span>
+<span class="lineNum">    1017 </span><span class="lineNoCov">          0 :   mTimer = nullptr;</span>
+<span class="lineNum">    1018 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">    1019 </span>            : 
+<span class="lineNum">    1020 </span>            : //------------------------------------------------------------
+<span class="lineNum">    1021 </span>            : // DataStorage::nsIObserver
+<span class="lineNum">    1022 </span>            : //------------------------------------------------------------
+<a name="1023"><span class="lineNum">    1023 </span>            : </a>
+<span class="lineNum">    1024 </span>            : NS_IMETHODIMP
+<span class="lineNum">    1025 </span><span class="lineNoCov">          0 : DataStorage::Observe(nsISupports* /*aSubject*/, const char* aTopic,</span>
+<span class="lineNum">    1026 </span>            :                      const char16_t* /*aData*/)
+<span class="lineNum">    1027 </span>            : {
+<span class="lineNum">    1028 </span>            :   // Don't access preferences off the main thread.
+<span class="lineNum">    1029 </span><span class="lineNoCov">          0 :   if (!NS_IsMainThread()) {</span>
+<span class="lineNum">    1030 </span><span class="lineNoCov">          0 :     MOZ_ASSERT_UNREACHABLE(&quot;DataStorage::Observe called off main thread&quot;);</span>
+<span class="lineNum">    1031 </span>            :     return NS_ERROR_NOT_SAME_THREAD;
+<span class="lineNum">    1032 </span>            :   }
+<span class="lineNum">    1033 </span>            : 
+<span class="lineNum">    1034 </span>            :   nsresult rv;
+<span class="lineNum">    1035 </span><span class="lineNoCov">          0 :   if (strcmp(aTopic, &quot;last-pb-context-exited&quot;) == 0) {</span>
+<span class="lineNum">    1036 </span><span class="lineNoCov">          0 :     MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">    1037 </span><span class="lineNoCov">          0 :     mPrivateDataTable.Clear();</span>
+<span class="lineNum">    1038 </span><span class="lineNoCov">          0 :   } else if (strcmp(aTopic, &quot;profile-before-change&quot;) == 0 ||</span>
+<span class="lineNum">    1039 </span><span class="lineNoCov">          0 :              (strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0 &amp;&amp;</span>
+<span class="lineNum">    1040 </span><span class="lineNoCov">          0 :               XRE_IsParentProcess())) {</span>
+<span class="lineNum">    1041 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(XRE_IsParentProcess());</span>
+<span class="lineNum">    1042 </span>            :     // per bug 1271402, this should be safe to run multiple times
+<span class="lineNum">    1043 </span>            :     {
+<span class="lineNum">    1044 </span><span class="lineNoCov">          0 :       MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">    1045 </span><span class="lineNoCov">          0 :       rv = AsyncWriteData(lock);</span>
+<span class="lineNum">    1046 </span><span class="lineNoCov">          0 :       mShuttingDown = true;</span>
+<span class="lineNum">    1047 </span><span class="lineNoCov">          0 :       Unused &lt;&lt; NS_WARN_IF(NS_FAILED(rv));</span>
+<span class="lineNum">    1048 </span><span class="lineNoCov">          0 :       if (mTimer) {</span>
+<span class="lineNum">    1049 </span><span class="lineNoCov">          0 :         rv = DispatchShutdownTimer(lock);</span>
+<span class="lineNum">    1050 </span><span class="lineNoCov">          0 :         Unused &lt;&lt; NS_WARN_IF(NS_FAILED(rv));</span>
+<span class="lineNum">    1051 </span>            :       }
+<span class="lineNum">    1052 </span>            :     }
+<span class="lineNum">    1053 </span>            :     // Run the thread to completion and prevent any further events
+<span class="lineNum">    1054 </span>            :     // being scheduled to it. The thread may need the lock, so we can't
+<span class="lineNum">    1055 </span>            :     // hold it here.
+<span class="lineNum">    1056 </span><span class="lineNoCov">          0 :     rv = mWorkerThread-&gt;Shutdown();</span>
+<span class="lineNum">    1057 </span><span class="lineNoCov">          0 :     if (NS_WARN_IF(NS_FAILED(rv))) {</span>
+<span class="lineNum">    1058 </span><span class="lineNoCov">          0 :       return rv;</span>
+<span class="lineNum">    1059 </span>            :     }
+<span class="lineNum">    1060 </span>            : 
+<span class="lineNum">    1061 </span><span class="lineNoCov">          0 :     sDataStorages-&gt;Clear();</span>
+<span class="lineNum">    1062 </span><span class="lineNoCov">          0 :   } else if (strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0) {</span>
+<span class="lineNum">    1063 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(!XRE_IsParentProcess());</span>
+<span class="lineNum">    1064 </span><span class="lineNoCov">          0 :     sDataStorages-&gt;Clear();</span>
+<span class="lineNum">    1065 </span><span class="lineNoCov">          0 :   } else if (strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) == 0) {</span>
+<span class="lineNum">    1066 </span><span class="lineNoCov">          0 :     MutexAutoLock lock(mMutex);</span>
+<span class="lineNum">    1067 </span><span class="lineNoCov">          0 :     mTimerDelay = Preferences::GetInt(&quot;test.datastorage.write_timer_ms&quot;,</span>
+<span class="lineNum">    1068 </span>            :                                       sDataStorageDefaultTimerDelay);
+<span class="lineNum">    1069 </span>            :   }
+<span class="lineNum">    1070 </span>            : 
+<span class="lineNum">    1071 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<a name="1072"><span class="lineNum">    1072 </span>            : }</a>
+<span class="lineNum">    1073 </span>            : 
+<span class="lineNum">    1074 </span><span class="lineCov">         22 : DataStorage::Entry::Entry()</span>
+<span class="lineNum">    1075 </span>            :   : mScore(0)
+<span class="lineNum">    1076 </span><span class="lineCov">         22 :   , mLastAccessed((int32_t)(PR_Now() / sOneDayInMicroseconds))</span>
+<span class="lineNum">    1077 </span>            : {
+<span class="lineNum">    1078 </span><span class="lineCov">         22 : }</span>
+<span class="lineNum">    1079 </span>            : 
+<span class="lineNum">    1080 </span>            : // Updates this entry's score. Returns true if the score has actually changed.
+<span class="lineNum">    1081 </span>            : // If it's been less than a day since this entry has been accessed, the score
+<span class="lineNum">    1082 </span>            : // does not change. Otherwise, the score increases by 1.
+<span class="lineNum">    1083 </span>            : // The default score is 0. The maximum score is the maximum value that can
+<span class="lineNum">    1084 </span>            : // be represented by an unsigned 32 bit integer.
+<span class="lineNum">    1085 </span>            : // This is to handle evictions from our tables, which in turn is to prevent
+<a name="1086"><span class="lineNum">    1086 </span>            : // unbounded resource use.</a>
+<span class="lineNum">    1087 </span>            : bool
+<span class="lineNum">    1088 </span><span class="lineNoCov">          0 : DataStorage::Entry::UpdateScore()</span>
+<span class="lineNum">    1089 </span>            : {
+<span class="lineNum">    1090 </span>            : 
+<span class="lineNum">    1091 </span><span class="lineNoCov">          0 :   int32_t nowInDays = (int32_t)(PR_Now() / sOneDayInMicroseconds);</span>
+<span class="lineNum">    1092 </span><span class="lineNoCov">          0 :   int32_t daysSinceAccessed = (nowInDays - mLastAccessed);</span>
+<span class="lineNum">    1093 </span>            : 
+<span class="lineNum">    1094 </span>            :   // Update the last accessed time.
+<span class="lineNum">    1095 </span><span class="lineNoCov">          0 :   mLastAccessed = nowInDays;</span>
+<span class="lineNum">    1096 </span>            : 
+<span class="lineNum">    1097 </span>            :   // If it's been less than a day since we've been accessed,
+<span class="lineNum">    1098 </span>            :   // the score isn't updated.
+<span class="lineNum">    1099 </span><span class="lineNoCov">          0 :   if (daysSinceAccessed &lt; 1) {</span>
+<span class="lineNum">    1100 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">    1101 </span>            :   }
+<span class="lineNum">    1102 </span>            : 
+<span class="lineNum">    1103 </span>            :   // Otherwise, increment the score (but don't overflow).
+<span class="lineNum">    1104 </span><span class="lineNoCov">          0 :   if (mScore &lt; sMaxScore) {</span>
+<span class="lineNum">    1105 </span><span class="lineNoCov">          0 :     mScore++;</span>
+<span class="lineNum">    1106 </span>            :   }
+<span class="lineNum">    1107 </span><span class="lineNoCov">          0 :   return true;</span>
+<span class="lineNum">    1108 </span>            : }
+<span class="lineNum">    1109 </span>            : 
+<span class="lineNum">    1110 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

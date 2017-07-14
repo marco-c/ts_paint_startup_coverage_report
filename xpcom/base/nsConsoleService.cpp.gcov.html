@@ -1,0 +1,564 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - xpcom/base/nsConsoleService.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">xpcom/base</a> - nsConsoleService.cpp<span style="font-size: 80%;"> (source / <a href="nsConsoleService.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">71</td>
+            <td class="headerCovTableEntry">173</td>
+            <td class="headerCovTableEntryLo">41.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">14</td>
+            <td class="headerCovTableEntry">27</td>
+            <td class="headerCovTableEntryLo">51.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : /*
+<span class="lineNum">       8 </span>            :  * Maintains a circular buffer of recent messages, and notifies
+<span class="lineNum">       9 </span>            :  * listeners when new messages are logged.
+<span class="lineNum">      10 </span>            :  */
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : /* Threadsafe. */
+<span class="lineNum">      13 </span>            : 
+<span class="lineNum">      14 </span>            : #include &quot;nsMemory.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsCOMArray.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : #include &quot;nsConsoleService.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;nsConsoleMessage.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;nsIClassInfoImpl.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;nsIConsoleListener.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;nsIObserverService.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;nsPrintfCString.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;nsProxyRelease.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;nsIScriptError.h&quot;
+<span class="lineNum">      26 </span>            : #include &quot;nsISupportsPrimitives.h&quot;
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : #include &quot;mozilla/Preferences.h&quot;
+<span class="lineNum">      29 </span>            : #include &quot;mozilla/Services.h&quot;
+<span class="lineNum">      30 </span>            : #include &quot;mozilla/SystemGroup.h&quot;
+<span class="lineNum">      31 </span>            : 
+<span class="lineNum">      32 </span>            : #if defined(ANDROID)
+<span class="lineNum">      33 </span>            : #include &lt;android/log.h&gt;
+<span class="lineNum">      34 </span>            : #include &quot;mozilla/dom/ContentChild.h&quot;
+<span class="lineNum">      35 </span>            : #endif
+<span class="lineNum">      36 </span>            : #ifdef XP_WIN
+<span class="lineNum">      37 </span>            : #include &lt;windows.h&gt;
+<span class="lineNum">      38 </span>            : #endif
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span>            : #ifdef MOZ_TASK_TRACER
+<span class="lineNum">      41 </span>            : #include &quot;GeckoTaskTracer.h&quot;
+<span class="lineNum">      42 </span>            : using namespace mozilla::tasktracer;
+<span class="lineNum">      43 </span>            : #endif
+<span class="lineNum">      44 </span>            : 
+<a name="45"><span class="lineNum">      45 </span>            : using namespace mozilla;</a>
+<a name="46"><span class="lineNum">      46 </span>            : </a>
+<span class="lineNum">      47 </span><span class="lineCov">         30 : NS_IMPL_ADDREF(nsConsoleService)</span>
+<span class="lineNum">      48 </span><span class="lineCov">         19 : NS_IMPL_RELEASE(nsConsoleService)</span>
+<span class="lineNum">      49 </span><span class="lineCov">          3 : NS_IMPL_CLASSINFO(nsConsoleService, nullptr,</span>
+<a name="50"><span class="lineNum">      50 </span>            :                   nsIClassInfo::THREADSAFE | nsIClassInfo::SINGLETON,</a>
+<a name="51"><span class="lineNum">      51 </span>            :                   NS_CONSOLESERVICE_CID)</a>
+<span class="lineNum">      52 </span><span class="lineCov">          9 : NS_IMPL_QUERY_INTERFACE_CI(nsConsoleService, nsIConsoleService, nsIObserver)</span>
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 : NS_IMPL_CI_INTERFACE_GETTER(nsConsoleService, nsIConsoleService, nsIObserver)</span>
+<span class="lineNum">      54 </span>            : 
+<span class="lineNum">      55 </span>            : static bool sLoggingEnabled = true;
+<span class="lineNum">      56 </span>            : static bool sLoggingBuffered = true;
+<span class="lineNum">      57 </span>            : #if defined(ANDROID)
+<span class="lineNum">      58 </span>            : static bool sLoggingLogcat = true;
+<a name="59"><span class="lineNum">      59 </span>            : #endif // defined(ANDROID)</a>
+<span class="lineNum">      60 </span>            : 
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 : nsConsoleService::MessageElement::~MessageElement()</span>
+<span class="lineNum">      62 </span>            : {
+<a name="63"><span class="lineNum">      63 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      64 </span>            : 
+<span class="lineNum">      65 </span><span class="lineCov">          3 : nsConsoleService::nsConsoleService()</span>
+<span class="lineNum">      66 </span>            :   : mCurrentSize(0)
+<span class="lineNum">      67 </span>            :   , mDeliveringMessage(false)
+<span class="lineNum">      68 </span><span class="lineCov">          3 :   , mLock(&quot;nsConsoleService.mLock&quot;)</span>
+<span class="lineNum">      69 </span>            : {
+<span class="lineNum">      70 </span>            :   // XXX grab this from a pref!
+<span class="lineNum">      71 </span>            :   // hm, but worry about circularity, bc we want to be able to report
+<span class="lineNum">      72 </span>            :   // prefs errs...
+<span class="lineNum">      73 </span><span class="lineCov">          3 :   mMaximumSize = 250;</span>
+<span class="lineNum">      74 </span><span class="lineCov">          3 : }</span>
+<span class="lineNum">      75 </span>            : 
+<a name="76"><span class="lineNum">      76 </span>            : </a>
+<span class="lineNum">      77 </span>            : void
+<span class="lineNum">      78 </span><span class="lineCov">          3 : nsConsoleService::ClearMessagesForWindowID(const uint64_t innerID)</span>
+<span class="lineNum">      79 </span>            : {
+<span class="lineNum">      80 </span><span class="lineCov">          3 :   MOZ_RELEASE_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">      81 </span><span class="lineCov">          6 :   MutexAutoLock lock(mLock);</span>
+<span class="lineNum">      82 </span>            : 
+<span class="lineNum">      83 </span><span class="lineCov">          6 :   for (MessageElement* e = mMessages.getFirst(); e != nullptr; ) {</span>
+<span class="lineNum">      84 </span>            :     // Only messages implementing nsIScriptError interface expose the
+<span class="lineNum">      85 </span>            :     // inner window ID.
+<span class="lineNum">      86 </span><span class="lineCov">          3 :     nsCOMPtr&lt;nsIScriptError&gt; scriptError = do_QueryInterface(e-&gt;Get());</span>
+<span class="lineNum">      87 </span><span class="lineCov">          3 :     if (!scriptError) {</span>
+<span class="lineNum">      88 </span><span class="lineCov">          2 :       e = e-&gt;getNext();</span>
+<span class="lineNum">      89 </span><span class="lineCov">          2 :       continue;</span>
+<span class="lineNum">      90 </span>            :     }
+<span class="lineNum">      91 </span>            :     uint64_t innerWindowID;
+<span class="lineNum">      92 </span><span class="lineCov">          1 :     nsresult rv = scriptError-&gt;GetInnerWindowID(&amp;innerWindowID);</span>
+<span class="lineNum">      93 </span><span class="lineCov">          1 :     if (NS_FAILED(rv) || innerWindowID != innerID) {</span>
+<span class="lineNum">      94 </span><span class="lineCov">          1 :       e = e-&gt;getNext();</span>
+<span class="lineNum">      95 </span><span class="lineCov">          1 :       continue;</span>
+<span class="lineNum">      96 </span>            :     }
+<span class="lineNum">      97 </span>            : 
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :     MessageElement* next = e-&gt;getNext();</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :     e-&gt;remove();</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :     delete e;</span>
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :     mCurrentSize--;</span>
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :     MOZ_ASSERT(mCurrentSize &lt; mMaximumSize);</span>
+<span class="lineNum">     103 </span>            : 
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :     e = next;</span>
+<span class="lineNum">     105 </span>            :   }
+<span class="lineNum">     106 </span><span class="lineCov">          3 : }</span>
+<a name="107"><span class="lineNum">     107 </span>            : </a>
+<span class="lineNum">     108 </span>            : void
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 : nsConsoleService::ClearMessages()</span>
+<span class="lineNum">     110 </span>            : {
+<span class="lineNum">     111 </span>            :   // NB: A lock is not required here as it's only called from |Reset| which
+<span class="lineNum">     112 </span>            :   //     locks for us and from the dtor.
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :   while (!mMessages.isEmpty()) {</span>
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :     MessageElement* e = mMessages.popFirst();</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :     delete e;</span>
+<span class="lineNum">     116 </span>            :   }
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :   mCurrentSize = 0;</span>
+<a name="118"><span class="lineNum">     118 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     119 </span>            : 
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 : nsConsoleService::~nsConsoleService()</span>
+<span class="lineNum">     121 </span>            : {
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :   MOZ_RELEASE_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     123 </span>            : 
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :   ClearMessages();</span>
+<a name="125"><span class="lineNum">     125 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     126 </span>            : 
+<span class="lineNum">     127 </span><span class="lineCov">          9 : class AddConsolePrefWatchers : public Runnable</span>
+<a name="128"><span class="lineNum">     128 </span>            : {</a>
+<span class="lineNum">     129 </span>            : public:
+<span class="lineNum">     130 </span><span class="lineCov">          3 :   explicit AddConsolePrefWatchers(nsConsoleService* aConsole)</span>
+<span class="lineNum">     131 </span><span class="lineCov">          3 :     : mozilla::Runnable(&quot;AddConsolePrefWatchers&quot;)</span>
+<span class="lineNum">     132 </span><span class="lineCov">          3 :     , mConsole(aConsole)</span>
+<span class="lineNum">     133 </span>            :   {
+<a name="134"><span class="lineNum">     134 </span><span class="lineCov">          3 :   }</span></a>
+<span class="lineNum">     135 </span>            : 
+<span class="lineNum">     136 </span><span class="lineCov">          3 :   NS_IMETHOD Run() override</span>
+<span class="lineNum">     137 </span>            :   {
+<span class="lineNum">     138 </span><span class="lineCov">          3 :     Preferences::AddBoolVarCache(&amp;sLoggingEnabled, &quot;consoleservice.enabled&quot;, true);</span>
+<span class="lineNum">     139 </span><span class="lineCov">          3 :     Preferences::AddBoolVarCache(&amp;sLoggingBuffered, &quot;consoleservice.buffered&quot;, true);</span>
+<span class="lineNum">     140 </span>            : #if defined(ANDROID)
+<span class="lineNum">     141 </span>            :     Preferences::AddBoolVarCache(&amp;sLoggingLogcat, &quot;consoleservice.logcat&quot;, true);
+<span class="lineNum">     142 </span>            : #endif // defined(ANDROID)
+<span class="lineNum">     143 </span>            : 
+<span class="lineNum">     144 </span><span class="lineCov">          6 :     nsCOMPtr&lt;nsIObserverService&gt; obs = mozilla::services::GetObserverService();</span>
+<span class="lineNum">     145 </span><span class="lineCov">          3 :     MOZ_ASSERT(obs);</span>
+<span class="lineNum">     146 </span><span class="lineCov">          3 :     obs-&gt;AddObserver(mConsole, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);</span>
+<span class="lineNum">     147 </span><span class="lineCov">          3 :     obs-&gt;AddObserver(mConsole, &quot;inner-window-destroyed&quot;, false);</span>
+<span class="lineNum">     148 </span>            : 
+<span class="lineNum">     149 </span><span class="lineCov">          3 :     if (!sLoggingBuffered) {</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :       mConsole-&gt;Reset();</span>
+<span class="lineNum">     151 </span>            :     }
+<span class="lineNum">     152 </span><span class="lineCov">          6 :     return NS_OK;</span>
+<span class="lineNum">     153 </span>            :   }
+<span class="lineNum">     154 </span>            : 
+<span class="lineNum">     155 </span>            : private:
+<span class="lineNum">     156 </span>            :   RefPtr&lt;nsConsoleService&gt; mConsole;
+<span class="lineNum">     157 </span>            : };
+<a name="158"><span class="lineNum">     158 </span>            : </a>
+<span class="lineNum">     159 </span>            : nsresult
+<span class="lineNum">     160 </span><span class="lineCov">          3 : nsConsoleService::Init()</span>
+<span class="lineNum">     161 </span>            : {
+<span class="lineNum">     162 </span><span class="lineCov">          3 :   NS_DispatchToMainThread(new AddConsolePrefWatchers(this));</span>
+<span class="lineNum">     163 </span>            : 
+<span class="lineNum">     164 </span><span class="lineCov">          3 :   return NS_OK;</span>
+<span class="lineNum">     165 </span>            : }
+<span class="lineNum">     166 </span>            : 
+<a name="167"><span class="lineNum">     167 </span>            : namespace {</a>
+<span class="lineNum">     168 </span>            : 
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 : class LogMessageRunnable : public Runnable</span>
+<a name="170"><span class="lineNum">     170 </span>            : {</a>
+<span class="lineNum">     171 </span>            : public:
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :   LogMessageRunnable(nsIConsoleMessage* aMessage, nsConsoleService* aService)</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :     : mozilla::Runnable(&quot;LogMessageRunnable&quot;)</span>
+<span class="lineNum">     174 </span>            :     , mMessage(aMessage)
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :     , mService(aService)</span>
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :   { }</span>
+<span class="lineNum">     177 </span>            : 
+<span class="lineNum">     178 </span>            :   NS_DECL_NSIRUNNABLE
+<span class="lineNum">     179 </span>            : 
+<span class="lineNum">     180 </span>            : private:
+<span class="lineNum">     181 </span>            :   nsCOMPtr&lt;nsIConsoleMessage&gt; mMessage;
+<span class="lineNum">     182 </span>            :   RefPtr&lt;nsConsoleService&gt; mService;
+<span class="lineNum">     183 </span>            : };
+<a name="184"><span class="lineNum">     184 </span>            : </a>
+<span class="lineNum">     185 </span>            : NS_IMETHODIMP
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 : LogMessageRunnable::Run()</span>
+<span class="lineNum">     187 </span>            : {
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     189 </span>            : 
+<span class="lineNum">     190 </span>            :   // Snapshot of listeners so that we don't reenter this hash during
+<span class="lineNum">     191 </span>            :   // enumeration.
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :   nsCOMArray&lt;nsIConsoleListener&gt; listeners;</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :   mService-&gt;CollectCurrentListeners(listeners);</span>
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :   mService-&gt;SetIsDelivering();</span>
+<span class="lineNum">     196 </span>            : 
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   for (int32_t i = 0; i &lt; listeners.Count(); ++i) {</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :     listeners[i]-&gt;Observe(mMessage);</span>
+<span class="lineNum">     199 </span>            :   }
+<span class="lineNum">     200 </span>            : 
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :   mService-&gt;SetDoneDelivering();</span>
+<span class="lineNum">     202 </span>            : 
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     204 </span>            : }
+<span class="lineNum">     205 </span>            : 
+<span class="lineNum">     206 </span>            : } // namespace
+<span class="lineNum">     207 </span>            : 
+<a name="208"><span class="lineNum">     208 </span>            : // nsIConsoleService methods</a>
+<span class="lineNum">     209 </span>            : NS_IMETHODIMP
+<span class="lineNum">     210 </span><span class="lineCov">          3 : nsConsoleService::LogMessage(nsIConsoleMessage* aMessage)</span>
+<span class="lineNum">     211 </span>            : {
+<span class="lineNum">     212 </span><span class="lineCov">          3 :   return LogMessageWithMode(aMessage, OutputToLog);</span>
+<span class="lineNum">     213 </span>            : }
+<span class="lineNum">     214 </span>            : 
+<a name="215"><span class="lineNum">     215 </span>            : // This can be called off the main thread.</a>
+<span class="lineNum">     216 </span>            : nsresult
+<span class="lineNum">     217 </span><span class="lineCov">          3 : nsConsoleService::LogMessageWithMode(nsIConsoleMessage* aMessage,</span>
+<span class="lineNum">     218 </span>            :                                      nsConsoleService::OutputMode aOutputMode)
+<span class="lineNum">     219 </span>            : {
+<span class="lineNum">     220 </span><span class="lineCov">          3 :   if (!aMessage) {</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     222 </span>            :   }
+<span class="lineNum">     223 </span>            : 
+<span class="lineNum">     224 </span><span class="lineCov">          3 :   if (!sLoggingEnabled) {</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     226 </span>            :   }
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span><span class="lineCov">          3 :   if (NS_IsMainThread() &amp;&amp; mDeliveringMessage) {</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     nsCString msg;</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :     aMessage-&gt;ToString(msg);</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     NS_WARNING(nsPrintfCString(&quot;Reentrancy error: some client attempted &quot;</span>
+<span class="lineNum">     232 </span>            :       &quot;to display a message to the console while in a console listener. &quot;
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :       &quot;The following message was discarded: \&quot;%s\&quot;&quot;, msg.get()).get());</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     235 </span>            :   }
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span><span class="lineCov">          6 :   RefPtr&lt;LogMessageRunnable&gt; r;</span>
+<span class="lineNum">     238 </span><span class="lineCov">          6 :   nsCOMPtr&lt;nsIConsoleMessage&gt; retiredMessage;</span>
+<span class="lineNum">     239 </span>            : 
+<span class="lineNum">     240 </span>            :   /*
+<span class="lineNum">     241 </span>            :    * Lock while updating buffer, and while taking snapshot of
+<span class="lineNum">     242 </span>            :    * listeners array.
+<span class="lineNum">     243 </span>            :    */
+<span class="lineNum">     244 </span>            :   {
+<span class="lineNum">     245 </span><span class="lineCov">          6 :     MutexAutoLock lock(mLock);</span>
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span>            : #if defined(ANDROID)
+<span class="lineNum">     248 </span>            :     if (sLoggingLogcat &amp;&amp; aOutputMode == OutputToLog) {
+<span class="lineNum">     249 </span>            :       nsCString msg;
+<span class="lineNum">     250 </span>            :       aMessage-&gt;ToString(msg);
+<span class="lineNum">     251 </span>            : 
+<span class="lineNum">     252 </span>            :       /** Attempt to use the process name as the log tag. */
+<span class="lineNum">     253 </span>            :       mozilla::dom::ContentChild* child =
+<span class="lineNum">     254 </span>            :           mozilla::dom::ContentChild::GetSingleton();
+<span class="lineNum">     255 </span>            :       nsCString appName;
+<span class="lineNum">     256 </span>            :       if (child) {
+<span class="lineNum">     257 </span>            :         child-&gt;GetProcessName(appName);
+<span class="lineNum">     258 </span>            :       } else {
+<span class="lineNum">     259 </span>            :         appName = &quot;GeckoConsole&quot;;
+<span class="lineNum">     260 </span>            :       }
+<span class="lineNum">     261 </span>            : 
+<span class="lineNum">     262 </span>            :       uint32_t logLevel = 0;
+<span class="lineNum">     263 </span>            :       aMessage-&gt;GetLogLevel(&amp;logLevel);
+<span class="lineNum">     264 </span>            : 
+<span class="lineNum">     265 </span>            :       android_LogPriority logPriority = ANDROID_LOG_INFO;
+<span class="lineNum">     266 </span>            :       switch (logLevel) {
+<span class="lineNum">     267 </span>            :         case nsIConsoleMessage::debug:
+<span class="lineNum">     268 </span>            :           logPriority = ANDROID_LOG_DEBUG;
+<span class="lineNum">     269 </span>            :           break;
+<span class="lineNum">     270 </span>            :         case nsIConsoleMessage::info:
+<span class="lineNum">     271 </span>            :           logPriority = ANDROID_LOG_INFO;
+<span class="lineNum">     272 </span>            :           break;
+<span class="lineNum">     273 </span>            :         case nsIConsoleMessage::warn:
+<span class="lineNum">     274 </span>            :           logPriority = ANDROID_LOG_WARN;
+<span class="lineNum">     275 </span>            :           break;
+<span class="lineNum">     276 </span>            :         case nsIConsoleMessage::error:
+<span class="lineNum">     277 </span>            :           logPriority = ANDROID_LOG_ERROR;
+<span class="lineNum">     278 </span>            :           break;
+<span class="lineNum">     279 </span>            :       }
+<span class="lineNum">     280 </span>            : 
+<span class="lineNum">     281 </span>            :       __android_log_print(logPriority, appName.get(), &quot;%s&quot;, msg.get());
+<span class="lineNum">     282 </span>            :     }
+<span class="lineNum">     283 </span>            : #endif
+<span class="lineNum">     284 </span>            : #ifdef XP_WIN
+<span class="lineNum">     285 </span>            :     if (IsDebuggerPresent()) {
+<span class="lineNum">     286 </span>            :       nsString msg;
+<span class="lineNum">     287 </span>            :       aMessage-&gt;GetMessageMoz(getter_Copies(msg));
+<span class="lineNum">     288 </span>            :       msg.Append('\n');
+<span class="lineNum">     289 </span>            :       OutputDebugStringW(msg.get());
+<span class="lineNum">     290 </span>            :     }
+<span class="lineNum">     291 </span>            : #endif
+<span class="lineNum">     292 </span>            : #ifdef MOZ_TASK_TRACER
+<span class="lineNum">     293 </span>            :     if (IsStartLogging()) {
+<span class="lineNum">     294 </span>            :       nsCString msg;
+<span class="lineNum">     295 </span>            :       aMessage-&gt;ToString(msg);
+<span class="lineNum">     296 </span>            :       int prefixPos = msg.Find(GetJSLabelPrefix());
+<span class="lineNum">     297 </span>            :       if (prefixPos &gt;= 0) {
+<span class="lineNum">     298 </span>            :         nsDependentCSubstring submsg(msg, prefixPos);
+<span class="lineNum">     299 </span>            :         AddLabel(&quot;%s&quot;, submsg.BeginReading());
+<span class="lineNum">     300 </span>            :       }
+<span class="lineNum">     301 </span>            :     }
+<span class="lineNum">     302 </span>            : #endif
+<span class="lineNum">     303 </span>            : 
+<span class="lineNum">     304 </span><span class="lineCov">          3 :     if (sLoggingBuffered) {</span>
+<span class="lineNum">     305 </span><span class="lineCov">          3 :       MessageElement* e = new MessageElement(aMessage);</span>
+<span class="lineNum">     306 </span><span class="lineCov">          3 :       mMessages.insertBack(e);</span>
+<span class="lineNum">     307 </span><span class="lineCov">          3 :       if (mCurrentSize != mMaximumSize) {</span>
+<span class="lineNum">     308 </span><span class="lineCov">          3 :         mCurrentSize++;</span>
+<span class="lineNum">     309 </span>            :       } else {
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :         MessageElement* p = mMessages.popFirst();</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :         MOZ_ASSERT(p);</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :         p-&gt;swapMessage(retiredMessage);</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :         delete p;</span>
+<span class="lineNum">     314 </span>            :       }
+<span class="lineNum">     315 </span>            :     }
+<span class="lineNum">     316 </span>            : 
+<span class="lineNum">     317 </span><span class="lineCov">          3 :     if (mListeners.Count() &gt; 0) {</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :       r = new LogMessageRunnable(aMessage, this);</span>
+<span class="lineNum">     319 </span>            :     }
+<span class="lineNum">     320 </span>            :   }
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineCov">          3 :   if (retiredMessage) {</span>
+<span class="lineNum">     323 </span>            :     // Release |retiredMessage| on the main thread in case it is an instance of
+<span class="lineNum">     324 </span>            :     // a mainthread-only class like nsScriptErrorWithStack and we're off the
+<span class="lineNum">     325 </span>            :     // main thread.
+<span class="lineNum">     326 </span>            :     NS_ReleaseOnMainThread(
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :       &quot;nsConsoleService::retiredMessage&quot;, retiredMessage.forget());</span>
+<span class="lineNum">     328 </span>            :   }
+<span class="lineNum">     329 </span>            : 
+<span class="lineNum">     330 </span><span class="lineCov">          3 :   if (r) {</span>
+<span class="lineNum">     331 </span>            :     // avoid failing in XPCShell tests
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIThread&gt; mainThread = do_GetMainThread();</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :     if (mainThread) {</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :       SystemGroup::Dispatch(&quot;LogMessageRunnable&quot;, TaskCategory::Other, r.forget());</span>
+<span class="lineNum">     335 </span>            :     }
+<span class="lineNum">     336 </span>            :   }
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span><span class="lineCov">          3 :   return NS_OK;</span>
+<span class="lineNum">     339 </span>            : }
+<a name="340"><span class="lineNum">     340 </span>            : </a>
+<span class="lineNum">     341 </span>            : void
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 : nsConsoleService::CollectCurrentListeners(</span>
+<span class="lineNum">     343 </span>            :   nsCOMArray&lt;nsIConsoleListener&gt;&amp; aListeners)
+<span class="lineNum">     344 </span>            : {
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mLock);</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :   for (auto iter = mListeners.Iter(); !iter.Done(); iter.Next()) {</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :     nsIConsoleListener* value = iter.UserData();</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :     aListeners.AppendObject(value);</span>
+<span class="lineNum">     349 </span>            :   }
+<span class="lineNum">     350 </span><span class="lineNoCov">          0 : }</span>
+<a name="351"><span class="lineNum">     351 </span>            : </a>
+<span class="lineNum">     352 </span>            : NS_IMETHODIMP
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 : nsConsoleService::LogStringMessage(const char16_t* aMessage)</span>
+<span class="lineNum">     354 </span>            : {
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :   if (!sLoggingEnabled) {</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     357 </span>            :   }
+<span class="lineNum">     358 </span>            : 
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :   RefPtr&lt;nsConsoleMessage&gt; msg(new nsConsoleMessage(aMessage));</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   return this-&gt;LogMessage(msg);</span>
+<span class="lineNum">     361 </span>            : }
+<a name="362"><span class="lineNum">     362 </span>            : </a>
+<span class="lineNum">     363 </span>            : NS_IMETHODIMP
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 : nsConsoleService::GetMessageArray(uint32_t* aCount,</span>
+<span class="lineNum">     365 </span>            :                                   nsIConsoleMessage*** aMessages)
+<span class="lineNum">     366 </span>            : {
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :   MOZ_RELEASE_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     368 </span>            : 
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mLock);</span>
+<span class="lineNum">     370 </span>            : 
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :   if (mMessages.isEmpty()) {</span>
+<span class="lineNum">     372 </span>            :     /*
+<span class="lineNum">     373 </span>            :      * Make a 1-length output array so that nobody gets confused,
+<span class="lineNum">     374 </span>            :      * and return a count of 0.  This should result in a 0-length
+<span class="lineNum">     375 </span>            :      * array object when called from script.
+<span class="lineNum">     376 </span>            :      */
+<span class="lineNum">     377 </span>            :     nsIConsoleMessage** messageArray = (nsIConsoleMessage**)
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :       moz_xmalloc(sizeof(nsIConsoleMessage*));</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :     *messageArray = nullptr;</span>
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :     *aMessages = messageArray;</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :     *aCount = 0;</span>
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     384 </span>            :   }
+<span class="lineNum">     385 </span>            : 
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(mCurrentSize &lt;= mMaximumSize);</span>
+<span class="lineNum">     387 </span>            :   nsIConsoleMessage** messageArray =
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :     static_cast&lt;nsIConsoleMessage**&gt;(moz_xmalloc(sizeof(nsIConsoleMessage*)</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :                                                  * mCurrentSize));</span>
+<span class="lineNum">     390 </span>            : 
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :   uint32_t i = 0;</span>
+<span class="lineNum">     392 </span><span class="lineNoCov">          0 :   for (MessageElement* e = mMessages.getFirst(); e != nullptr; e = e-&gt;getNext()) {</span>
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :     nsCOMPtr&lt;nsIConsoleMessage&gt; m = e-&gt;Get();</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :     m.forget(&amp;messageArray[i]);</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :     i++;</span>
+<span class="lineNum">     396 </span>            :   }
+<span class="lineNum">     397 </span>            : 
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(i == mCurrentSize);</span>
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :   *aCount = i;</span>
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :   *aMessages = messageArray;</span>
+<span class="lineNum">     402 </span>            : 
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     404 </span>            : }
+<a name="405"><span class="lineNum">     405 </span>            : </a>
+<span class="lineNum">     406 </span>            : NS_IMETHODIMP
+<span class="lineNum">     407 </span><span class="lineCov">          2 : nsConsoleService::RegisterListener(nsIConsoleListener* aListener)</span>
+<span class="lineNum">     408 </span>            : {
+<span class="lineNum">     409 </span><span class="lineCov">          2 :   if (!NS_IsMainThread()) {</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :     NS_ERROR(&quot;nsConsoleService::RegisterListener is main thread only.&quot;);</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_SAME_THREAD;</span>
+<span class="lineNum">     412 </span>            :   }
+<span class="lineNum">     413 </span>            : 
+<span class="lineNum">     414 </span><span class="lineCov">          4 :   nsCOMPtr&lt;nsISupports&gt; canonical = do_QueryInterface(aListener);</span>
+<span class="lineNum">     415 </span>            : 
+<span class="lineNum">     416 </span><span class="lineCov">          4 :   MutexAutoLock lock(mLock);</span>
+<span class="lineNum">     417 </span><span class="lineCov">          2 :   if (mListeners.GetWeak(canonical)) {</span>
+<span class="lineNum">     418 </span>            :     // Reregistering a listener isn't good
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     420 </span>            :   }
+<span class="lineNum">     421 </span><span class="lineCov">          2 :   mListeners.Put(canonical, aListener);</span>
+<span class="lineNum">     422 </span><span class="lineCov">          2 :   return NS_OK;</span>
+<span class="lineNum">     423 </span>            : }
+<a name="424"><span class="lineNum">     424 </span>            : </a>
+<span class="lineNum">     425 </span>            : NS_IMETHODIMP
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 : nsConsoleService::UnregisterListener(nsIConsoleListener* aListener)</span>
+<span class="lineNum">     427 </span>            : {
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :   if (!NS_IsMainThread()) {</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :     NS_ERROR(&quot;nsConsoleService::UnregisterListener is main thread only.&quot;);</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_SAME_THREAD;</span>
+<span class="lineNum">     431 </span>            :   }
+<span class="lineNum">     432 </span>            : 
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :   nsCOMPtr&lt;nsISupports&gt; canonical = do_QueryInterface(aListener);</span>
+<span class="lineNum">     434 </span>            : 
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mLock);</span>
+<span class="lineNum">     436 </span>            : 
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :   if (!mListeners.GetWeak(canonical)) {</span>
+<span class="lineNum">     438 </span>            :     // Unregistering a listener that was never registered?
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :     return NS_ERROR_FAILURE;</span>
+<span class="lineNum">     440 </span>            :   }
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :   mListeners.Remove(canonical);</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     443 </span>            : }
+<a name="444"><span class="lineNum">     444 </span>            : </a>
+<span class="lineNum">     445 </span>            : NS_IMETHODIMP
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 : nsConsoleService::Reset()</span>
+<span class="lineNum">     447 </span>            : {
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :   MOZ_RELEASE_ASSERT(NS_IsMainThread());</span>
+<span class="lineNum">     449 </span>            : 
+<span class="lineNum">     450 </span>            :   /*
+<span class="lineNum">     451 </span>            :    * Make sure nobody trips into the buffer while it's being reset
+<span class="lineNum">     452 </span>            :    */
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :   MutexAutoLock lock(mLock);</span>
+<span class="lineNum">     454 </span>            : 
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :   ClearMessages();</span>
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     457 </span>            : }
+<a name="458"><span class="lineNum">     458 </span>            : </a>
+<span class="lineNum">     459 </span>            : NS_IMETHODIMP
+<span class="lineNum">     460 </span><span class="lineCov">          3 : nsConsoleService::Observe(nsISupports* aSubject, const char* aTopic,</span>
+<span class="lineNum">     461 </span>            :                           const char16_t* aData)
+<span class="lineNum">     462 </span>            : {
+<span class="lineNum">     463 </span><span class="lineCov">          3 :   if (!strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID)) {</span>
+<span class="lineNum">     464 </span>            :     // Dump all our messages, in case any are cycle collected.
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :     Reset();</span>
+<span class="lineNum">     466 </span>            :     // We could remove ourselves from the observer service, but it is about to
+<span class="lineNum">     467 </span>            :     // drop all observers anyways, so why bother.
+<span class="lineNum">     468 </span><span class="lineCov">          3 :   } else if (!strcmp(aTopic, &quot;inner-window-destroyed&quot;)) {</span>
+<span class="lineNum">     469 </span><span class="lineCov">          6 :     nsCOMPtr&lt;nsISupportsPRUint64&gt; supportsInt = do_QueryInterface(aSubject);</span>
+<span class="lineNum">     470 </span><span class="lineCov">          3 :     MOZ_ASSERT(supportsInt);</span>
+<span class="lineNum">     471 </span>            : 
+<span class="lineNum">     472 </span>            :     uint64_t windowId;
+<span class="lineNum">     473 </span><span class="lineCov">          3 :     MOZ_ALWAYS_SUCCEEDS(supportsInt-&gt;GetData(&amp;windowId));</span>
+<span class="lineNum">     474 </span>            : 
+<span class="lineNum">     475 </span><span class="lineCov">          3 :     ClearMessagesForWindowID(windowId);</span>
+<span class="lineNum">     476 </span>            :   } else {
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :     MOZ_CRASH();</span>
+<span class="lineNum">     478 </span>            :   }
+<span class="lineNum">     479 </span><span class="lineCov">          3 :   return NS_OK;</span>
+<span class="lineNum">     480 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

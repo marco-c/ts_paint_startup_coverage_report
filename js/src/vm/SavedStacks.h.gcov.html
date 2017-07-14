@@ -1,0 +1,415 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - js/src/vm/SavedStacks.h</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">js/src/vm</a> - SavedStacks.h<span style="font-size: 80%;"> (source / <a href="SavedStacks.h.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">35</td>
+            <td class="headerCovTableEntry">51</td>
+            <td class="headerCovTableEntryLo">68.6 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">25</td>
+            <td class="headerCovTableEntry">39</td>
+            <td class="headerCovTableEntryLo">64.1 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-</a>
+<span class="lineNum">       2 </span>            :  * vim: set ts=8 sts=4 et sw=4 tw=99:
+<span class="lineNum">       3 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #ifndef vm_SavedStacks_h
+<span class="lineNum">       8 </span>            : #define vm_SavedStacks_h
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/Attributes.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/FastBernoulliTrial.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &quot;jscntxt.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;jsmath.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;jswrapper.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;js/HashTable.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;vm/SavedFrame.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;vm/Stack.h&quot;
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : namespace js {
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : // # Saved Stacks
+<span class="lineNum">      23 </span>            : //
+<span class="lineNum">      24 </span>            : // The `SavedStacks` class provides a compact way to capture and save JS stacks
+<span class="lineNum">      25 </span>            : // as `SavedFrame` `JSObject` subclasses. A single `SavedFrame` object
+<span class="lineNum">      26 </span>            : // represents one frame that was on the stack, and has a strong reference to its
+<span class="lineNum">      27 </span>            : // parent `SavedFrame` (the next youngest frame). This reference is null when
+<span class="lineNum">      28 </span>            : // the `SavedFrame` object is the oldest frame that was on the stack.
+<span class="lineNum">      29 </span>            : //
+<span class="lineNum">      30 </span>            : // This comment documents implementation. For usage documentation, see the
+<span class="lineNum">      31 </span>            : // `js/src/doc/SavedFrame/SavedFrame.md` file and relevant `SavedFrame`
+<span class="lineNum">      32 </span>            : // functions in `js/src/jsapi.h`.
+<span class="lineNum">      33 </span>            : //
+<span class="lineNum">      34 </span>            : // ## Compact
+<span class="lineNum">      35 </span>            : //
+<span class="lineNum">      36 </span>            : // Older saved stack frame tails are shared via hash consing, to deduplicate
+<span class="lineNum">      37 </span>            : // structurally identical data. `SavedStacks` contains a hash table of weakly
+<span class="lineNum">      38 </span>            : // held `SavedFrame` objects, and when the owning compartment is swept, it
+<span class="lineNum">      39 </span>            : // removes entries from this table that aren't held alive in any other way. When
+<span class="lineNum">      40 </span>            : // saving new stacks, we use this table to find pre-existing `SavedFrame`
+<span class="lineNum">      41 </span>            : // objects. If such an object is already extant, it is reused; otherwise a new
+<span class="lineNum">      42 </span>            : // `SavedFrame` is allocated and inserted into the table.
+<span class="lineNum">      43 </span>            : //
+<span class="lineNum">      44 </span>            : //    Naive         |   Hash Consing
+<span class="lineNum">      45 </span>            : //    --------------+------------------
+<span class="lineNum">      46 </span>            : //    c -&gt; b -&gt; a   |   c -&gt; b -&gt; a
+<span class="lineNum">      47 </span>            : //                  |        ^
+<span class="lineNum">      48 </span>            : //    d -&gt; b -&gt; a   |   d ---|
+<span class="lineNum">      49 </span>            : //                  |        |
+<span class="lineNum">      50 </span>            : //    e -&gt; b -&gt; a   |   e ---'
+<span class="lineNum">      51 </span>            : //
+<span class="lineNum">      52 </span>            : // This technique is effective because of the nature of the events that trigger
+<span class="lineNum">      53 </span>            : // capturing the stack. Currently, these events consist primarily of `JSObject`
+<span class="lineNum">      54 </span>            : // allocation (when an observing `Debugger` has such tracking), `Promise`
+<span class="lineNum">      55 </span>            : // settlement, and `Error` object creation. While these events may occur many
+<span class="lineNum">      56 </span>            : // times, they tend to occur only at a few locations in the JS source. For
+<span class="lineNum">      57 </span>            : // example, if we enable Object allocation tracking and run the esprima
+<span class="lineNum">      58 </span>            : // JavaScript parser on its own JavaScript source, there are approximately 54700
+<span class="lineNum">      59 </span>            : // total `Object` allocations, but just ~1400 unique JS stacks at allocation
+<span class="lineNum">      60 </span>            : // time. There's only ~200 allocation sites if we capture only the youngest
+<span class="lineNum">      61 </span>            : // stack frame.
+<span class="lineNum">      62 </span>            : //
+<span class="lineNum">      63 </span>            : // ## Security and Wrappers
+<span class="lineNum">      64 </span>            : //
+<span class="lineNum">      65 </span>            : // We save every frame on the stack, regardless of whether the `SavedStack`'s
+<span class="lineNum">      66 </span>            : // compartment's principals subsume the frame's compartment's principals or
+<span class="lineNum">      67 </span>            : // not. This gives us maximum flexibility down the line when accessing and
+<span class="lineNum">      68 </span>            : // presenting captured stacks, but at the price of some complication involved in
+<span class="lineNum">      69 </span>            : // preventing the leakage of privileged stack frames to unprivileged callers.
+<span class="lineNum">      70 </span>            : //
+<span class="lineNum">      71 </span>            : // When a `SavedFrame` method or accessor is called, we compare the caller's
+<span class="lineNum">      72 </span>            : // compartment's principals to each `SavedFrame`'s captured principals. We avoid
+<span class="lineNum">      73 </span>            : // using the usual `CallNonGenericMethod` and `nativeCall` machinery which
+<span class="lineNum">      74 </span>            : // enters the `SavedFrame` object's compartment before we can check these
+<span class="lineNum">      75 </span>            : // principals, because we need access to the original caller's compartment's
+<span class="lineNum">      76 </span>            : // principals (unlike other `CallNonGenericMethod` users) to determine what view
+<span class="lineNum">      77 </span>            : // of the stack to present. Instead, we take a similar approach to that used by
+<span class="lineNum">      78 </span>            : // DOM methods, and manually unwrap wrappers until we get the underlying
+<span class="lineNum">      79 </span>            : // `SavedFrame` object, find the first `SavedFrame` in its stack whose captured
+<span class="lineNum">      80 </span>            : // principals are subsumed by the caller's principals, access the reserved slots
+<span class="lineNum">      81 </span>            : // we care about, and then rewrap return values as necessary.
+<span class="lineNum">      82 </span>            : //
+<span class="lineNum">      83 </span>            : // Consider the following diagram:
+<span class="lineNum">      84 </span>            : //
+<span class="lineNum">      85 </span>            : //                                              Content Compartment
+<span class="lineNum">      86 </span>            : //                                    +---------------------------------------+
+<span class="lineNum">      87 </span>            : //                                    |                                       |
+<span class="lineNum">      88 </span>            : //                                    |           +------------------------+  |
+<span class="lineNum">      89 </span>            : //      Chrome Compartment            |           |                        |  |
+<span class="lineNum">      90 </span>            : //    +--------------------+          |           | SavedFrame C (content) |  |
+<span class="lineNum">      91 </span>            : //    |                    |          |           |                        |  |
+<span class="lineNum">      92 </span>            : //    |                  +--------------+         +------------------------+  |
+<span class="lineNum">      93 </span>            : //    |                  |              |                    ^                |
+<span class="lineNum">      94 </span>            : //    |     var x -----&gt; | Xray Wrapper |-----.              |                |
+<span class="lineNum">      95 </span>            : //    |                  |              |     |              |                |
+<span class="lineNum">      96 </span>            : //    |                  +--------------+     |   +------------------------+  |
+<span class="lineNum">      97 </span>            : //    |                    |          |       |   |                        |  |
+<span class="lineNum">      98 </span>            : //    |                  +--------------+     |   | SavedFrame B (content) |  |
+<span class="lineNum">      99 </span>            : //    |                  |              |     |   |                        |  |
+<span class="lineNum">     100 </span>            : //    |     var y -----&gt; | CCW (waived) |--.  |   +------------------------+  |
+<span class="lineNum">     101 </span>            : //    |                  |              |  |  |              ^                |
+<span class="lineNum">     102 </span>            : //    |                  +--------------+  |  |              |                |
+<span class="lineNum">     103 </span>            : //    |                    |          |    |  |              |                |
+<span class="lineNum">     104 </span>            : //    +--------------------+          |    |  |   +------------------------+  |
+<span class="lineNum">     105 </span>            : //                                    |    |  '-&gt; |                        |  |
+<span class="lineNum">     106 </span>            : //                                    |    |      | SavedFrame A (chrome)  |  |
+<span class="lineNum">     107 </span>            : //                                    |    '----&gt; |                        |  |
+<span class="lineNum">     108 </span>            : //                                    |           +------------------------+  |
+<span class="lineNum">     109 </span>            : //                                    |                      ^                |
+<span class="lineNum">     110 </span>            : //                                    |                      |                |
+<span class="lineNum">     111 </span>            : //                                    |           var z -----'                |
+<span class="lineNum">     112 </span>            : //                                    |                                       |
+<span class="lineNum">     113 </span>            : //                                    +---------------------------------------+
+<span class="lineNum">     114 </span>            : //
+<span class="lineNum">     115 </span>            : // CCW is a plain cross-compartment wrapper, yielded by waiving Xray vision. A
+<span class="lineNum">     116 </span>            : // is the youngest `SavedFrame` and represents a frame that was from the chrome
+<span class="lineNum">     117 </span>            : // compartment, while B and C are from frames from the content compartment. C is
+<span class="lineNum">     118 </span>            : // the oldest frame.
+<span class="lineNum">     119 </span>            : //
+<span class="lineNum">     120 </span>            : // Note that it is always safe to waive an Xray around a SavedFrame object,
+<span class="lineNum">     121 </span>            : // because SavedFrame objects and the SavedFrame prototype are always frozen you
+<span class="lineNum">     122 </span>            : // will never run untrusted code.
+<span class="lineNum">     123 </span>            : //
+<span class="lineNum">     124 </span>            : // Depending on who the caller is, the view of the stack will be different, and
+<span class="lineNum">     125 </span>            : // is summarized in the table below.
+<span class="lineNum">     126 </span>            : //
+<span class="lineNum">     127 </span>            : //    Var  | View
+<span class="lineNum">     128 </span>            : //    -----+------------
+<span class="lineNum">     129 </span>            : //    x    | A -&gt; B -&gt; C
+<span class="lineNum">     130 </span>            : //    y, z | B -&gt; C
+<span class="lineNum">     131 </span>            : //
+<span class="lineNum">     132 </span>            : // In the case of x, the `SavedFrame` accessors are called with an Xray wrapper
+<span class="lineNum">     133 </span>            : // around the `SavedFrame` object as the `this` value, and the chrome
+<span class="lineNum">     134 </span>            : // compartment as the cx's current principals. Because the chrome compartment's
+<span class="lineNum">     135 </span>            : // principals subsume both itself and the content compartment's principals, x
+<span class="lineNum">     136 </span>            : // has the complete view of the stack.
+<span class="lineNum">     137 </span>            : //
+<span class="lineNum">     138 </span>            : // In the case of y, the cross-compartment machinery automatically enters the
+<span class="lineNum">     139 </span>            : // content compartment, and calls the `SavedFrame` accessors with the wrapped
+<span class="lineNum">     140 </span>            : // `SavedFrame` object as the `this` value. Because the cx's current compartment
+<span class="lineNum">     141 </span>            : // is the content compartment, and the content compartment's principals do not
+<span class="lineNum">     142 </span>            : // subsume the chrome compartment's principals, it can only see the B and C
+<span class="lineNum">     143 </span>            : // frames.
+<span class="lineNum">     144 </span>            : //
+<span class="lineNum">     145 </span>            : // In the case of z, the `SavedFrame` accessors are called with the `SavedFrame`
+<span class="lineNum">     146 </span>            : // object in the `this` value, and the content compartment as the cx's current
+<span class="lineNum">     147 </span>            : // compartment. Similar to the case of y, only the B and C frames are exposed
+<span class="lineNum">     148 </span>            : // because the cx's current compartment's principals do not subsume A's captured
+<a name="149"><span class="lineNum">     149 </span>            : // principals.</a>
+<span class="lineNum">     150 </span>            : 
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 : class SavedStacks {</span>
+<span class="lineNum">     152 </span>            :     friend class SavedFrame;
+<span class="lineNum">     153 </span>            :     friend bool JS::ubi::ConstructSavedFrameStackSlow(JSContext* cx,
+<span class="lineNum">     154 </span>            :                                                       JS::ubi::StackFrame&amp; ubiFrame,
+<span class="lineNum">     155 </span>            :                                                       MutableHandleObject outSavedFrameStack);
+<a name="156"><span class="lineNum">     156 </span>            : </a>
+<span class="lineNum">     157 </span>            :   public:
+<span class="lineNum">     158 </span><span class="lineCov">        315 :     SavedStacks()</span>
+<span class="lineNum">     159 </span><span class="lineCov">        315 :       : frames(),</span>
+<span class="lineNum">     160 </span>            :         bernoulliSeeded(false),
+<span class="lineNum">     161 </span>            :         bernoulli(1.0, 0x59fdad7f6b4cc573, 0x91adf38db96a9354),
+<span class="lineNum">     162 </span><span class="lineCov">        315 :         creatingSavedFrame(false)</span>
+<span class="lineNum">     163 </span><span class="lineCov">        315 :     { }</span>
+<a name="164"><span class="lineNum">     164 </span>            : </a>
+<span class="lineNum">     165 </span>            :     MOZ_MUST_USE bool init();
+<span class="lineNum">     166 </span><span class="lineCov">       2976 :     bool initialized() const { return frames.initialized(); }</span>
+<span class="lineNum">     167 </span>            :     MOZ_MUST_USE bool saveCurrentStack(JSContext* cx, MutableHandleSavedFrame frame,
+<span class="lineNum">     168 </span>            :                                        JS::StackCapture&amp;&amp; capture = JS::StackCapture(JS::AllFrames()));
+<span class="lineNum">     169 </span>            :     MOZ_MUST_USE bool copyAsyncStack(JSContext* cx, HandleObject asyncStack,
+<span class="lineNum">     170 </span>            :                                      HandleString asyncCause,
+<span class="lineNum">     171 </span>            :                                      MutableHandleSavedFrame adoptedStack,
+<span class="lineNum">     172 </span>            :                                      uint32_t maxFrameCount = 0);
+<span class="lineNum">     173 </span>            :     void sweep();
+<span class="lineNum">     174 </span>            :     void trace(JSTracer* trc);
+<span class="lineNum">     175 </span>            :     uint32_t count();
+<span class="lineNum">     176 </span>            :     void clear();
+<span class="lineNum">     177 </span>            :     void chooseSamplingProbability(JSCompartment*);
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span>            :     // Set the sampling random number generator's state to |state0| and
+<a name="180"><span class="lineNum">     180 </span>            :     // |state1|. One or the other must be non-zero. See the comments for</a>
+<span class="lineNum">     181 </span>            :     // mozilla::non_crypto::XorShift128PlusRNG::setState for details.
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :     void setRNGState(uint64_t state0, uint64_t state1) { bernoulli.setRandomState(state0, state1); }</span>
+<span class="lineNum">     183 </span>            : 
+<span class="lineNum">     184 </span>            :     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf);
+<span class="lineNum">     185 </span>            : 
+<span class="lineNum">     186 </span>            :     // An alloction metadata builder that marks cells with the JavaScript stack
+<a name="187"><span class="lineNum">     187 </span>            :     // at which they were allocated.</a>
+<span class="lineNum">     188 </span>            :     struct MetadataBuilder : public AllocationMetadataBuilder {
+<span class="lineNum">     189 </span><span class="lineCov">          3 :         MetadataBuilder() : AllocationMetadataBuilder() { }</span>
+<span class="lineNum">     190 </span>            :         virtual JSObject* build(JSContext *cx, HandleObject obj,
+<span class="lineNum">     191 </span>            :                                 AutoEnterOOMUnsafeRegion&amp; oomUnsafe) const override;
+<span class="lineNum">     192 </span>            :     };
+<span class="lineNum">     193 </span>            : 
+<span class="lineNum">     194 </span>            :     static const MetadataBuilder metadataBuilder;
+<span class="lineNum">     195 </span>            : 
+<span class="lineNum">     196 </span>            :   private:
+<span class="lineNum">     197 </span>            :     SavedFrame::Set frames;
+<span class="lineNum">     198 </span>            :     bool bernoulliSeeded;
+<span class="lineNum">     199 </span>            :     mozilla::FastBernoulliTrial bernoulli;
+<span class="lineNum">     200 </span>            :     bool creatingSavedFrame;
+<span class="lineNum">     201 </span>            : 
+<span class="lineNum">     202 </span>            :     // Similar to mozilla::ReentrancyGuard, but instead of asserting against
+<span class="lineNum">     203 </span>            :     // reentrancy, just change the behavior of SavedStacks::saveCurrentStack to
+<span class="lineNum">     204 </span>            :     // return a nullptr SavedFrame.
+<span class="lineNum">     205 </span>            :     struct MOZ_RAII AutoReentrancyGuard {
+<span class="lineNum">     206 </span>            :         MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER;
+<a name="207"><span class="lineNum">     207 </span>            :         SavedStacks&amp; stacks;</a>
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span><span class="lineCov">       2016 :         explicit AutoReentrancyGuard(SavedStacks&amp; stacks MOZ_GUARD_OBJECT_NOTIFIER_PARAM)</span>
+<span class="lineNum">     210 </span><span class="lineCov">       2016 :             : stacks(stacks)</span>
+<span class="lineNum">     211 </span>            :         {
+<span class="lineNum">     212 </span><span class="lineCov">       2016 :             MOZ_GUARD_OBJECT_NOTIFIER_INIT;</span>
+<span class="lineNum">     213 </span><span class="lineCov">       2016 :             stacks.creatingSavedFrame = true;</span>
+<a name="214"><span class="lineNum">     214 </span><span class="lineCov">       2016 :         }</span></a>
+<span class="lineNum">     215 </span>            : 
+<span class="lineNum">     216 </span><span class="lineCov">       2016 :         ~AutoReentrancyGuard()</span>
+<span class="lineNum">     217 </span><span class="lineCov">       2016 :         {</span>
+<span class="lineNum">     218 </span><span class="lineCov">       2016 :             stacks.creatingSavedFrame = false;</span>
+<span class="lineNum">     219 </span><span class="lineCov">       2016 :         }</span>
+<span class="lineNum">     220 </span>            :     };
+<span class="lineNum">     221 </span>            : 
+<span class="lineNum">     222 </span>            :     MOZ_MUST_USE bool insertFrames(JSContext* cx, FrameIter&amp; iter,
+<span class="lineNum">     223 </span>            :                                    MutableHandleSavedFrame frame,
+<span class="lineNum">     224 </span>            :                                    JS::StackCapture&amp;&amp; capture);
+<span class="lineNum">     225 </span>            :     MOZ_MUST_USE bool adoptAsyncStack(JSContext* cx, HandleSavedFrame asyncStack,
+<span class="lineNum">     226 </span>            :                                       HandleString asyncCause,
+<span class="lineNum">     227 </span>            :                                       MutableHandleSavedFrame adoptedStack,
+<span class="lineNum">     228 </span>            :                                       uint32_t maxFrameCount);
+<span class="lineNum">     229 </span>            :     SavedFrame* getOrCreateSavedFrame(JSContext* cx, SavedFrame::HandleLookup lookup);
+<span class="lineNum">     230 </span>            :     SavedFrame* createFrameFromLookup(JSContext* cx, SavedFrame::HandleLookup lookup);
+<span class="lineNum">     231 </span>            : 
+<a name="232"><span class="lineNum">     232 </span>            :     // Cache for memoizing PCToLineNumber lookups.</a>
+<a name="233"><span class="lineNum">     233 </span>            : </a>
+<span class="lineNum">     234 </span><span class="lineCov">      13713 :     struct PCKey {</span>
+<span class="lineNum">     235 </span><span class="lineCov">      12463 :         PCKey(JSScript* script, jsbytecode* pc) : script(script), pc(pc) { }</span>
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span>            :         HeapPtr&lt;JSScript*&gt; script;
+<a name="238"><span class="lineNum">     238 </span>            :         jsbytecode* pc;</a>
+<a name="239"><span class="lineNum">     239 </span>            : </a>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :         void trace(JSTracer* trc) { /* PCKey is weak. */ }</span>
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :         bool needsSweep() { return IsAboutToBeFinalized(&amp;script); }</span>
+<span class="lineNum">     242 </span>            :     };
+<a name="243"><span class="lineNum">     243 </span>            : </a>
+<a name="244"><span class="lineNum">     244 </span>            :   public:</a>
+<a name="245"><span class="lineNum">     245 </span><span class="lineCov">      51824 :     struct LocationValue {</span></a>
+<span class="lineNum">     246 </span><span class="lineCov">      12463 :         LocationValue() : source(nullptr), line(0), column(0) { }</span>
+<span class="lineNum">     247 </span><span class="lineCov">        722 :         LocationValue(JSAtom* source, size_t line, uint32_t column)</span>
+<span class="lineNum">     248 </span><span class="lineCov">        722 :             : source(source), line(line), column(column)</span>
+<a name="249"><span class="lineNum">     249 </span><span class="lineCov">        722 :         { }</span></a>
+<span class="lineNum">     250 </span>            : 
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :         void trace(JSTracer* trc) {</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :             TraceNullableEdge(trc, &amp;source, &quot;SavedStacks::LocationValue::source&quot;);</span>
+<a name="253"><span class="lineNum">     253 </span><span class="lineNoCov">          0 :         }</span></a>
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :         bool needsSweep() {</span>
+<span class="lineNum">     256 </span>            :             // LocationValue is always held strongly, but in a weak map.
+<span class="lineNum">     257 </span>            :             // Assert that it has been marked already, but allow it to be
+<span class="lineNum">     258 </span>            :             // ejected from the map when the key dies.
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :             MOZ_ASSERT(source);</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :             MOZ_ASSERT(!IsAboutToBeFinalized(&amp;source));</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">     262 </span>            :         }
+<span class="lineNum">     263 </span>            : 
+<span class="lineNum">     264 </span>            :         HeapPtr&lt;JSAtom*&gt; source;
+<span class="lineNum">     265 </span>            :         size_t line;
+<span class="lineNum">     266 </span>            :         uint32_t column;
+<span class="lineNum">     267 </span>            :     };
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span>            :   private:
+<span class="lineNum">     270 </span>            :     struct PCLocationHasher : public DefaultHasher&lt;PCKey&gt; {
+<span class="lineNum">     271 </span>            :         using ScriptPtrHasher = DefaultHasher&lt;JSScript*&gt;;
+<a name="272"><span class="lineNum">     272 </span>            :         using BytecodePtrHasher = DefaultHasher&lt;jsbytecode*&gt;;</a>
+<span class="lineNum">     273 </span>            : 
+<span class="lineNum">     274 </span><span class="lineCov">      12463 :         static HashNumber hash(const PCKey&amp; key) {</span>
+<span class="lineNum">     275 </span><span class="lineCov">      12463 :             return mozilla::AddToHash(ScriptPtrHasher::hash(key.script),</span>
+<span class="lineNum">     276 </span><span class="lineCov">      12463 :                                       BytecodePtrHasher::hash(key.pc));</span>
+<a name="277"><span class="lineNum">     277 </span>            :         }</a>
+<span class="lineNum">     278 </span>            : 
+<span class="lineNum">     279 </span><span class="lineCov">      11741 :         static bool match(const PCKey&amp; l, const PCKey&amp; k) {</span>
+<span class="lineNum">     280 </span><span class="lineCov">      23482 :             return ScriptPtrHasher::match(l.script, k.script) &amp;&amp;</span>
+<span class="lineNum">     281 </span><span class="lineCov">      23482 :                    BytecodePtrHasher::match(l.pc, k.pc);</span>
+<span class="lineNum">     282 </span>            :         }
+<span class="lineNum">     283 </span>            :     };
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span>            :     // We eagerly Atomize the script source stored in LocationValue because
+<span class="lineNum">     286 </span>            :     // wasm does not always have a JSScript and the source might not be
+<span class="lineNum">     287 </span>            :     // available when we need it later. However, since the JSScript does not
+<span class="lineNum">     288 </span>            :     // actually hold this atom, we have to trace it strongly to keep it alive.
+<span class="lineNum">     289 </span>            :     // Thus, it takes two GC passes to fully clean up this table: the first GC
+<span class="lineNum">     290 </span>            :     // removes the dead script; the second will clear out the source atom since
+<span class="lineNum">     291 </span>            :     // it is no longer held by the table.
+<span class="lineNum">     292 </span>            :     using PCLocationMap = GCHashMap&lt;PCKey, LocationValue, PCLocationHasher, SystemAllocPolicy&gt;;
+<span class="lineNum">     293 </span>            :     PCLocationMap pcLocationMap;
+<span class="lineNum">     294 </span>            : 
+<span class="lineNum">     295 </span>            :     MOZ_MUST_USE bool getLocation(JSContext* cx, const FrameIter&amp; iter,
+<span class="lineNum">     296 </span>            :                                   MutableHandle&lt;LocationValue&gt; locationp);
+<span class="lineNum">     297 </span>            : };
+<a name="298"><span class="lineNum">     298 </span>            : </a>
+<span class="lineNum">     299 </span>            : template &lt;typename Wrapper&gt;
+<a name="300"><span class="lineNum">     300 </span><span class="lineCov">      24926 : struct WrappedPtrOperations&lt;SavedStacks::LocationValue, Wrapper&gt;</span></a>
+<a name="301"><span class="lineNum">     301 </span>            : {</a>
+<a name="302"><span class="lineNum">     302 </span><span class="lineCov">      24926 :     JSAtom* source() const { return loc().source; }</span></a>
+<span class="lineNum">     303 </span><span class="lineCov">      12463 :     size_t line() const { return loc().line; }</span>
+<span class="lineNum">     304 </span><span class="lineCov">      12463 :     uint32_t column() const { return loc().column; }</span>
+<a name="305"><span class="lineNum">     305 </span>            : </a>
+<span class="lineNum">     306 </span>            :   private:
+<span class="lineNum">     307 </span><span class="lineCov">      49852 :     const SavedStacks::LocationValue&amp; loc() const {</span>
+<span class="lineNum">     308 </span><span class="lineCov">      49852 :         return static_cast&lt;const Wrapper*&gt;(this)-&gt;get();</span>
+<span class="lineNum">     309 </span>            :     }
+<span class="lineNum">     310 </span>            : };
+<a name="311"><span class="lineNum">     311 </span>            : </a>
+<span class="lineNum">     312 </span>            : template &lt;typename Wrapper&gt;
+<span class="lineNum">     313 </span><span class="lineCov">      24926 : struct MutableWrappedPtrOperations&lt;SavedStacks::LocationValue, Wrapper&gt;</span>
+<a name="314"><span class="lineNum">     314 </span>            :     : public WrappedPtrOperations&lt;SavedStacks::LocationValue, Wrapper&gt;</a>
+<a name="315"><span class="lineNum">     315 </span>            : {</a>
+<a name="316"><span class="lineNum">     316 </span><span class="lineNoCov">          0 :     void setSource(JSAtom* v) { loc().source = v; }</span></a>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :     void setLine(size_t v) { loc().line = v; }</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :     void setColumn(uint32_t v) { loc().column = v; }</span>
+<a name="319"><span class="lineNum">     319 </span>            : </a>
+<span class="lineNum">     320 </span>            :   private:
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :     SavedStacks::LocationValue&amp; loc() {</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :         return static_cast&lt;Wrapper*&gt;(this)-&gt;get();</span>
+<span class="lineNum">     323 </span>            :     }
+<span class="lineNum">     324 </span>            : };
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span>            : UTF8CharsZ
+<span class="lineNum">     327 </span>            : BuildUTF8StackString(JSContext* cx, HandleObject stack);
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span>            : } /* namespace js */
+<span class="lineNum">     330 </span>            : 
+<span class="lineNum">     331 </span>            : #endif /* vm_SavedStacks_h */
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

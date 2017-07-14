@@ -1,0 +1,1187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - gfx/skia/skia/src/gpu/ops/GrAAConvexTessellator.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../index.html">top level</a> - <a href="index.html">gfx/skia/skia/src/gpu/ops</a> - GrAAConvexTessellator.cpp<span style="font-size: 80%;"> (source / <a href="GrAAConvexTessellator.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">538</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">34</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * Copyright 2015 Google Inc.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * Use of this source code is governed by a BSD-style license that can be
+<span class="lineNum">       5 </span>            :  * found in the LICENSE file.
+<span class="lineNum">       6 </span>            :  */
+<span class="lineNum">       7 </span>            : 
+<span class="lineNum">       8 </span>            : #include &quot;GrAAConvexTessellator.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;SkCanvas.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;SkPath.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;SkPoint.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;SkString.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;GrPathUtils.h&quot;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : // Next steps:
+<span class="lineNum">      16 </span>            : //  add an interactive sample app slide
+<span class="lineNum">      17 </span>            : //  add debug check that all points are suitably far apart
+<span class="lineNum">      18 </span>            : //  test more degenerate cases
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : // The tolerance for fusing vertices and eliminating colinear lines (It is in device space).
+<span class="lineNum">      21 </span>            : static const SkScalar kClose = (SK_Scalar1 / 16);
+<span class="lineNum">      22 </span>            : static const SkScalar kCloseSqd = kClose * kClose;
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : // tesselation tolerance values, in device space pixels
+<span class="lineNum">      25 </span>            : static const SkScalar kQuadTolerance = 0.2f;
+<span class="lineNum">      26 </span>            : static const SkScalar kCubicTolerance = 0.2f;
+<span class="lineNum">      27 </span>            : static const SkScalar kConicTolerance = 0.5f;
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : // dot product below which we use a round cap between curve segments
+<span class="lineNum">      30 </span>            : static const SkScalar kRoundCapThreshold = 0.8f;
+<span class="lineNum">      31 </span>            : 
+<span class="lineNum">      32 </span>            : // dot product above which we consider two adjacent curves to be part of the &quot;same&quot; curve
+<a name="33"><span class="lineNum">      33 </span>            : static const SkScalar kCurveConnectionThreshold = 0.8f;</a>
+<span class="lineNum">      34 </span>            : 
+<span class="lineNum">      35 </span><span class="lineNoCov">          0 : static bool intersect(const SkPoint&amp; p0, const SkPoint&amp; n0,</span>
+<span class="lineNum">      36 </span>            :                       const SkPoint&amp; p1, const SkPoint&amp; n1,
+<span class="lineNum">      37 </span>            :                       SkScalar* t) {
+<span class="lineNum">      38 </span><span class="lineNoCov">          0 :     const SkPoint v = p1 - p0;</span>
+<span class="lineNum">      39 </span><span class="lineNoCov">          0 :     SkScalar perpDot = n0.fX * n1.fY - n0.fY * n1.fX;</span>
+<span class="lineNum">      40 </span><span class="lineNoCov">          0 :     if (SkScalarNearlyZero(perpDot)) {</span>
+<span class="lineNum">      41 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">      42 </span>            :     }
+<span class="lineNum">      43 </span><span class="lineNoCov">          0 :     *t = (v.fX * n1.fY - v.fY * n1.fX) / perpDot;</span>
+<span class="lineNum">      44 </span><span class="lineNoCov">          0 :     SkASSERT(SkScalarIsFinite(*t));</span>
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">      46 </span>            : }
+<span class="lineNum">      47 </span>            : 
+<a name="48"><span class="lineNum">      48 </span>            : // This is a special case version of intersect where we have the vector</a>
+<span class="lineNum">      49 </span>            : // perpendicular to the second line rather than the vector parallel to it.
+<span class="lineNum">      50 </span><span class="lineNoCov">          0 : static SkScalar perp_intersect(const SkPoint&amp; p0, const SkPoint&amp; n0,</span>
+<span class="lineNum">      51 </span>            :                                const SkPoint&amp; p1, const SkPoint&amp; perp) {
+<span class="lineNum">      52 </span><span class="lineNoCov">          0 :     const SkPoint v = p1 - p0;</span>
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 :     SkScalar perpDot = n0.dot(perp);</span>
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 :     return v.dot(perp) / perpDot;</span>
+<a name="55"><span class="lineNum">      55 </span>            : }</a>
+<span class="lineNum">      56 </span>            : 
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 : static bool duplicate_pt(const SkPoint&amp; p0, const SkPoint&amp; p1) {</span>
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 :     SkScalar distSq = p0.distanceToSqd(p1);</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :     return distSq &lt; kCloseSqd;</span>
+<a name="60"><span class="lineNum">      60 </span>            : }</a>
+<span class="lineNum">      61 </span>            : 
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 : static SkScalar abs_dist_from_line(const SkPoint&amp; p0, const SkVector&amp; v, const SkPoint&amp; test) {</span>
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :     SkPoint testV = test - p0;</span>
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 :     SkScalar dist = testV.fX * v.fY - testV.fY * v.fX;</span>
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :     return SkScalarAbs(dist);</span>
+<a name="66"><span class="lineNum">      66 </span>            : }</a>
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 : int GrAAConvexTessellator::addPt(const SkPoint&amp; pt,</span>
+<span class="lineNum">      69 </span>            :                                  SkScalar depth,
+<span class="lineNum">      70 </span>            :                                  SkScalar coverage,
+<span class="lineNum">      71 </span>            :                                  bool movable,
+<span class="lineNum">      72 </span>            :                                  CurveState curve) {
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :     this-&gt;validate();</span>
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span><span class="lineNoCov">          0 :     int index = fPts.count();</span>
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :     *fPts.push() = pt;</span>
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :     *fCoverages.push() = coverage;</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :     *fMovable.push() = movable;</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :     *fCurveState.push() = curve;</span>
+<span class="lineNum">      80 </span>            : 
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :     this-&gt;validate();</span>
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :     return index;</span>
+<a name="83"><span class="lineNum">      83 </span>            : }</a>
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::popLastPt() {</span>
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :     this-&gt;validate();</span>
+<span class="lineNum">      87 </span>            : 
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :     fPts.pop();</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :     fCoverages.pop();</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :     fMovable.pop();</span>
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :     fCurveState.pop();</span>
+<span class="lineNum">      92 </span>            : 
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :     this-&gt;validate();</span>
+<a name="94"><span class="lineNum">      94 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      95 </span>            : 
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::popFirstPtShuffle() {</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :     this-&gt;validate();</span>
+<span class="lineNum">      98 </span>            : 
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :     fPts.removeShuffle(0);</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :     fCoverages.removeShuffle(0);</span>
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 :     fMovable.removeShuffle(0);</span>
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :     fCurveState.removeShuffle(0);</span>
+<span class="lineNum">     103 </span>            : 
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :     this-&gt;validate();</span>
+<a name="105"><span class="lineNum">     105 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::updatePt(int index,</span>
+<span class="lineNum">     108 </span>            :                                      const SkPoint&amp; pt,
+<span class="lineNum">     109 </span>            :                                      SkScalar depth,
+<span class="lineNum">     110 </span>            :                                      SkScalar coverage) {
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :     this-&gt;validate();</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :     SkASSERT(fMovable[index]);</span>
+<span class="lineNum">     113 </span>            : 
+<span class="lineNum">     114 </span><span class="lineNoCov">          0 :     fPts[index] = pt;</span>
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :     fCoverages[index] = coverage;</span>
+<a name="116"><span class="lineNum">     116 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     117 </span>            : 
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::addTri(int i0, int i1, int i2) {</span>
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :     if (i0 == i1 || i1 == i2 || i2 == i0) {</span>
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     121 </span>            :     }
+<span class="lineNum">     122 </span>            : 
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :     *fIndices.push() = i0;</span>
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :     *fIndices.push() = i1;</span>
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :     *fIndices.push() = i2;</span>
+<a name="126"><span class="lineNum">     126 </span>            : }</a>
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::rewind() {</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :     fPts.rewind();</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :     fCoverages.rewind();</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :     fMovable.rewind();</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :     fIndices.rewind();</span>
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :     fNorms.rewind();</span>
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :     fCurveState.rewind();</span>
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :     fInitialRing.rewind();</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :     fCandidateVerts.rewind();</span>
+<span class="lineNum">     137 </span>            : #if GR_AA_CONVEX_TESSELLATOR_VIZ
+<span class="lineNum">     138 </span>            :     fRings.rewind();        // TODO: leak in this case!
+<span class="lineNum">     139 </span>            : #else
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     fRings[0].rewind();</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :     fRings[1].rewind();</span>
+<span class="lineNum">     142 </span>            : #endif
+<a name="143"><span class="lineNum">     143 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::computeBisectors() {</span>
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :     fBisectors.setCount(fNorms.count());</span>
+<span class="lineNum">     147 </span>            : 
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :     int prev = fBisectors.count() - 1;</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     for (int cur = 0; cur &lt; fBisectors.count(); prev = cur, ++cur) {</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :         fBisectors[cur] = fNorms[cur] + fNorms[prev];</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :         if (!fBisectors[cur].normalize()) {</span>
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :             SkASSERT(SkPoint::kLeft_Side == fSide || SkPoint::kRight_Side == fSide);</span>
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :             fBisectors[cur].setOrthog(fNorms[cur], (SkPoint::Side)-fSide);</span>
+<span class="lineNum">     154 </span>            :             SkVector other;
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :             other.setOrthog(fNorms[prev], fSide);</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :             fBisectors[cur] += other;</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :             SkAssertResult(fBisectors[cur].normalize());</span>
+<span class="lineNum">     158 </span>            :         } else {
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :             fBisectors[cur].negate();      // make the bisector face in</span>
+<span class="lineNum">     160 </span>            :         }
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :         if (fCurveState[prev] == kIndeterminate_CurveState) {</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :             if (fCurveState[cur] == kSharp_CurveState) {</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :                 fCurveState[prev] = kSharp_CurveState;</span>
+<span class="lineNum">     164 </span>            :             } else {
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :                 if (SkScalarAbs(fNorms[cur].dot(fNorms[prev])) &gt; kCurveConnectionThreshold) {</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :                     fCurveState[prev] = kCurve_CurveState;</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :                     fCurveState[cur]  = kCurve_CurveState;</span>
+<span class="lineNum">     168 </span>            :                 } else {
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :                     fCurveState[prev] = kSharp_CurveState;</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :                     fCurveState[cur]  = kSharp_CurveState;</span>
+<span class="lineNum">     171 </span>            :                 }
+<span class="lineNum">     172 </span>            :             }
+<span class="lineNum">     173 </span>            :         }
+<span class="lineNum">     174 </span>            : 
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :         SkASSERT(SkScalarNearlyEqual(1.0f, fBisectors[cur].length()));</span>
+<span class="lineNum">     176 </span>            :     }
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     178 </span>            : 
+<a name="179"><span class="lineNum">     179 </span>            : // Create as many rings as we need to (up to a predefined limit) to reach the specified target</a>
+<span class="lineNum">     180 </span>            : // depth. If we are in fill mode, the final ring will automatically be fanned.
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 : bool GrAAConvexTessellator::createInsetRings(Ring&amp; previousRing, SkScalar initialDepth,</span>
+<span class="lineNum">     182 </span>            :                                              SkScalar initialCoverage, SkScalar targetDepth,
+<span class="lineNum">     183 </span>            :                                              SkScalar targetCoverage, Ring** finalRing) {
+<span class="lineNum">     184 </span>            :     static const int kMaxNumRings = 8;
+<span class="lineNum">     185 </span>            : 
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :     if (previousRing.numPts() &lt; 3) {</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     188 </span>            :     }
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :     Ring* currentRing = &amp;previousRing;</span>
+<span class="lineNum">     190 </span>            :     int i;
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :     for (i = 0; i &lt; kMaxNumRings; ++i) {</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :         Ring* nextRing = this-&gt;getNextRing(currentRing);</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :         SkASSERT(nextRing != currentRing);</span>
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :         bool done = this-&gt;createInsetRing(*currentRing, nextRing, initialDepth, initialCoverage,</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :                                           targetDepth, targetCoverage, i == 0);</span>
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :         currentRing = nextRing;</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :         if (done) {</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     200 </span>            :         }
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :         currentRing-&gt;init(*this);</span>
+<span class="lineNum">     202 </span>            :     }
+<span class="lineNum">     203 </span>            : 
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :     if (kMaxNumRings == i) {</span>
+<span class="lineNum">     205 </span>            :         // Bail if we've exceeded the amount of time we want to throw at this.
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :         this-&gt;terminate(*currentRing);</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     208 </span>            :     }
+<span class="lineNum">     209 </span><span class="lineNoCov">          0 :     bool done = currentRing-&gt;numPts() &gt;= 3;</span>
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :     if (done) {</span>
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 :         currentRing-&gt;init(*this);</span>
+<span class="lineNum">     212 </span>            :     }
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :     *finalRing = currentRing;</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :     return done;</span>
+<span class="lineNum">     215 </span>            : }
+<span class="lineNum">     216 </span>            : 
+<span class="lineNum">     217 </span>            : // The general idea here is to, conceptually, start with the original polygon and slide
+<span class="lineNum">     218 </span>            : // the vertices along the bisectors until the first intersection. At that
+<span class="lineNum">     219 </span>            : // point two of the edges collapse and the process repeats on the new polygon.
+<span class="lineNum">     220 </span>            : // The polygon state is captured in the Ring class while the GrAAConvexTessellator
+<a name="221"><span class="lineNum">     221 </span>            : // controls the iteration. The CandidateVerts holds the formative points for the</a>
+<span class="lineNum">     222 </span>            : // next ring.
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 : bool GrAAConvexTessellator::tessellate(const SkMatrix&amp; m, const SkPath&amp; path) {</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     if (!this-&gt;extractFromPath(m, path)) {</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     226 </span>            :     }
+<span class="lineNum">     227 </span>            : 
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :     SkScalar coverage = 1.0f;</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     SkScalar scaleFactor = 0.0f;</span>
+<span class="lineNum">     230 </span>            : 
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     if (SkStrokeRec::kStrokeAndFill_Style == fStyle) {</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :         SkASSERT(m.isSimilarity());</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :         scaleFactor = m.getMaxScale(); // x and y scale are the same</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :         SkScalar effectiveStrokeWidth = scaleFactor * fStrokeWidth;</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :         Ring outerStrokeAndAARing;</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :         this-&gt;createOuterRing(fInitialRing,</span>
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 :                               effectiveStrokeWidth / 2 + kAntialiasingRadius, 0.0,</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :                               &amp;outerStrokeAndAARing);</span>
+<span class="lineNum">     239 </span>            : 
+<span class="lineNum">     240 </span>            :         // discard all the triangles added between the originating ring and the new outer ring
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :         fIndices.rewind();</span>
+<span class="lineNum">     242 </span>            : 
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :         outerStrokeAndAARing.init(*this);</span>
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 :         outerStrokeAndAARing.makeOriginalRing();</span>
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span>            :         // Add the outer stroke ring's normals to the originating ring's normals
+<span class="lineNum">     248 </span>            :         // so it can also act as an originating ring
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :         fNorms.setCount(fNorms.count() + outerStrokeAndAARing.numPts());</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :         for (int i = 0; i &lt; outerStrokeAndAARing.numPts(); ++i) {</span>
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :             SkASSERT(outerStrokeAndAARing.index(i) &lt; fNorms.count());</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :             fNorms[outerStrokeAndAARing.index(i)] = outerStrokeAndAARing.norm(i);</span>
+<span class="lineNum">     253 </span>            :         }
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span>            :         // the bisectors are only needed for the computation of the outer ring
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :         fBisectors.rewind();</span>
+<span class="lineNum">     257 </span>            : 
+<span class="lineNum">     258 </span>            :         Ring* insetAARing;
+<span class="lineNum">     259 </span>            :         this-&gt;createInsetRings(outerStrokeAndAARing,
+<span class="lineNum">     260 </span>            :                                0.0f, 0.0f, 2*kAntialiasingRadius, 1.0f,
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :                                &amp;insetAARing);</span>
+<span class="lineNum">     262 </span>            : 
+<span class="lineNum">     263 </span><span class="lineNoCov">          0 :         SkDEBUGCODE(this-&gt;validate();)</span>
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     265 </span>            :     }
+<span class="lineNum">     266 </span>            : 
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     if (SkStrokeRec::kStroke_Style == fStyle) {</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :         SkASSERT(fStrokeWidth &gt;= 0.0f);</span>
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :         SkASSERT(m.isSimilarity());</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :         scaleFactor = m.getMaxScale(); // x and y scale are the same</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :         SkScalar effectiveStrokeWidth = scaleFactor * fStrokeWidth;</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :         Ring outerStrokeRing;</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :         this-&gt;createOuterRing(fInitialRing, effectiveStrokeWidth / 2 - kAntialiasingRadius,</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :                               coverage, &amp;outerStrokeRing);</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :         outerStrokeRing.init(*this);</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :         Ring outerAARing;</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :         this-&gt;createOuterRing(outerStrokeRing, kAntialiasingRadius * 2, 0.0f, &amp;outerAARing);</span>
+<span class="lineNum">     278 </span>            :     } else {
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :         Ring outerAARing;</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :         this-&gt;createOuterRing(fInitialRing, kAntialiasingRadius, 0.0f, &amp;outerAARing);</span>
+<span class="lineNum">     281 </span>            :     }
+<span class="lineNum">     282 </span>            : 
+<span class="lineNum">     283 </span>            :     // the bisectors are only needed for the computation of the outer ring
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :     fBisectors.rewind();</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :     if (SkStrokeRec::kStroke_Style == fStyle &amp;&amp; fInitialRing.numPts() &gt; 2) {</span>
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :         SkASSERT(fStrokeWidth &gt;= 0.0f);</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :         SkScalar effectiveStrokeWidth = scaleFactor * fStrokeWidth;</span>
+<span class="lineNum">     288 </span>            :         Ring* insetStrokeRing;
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :         SkScalar strokeDepth = effectiveStrokeWidth / 2 - kAntialiasingRadius;</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :         if (this-&gt;createInsetRings(fInitialRing, 0.0f, coverage, strokeDepth, coverage,</span>
+<span class="lineNum">     291 </span>            :                                    &amp;insetStrokeRing)) {
+<span class="lineNum">     292 </span>            :             Ring* insetAARing;
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :             this-&gt;createInsetRings(*insetStrokeRing, strokeDepth, coverage, strokeDepth +</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :                                    kAntialiasingRadius * 2, 0.0f, &amp;insetAARing);</span>
+<span class="lineNum">     295 </span>            :         }
+<span class="lineNum">     296 </span>            :     } else {
+<span class="lineNum">     297 </span>            :         Ring* insetAARing;
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :         this-&gt;createInsetRings(fInitialRing, 0.0f, 0.5f, kAntialiasingRadius, 1.0f, &amp;insetAARing);</span>
+<span class="lineNum">     299 </span>            :     }
+<span class="lineNum">     300 </span>            : 
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :     SkDEBUGCODE(this-&gt;validate();)</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="303"><span class="lineNum">     303 </span>            : }</a>
+<span class="lineNum">     304 </span>            : 
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 : SkScalar GrAAConvexTessellator::computeDepthFromEdge(int edgeIdx, const SkPoint&amp; p) const {</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :     SkASSERT(edgeIdx &lt; fNorms.count());</span>
+<span class="lineNum">     307 </span>            : 
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :     SkPoint v = p - fPts[edgeIdx];</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     SkScalar depth = -fNorms[edgeIdx].dot(v);</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :     return depth;</span>
+<span class="lineNum">     311 </span>            : }
+<span class="lineNum">     312 </span>            : 
+<a name="313"><span class="lineNum">     313 </span>            : // Find a point that is 'desiredDepth' away from the 'edgeIdx'-th edge and lies</a>
+<span class="lineNum">     314 </span>            : // along the 'bisector' from the 'startIdx'-th point.
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 : bool GrAAConvexTessellator::computePtAlongBisector(int startIdx,</span>
+<span class="lineNum">     316 </span>            :                                                    const SkVector&amp; bisector,
+<span class="lineNum">     317 </span>            :                                                    int edgeIdx,
+<span class="lineNum">     318 </span>            :                                                    SkScalar desiredDepth,
+<span class="lineNum">     319 </span>            :                                                    SkPoint* result) const {
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     const SkPoint&amp; norm = fNorms[edgeIdx];</span>
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span>            :     // First find the point where the edge and the bisector intersect
+<span class="lineNum">     323 </span>            :     SkPoint newP;
+<span class="lineNum">     324 </span>            : 
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :     SkScalar t = perp_intersect(fPts[startIdx], bisector, fPts[edgeIdx], norm);</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :     if (SkScalarNearlyEqual(t, 0.0f)) {</span>
+<span class="lineNum">     327 </span>            :         // the start point was one of the original ring points
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :         SkASSERT(startIdx &lt; fPts.count());</span>
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :         newP = fPts[startIdx];</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :     } else if (t &lt; 0.0f) {</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :         newP = bisector;</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :         newP.scale(t);</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :         newP += fPts[startIdx];</span>
+<span class="lineNum">     334 </span>            :     } else {
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     336 </span>            :     }
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span>            :     // Then offset along the bisector from that point the correct distance
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     SkScalar dot = bisector.dot(norm);</span>
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :     t = -desiredDepth / dot;</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :     *result = bisector;</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :     result-&gt;scale(t);</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :     *result += newP;</span>
+<span class="lineNum">     344 </span>            : 
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="346"><span class="lineNum">     346 </span>            : }</a>
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 : bool GrAAConvexTessellator::extractFromPath(const SkMatrix&amp; m, const SkPath&amp; path) {</span>
+<span class="lineNum">     349 </span><span class="lineNoCov">          0 :     SkASSERT(SkPath::kConvex_Convexity == path.getConvexity());</span>
+<span class="lineNum">     350 </span>            : 
+<span class="lineNum">     351 </span>            :     // Outer ring: 3*numPts
+<span class="lineNum">     352 </span>            :     // Middle ring: numPts
+<span class="lineNum">     353 </span>            :     // Presumptive inner ring: numPts
+<span class="lineNum">     354 </span><span class="lineNoCov">          0 :     this-&gt;reservePts(5*path.countPoints());</span>
+<span class="lineNum">     355 </span>            :     // Outer ring: 12*numPts
+<span class="lineNum">     356 </span>            :     // Middle ring: 0
+<span class="lineNum">     357 </span>            :     // Presumptive inner ring: 6*numPts + 6
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :     fIndices.setReserve(18*path.countPoints() + 6);</span>
+<span class="lineNum">     359 </span>            : 
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :     fNorms.setReserve(path.countPoints());</span>
+<span class="lineNum">     361 </span>            : 
+<span class="lineNum">     362 </span>            :     // TODO: is there a faster way to extract the points from the path? Perhaps
+<span class="lineNum">     363 </span>            :     // get all the points via a new entry point, transform them all in bulk
+<span class="lineNum">     364 </span>            :     // and then walk them to find duplicates?
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :     SkPath::Iter iter(path, true);</span>
+<span class="lineNum">     366 </span>            :     SkPoint pts[4];
+<span class="lineNum">     367 </span>            :     SkPath::Verb verb;
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :     while ((verb = iter.next(pts, true, true)) != SkPath::kDone_Verb) {</span>
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :         switch (verb) {</span>
+<span class="lineNum">     370 </span>            :             case SkPath::kLine_Verb:
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :                 this-&gt;lineTo(m, pts[1], kSharp_CurveState);</span>
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     373 </span>            :             case SkPath::kQuad_Verb:
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :                 this-&gt;quadTo(m, pts);</span>
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     376 </span>            :             case SkPath::kCubic_Verb:
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :                 this-&gt;cubicTo(m, pts);</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     379 </span>            :             case SkPath::kConic_Verb:
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 :                 this-&gt;conicTo(m, pts, iter.conicWeight());</span>
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     382 </span>            :             case SkPath::kMove_Verb:
+<span class="lineNum">     383 </span>            :             case SkPath::kClose_Verb:
+<span class="lineNum">     384 </span>            :             case SkPath::kDone_Verb:
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :                 break;</span>
+<span class="lineNum">     386 </span>            :         }
+<span class="lineNum">     387 </span>            :     }
+<span class="lineNum">     388 </span>            : 
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :     if (this-&gt;numPts() &lt; 2) {</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     391 </span>            :     }
+<span class="lineNum">     392 </span>            : 
+<span class="lineNum">     393 </span>            :     // check if last point is a duplicate of the first point. If so, remove it.
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :     if (duplicate_pt(fPts[this-&gt;numPts()-1], fPts[0])) {</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :         this-&gt;popLastPt();</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :         fNorms.pop();</span>
+<span class="lineNum">     397 </span>            :     }
+<span class="lineNum">     398 </span>            : 
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :     SkASSERT(fPts.count() == fNorms.count()+1);</span>
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :     if (this-&gt;numPts() &gt;= 3) {</span>
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :         if (abs_dist_from_line(fPts.top(), fNorms.top(), fPts[0]) &lt; kClose) {</span>
+<span class="lineNum">     402 </span>            :             // The last point is on the line from the second to last to the first point.
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :             this-&gt;popLastPt();</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :             fNorms.pop();</span>
+<span class="lineNum">     405 </span>            :         }
+<span class="lineNum">     406 </span>            : 
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :         *fNorms.push() = fPts[0] - fPts.top();</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :         SkDEBUGCODE(SkScalar len =) SkPoint::Normalize(&amp;fNorms.top());</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :         SkASSERT(len &gt; 0.0f);</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :         SkASSERT(fPts.count() == fNorms.count());</span>
+<span class="lineNum">     411 </span>            :     }
+<span class="lineNum">     412 </span>            : 
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :     if (this-&gt;numPts() &gt;= 3 &amp;&amp; abs_dist_from_line(fPts[0], fNorms.top(), fPts[1]) &lt; kClose) {</span>
+<span class="lineNum">     414 </span>            :         // The first point is on the line from the last to the second.
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :         this-&gt;popFirstPtShuffle();</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :         fNorms.removeShuffle(0);</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :         fNorms[0] = fPts[1] - fPts[0];</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :         SkDEBUGCODE(SkScalar len =) SkPoint::Normalize(&amp;fNorms[0]);</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :         SkASSERT(len &gt; 0.0f);</span>
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :         SkASSERT(SkScalarNearlyEqual(1.0f, fNorms[0].length()));</span>
+<span class="lineNum">     421 </span>            :     }
+<span class="lineNum">     422 </span>            : 
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :     if (this-&gt;numPts() &gt;= 3) {</span>
+<span class="lineNum">     424 </span>            :         // Check the cross product of the final trio
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :         SkScalar cross = SkPoint::CrossProduct(fNorms[0], fNorms.top());</span>
+<span class="lineNum">     426 </span><span class="lineNoCov">          0 :         if (cross &gt; 0.0f) {</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :             fSide = SkPoint::kRight_Side;</span>
+<span class="lineNum">     428 </span>            :         } else {
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :             fSide = SkPoint::kLeft_Side;</span>
+<span class="lineNum">     430 </span>            :         }
+<span class="lineNum">     431 </span>            : 
+<span class="lineNum">     432 </span>            :         // Make all the normals face outwards rather than along the edge
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :         for (int cur = 0; cur &lt; fNorms.count(); ++cur) {</span>
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 :             fNorms[cur].setOrthog(fNorms[cur], fSide);</span>
+<span class="lineNum">     435 </span><span class="lineNoCov">          0 :             SkASSERT(SkScalarNearlyEqual(1.0f, fNorms[cur].length()));</span>
+<span class="lineNum">     436 </span>            :         }
+<span class="lineNum">     437 </span>            : 
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :         this-&gt;computeBisectors();</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :     } else if (this-&gt;numPts() == 2) {</span>
+<span class="lineNum">     440 </span>            :         // We've got two points, so we're degenerate.
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :         if (fStyle == SkStrokeRec::kFill_Style) {</span>
+<span class="lineNum">     442 </span>            :             // it's a fill, so we don't need to worry about degenerate paths
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     444 </span>            :         }
+<span class="lineNum">     445 </span>            :         // For stroking, we still need to process the degenerate path, so fix it up
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :         fSide = SkPoint::kLeft_Side;</span>
+<span class="lineNum">     447 </span>            : 
+<span class="lineNum">     448 </span>            :         // Make all the normals face outwards rather than along the edge
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :         for (int cur = 0; cur &lt; fNorms.count(); ++cur) {</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :             fNorms[cur].setOrthog(fNorms[cur], fSide);</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :             SkASSERT(SkScalarNearlyEqual(1.0f, fNorms[cur].length()));</span>
+<span class="lineNum">     452 </span>            :         }
+<span class="lineNum">     453 </span>            : 
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :         fNorms.push(SkPoint::Make(-fNorms[0].fX, -fNorms[0].fY));</span>
+<span class="lineNum">     455 </span>            :         // we won't actually use the bisectors, so just push zeroes
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 :         fBisectors.push(SkPoint::Make(0.0, 0.0));</span>
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :         fBisectors.push(SkPoint::Make(0.0, 0.0));</span>
+<span class="lineNum">     458 </span>            :     } else {
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     460 </span>            :     }
+<span class="lineNum">     461 </span>            : 
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :     fCandidateVerts.setReserve(this-&gt;numPts());</span>
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :     fInitialRing.setReserve(this-&gt;numPts());</span>
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :     for (int i = 0; i &lt; this-&gt;numPts(); ++i) {</span>
+<span class="lineNum">     465 </span><span class="lineNoCov">          0 :         fInitialRing.addIdx(i, i);</span>
+<span class="lineNum">     466 </span>            :     }
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :     fInitialRing.init(fNorms, fBisectors);</span>
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :     this-&gt;validate();</span>
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :     return true;</span>
+<a name="471"><span class="lineNum">     471 </span>            : }</a>
+<span class="lineNum">     472 </span>            : 
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 : GrAAConvexTessellator::Ring* GrAAConvexTessellator::getNextRing(Ring* lastRing) {</span>
+<span class="lineNum">     474 </span>            : #if GR_AA_CONVEX_TESSELLATOR_VIZ
+<span class="lineNum">     475 </span>            :     Ring* ring = *fRings.push() = new Ring;
+<span class="lineNum">     476 </span>            :     ring-&gt;setReserve(fInitialRing.numPts());
+<span class="lineNum">     477 </span>            :     ring-&gt;rewind();
+<span class="lineNum">     478 </span>            :     return ring;
+<span class="lineNum">     479 </span>            : #else
+<span class="lineNum">     480 </span>            :     // Flip flop back and forth between fRings[0] &amp; fRings[1]
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :     int nextRing = (lastRing == &amp;fRings[0]) ? 1 : 0;</span>
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :     fRings[nextRing].setReserve(fInitialRing.numPts());</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :     fRings[nextRing].rewind();</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :     return &amp;fRings[nextRing];</span>
+<span class="lineNum">     485 </span>            : #endif
+<a name="486"><span class="lineNum">     486 </span>            : }</a>
+<span class="lineNum">     487 </span>            : 
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::fanRing(const Ring&amp; ring) {</span>
+<span class="lineNum">     489 </span>            :     // fan out from point 0
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :     int startIdx = ring.index(0);</span>
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :     for (int cur = ring.numPts() - 2; cur &gt;= 0; --cur) {</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :         this-&gt;addTri(startIdx, ring.index(cur), ring.index(cur + 1));</span>
+<span class="lineNum">     493 </span>            :     }
+<a name="494"><span class="lineNum">     494 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     495 </span>            : 
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::createOuterRing(const Ring&amp; previousRing, SkScalar outset,</span>
+<span class="lineNum">     497 </span>            :                                             SkScalar coverage, Ring* nextRing) {
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :     const int numPts = previousRing.numPts();</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :     if (numPts == 0) {</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     501 </span>            :     }
+<span class="lineNum">     502 </span>            : 
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 :     int prev = numPts - 1;</span>
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :     int lastPerpIdx = -1, firstPerpIdx = -1;</span>
+<span class="lineNum">     505 </span>            : 
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :     const SkScalar outsetSq = outset * outset;</span>
+<span class="lineNum">     507 </span><span class="lineNoCov">          0 :     SkScalar miterLimitSq = outset * fMiterLimit;</span>
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :     miterLimitSq = miterLimitSq * miterLimitSq;</span>
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 :     for (int cur = 0; cur &lt; numPts; ++cur) {</span>
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 :         int originalIdx = previousRing.index(cur);</span>
+<span class="lineNum">     511 </span>            :         // For each vertex of the original polygon we add at least two points to the
+<span class="lineNum">     512 </span>            :         // outset polygon - one extending perpendicular to each impinging edge. Connecting these
+<span class="lineNum">     513 </span>            :         // two points yields a bevel join. We need one additional point for a mitered join, and
+<span class="lineNum">     514 </span>            :         // a round join requires one or more points depending upon curvature.
+<span class="lineNum">     515 </span>            : 
+<span class="lineNum">     516 </span>            :         // The perpendicular point for the last edge
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :         SkPoint normal1 = previousRing.norm(prev);</span>
+<span class="lineNum">     518 </span><span class="lineNoCov">          0 :         SkPoint perp1 = normal1;</span>
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :         perp1.scale(outset);</span>
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 :         perp1 += this-&gt;point(originalIdx);</span>
+<span class="lineNum">     521 </span>            : 
+<span class="lineNum">     522 </span>            :         // The perpendicular point for the next edge.
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :         SkPoint normal2 = previousRing.norm(cur);</span>
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :         SkPoint perp2 = normal2;</span>
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :         perp2.scale(outset);</span>
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :         perp2 += fPts[originalIdx];</span>
+<span class="lineNum">     527 </span>            : 
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :         CurveState curve = fCurveState[originalIdx];</span>
+<span class="lineNum">     529 </span>            : 
+<span class="lineNum">     530 </span>            :         // We know it isn't a duplicate of the prior point (since it and this
+<span class="lineNum">     531 </span>            :         // one are just perpendicular offsets from the non-merged polygon points)
+<span class="lineNum">     532 </span><span class="lineNoCov">          0 :         int perp1Idx = this-&gt;addPt(perp1, -outset, coverage, false, curve);</span>
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :         nextRing-&gt;addIdx(perp1Idx, originalIdx);</span>
+<span class="lineNum">     534 </span>            : 
+<span class="lineNum">     535 </span>            :         int perp2Idx;
+<span class="lineNum">     536 </span>            :         // For very shallow angles all the corner points could fuse.
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :         if (duplicate_pt(perp2, this-&gt;point(perp1Idx))) {</span>
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 :             perp2Idx = perp1Idx;</span>
+<span class="lineNum">     539 </span>            :         } else {
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :             perp2Idx = this-&gt;addPt(perp2, -outset, coverage, false, curve);</span>
+<span class="lineNum">     541 </span>            :         }
+<span class="lineNum">     542 </span>            : 
+<span class="lineNum">     543 </span><span class="lineNoCov">          0 :         if (perp2Idx != perp1Idx) {</span>
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :             if (curve == kCurve_CurveState) {</span>
+<span class="lineNum">     545 </span>            :                 // bevel or round depending upon curvature
+<span class="lineNum">     546 </span><span class="lineNoCov">          0 :                 SkScalar dotProd = normal1.dot(normal2);</span>
+<span class="lineNum">     547 </span><span class="lineNoCov">          0 :                 if (dotProd &lt; kRoundCapThreshold) {</span>
+<span class="lineNum">     548 </span>            :                     // Currently we &quot;round&quot; by creating a single extra point, which produces
+<span class="lineNum">     549 </span>            :                     // good results for common cases. For thick strokes with high curvature, we will
+<span class="lineNum">     550 </span>            :                     // need to add more points; for the time being we simply fall back to software
+<span class="lineNum">     551 </span>            :                     // rendering for thick strokes.
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :                     SkPoint miter = previousRing.bisector(cur);</span>
+<span class="lineNum">     553 </span><span class="lineNoCov">          0 :                     miter.setLength(-outset);</span>
+<span class="lineNum">     554 </span><span class="lineNoCov">          0 :                     miter += fPts[originalIdx];</span>
+<span class="lineNum">     555 </span>            : 
+<span class="lineNum">     556 </span>            :                     // For very shallow angles all the corner points could fuse
+<span class="lineNum">     557 </span><span class="lineNoCov">          0 :                     if (!duplicate_pt(miter, this-&gt;point(perp1Idx))) {</span>
+<span class="lineNum">     558 </span>            :                         int miterIdx;
+<span class="lineNum">     559 </span><span class="lineNoCov">          0 :                         miterIdx = this-&gt;addPt(miter, -outset, coverage, false, kSharp_CurveState);</span>
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 :                         nextRing-&gt;addIdx(miterIdx, originalIdx);</span>
+<span class="lineNum">     561 </span>            :                         // The two triangles for the corner
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :                         this-&gt;addTri(originalIdx, perp1Idx, miterIdx);</span>
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :                         this-&gt;addTri(originalIdx, miterIdx, perp2Idx);</span>
+<span class="lineNum">     564 </span>            :                     }
+<span class="lineNum">     565 </span>            :                 } else {
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 :                     this-&gt;addTri(originalIdx, perp1Idx, perp2Idx);</span>
+<span class="lineNum">     567 </span>            :                 }
+<span class="lineNum">     568 </span>            :             } else {
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :                 switch (fJoin) {</span>
+<span class="lineNum">     570 </span>            :                     case SkPaint::Join::kMiter_Join: {
+<span class="lineNum">     571 </span>            :                         // The bisector outset point
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :                         SkPoint miter = previousRing.bisector(cur);</span>
+<span class="lineNum">     573 </span><span class="lineNoCov">          0 :                         SkScalar dotProd = normal1.dot(normal2);</span>
+<span class="lineNum">     574 </span><span class="lineNoCov">          0 :                         SkScalar sinHalfAngleSq = SkScalarHalf(SK_Scalar1 + dotProd);</span>
+<span class="lineNum">     575 </span><span class="lineNoCov">          0 :                         SkScalar lengthSq = outsetSq / sinHalfAngleSq;</span>
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 :                         if (lengthSq &gt; miterLimitSq) {</span>
+<span class="lineNum">     577 </span>            :                             // just bevel it
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :                             this-&gt;addTri(originalIdx, perp1Idx, perp2Idx);</span>
+<span class="lineNum">     579 </span><span class="lineNoCov">          0 :                             break;</span>
+<span class="lineNum">     580 </span>            :                         }
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :                         miter.setLength(-SkScalarSqrt(lengthSq));</span>
+<span class="lineNum">     582 </span><span class="lineNoCov">          0 :                         miter += fPts[originalIdx];</span>
+<span class="lineNum">     583 </span>            : 
+<span class="lineNum">     584 </span>            :                         // For very shallow angles all the corner points could fuse
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :                         if (!duplicate_pt(miter, this-&gt;point(perp1Idx))) {</span>
+<span class="lineNum">     586 </span>            :                             int miterIdx;
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :                             miterIdx = this-&gt;addPt(miter, -outset, coverage, false, </span>
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :                                                    kSharp_CurveState);</span>
+<span class="lineNum">     589 </span><span class="lineNoCov">          0 :                             nextRing-&gt;addIdx(miterIdx, originalIdx);</span>
+<span class="lineNum">     590 </span>            :                             // The two triangles for the corner
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :                             this-&gt;addTri(originalIdx, perp1Idx, miterIdx);</span>
+<span class="lineNum">     592 </span><span class="lineNoCov">          0 :                             this-&gt;addTri(originalIdx, miterIdx, perp2Idx);</span>
+<span class="lineNum">     593 </span>            :                         }
+<span class="lineNum">     594 </span><span class="lineNoCov">          0 :                         break;</span>
+<span class="lineNum">     595 </span>            :                     }
+<span class="lineNum">     596 </span>            :                     case SkPaint::Join::kBevel_Join:
+<span class="lineNum">     597 </span><span class="lineNoCov">          0 :                         this-&gt;addTri(originalIdx, perp1Idx, perp2Idx);</span>
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :                         break;</span>
+<span class="lineNum">     599 </span>            :                     default:
+<span class="lineNum">     600 </span>            :                         // kRound_Join is unsupported for now. GrAALinearizingConvexPathRenderer is
+<span class="lineNum">     601 </span>            :                         // only willing to draw mitered or beveled, so we should never get here.
+<span class="lineNum">     602 </span><span class="lineNoCov">          0 :                         SkASSERT(false);</span>
+<span class="lineNum">     603 </span>            :                 }
+<span class="lineNum">     604 </span>            :             }
+<span class="lineNum">     605 </span>            : 
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :             nextRing-&gt;addIdx(perp2Idx, originalIdx);</span>
+<span class="lineNum">     607 </span>            :         }
+<span class="lineNum">     608 </span>            : 
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :         if (0 == cur) {</span>
+<span class="lineNum">     610 </span>            :             // Store the index of the first perpendicular point to finish up
+<span class="lineNum">     611 </span><span class="lineNoCov">          0 :             firstPerpIdx = perp1Idx;</span>
+<span class="lineNum">     612 </span><span class="lineNoCov">          0 :             SkASSERT(-1 == lastPerpIdx);</span>
+<span class="lineNum">     613 </span>            :         } else {
+<span class="lineNum">     614 </span>            :             // The triangles for the previous edge
+<span class="lineNum">     615 </span><span class="lineNoCov">          0 :             int prevIdx = previousRing.index(prev);</span>
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 :             this-&gt;addTri(prevIdx, perp1Idx, originalIdx);</span>
+<span class="lineNum">     617 </span><span class="lineNoCov">          0 :             this-&gt;addTri(prevIdx, lastPerpIdx, perp1Idx);</span>
+<span class="lineNum">     618 </span>            :         }
+<span class="lineNum">     619 </span>            : 
+<span class="lineNum">     620 </span>            :         // Track the last perpendicular outset point so we can construct the
+<span class="lineNum">     621 </span>            :         // trailing edge triangles.
+<span class="lineNum">     622 </span><span class="lineNoCov">          0 :         lastPerpIdx = perp2Idx;</span>
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 :         prev = cur;</span>
+<span class="lineNum">     624 </span>            :     }
+<span class="lineNum">     625 </span>            : 
+<span class="lineNum">     626 </span>            :     // pick up the final edge rect
+<span class="lineNum">     627 </span><span class="lineNoCov">          0 :     int lastIdx = previousRing.index(numPts - 1);</span>
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 :     this-&gt;addTri(lastIdx, firstPerpIdx, previousRing.index(0));</span>
+<span class="lineNum">     629 </span><span class="lineNoCov">          0 :     this-&gt;addTri(lastIdx, lastPerpIdx, firstPerpIdx);</span>
+<span class="lineNum">     630 </span>            : 
+<span class="lineNum">     631 </span><span class="lineNoCov">          0 :     this-&gt;validate();</span>
+<span class="lineNum">     632 </span>            : }
+<span class="lineNum">     633 </span>            : 
+<a name="634"><span class="lineNum">     634 </span>            : // Something went wrong in the creation of the next ring. If we're filling the shape, just go ahead</a>
+<span class="lineNum">     635 </span>            : // and fan it.
+<span class="lineNum">     636 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::terminate(const Ring&amp; ring) {</span>
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :     if (fStyle != SkStrokeRec::kStroke_Style) {</span>
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 :         this-&gt;fanRing(ring);</span>
+<span class="lineNum">     639 </span>            :     }
+<a name="640"><span class="lineNum">     640 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     641 </span>            : 
+<span class="lineNum">     642 </span><span class="lineNoCov">          0 : static SkScalar compute_coverage(SkScalar depth, SkScalar initialDepth, SkScalar initialCoverage,</span>
+<span class="lineNum">     643 </span>            :                                 SkScalar targetDepth, SkScalar targetCoverage) {
+<span class="lineNum">     644 </span><span class="lineNoCov">          0 :     if (SkScalarNearlyEqual(initialDepth, targetDepth)) {</span>
+<span class="lineNum">     645 </span><span class="lineNoCov">          0 :         return targetCoverage;</span>
+<span class="lineNum">     646 </span>            :     }
+<span class="lineNum">     647 </span><span class="lineNoCov">          0 :     SkScalar result = (depth - initialDepth) / (targetDepth - initialDepth) *</span>
+<span class="lineNum">     648 </span><span class="lineNoCov">          0 :             (targetCoverage - initialCoverage) + initialCoverage;</span>
+<span class="lineNum">     649 </span><span class="lineNoCov">          0 :     return SkScalarClampMax(result, 1.0f);</span>
+<span class="lineNum">     650 </span>            : }
+<a name="651"><span class="lineNum">     651 </span>            : </a>
+<span class="lineNum">     652 </span>            : // return true when processing is complete
+<span class="lineNum">     653 </span><span class="lineNoCov">          0 : bool GrAAConvexTessellator::createInsetRing(const Ring&amp; lastRing, Ring* nextRing,</span>
+<span class="lineNum">     654 </span>            :                                             SkScalar initialDepth, SkScalar initialCoverage,
+<span class="lineNum">     655 </span>            :                                             SkScalar targetDepth, SkScalar targetCoverage,
+<span class="lineNum">     656 </span>            :                                             bool forceNew) {
+<span class="lineNum">     657 </span><span class="lineNoCov">          0 :     bool done = false;</span>
+<span class="lineNum">     658 </span>            : 
+<span class="lineNum">     659 </span><span class="lineNoCov">          0 :     fCandidateVerts.rewind();</span>
+<span class="lineNum">     660 </span>            : 
+<span class="lineNum">     661 </span>            :     // Loop through all the points in the ring and find the intersection with the smallest depth
+<span class="lineNum">     662 </span><span class="lineNoCov">          0 :     SkScalar minDist = SK_ScalarMax, minT = 0.0f;</span>
+<span class="lineNum">     663 </span><span class="lineNoCov">          0 :     int minEdgeIdx = -1;</span>
+<span class="lineNum">     664 </span>            : 
+<span class="lineNum">     665 </span><span class="lineNoCov">          0 :     for (int cur = 0; cur &lt; lastRing.numPts(); ++cur) {</span>
+<span class="lineNum">     666 </span><span class="lineNoCov">          0 :         int next = (cur + 1) % lastRing.numPts();</span>
+<span class="lineNum">     667 </span>            : 
+<span class="lineNum">     668 </span>            :         SkScalar t;
+<span class="lineNum">     669 </span><span class="lineNoCov">          0 :         bool result = intersect(this-&gt;point(lastRing.index(cur)),  lastRing.bisector(cur),</span>
+<span class="lineNum">     670 </span>            :                                 this-&gt;point(lastRing.index(next)), lastRing.bisector(next),
+<span class="lineNum">     671 </span><span class="lineNoCov">          0 :                                 &amp;t);</span>
+<span class="lineNum">     672 </span><span class="lineNoCov">          0 :         if (!result) {</span>
+<span class="lineNum">     673 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     674 </span>            :         }
+<span class="lineNum">     675 </span><span class="lineNoCov">          0 :         SkScalar dist = -t * lastRing.norm(cur).dot(lastRing.bisector(cur));</span>
+<span class="lineNum">     676 </span>            : 
+<span class="lineNum">     677 </span><span class="lineNoCov">          0 :         if (minDist &gt; dist) {</span>
+<span class="lineNum">     678 </span><span class="lineNoCov">          0 :             minDist = dist;</span>
+<span class="lineNum">     679 </span><span class="lineNoCov">          0 :             minT = t;</span>
+<span class="lineNum">     680 </span><span class="lineNoCov">          0 :             minEdgeIdx = cur;</span>
+<span class="lineNum">     681 </span>            :         }
+<span class="lineNum">     682 </span>            :     }
+<span class="lineNum">     683 </span>            : 
+<span class="lineNum">     684 </span><span class="lineNoCov">          0 :     if (minEdgeIdx == -1) {</span>
+<span class="lineNum">     685 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     686 </span>            :     }
+<span class="lineNum">     687 </span><span class="lineNoCov">          0 :     SkPoint newPt = lastRing.bisector(minEdgeIdx);</span>
+<span class="lineNum">     688 </span><span class="lineNoCov">          0 :     newPt.scale(minT);</span>
+<span class="lineNum">     689 </span><span class="lineNoCov">          0 :     newPt += this-&gt;point(lastRing.index(minEdgeIdx));</span>
+<span class="lineNum">     690 </span>            : 
+<span class="lineNum">     691 </span><span class="lineNoCov">          0 :     SkScalar depth = this-&gt;computeDepthFromEdge(lastRing.origEdgeID(minEdgeIdx), newPt);</span>
+<span class="lineNum">     692 </span><span class="lineNoCov">          0 :     if (depth &gt;= targetDepth) {</span>
+<span class="lineNum">     693 </span>            :         // None of the bisectors intersect before reaching the desired depth.
+<span class="lineNum">     694 </span>            :         // Just step them all to the desired depth
+<span class="lineNum">     695 </span><span class="lineNoCov">          0 :         depth = targetDepth;</span>
+<span class="lineNum">     696 </span><span class="lineNoCov">          0 :         done = true;</span>
+<span class="lineNum">     697 </span>            :     }
+<span class="lineNum">     698 </span>            : 
+<span class="lineNum">     699 </span>            :     // 'dst' stores where each point in the last ring maps to/transforms into
+<span class="lineNum">     700 </span>            :     // in the next ring.
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :     SkTDArray&lt;int&gt; dst;</span>
+<span class="lineNum">     702 </span><span class="lineNoCov">          0 :     dst.setCount(lastRing.numPts());</span>
+<span class="lineNum">     703 </span>            : 
+<span class="lineNum">     704 </span>            :     // Create the first point (who compares with no one)
+<span class="lineNum">     705 </span><span class="lineNoCov">          0 :     if (!this-&gt;computePtAlongBisector(lastRing.index(0),</span>
+<span class="lineNum">     706 </span><span class="lineNoCov">          0 :                                       lastRing.bisector(0),</span>
+<span class="lineNum">     707 </span>            :                                       lastRing.origEdgeID(0),
+<span class="lineNum">     708 </span>            :                                       depth, &amp;newPt)) {
+<span class="lineNum">     709 </span><span class="lineNoCov">          0 :         this-&gt;terminate(lastRing);</span>
+<span class="lineNum">     710 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     711 </span>            :     }
+<span class="lineNum">     712 </span><span class="lineNoCov">          0 :     dst[0] = fCandidateVerts.addNewPt(newPt,</span>
+<span class="lineNum">     713 </span>            :                                       lastRing.index(0), lastRing.origEdgeID(0),
+<span class="lineNum">     714 </span><span class="lineNoCov">          0 :                                       !this-&gt;movable(lastRing.index(0)));</span>
+<span class="lineNum">     715 </span>            : 
+<span class="lineNum">     716 </span>            :     // Handle the middle points (who only compare with the prior point)
+<span class="lineNum">     717 </span><span class="lineNoCov">          0 :     for (int cur = 1; cur &lt; lastRing.numPts()-1; ++cur) {</span>
+<span class="lineNum">     718 </span><span class="lineNoCov">          0 :         if (!this-&gt;computePtAlongBisector(lastRing.index(cur),</span>
+<span class="lineNum">     719 </span><span class="lineNoCov">          0 :                                           lastRing.bisector(cur),</span>
+<span class="lineNum">     720 </span>            :                                           lastRing.origEdgeID(cur),
+<span class="lineNum">     721 </span>            :                                           depth, &amp;newPt)) {
+<span class="lineNum">     722 </span><span class="lineNoCov">          0 :             this-&gt;terminate(lastRing);</span>
+<span class="lineNum">     723 </span><span class="lineNoCov">          0 :             return true;</span>
+<span class="lineNum">     724 </span>            :         }
+<span class="lineNum">     725 </span><span class="lineNoCov">          0 :         if (!duplicate_pt(newPt, fCandidateVerts.lastPoint())) {</span>
+<span class="lineNum">     726 </span><span class="lineNoCov">          0 :             dst[cur] = fCandidateVerts.addNewPt(newPt,</span>
+<span class="lineNum">     727 </span>            :                                                 lastRing.index(cur), lastRing.origEdgeID(cur),
+<span class="lineNum">     728 </span><span class="lineNoCov">          0 :                                                 !this-&gt;movable(lastRing.index(cur)));</span>
+<span class="lineNum">     729 </span>            :         } else {
+<span class="lineNum">     730 </span><span class="lineNoCov">          0 :             dst[cur] = fCandidateVerts.fuseWithPrior(lastRing.origEdgeID(cur));</span>
+<span class="lineNum">     731 </span>            :         }
+<span class="lineNum">     732 </span>            :     }
+<span class="lineNum">     733 </span>            : 
+<span class="lineNum">     734 </span>            :     // Check on the last point (handling the wrap around)
+<span class="lineNum">     735 </span><span class="lineNoCov">          0 :     int cur = lastRing.numPts()-1;</span>
+<span class="lineNum">     736 </span><span class="lineNoCov">          0 :     if  (!this-&gt;computePtAlongBisector(lastRing.index(cur),</span>
+<span class="lineNum">     737 </span><span class="lineNoCov">          0 :                                        lastRing.bisector(cur),</span>
+<span class="lineNum">     738 </span>            :                                        lastRing.origEdgeID(cur),
+<span class="lineNum">     739 </span>            :                                        depth, &amp;newPt)) {
+<span class="lineNum">     740 </span><span class="lineNoCov">          0 :         this-&gt;terminate(lastRing);</span>
+<span class="lineNum">     741 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     742 </span>            :     }
+<span class="lineNum">     743 </span><span class="lineNoCov">          0 :     bool dupPrev = duplicate_pt(newPt, fCandidateVerts.lastPoint());</span>
+<span class="lineNum">     744 </span><span class="lineNoCov">          0 :     bool dupNext = duplicate_pt(newPt, fCandidateVerts.firstPoint());</span>
+<span class="lineNum">     745 </span>            : 
+<span class="lineNum">     746 </span><span class="lineNoCov">          0 :     if (!dupPrev &amp;&amp; !dupNext) {</span>
+<span class="lineNum">     747 </span><span class="lineNoCov">          0 :         dst[cur] = fCandidateVerts.addNewPt(newPt,</span>
+<span class="lineNum">     748 </span>            :                                             lastRing.index(cur), lastRing.origEdgeID(cur),
+<span class="lineNum">     749 </span><span class="lineNoCov">          0 :                                             !this-&gt;movable(lastRing.index(cur)));</span>
+<span class="lineNum">     750 </span><span class="lineNoCov">          0 :     } else if (dupPrev &amp;&amp; !dupNext) {</span>
+<span class="lineNum">     751 </span><span class="lineNoCov">          0 :         dst[cur] = fCandidateVerts.fuseWithPrior(lastRing.origEdgeID(cur));</span>
+<span class="lineNum">     752 </span><span class="lineNoCov">          0 :     } else if (!dupPrev &amp;&amp; dupNext) {</span>
+<span class="lineNum">     753 </span><span class="lineNoCov">          0 :         dst[cur] = fCandidateVerts.fuseWithNext();</span>
+<span class="lineNum">     754 </span>            :     } else {
+<span class="lineNum">     755 </span><span class="lineNoCov">          0 :         bool dupPrevVsNext = duplicate_pt(fCandidateVerts.firstPoint(), fCandidateVerts.lastPoint());</span>
+<span class="lineNum">     756 </span>            : 
+<span class="lineNum">     757 </span><span class="lineNoCov">          0 :         if (!dupPrevVsNext) {</span>
+<span class="lineNum">     758 </span><span class="lineNoCov">          0 :             dst[cur] = fCandidateVerts.fuseWithPrior(lastRing.origEdgeID(cur));</span>
+<span class="lineNum">     759 </span>            :         } else {
+<span class="lineNum">     760 </span><span class="lineNoCov">          0 :             const int fused = fCandidateVerts.fuseWithBoth();</span>
+<span class="lineNum">     761 </span><span class="lineNoCov">          0 :             dst[cur] = fused;</span>
+<span class="lineNum">     762 </span><span class="lineNoCov">          0 :             const int targetIdx = dst[cur - 1];</span>
+<span class="lineNum">     763 </span><span class="lineNoCov">          0 :             for (int i = cur - 1; i &gt;= 0 &amp;&amp; dst[i] == targetIdx; i--) {</span>
+<span class="lineNum">     764 </span><span class="lineNoCov">          0 :                 dst[i] = fused;</span>
+<span class="lineNum">     765 </span>            :             }
+<span class="lineNum">     766 </span>            :         }
+<span class="lineNum">     767 </span>            :     }
+<span class="lineNum">     768 </span>            : 
+<span class="lineNum">     769 </span>            :     // Fold the new ring's points into the global pool
+<span class="lineNum">     770 </span><span class="lineNoCov">          0 :     for (int i = 0; i &lt; fCandidateVerts.numPts(); ++i) {</span>
+<span class="lineNum">     771 </span>            :         int newIdx;
+<span class="lineNum">     772 </span><span class="lineNoCov">          0 :         if (fCandidateVerts.needsToBeNew(i) || forceNew) {</span>
+<span class="lineNum">     773 </span>            :             // if the originating index is still valid then this point wasn't
+<span class="lineNum">     774 </span>            :             // fused (and is thus movable)
+<span class="lineNum">     775 </span>            :             SkScalar coverage = compute_coverage(depth, initialDepth, initialCoverage,
+<span class="lineNum">     776 </span><span class="lineNoCov">          0 :                                                  targetDepth, targetCoverage);</span>
+<span class="lineNum">     777 </span><span class="lineNoCov">          0 :             newIdx = this-&gt;addPt(fCandidateVerts.point(i), depth, coverage,</span>
+<span class="lineNum">     778 </span><span class="lineNoCov">          0 :                                  fCandidateVerts.originatingIdx(i) != -1, kSharp_CurveState);</span>
+<span class="lineNum">     779 </span>            :         } else {
+<span class="lineNum">     780 </span><span class="lineNoCov">          0 :             SkASSERT(fCandidateVerts.originatingIdx(i) != -1);</span>
+<span class="lineNum">     781 </span><span class="lineNoCov">          0 :             this-&gt;updatePt(fCandidateVerts.originatingIdx(i), fCandidateVerts.point(i), depth,</span>
+<span class="lineNum">     782 </span><span class="lineNoCov">          0 :                            targetCoverage);</span>
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :             newIdx = fCandidateVerts.originatingIdx(i);</span>
+<span class="lineNum">     784 </span>            :         }
+<span class="lineNum">     785 </span>            : 
+<span class="lineNum">     786 </span><span class="lineNoCov">          0 :         nextRing-&gt;addIdx(newIdx, fCandidateVerts.origEdge(i));</span>
+<span class="lineNum">     787 </span>            :     }
+<span class="lineNum">     788 </span>            : 
+<span class="lineNum">     789 </span>            :     // 'dst' currently has indices into the ring. Remap these to be indices
+<span class="lineNum">     790 </span>            :     // into the global pool since the triangulation operates in that space.
+<span class="lineNum">     791 </span><span class="lineNoCov">          0 :     for (int i = 0; i &lt; dst.count(); ++i) {</span>
+<span class="lineNum">     792 </span><span class="lineNoCov">          0 :         dst[i] = nextRing-&gt;index(dst[i]);</span>
+<span class="lineNum">     793 </span>            :     }
+<span class="lineNum">     794 </span>            : 
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :     for (int i = 0; i &lt; lastRing.numPts(); ++i) {</span>
+<span class="lineNum">     796 </span><span class="lineNoCov">          0 :         int next = (i + 1) % lastRing.numPts();</span>
+<span class="lineNum">     797 </span>            : 
+<span class="lineNum">     798 </span><span class="lineNoCov">          0 :         this-&gt;addTri(lastRing.index(i), lastRing.index(next), dst[next]);</span>
+<span class="lineNum">     799 </span><span class="lineNoCov">          0 :         this-&gt;addTri(lastRing.index(i), dst[next], dst[i]);</span>
+<span class="lineNum">     800 </span>            :     }
+<span class="lineNum">     801 </span>            : 
+<span class="lineNum">     802 </span><span class="lineNoCov">          0 :     if (done &amp;&amp; fStyle != SkStrokeRec::kStroke_Style) {</span>
+<span class="lineNum">     803 </span>            :         // fill or stroke-and-fill
+<span class="lineNum">     804 </span><span class="lineNoCov">          0 :         this-&gt;fanRing(*nextRing);</span>
+<span class="lineNum">     805 </span>            :     }
+<span class="lineNum">     806 </span>            : 
+<span class="lineNum">     807 </span><span class="lineNoCov">          0 :     if (nextRing-&gt;numPts() &lt; 3) {</span>
+<span class="lineNum">     808 </span><span class="lineNoCov">          0 :         done = true;</span>
+<span class="lineNum">     809 </span>            :     }
+<span class="lineNum">     810 </span><span class="lineNoCov">          0 :     return done;</span>
+<a name="811"><span class="lineNum">     811 </span>            : }</a>
+<span class="lineNum">     812 </span>            : 
+<span class="lineNum">     813 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::validate() const {</span>
+<span class="lineNum">     814 </span><span class="lineNoCov">          0 :     SkASSERT(fPts.count() == fMovable.count());</span>
+<span class="lineNum">     815 </span><span class="lineNoCov">          0 :     SkASSERT(fPts.count() == fCoverages.count());</span>
+<span class="lineNum">     816 </span><span class="lineNoCov">          0 :     SkASSERT(fPts.count() == fCurveState.count());</span>
+<span class="lineNum">     817 </span><span class="lineNoCov">          0 :     SkASSERT(0 == (fIndices.count() % 3));</span>
+<span class="lineNum">     818 </span><span class="lineNoCov">          0 :     SkASSERT(!fBisectors.count() || fBisectors.count() == fNorms.count());</span>
+<span class="lineNum">     819 </span><span class="lineNoCov">          0 : }</span>
+<a name="820"><span class="lineNum">     820 </span>            : </a>
+<span class="lineNum">     821 </span>            : //////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     822 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::Ring::init(const GrAAConvexTessellator&amp; tess) {</span>
+<span class="lineNum">     823 </span><span class="lineNoCov">          0 :     this-&gt;computeNormals(tess);</span>
+<span class="lineNum">     824 </span><span class="lineNoCov">          0 :     this-&gt;computeBisectors(tess);</span>
+<a name="825"><span class="lineNum">     825 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     826 </span>            : 
+<span class="lineNum">     827 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::Ring::init(const SkTDArray&lt;SkVector&gt;&amp; norms,</span>
+<span class="lineNum">     828 </span>            :                                        const SkTDArray&lt;SkVector&gt;&amp; bisectors) {
+<span class="lineNum">     829 </span><span class="lineNoCov">          0 :     for (int i = 0; i &lt; fPts.count(); ++i) {</span>
+<span class="lineNum">     830 </span><span class="lineNoCov">          0 :         fPts[i].fNorm = norms[i];</span>
+<span class="lineNum">     831 </span><span class="lineNoCov">          0 :         fPts[i].fBisector = bisectors[i];</span>
+<span class="lineNum">     832 </span>            :     }
+<span class="lineNum">     833 </span><span class="lineNoCov">          0 : }</span>
+<a name="834"><span class="lineNum">     834 </span>            : </a>
+<span class="lineNum">     835 </span>            : // Compute the outward facing normal at each vertex.
+<span class="lineNum">     836 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::Ring::computeNormals(const GrAAConvexTessellator&amp; tess) {</span>
+<span class="lineNum">     837 </span><span class="lineNoCov">          0 :     for (int cur = 0; cur &lt; fPts.count(); ++cur) {</span>
+<span class="lineNum">     838 </span><span class="lineNoCov">          0 :         int next = (cur + 1) % fPts.count();</span>
+<span class="lineNum">     839 </span>            : 
+<span class="lineNum">     840 </span><span class="lineNoCov">          0 :         fPts[cur].fNorm = tess.point(fPts[next].fIndex) - tess.point(fPts[cur].fIndex);</span>
+<span class="lineNum">     841 </span><span class="lineNoCov">          0 :         SkPoint::Normalize(&amp;fPts[cur].fNorm);</span>
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :         fPts[cur].fNorm.setOrthog(fPts[cur].fNorm, tess.side());</span>
+<span class="lineNum">     843 </span>            :     }
+<a name="844"><span class="lineNum">     844 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     845 </span>            : 
+<span class="lineNum">     846 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::Ring::computeBisectors(const GrAAConvexTessellator&amp; tess) {</span>
+<span class="lineNum">     847 </span><span class="lineNoCov">          0 :     int prev = fPts.count() - 1;</span>
+<span class="lineNum">     848 </span><span class="lineNoCov">          0 :     for (int cur = 0; cur &lt; fPts.count(); prev = cur, ++cur) {</span>
+<span class="lineNum">     849 </span><span class="lineNoCov">          0 :         fPts[cur].fBisector = fPts[cur].fNorm + fPts[prev].fNorm;</span>
+<span class="lineNum">     850 </span><span class="lineNoCov">          0 :         if (!fPts[cur].fBisector.normalize()) {</span>
+<span class="lineNum">     851 </span><span class="lineNoCov">          0 :             SkASSERT(SkPoint::kLeft_Side == tess.side() || SkPoint::kRight_Side == tess.side());</span>
+<span class="lineNum">     852 </span><span class="lineNoCov">          0 :             fPts[cur].fBisector.setOrthog(fPts[cur].fNorm, (SkPoint::Side)-tess.side());</span>
+<span class="lineNum">     853 </span>            :             SkVector other;
+<span class="lineNum">     854 </span><span class="lineNoCov">          0 :             other.setOrthog(fPts[prev].fNorm, tess.side());</span>
+<span class="lineNum">     855 </span><span class="lineNoCov">          0 :             fPts[cur].fBisector += other;</span>
+<span class="lineNum">     856 </span><span class="lineNoCov">          0 :             SkAssertResult(fPts[cur].fBisector.normalize());</span>
+<span class="lineNum">     857 </span>            :         } else {
+<span class="lineNum">     858 </span><span class="lineNoCov">          0 :             fPts[cur].fBisector.negate();      // make the bisector face in</span>
+<span class="lineNum">     859 </span>            :         }
+<span class="lineNum">     860 </span>            :     }
+<span class="lineNum">     861 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     862 </span>            : 
+<span class="lineNum">     863 </span>            : //////////////////////////////////////////////////////////////////////////////
+<a name="864"><span class="lineNum">     864 </span>            : #ifdef SK_DEBUG</a>
+<span class="lineNum">     865 </span>            : // Is this ring convex?
+<span class="lineNum">     866 </span><span class="lineNoCov">          0 : bool GrAAConvexTessellator::Ring::isConvex(const GrAAConvexTessellator&amp; tess) const {</span>
+<span class="lineNum">     867 </span><span class="lineNoCov">          0 :     if (fPts.count() &lt; 3) {</span>
+<span class="lineNum">     868 </span><span class="lineNoCov">          0 :         return true;</span>
+<span class="lineNum">     869 </span>            :     }
+<span class="lineNum">     870 </span>            : 
+<span class="lineNum">     871 </span><span class="lineNoCov">          0 :     SkPoint prev = tess.point(fPts[0].fIndex) - tess.point(fPts.top().fIndex);</span>
+<span class="lineNum">     872 </span><span class="lineNoCov">          0 :     SkPoint cur  = tess.point(fPts[1].fIndex) - tess.point(fPts[0].fIndex);</span>
+<span class="lineNum">     873 </span><span class="lineNoCov">          0 :     SkScalar minDot = prev.fX * cur.fY - prev.fY * cur.fX;</span>
+<span class="lineNum">     874 </span><span class="lineNoCov">          0 :     SkScalar maxDot = minDot;</span>
+<span class="lineNum">     875 </span>            : 
+<span class="lineNum">     876 </span><span class="lineNoCov">          0 :     prev = cur;</span>
+<span class="lineNum">     877 </span><span class="lineNoCov">          0 :     for (int i = 1; i &lt; fPts.count(); ++i) {</span>
+<span class="lineNum">     878 </span><span class="lineNoCov">          0 :         int next = (i + 1) % fPts.count();</span>
+<span class="lineNum">     879 </span>            : 
+<span class="lineNum">     880 </span><span class="lineNoCov">          0 :         cur  = tess.point(fPts[next].fIndex) - tess.point(fPts[i].fIndex);</span>
+<span class="lineNum">     881 </span><span class="lineNoCov">          0 :         SkScalar dot = prev.fX * cur.fY - prev.fY * cur.fX;</span>
+<span class="lineNum">     882 </span>            : 
+<span class="lineNum">     883 </span><span class="lineNoCov">          0 :         minDot = SkMinScalar(minDot, dot);</span>
+<span class="lineNum">     884 </span><span class="lineNoCov">          0 :         maxDot = SkMaxScalar(maxDot, dot);</span>
+<span class="lineNum">     885 </span>            : 
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 :         prev = cur;</span>
+<span class="lineNum">     887 </span>            :     }
+<span class="lineNum">     888 </span>            : 
+<span class="lineNum">     889 </span><span class="lineNoCov">          0 :     if (SkScalarNearlyEqual(maxDot, 0.0f, 0.005f)) {</span>
+<span class="lineNum">     890 </span><span class="lineNoCov">          0 :         maxDot = 0;</span>
+<span class="lineNum">     891 </span>            :     }
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :     if (SkScalarNearlyEqual(minDot, 0.0f, 0.005f)) {</span>
+<span class="lineNum">     893 </span><span class="lineNoCov">          0 :         minDot = 0;</span>
+<span class="lineNum">     894 </span>            :     }
+<span class="lineNum">     895 </span><span class="lineNoCov">          0 :     return (maxDot &gt;= 0.0f) == (minDot &gt;= 0.0f);</span>
+<span class="lineNum">     896 </span>            : }
+<span class="lineNum">     897 </span>            : 
+<a name="898"><span class="lineNum">     898 </span>            : #endif</a>
+<span class="lineNum">     899 </span>            : 
+<span class="lineNum">     900 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::lineTo(const SkPoint&amp; p, CurveState curve) {</span>
+<span class="lineNum">     901 </span><span class="lineNoCov">          0 :     if (this-&gt;numPts() &gt; 0 &amp;&amp; duplicate_pt(p, this-&gt;lastPoint())) {</span>
+<span class="lineNum">     902 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     903 </span>            :     }
+<span class="lineNum">     904 </span>            : 
+<span class="lineNum">     905 </span><span class="lineNoCov">          0 :     SkASSERT(fPts.count() &lt;= 1 || fPts.count() == fNorms.count()+1);</span>
+<span class="lineNum">     906 </span><span class="lineNoCov">          0 :     if (this-&gt;numPts() &gt;= 2 &amp;&amp; abs_dist_from_line(fPts.top(), fNorms.top(), p) &lt; kClose) {</span>
+<span class="lineNum">     907 </span>            :         // The old last point is on the line from the second to last to the new point
+<span class="lineNum">     908 </span><span class="lineNoCov">          0 :         this-&gt;popLastPt();</span>
+<span class="lineNum">     909 </span><span class="lineNoCov">          0 :         fNorms.pop();</span>
+<span class="lineNum">     910 </span>            :         // double-check that the new last point is not a duplicate of the new point. In an ideal
+<span class="lineNum">     911 </span>            :         // world this wouldn't be necessary (since it's only possible for non-convex paths), but
+<span class="lineNum">     912 </span>            :         // floating point precision issues mean it can actually happen on paths that were
+<span class="lineNum">     913 </span>            :         // determined to be convex.
+<span class="lineNum">     914 </span><span class="lineNoCov">          0 :         if (duplicate_pt(p, this-&gt;lastPoint())) {</span>
+<span class="lineNum">     915 </span><span class="lineNoCov">          0 :             return;</span>
+<span class="lineNum">     916 </span>            :         }
+<span class="lineNum">     917 </span>            :     }
+<span class="lineNum">     918 </span><span class="lineNoCov">          0 :     SkScalar initialRingCoverage = (SkStrokeRec::kFill_Style == fStyle) ? 0.5f : 1.0f;</span>
+<span class="lineNum">     919 </span><span class="lineNoCov">          0 :     this-&gt;addPt(p, 0.0f, initialRingCoverage, false, curve);</span>
+<span class="lineNum">     920 </span><span class="lineNoCov">          0 :     if (this-&gt;numPts() &gt; 1) {</span>
+<span class="lineNum">     921 </span><span class="lineNoCov">          0 :         *fNorms.push() = fPts.top() - fPts[fPts.count()-2];</span>
+<span class="lineNum">     922 </span><span class="lineNoCov">          0 :         SkDEBUGCODE(SkScalar len =) SkPoint::Normalize(&amp;fNorms.top());</span>
+<span class="lineNum">     923 </span><span class="lineNoCov">          0 :         SkASSERT(len &gt; 0.0f);</span>
+<span class="lineNum">     924 </span><span class="lineNoCov">          0 :         SkASSERT(SkScalarNearlyEqual(1.0f, fNorms.top().length()));</span>
+<span class="lineNum">     925 </span>            :     }
+<a name="926"><span class="lineNum">     926 </span>            : }</a>
+<span class="lineNum">     927 </span>            : 
+<span class="lineNum">     928 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::lineTo(const SkMatrix&amp; m, SkPoint p, CurveState curve) {</span>
+<span class="lineNum">     929 </span><span class="lineNoCov">          0 :     m.mapPoints(&amp;p, 1);</span>
+<span class="lineNum">     930 </span><span class="lineNoCov">          0 :     this-&gt;lineTo(p, curve);</span>
+<a name="931"><span class="lineNum">     931 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     932 </span>            : 
+<span class="lineNum">     933 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::quadTo(const SkPoint pts[3]) {</span>
+<span class="lineNum">     934 </span><span class="lineNoCov">          0 :     int maxCount = GrPathUtils::quadraticPointCount(pts, kQuadTolerance);</span>
+<span class="lineNum">     935 </span><span class="lineNoCov">          0 :     fPointBuffer.setReserve(maxCount);</span>
+<span class="lineNum">     936 </span><span class="lineNoCov">          0 :     SkPoint* target = fPointBuffer.begin();</span>
+<span class="lineNum">     937 </span><span class="lineNoCov">          0 :     int count = GrPathUtils::generateQuadraticPoints(pts[0], pts[1], pts[2],</span>
+<span class="lineNum">     938 </span><span class="lineNoCov">          0 :                                                      kQuadTolerance, &amp;target, maxCount);</span>
+<span class="lineNum">     939 </span><span class="lineNoCov">          0 :     fPointBuffer.setCount(count);</span>
+<span class="lineNum">     940 </span><span class="lineNoCov">          0 :     for (int i = 0; i &lt; count - 1; i++) {</span>
+<span class="lineNum">     941 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(fPointBuffer[i], kCurve_CurveState);</span>
+<span class="lineNum">     942 </span>            :     }
+<span class="lineNum">     943 </span><span class="lineNoCov">          0 :     this-&gt;lineTo(fPointBuffer[count - 1], kIndeterminate_CurveState);</span>
+<a name="944"><span class="lineNum">     944 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     945 </span>            : 
+<span class="lineNum">     946 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::quadTo(const SkMatrix&amp; m, SkPoint pts[3]) {</span>
+<span class="lineNum">     947 </span><span class="lineNoCov">          0 :     m.mapPoints(pts, 3);</span>
+<span class="lineNum">     948 </span><span class="lineNoCov">          0 :     this-&gt;quadTo(pts);</span>
+<a name="949"><span class="lineNum">     949 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     950 </span>            : 
+<span class="lineNum">     951 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::cubicTo(const SkMatrix&amp; m, SkPoint pts[4]) {</span>
+<span class="lineNum">     952 </span><span class="lineNoCov">          0 :     m.mapPoints(pts, 4);</span>
+<span class="lineNum">     953 </span><span class="lineNoCov">          0 :     int maxCount = GrPathUtils::cubicPointCount(pts, kCubicTolerance);</span>
+<span class="lineNum">     954 </span><span class="lineNoCov">          0 :     fPointBuffer.setReserve(maxCount);</span>
+<span class="lineNum">     955 </span><span class="lineNoCov">          0 :     SkPoint* target = fPointBuffer.begin();</span>
+<span class="lineNum">     956 </span><span class="lineNoCov">          0 :     int count = GrPathUtils::generateCubicPoints(pts[0], pts[1], pts[2], pts[3],</span>
+<span class="lineNum">     957 </span><span class="lineNoCov">          0 :             kCubicTolerance, &amp;target, maxCount);</span>
+<span class="lineNum">     958 </span><span class="lineNoCov">          0 :     fPointBuffer.setCount(count);</span>
+<span class="lineNum">     959 </span><span class="lineNoCov">          0 :     for (int i = 0; i &lt; count - 1; i++) {</span>
+<span class="lineNum">     960 </span><span class="lineNoCov">          0 :         this-&gt;lineTo(fPointBuffer[i], kCurve_CurveState);</span>
+<span class="lineNum">     961 </span>            :     }
+<span class="lineNum">     962 </span><span class="lineNoCov">          0 :     this-&gt;lineTo(fPointBuffer[count - 1], kIndeterminate_CurveState);</span>
+<span class="lineNum">     963 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     964 </span>            : 
+<span class="lineNum">     965 </span>            : // include down here to avoid compilation errors caused by &quot;-&quot; overload in SkGeometry.h
+<a name="966"><span class="lineNum">     966 </span>            : #include &quot;SkGeometry.h&quot;</a>
+<span class="lineNum">     967 </span>            : 
+<span class="lineNum">     968 </span><span class="lineNoCov">          0 : void GrAAConvexTessellator::conicTo(const SkMatrix&amp; m, SkPoint pts[3], SkScalar w) {</span>
+<span class="lineNum">     969 </span><span class="lineNoCov">          0 :     m.mapPoints(pts, 3);</span>
+<span class="lineNum">     970 </span><span class="lineNoCov">          0 :     SkAutoConicToQuads quadder;</span>
+<span class="lineNum">     971 </span><span class="lineNoCov">          0 :     const SkPoint* quads = quadder.computeQuads(pts, w, kConicTolerance);</span>
+<span class="lineNum">     972 </span><span class="lineNoCov">          0 :     SkPoint lastPoint = *(quads++);</span>
+<span class="lineNum">     973 </span><span class="lineNoCov">          0 :     int count = quadder.countQuads();</span>
+<span class="lineNum">     974 </span><span class="lineNoCov">          0 :     for (int i = 0; i &lt; count; ++i) {</span>
+<span class="lineNum">     975 </span>            :         SkPoint quadPts[3];
+<span class="lineNum">     976 </span><span class="lineNoCov">          0 :         quadPts[0] = lastPoint;</span>
+<span class="lineNum">     977 </span><span class="lineNoCov">          0 :         quadPts[1] = quads[0];</span>
+<span class="lineNum">     978 </span><span class="lineNoCov">          0 :         quadPts[2] = i == count - 1 ? pts[2] : quads[1];</span>
+<span class="lineNum">     979 </span><span class="lineNoCov">          0 :         this-&gt;quadTo(quadPts);</span>
+<span class="lineNum">     980 </span><span class="lineNoCov">          0 :         lastPoint = quadPts[2];</span>
+<span class="lineNum">     981 </span><span class="lineNoCov">          0 :         quads += 2;</span>
+<span class="lineNum">     982 </span>            :     }
+<span class="lineNum">     983 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     984 </span>            : 
+<span class="lineNum">     985 </span>            : //////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     986 </span>            : #if GR_AA_CONVEX_TESSELLATOR_VIZ
+<span class="lineNum">     987 </span>            : static const SkScalar kPointRadius = 0.02f;
+<span class="lineNum">     988 </span>            : static const SkScalar kArrowStrokeWidth = 0.0f;
+<span class="lineNum">     989 </span>            : static const SkScalar kArrowLength = 0.2f;
+<span class="lineNum">     990 </span>            : static const SkScalar kEdgeTextSize = 0.1f;
+<span class="lineNum">     991 </span>            : static const SkScalar kPointTextSize = 0.02f;
+<span class="lineNum">     992 </span>            : 
+<span class="lineNum">     993 </span>            : static void draw_point(SkCanvas* canvas, const SkPoint&amp; p, SkScalar paramValue, bool stroke) {
+<span class="lineNum">     994 </span>            :     SkPaint paint;
+<span class="lineNum">     995 </span>            :     SkASSERT(paramValue &lt;= 1.0f);
+<span class="lineNum">     996 </span>            :     int gs = int(255*paramValue);
+<span class="lineNum">     997 </span>            :     paint.setARGB(255, gs, gs, gs);
+<span class="lineNum">     998 </span>            : 
+<span class="lineNum">     999 </span>            :     canvas-&gt;drawCircle(p.fX, p.fY, kPointRadius, paint);
+<span class="lineNum">    1000 </span>            : 
+<span class="lineNum">    1001 </span>            :     if (stroke) {
+<span class="lineNum">    1002 </span>            :         SkPaint stroke;
+<span class="lineNum">    1003 </span>            :         stroke.setColor(SK_ColorYELLOW);
+<span class="lineNum">    1004 </span>            :         stroke.setStyle(SkPaint::kStroke_Style);
+<span class="lineNum">    1005 </span>            :         stroke.setStrokeWidth(kPointRadius/3.0f);
+<span class="lineNum">    1006 </span>            :         canvas-&gt;drawCircle(p.fX, p.fY, kPointRadius, stroke);
+<span class="lineNum">    1007 </span>            :     }
+<span class="lineNum">    1008 </span>            : }
+<span class="lineNum">    1009 </span>            : 
+<span class="lineNum">    1010 </span>            : static void draw_line(SkCanvas* canvas, const SkPoint&amp; p0, const SkPoint&amp; p1, SkColor color) {
+<span class="lineNum">    1011 </span>            :     SkPaint p;
+<span class="lineNum">    1012 </span>            :     p.setColor(color);
+<span class="lineNum">    1013 </span>            : 
+<span class="lineNum">    1014 </span>            :     canvas-&gt;drawLine(p0.fX, p0.fY, p1.fX, p1.fY, p);
+<span class="lineNum">    1015 </span>            : }
+<span class="lineNum">    1016 </span>            : 
+<span class="lineNum">    1017 </span>            : static void draw_arrow(SkCanvas*canvas, const SkPoint&amp; p, const SkPoint &amp;n,
+<span class="lineNum">    1018 </span>            :                        SkScalar len, SkColor color) {
+<span class="lineNum">    1019 </span>            :     SkPaint paint;
+<span class="lineNum">    1020 </span>            :     paint.setColor(color);
+<span class="lineNum">    1021 </span>            :     paint.setStrokeWidth(kArrowStrokeWidth);
+<span class="lineNum">    1022 </span>            :     paint.setStyle(SkPaint::kStroke_Style);
+<span class="lineNum">    1023 </span>            : 
+<span class="lineNum">    1024 </span>            :     canvas-&gt;drawLine(p.fX, p.fY,
+<span class="lineNum">    1025 </span>            :                      p.fX + len * n.fX, p.fY + len * n.fY,
+<span class="lineNum">    1026 </span>            :                      paint);
+<span class="lineNum">    1027 </span>            : }
+<span class="lineNum">    1028 </span>            : 
+<span class="lineNum">    1029 </span>            : void GrAAConvexTessellator::Ring::draw(SkCanvas* canvas, const GrAAConvexTessellator&amp; tess) const {
+<span class="lineNum">    1030 </span>            :     SkPaint paint;
+<span class="lineNum">    1031 </span>            :     paint.setTextSize(kEdgeTextSize);
+<span class="lineNum">    1032 </span>            : 
+<span class="lineNum">    1033 </span>            :     for (int cur = 0; cur &lt; fPts.count(); ++cur) {
+<span class="lineNum">    1034 </span>            :         int next = (cur + 1) % fPts.count();
+<span class="lineNum">    1035 </span>            : 
+<span class="lineNum">    1036 </span>            :         draw_line(canvas,
+<span class="lineNum">    1037 </span>            :                   tess.point(fPts[cur].fIndex),
+<span class="lineNum">    1038 </span>            :                   tess.point(fPts[next].fIndex),
+<span class="lineNum">    1039 </span>            :                   SK_ColorGREEN);
+<span class="lineNum">    1040 </span>            : 
+<span class="lineNum">    1041 </span>            :         SkPoint mid = tess.point(fPts[cur].fIndex) + tess.point(fPts[next].fIndex);
+<span class="lineNum">    1042 </span>            :         mid.scale(0.5f);
+<span class="lineNum">    1043 </span>            : 
+<span class="lineNum">    1044 </span>            :         if (fPts.count()) {
+<span class="lineNum">    1045 </span>            :             draw_arrow(canvas, mid, fPts[cur].fNorm, kArrowLength, SK_ColorRED);
+<span class="lineNum">    1046 </span>            :             mid.fX += (kArrowLength/2) * fPts[cur].fNorm.fX;
+<span class="lineNum">    1047 </span>            :             mid.fY += (kArrowLength/2) * fPts[cur].fNorm.fY;
+<span class="lineNum">    1048 </span>            :         }
+<span class="lineNum">    1049 </span>            : 
+<span class="lineNum">    1050 </span>            :         SkString num;
+<span class="lineNum">    1051 </span>            :         num.printf(&quot;%d&quot;, this-&gt;origEdgeID(cur));
+<span class="lineNum">    1052 </span>            :         canvas-&gt;drawText(num.c_str(), num.size(), mid.fX, mid.fY, paint);
+<span class="lineNum">    1053 </span>            : 
+<span class="lineNum">    1054 </span>            :         if (fPts.count()) {
+<span class="lineNum">    1055 </span>            :             draw_arrow(canvas, tess.point(fPts[cur].fIndex), fPts[cur].fBisector,
+<span class="lineNum">    1056 </span>            :                        kArrowLength, SK_ColorBLUE);
+<span class="lineNum">    1057 </span>            :         }
+<span class="lineNum">    1058 </span>            :     }
+<span class="lineNum">    1059 </span>            : }
+<span class="lineNum">    1060 </span>            : 
+<span class="lineNum">    1061 </span>            : void GrAAConvexTessellator::draw(SkCanvas* canvas) const {
+<span class="lineNum">    1062 </span>            :     for (int i = 0; i &lt; fIndices.count(); i += 3) {
+<span class="lineNum">    1063 </span>            :         SkASSERT(fIndices[i] &lt; this-&gt;numPts()) ;
+<span class="lineNum">    1064 </span>            :         SkASSERT(fIndices[i+1] &lt; this-&gt;numPts()) ;
+<span class="lineNum">    1065 </span>            :         SkASSERT(fIndices[i+2] &lt; this-&gt;numPts()) ;
+<span class="lineNum">    1066 </span>            : 
+<span class="lineNum">    1067 </span>            :         draw_line(canvas,
+<span class="lineNum">    1068 </span>            :                   this-&gt;point(this-&gt;fIndices[i]), this-&gt;point(this-&gt;fIndices[i+1]),
+<span class="lineNum">    1069 </span>            :                   SK_ColorBLACK);
+<span class="lineNum">    1070 </span>            :         draw_line(canvas,
+<span class="lineNum">    1071 </span>            :                   this-&gt;point(this-&gt;fIndices[i+1]), this-&gt;point(this-&gt;fIndices[i+2]),
+<span class="lineNum">    1072 </span>            :                   SK_ColorBLACK);
+<span class="lineNum">    1073 </span>            :         draw_line(canvas,
+<span class="lineNum">    1074 </span>            :                   this-&gt;point(this-&gt;fIndices[i+2]), this-&gt;point(this-&gt;fIndices[i]),
+<span class="lineNum">    1075 </span>            :                   SK_ColorBLACK);
+<span class="lineNum">    1076 </span>            :     }
+<span class="lineNum">    1077 </span>            : 
+<span class="lineNum">    1078 </span>            :     fInitialRing.draw(canvas, *this);
+<span class="lineNum">    1079 </span>            :     for (int i = 0; i &lt; fRings.count(); ++i) {
+<span class="lineNum">    1080 </span>            :         fRings[i]-&gt;draw(canvas, *this);
+<span class="lineNum">    1081 </span>            :     }
+<span class="lineNum">    1082 </span>            : 
+<span class="lineNum">    1083 </span>            :     for (int i = 0; i &lt; this-&gt;numPts(); ++i) {
+<span class="lineNum">    1084 </span>            :         draw_point(canvas,
+<span class="lineNum">    1085 </span>            :                    this-&gt;point(i), 0.5f + (this-&gt;depth(i)/(2 * kAntialiasingRadius)),
+<span class="lineNum">    1086 </span>            :                    !this-&gt;movable(i));
+<span class="lineNum">    1087 </span>            : 
+<span class="lineNum">    1088 </span>            :         SkPaint paint;
+<span class="lineNum">    1089 </span>            :         paint.setTextSize(kPointTextSize);
+<span class="lineNum">    1090 </span>            :         paint.setTextAlign(SkPaint::kCenter_Align);
+<span class="lineNum">    1091 </span>            :         if (this-&gt;depth(i) &lt;= -kAntialiasingRadius) {
+<span class="lineNum">    1092 </span>            :             paint.setColor(SK_ColorWHITE);
+<span class="lineNum">    1093 </span>            :         }
+<span class="lineNum">    1094 </span>            : 
+<span class="lineNum">    1095 </span>            :         SkString num;
+<span class="lineNum">    1096 </span>            :         num.printf(&quot;%d&quot;, i);
+<span class="lineNum">    1097 </span>            :         canvas-&gt;drawText(num.c_str(), num.size(),
+<span class="lineNum">    1098 </span>            :                          this-&gt;point(i).fX, this-&gt;point(i).fY+(kPointRadius/2.0f),
+<span class="lineNum">    1099 </span>            :                          paint);
+<span class="lineNum">    1100 </span>            :     }
+<span class="lineNum">    1101 </span>            : }
+<span class="lineNum">    1102 </span>            : 
+<span class="lineNum">    1103 </span>            : #endif
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

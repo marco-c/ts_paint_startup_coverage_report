@@ -1,0 +1,335 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/rtp_rtcp/source/ulpfec_generator.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/rtp_rtcp/source</a> - ulpfec_generator.cc<span style="font-size: 80%;"> (source / <a href="ulpfec_generator.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">113</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">20</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2012 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/ulpfec_generator.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &lt;memory&gt;
+<span class="lineNum">      14 </span>            : #include &lt;utility&gt;
+<span class="lineNum">      15 </span>            : 
+<span class="lineNum">      16 </span>            : #include &quot;webrtc/base/basictypes.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/byte_io.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/forward_error_correction.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;webrtc/modules/rtp_rtcp/source/rtp_utility.h&quot;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : namespace webrtc {
+<span class="lineNum">      23 </span>            : 
+<span class="lineNum">      24 </span>            : namespace {
+<span class="lineNum">      25 </span>            : 
+<span class="lineNum">      26 </span>            : constexpr size_t kRedForFecHeaderLength = 1;
+<span class="lineNum">      27 </span>            : 
+<span class="lineNum">      28 </span>            : // This controls the maximum amount of excess overhead (actual - target)
+<span class="lineNum">      29 </span>            : // allowed in order to trigger EncodeFec(), before |params_.max_fec_frames|
+<span class="lineNum">      30 </span>            : // is reached. Overhead here is defined as relative to number of media packets.
+<span class="lineNum">      31 </span>            : constexpr int kMaxExcessOverhead = 50;  // Q8.
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : // This is the minimum number of media packets required (above some protection
+<span class="lineNum">      34 </span>            : // level) in order to trigger EncodeFec(), before |params_.max_fec_frames| is
+<span class="lineNum">      35 </span>            : // reached.
+<span class="lineNum">      36 </span>            : constexpr size_t kMinMediaPackets = 4;
+<span class="lineNum">      37 </span>            : 
+<span class="lineNum">      38 </span>            : // Threshold on the received FEC protection level, above which we enforce at
+<span class="lineNum">      39 </span>            : // least |kMinMediaPackets| packets for the FEC code. Below this
+<span class="lineNum">      40 </span>            : // threshold |kMinMediaPackets| is set to default value of 1.
+<span class="lineNum">      41 </span>            : //
+<span class="lineNum">      42 </span>            : // The range is between 0 and 255, where 255 corresponds to 100% overhead
+<span class="lineNum">      43 </span>            : // (relative to the number of protected media packets).
+<span class="lineNum">      44 </span>            : constexpr uint8_t kHighProtectionThreshold = 80;
+<span class="lineNum">      45 </span>            : 
+<span class="lineNum">      46 </span>            : // This threshold is used to adapt the |kMinMediaPackets| threshold, based
+<span class="lineNum">      47 </span>            : // on the average number of packets per frame seen so far. When there are few
+<span class="lineNum">      48 </span>            : // packets per frame (as given by this threshold), at least
+<span class="lineNum">      49 </span>            : // |kMinMediaPackets| + 1 packets are sent to the FEC code.
+<span class="lineNum">      50 </span>            : constexpr float kMinMediaPacketsAdaptationThreshold = 2.0f;
+<span class="lineNum">      51 </span>            : 
+<a name="52"><span class="lineNum">      52 </span>            : }  // namespace</a>
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 : RedPacket::RedPacket(size_t length)</span>
+<a name="55"><span class="lineNum">      55 </span><span class="lineNoCov">          0 :     : data_(new uint8_t[length]), length_(length), header_length_(0) {}</span></a>
+<span class="lineNum">      56 </span>            : 
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 : void RedPacket::CreateHeader(const uint8_t* rtp_header,</span>
+<span class="lineNum">      58 </span>            :                              size_t header_length,
+<span class="lineNum">      59 </span>            :                              int red_payload_type,
+<span class="lineNum">      60 </span>            :                              int payload_type) {
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(header_length + kRedForFecHeaderLength, length_);</span>
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :   memcpy(data_.get(), rtp_header, header_length);</span>
+<span class="lineNum">      63 </span>            :   // Replace payload type.
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 :   data_[1] &amp;= 0x80;</span>
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :   data_[1] += red_payload_type;</span>
+<span class="lineNum">      66 </span>            :   // Add RED header
+<span class="lineNum">      67 </span>            :   // f-bit always 0
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :   data_[header_length] = static_cast&lt;uint8_t&gt;(payload_type);</span>
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :   header_length_ = header_length + kRedForFecHeaderLength;</span>
+<a name="70"><span class="lineNum">      70 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      71 </span>            : 
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 : void RedPacket::SetSeqNum(int seq_num) {</span>
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GE(seq_num, 0);</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LT(seq_num, 1 &lt;&lt; 16);</span>
+<span class="lineNum">      75 </span>            : 
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :   ByteWriter&lt;uint16_t&gt;::WriteBigEndian(&amp;data_[2], seq_num);</span>
+<a name="77"><span class="lineNum">      77 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      78 </span>            : 
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 : void RedPacket::AssignPayload(const uint8_t* payload, size_t length) {</span>
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(header_length_ + length, length_);</span>
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :   memcpy(data_.get() + header_length_, payload, length);</span>
+<a name="82"><span class="lineNum">      82 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      83 </span>            : 
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 : void RedPacket::ClearMarkerBit() {</span>
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :   data_[1] &amp;= 0x7F;</span>
+<a name="86"><span class="lineNum">      86 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      87 </span>            : 
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 : uint8_t* RedPacket::data() const {</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :   return data_.get();</span>
+<a name="90"><span class="lineNum">      90 </span>            : }</a>
+<span class="lineNum">      91 </span>            : 
+<span class="lineNum">      92 </span><span class="lineNoCov">          0 : size_t RedPacket::length() const {</span>
+<span class="lineNum">      93 </span><span class="lineNoCov">          0 :   return length_;</span>
+<a name="94"><span class="lineNum">      94 </span>            : }</a>
+<span class="lineNum">      95 </span>            : 
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 : UlpfecGenerator::UlpfecGenerator()</span>
+<a name="97"><span class="lineNum">      97 </span><span class="lineNoCov">          0 :     : UlpfecGenerator(ForwardErrorCorrection::CreateUlpfec()) {}</span></a>
+<span class="lineNum">      98 </span>            : 
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 : UlpfecGenerator::UlpfecGenerator(std::unique_ptr&lt;ForwardErrorCorrection&gt; fec)</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :     : fec_(std::move(fec)),</span>
+<span class="lineNum">     101 </span>            :       num_protected_frames_(0),
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :       min_num_media_packets_(1) {</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :   memset(&amp;params_, 0, sizeof(params_));</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :   memset(&amp;new_params_, 0, sizeof(new_params_));</span>
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     106 </span>            : 
+<a name="107"><span class="lineNum">     107 </span>            : UlpfecGenerator::~UlpfecGenerator() = default;</a>
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 : std::unique_ptr&lt;RedPacket&gt; UlpfecGenerator::BuildRedPacket(</span>
+<span class="lineNum">     110 </span>            :     const uint8_t* data_buffer,
+<span class="lineNum">     111 </span>            :     size_t payload_length,
+<span class="lineNum">     112 </span>            :     size_t rtp_header_length,
+<span class="lineNum">     113 </span>            :     int red_payload_type) {
+<span class="lineNum">     114 </span>            :   std::unique_ptr&lt;RedPacket&gt; red_packet(new RedPacket(
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :       payload_length + kRedForFecHeaderLength + rtp_header_length));</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :   int payload_type = data_buffer[1] &amp; 0x7f;</span>
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :   red_packet-&gt;CreateHeader(data_buffer, rtp_header_length, red_payload_type,</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :                            payload_type);</span>
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :   red_packet-&gt;AssignPayload(data_buffer + rtp_header_length, payload_length);</span>
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :   return red_packet;</span>
+<a name="121"><span class="lineNum">     121 </span>            : }</a>
+<span class="lineNum">     122 </span>            : 
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 : void UlpfecGenerator::SetFecParameters(const FecProtectionParams&amp; params) {</span>
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :   RTC_DCHECK_GE(params.fec_rate, 0);</span>
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :   RTC_DCHECK_LE(params.fec_rate, 255);</span>
+<span class="lineNum">     126 </span>            :   // Store the new params and apply them for the next set of FEC packets being
+<span class="lineNum">     127 </span>            :   // produced.
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :   new_params_ = params;</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :   if (params.fec_rate &gt; kHighProtectionThreshold) {</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :     min_num_media_packets_ = kMinMediaPackets;</span>
+<span class="lineNum">     131 </span>            :   } else {
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :     min_num_media_packets_ = 1;</span>
+<span class="lineNum">     133 </span>            :   }
+<a name="134"><span class="lineNum">     134 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     135 </span>            : 
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 : int UlpfecGenerator::AddRtpPacketAndGenerateFec(const uint8_t* data_buffer,</span>
+<span class="lineNum">     137 </span>            :                                                 size_t payload_length,
+<span class="lineNum">     138 </span>            :                                                 size_t rtp_header_length) {
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   RTC_DCHECK(generated_fec_packets_.empty());</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :   if (media_packets_.empty()) {</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :     params_ = new_params_;</span>
+<span class="lineNum">     142 </span>            :   }
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :   bool complete_frame = false;</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :   const bool marker_bit = (data_buffer[1] &amp; kRtpMarkerBitMask) ? true : false;</span>
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :   if (media_packets_.size() &lt; kUlpfecMaxMediaPackets) {</span>
+<span class="lineNum">     146 </span>            :     // Our packet masks can only protect up to |kUlpfecMaxMediaPackets| packets.
+<span class="lineNum">     147 </span>            :     std::unique_ptr&lt;ForwardErrorCorrection::Packet&gt; packet(
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :         new ForwardErrorCorrection::Packet());</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :     packet-&gt;length = payload_length + rtp_header_length;</span>
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :     memcpy(packet-&gt;data, data_buffer, packet-&gt;length);</span>
+<span class="lineNum">     151 </span><span class="lineNoCov">          0 :     media_packets_.push_back(std::move(packet));</span>
+<span class="lineNum">     152 </span>            :   }
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :   if (marker_bit) {</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :     ++num_protected_frames_;</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :     complete_frame = true;</span>
+<span class="lineNum">     156 </span>            :   }
+<span class="lineNum">     157 </span>            :   // Produce FEC over at most |params_.max_fec_frames| frames, or as soon as:
+<span class="lineNum">     158 </span>            :   // (1) the excess overhead (actual overhead - requested/target overhead) is
+<span class="lineNum">     159 </span>            :   // less than |kMaxExcessOverhead|, and
+<span class="lineNum">     160 </span>            :   // (2) at least |min_num_media_packets_| media packets is reached.
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :   if (complete_frame &amp;&amp;</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :       (num_protected_frames_ == params_.max_fec_frames ||</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :        (ExcessOverheadBelowMax() &amp;&amp; MinimumMediaPacketsReached()))) {</span>
+<span class="lineNum">     164 </span>            :     // We are not using Unequal Protection feature of the parity erasure code.
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :     constexpr int kNumImportantPackets = 0;</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :     constexpr bool kUseUnequalProtection = false;</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :     int ret = fec_-&gt;EncodeFec(media_packets_, params_.fec_rate,</span>
+<span class="lineNum">     168 </span>            :                               kNumImportantPackets, kUseUnequalProtection,
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :                               params_.fec_mask_type, &amp;generated_fec_packets_);</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :     if (generated_fec_packets_.empty()) {</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :       ResetState();</span>
+<span class="lineNum">     172 </span>            :     }
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :     return ret;</span>
+<span class="lineNum">     174 </span>            :   }
+<span class="lineNum">     175 </span><span class="lineNoCov">          0 :   return 0;</span>
+<a name="176"><span class="lineNum">     176 </span>            : }</a>
+<span class="lineNum">     177 </span>            : 
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 : bool UlpfecGenerator::ExcessOverheadBelowMax() const {</span>
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   return ((Overhead() - params_.fec_rate) &lt; kMaxExcessOverhead);</span>
+<a name="180"><span class="lineNum">     180 </span>            : }</a>
+<span class="lineNum">     181 </span>            : 
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 : bool UlpfecGenerator::MinimumMediaPacketsReached() const {</span>
+<span class="lineNum">     183 </span>            :   float average_num_packets_per_frame =
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :       static_cast&lt;float&gt;(media_packets_.size()) / num_protected_frames_;</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :   int num_media_packets = static_cast&lt;int&gt;(media_packets_.size());</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :   if (average_num_packets_per_frame &lt; kMinMediaPacketsAdaptationThreshold) {</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :     return num_media_packets &gt;= min_num_media_packets_;</span>
+<span class="lineNum">     188 </span>            :   } else {
+<span class="lineNum">     189 </span>            :     // For larger rates (more packets/frame), increase the threshold.
+<span class="lineNum">     190 </span>            :     // TODO(brandtr): Investigate what impact this adaptation has.
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :     return num_media_packets &gt;= min_num_media_packets_ + 1;</span>
+<span class="lineNum">     192 </span>            :   }
+<a name="193"><span class="lineNum">     193 </span>            : }</a>
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 : bool UlpfecGenerator::FecAvailable() const {</span>
+<span class="lineNum">     196 </span><span class="lineNoCov">          0 :   return !generated_fec_packets_.empty();</span>
+<a name="197"><span class="lineNum">     197 </span>            : }</a>
+<span class="lineNum">     198 </span>            : 
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 : size_t UlpfecGenerator::NumAvailableFecPackets() const {</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :   return generated_fec_packets_.size();</span>
+<a name="201"><span class="lineNum">     201 </span>            : }</a>
+<span class="lineNum">     202 </span>            : 
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 : size_t UlpfecGenerator::MaxPacketOverhead() const {</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :   return fec_-&gt;MaxPacketOverhead();</span>
+<a name="205"><span class="lineNum">     205 </span>            : }</a>
+<span class="lineNum">     206 </span>            : 
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 : std::vector&lt;std::unique_ptr&lt;RedPacket&gt;&gt; UlpfecGenerator::GetUlpfecPacketsAsRed(</span>
+<span class="lineNum">     208 </span>            :     int red_payload_type,
+<span class="lineNum">     209 </span>            :     int ulpfec_payload_type,
+<span class="lineNum">     210 </span>            :     uint16_t first_seq_num,
+<span class="lineNum">     211 </span>            :     size_t rtp_header_length) {
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :   std::vector&lt;std::unique_ptr&lt;RedPacket&gt;&gt; red_packets;</span>
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   red_packets.reserve(generated_fec_packets_.size());</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!media_packets_.empty());</span>
+<span class="lineNum">     215 </span>            :   ForwardErrorCorrection::Packet* last_media_packet =
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :       media_packets_.back().get();</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :   uint16_t seq_num = first_seq_num;</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :   for (const auto&amp; fec_packet : generated_fec_packets_) {</span>
+<span class="lineNum">     219 </span>            :     // Wrap FEC packet (including FEC headers) in a RED packet. Since the
+<span class="lineNum">     220 </span>            :     // FEC packets in |generated_fec_packets_| don't have RTP headers, we
+<span class="lineNum">     221 </span>            :     // reuse the header from the last media packet.
+<span class="lineNum">     222 </span>            :     std::unique_ptr&lt;RedPacket&gt; red_packet(new RedPacket(
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :         fec_packet-&gt;length + kRedForFecHeaderLength + rtp_header_length));</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :     red_packet-&gt;CreateHeader(last_media_packet-&gt;data, rtp_header_length,</span>
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :                              red_payload_type, ulpfec_payload_type);</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :     red_packet-&gt;SetSeqNum(seq_num++);</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :     red_packet-&gt;ClearMarkerBit();</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :     red_packet-&gt;AssignPayload(fec_packet-&gt;data, fec_packet-&gt;length);</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     red_packets.push_back(std::move(red_packet));</span>
+<span class="lineNum">     230 </span>            :   }
+<span class="lineNum">     231 </span>            : 
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   ResetState();</span>
+<span class="lineNum">     233 </span>            : 
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :   return red_packets;</span>
+<a name="235"><span class="lineNum">     235 </span>            : }</a>
+<span class="lineNum">     236 </span>            : 
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 : int UlpfecGenerator::Overhead() const {</span>
+<span class="lineNum">     238 </span><span class="lineNoCov">          0 :   RTC_DCHECK(!media_packets_.empty());</span>
+<span class="lineNum">     239 </span>            :   int num_fec_packets =
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :       fec_-&gt;NumFecPackets(media_packets_.size(), params_.fec_rate);</span>
+<span class="lineNum">     241 </span>            :   // Return the overhead in Q8.
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :   return (num_fec_packets &lt;&lt; 8) / media_packets_.size();</span>
+<a name="243"><span class="lineNum">     243 </span>            : }</a>
+<span class="lineNum">     244 </span>            : 
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 : void UlpfecGenerator::ResetState() {</span>
+<span class="lineNum">     246 </span><span class="lineNoCov">          0 :   media_packets_.clear();</span>
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   generated_fec_packets_.clear();</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   num_protected_frames_ = 0;</span>
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     250 </span>            : 
+<span class="lineNum">     251 </span>            : }  // namespace webrtc
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

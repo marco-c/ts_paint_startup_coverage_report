@@ -1,0 +1,610 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - layout/painting/ActiveLayerTracker.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">layout/painting</a> - ActiveLayerTracker.cpp<span style="font-size: 80%;"> (source / <a href="ActiveLayerTracker.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">99</td>
+            <td class="headerCovTableEntry">233</td>
+            <td class="headerCovTableEntryLo">42.5 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">19</td>
+            <td class="headerCovTableEntry">32</td>
+            <td class="headerCovTableEntryLo">59.4 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public</a>
+<span class="lineNum">       2 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       3 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       4 </span>            : 
+<span class="lineNum">       5 </span>            : #include &quot;ActiveLayerTracker.h&quot;
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;mozilla/AnimationUtils.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;mozilla/ArrayUtils.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;mozilla/gfx/Matrix.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/EffectSet.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/PodOperations.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;gfx2DGlue.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;nsExpirationTracker.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nsContainerFrame.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsIContent.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;nsRefreshDriver.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;nsPIDOMWindow.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;nsIDocument.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;nsAnimationManager.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;nsStyleTransformMatrix.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;nsTransitionManager.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;nsDisplayList.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;nsDOMCSSDeclaration.h&quot;
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : namespace mozilla {
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : using namespace gfx;
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : /**
+<span class="lineNum">      30 </span>            :  * This tracks the state of a frame that may need active layers due to
+<span class="lineNum">      31 </span>            :  * ongoing content changes or style changes that indicate animation.
+<span class="lineNum">      32 </span>            :  *
+<span class="lineNum">      33 </span>            :  * When no changes of *any* kind are detected after 75-100ms we remove this
+<span class="lineNum">      34 </span>            :  * object. Because we only track all kinds of activity with a single
+<span class="lineNum">      35 </span>            :  * nsExpirationTracker, it's possible a frame might remain active somewhat
+<span class="lineNum">      36 </span>            :  * spuriously if different kinds of changes kept happening, but that almost
+<span class="lineNum">      37 </span>            :  * certainly doesn't matter.
+<span class="lineNum">      38 </span>            :  */
+<span class="lineNum">      39 </span>            : class LayerActivity {
+<span class="lineNum">      40 </span>            : public:
+<span class="lineNum">      41 </span>            :   enum ActivityIndex {
+<span class="lineNum">      42 </span>            :     ACTIVITY_OPACITY,
+<span class="lineNum">      43 </span>            :     ACTIVITY_TRANSFORM,
+<span class="lineNum">      44 </span>            :     ACTIVITY_LEFT,
+<span class="lineNum">      45 </span>            :     ACTIVITY_TOP,
+<span class="lineNum">      46 </span>            :     ACTIVITY_RIGHT,
+<span class="lineNum">      47 </span>            :     ACTIVITY_BOTTOM,
+<span class="lineNum">      48 </span>            :     ACTIVITY_MARGIN_LEFT,
+<span class="lineNum">      49 </span>            :     ACTIVITY_MARGIN_TOP,
+<span class="lineNum">      50 </span>            :     ACTIVITY_MARGIN_RIGHT,
+<span class="lineNum">      51 </span>            :     ACTIVITY_MARGIN_BOTTOM,
+<span class="lineNum">      52 </span>            :     ACTIVITY_BACKGROUND_POSITION,
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span>            :     ACTIVITY_SCALE,
+<span class="lineNum">      55 </span>            : 
+<span class="lineNum">      56 </span>            :     // keep as last item
+<span class="lineNum">      57 </span>            :     ACTIVITY_COUNT
+<a name="58"><span class="lineNum">      58 </span>            :   };</a>
+<span class="lineNum">      59 </span>            : 
+<span class="lineNum">      60 </span><span class="lineCov">          9 :   explicit LayerActivity(nsIFrame* aFrame)</span>
+<span class="lineNum">      61 </span><span class="lineCov">          9 :     : mFrame(aFrame)</span>
+<span class="lineNum">      62 </span>            :     , mContent(nullptr)
+<span class="lineNum">      63 </span><span class="lineCov">          9 :     , mContentActive(false)</span>
+<span class="lineNum">      64 </span>            :   {
+<span class="lineNum">      65 </span><span class="lineCov">          9 :     PodArrayZero(mRestyleCounts);</span>
+<a name="66"><span class="lineNum">      66 </span><span class="lineCov">          9 :   }</span></a>
+<a name="67"><span class="lineNum">      67 </span>            :   ~LayerActivity();</a>
+<span class="lineNum">      68 </span><span class="lineCov">         47 :   nsExpirationState* GetExpirationState() { return &amp;mState; }</span>
+<span class="lineNum">      69 </span><span class="lineCov">         21 :   uint8_t&amp; RestyleCountForProperty(nsCSSPropertyID aProperty)</span>
+<span class="lineNum">      70 </span>            :   {
+<span class="lineNum">      71 </span><span class="lineCov">         21 :     return mRestyleCounts[GetActivityIndexForProperty(aProperty)];</span>
+<a name="72"><span class="lineNum">      72 </span>            :   }</a>
+<span class="lineNum">      73 </span>            : 
+<span class="lineNum">      74 </span><span class="lineCov">         30 :   static ActivityIndex GetActivityIndexForProperty(nsCSSPropertyID aProperty)</span>
+<span class="lineNum">      75 </span>            :   {
+<span class="lineNum">      76 </span><span class="lineCov">         30 :     switch (aProperty) {</span>
+<span class="lineNum">      77 </span><span class="lineCov">         21 :     case eCSSProperty_opacity: return ACTIVITY_OPACITY;</span>
+<span class="lineNum">      78 </span><span class="lineCov">          9 :     case eCSSProperty_transform: return ACTIVITY_TRANSFORM;</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :     case eCSSProperty_left: return ACTIVITY_LEFT;</span>
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :     case eCSSProperty_top: return ACTIVITY_TOP;</span>
+<span class="lineNum">      81 </span><span class="lineNoCov">          0 :     case eCSSProperty_right: return ACTIVITY_RIGHT;</span>
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :     case eCSSProperty_bottom: return ACTIVITY_BOTTOM;</span>
+<span class="lineNum">      83 </span><span class="lineNoCov">          0 :     case eCSSProperty_margin_left: return ACTIVITY_MARGIN_LEFT;</span>
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :     case eCSSProperty_margin_top: return ACTIVITY_MARGIN_TOP;</span>
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :     case eCSSProperty_margin_right: return ACTIVITY_MARGIN_RIGHT;</span>
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 :     case eCSSProperty_margin_bottom: return ACTIVITY_MARGIN_BOTTOM;</span>
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :     case eCSSProperty_background_position: return ACTIVITY_BACKGROUND_POSITION;</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :     case eCSSProperty_background_position_x: return ACTIVITY_BACKGROUND_POSITION;</span>
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 :     case eCSSProperty_background_position_y: return ACTIVITY_BACKGROUND_POSITION;</span>
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :     default: MOZ_ASSERT(false); return ACTIVITY_OPACITY;</span>
+<span class="lineNum">      91 </span>            :     }
+<span class="lineNum">      92 </span>            :   }
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span>            :   // While tracked, exactly one of mFrame or mContent is non-null, depending
+<span class="lineNum">      95 </span>            :   // on whether this property is stored on a frame or on a content node.
+<span class="lineNum">      96 </span>            :   // When this property is expired by the layer activity tracker, both mFrame
+<span class="lineNum">      97 </span>            :   // and mContent are nulled-out and the property is deleted.
+<span class="lineNum">      98 </span>            :   nsIFrame* mFrame;
+<span class="lineNum">      99 </span>            :   nsIContent* mContent;
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span>            :   nsExpirationState mState;
+<span class="lineNum">     102 </span>            : 
+<span class="lineNum">     103 </span>            :   // Previous scale due to the CSS transform property.
+<span class="lineNum">     104 </span>            :   Maybe&lt;gfxSize&gt; mPreviousTransformScale;
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span>            :   // The scroll frame during for which we most recently received a call to
+<span class="lineNum">     107 </span>            :   // NotifyAnimatedFromScrollHandler.
+<span class="lineNum">     108 </span>            :   WeakFrame mAnimatingScrollHandlerFrame;
+<span class="lineNum">     109 </span>            :   // The set of activities that were triggered during
+<span class="lineNum">     110 </span>            :   // mAnimatingScrollHandlerFrame's scroll event handler.
+<span class="lineNum">     111 </span>            :   EnumSet&lt;ActivityIndex&gt; mScrollHandlerInducedActivity;
+<span class="lineNum">     112 </span>            : 
+<span class="lineNum">     113 </span>            :   // Number of restyle operations detected
+<span class="lineNum">     114 </span>            :   uint8_t mRestyleCounts[ACTIVITY_COUNT];
+<span class="lineNum">     115 </span>            :   bool mContentActive;
+<span class="lineNum">     116 </span>            : };
+<span class="lineNum">     117 </span>            : 
+<span class="lineNum">     118 </span>            : class LayerActivityTracker final : public nsExpirationTracker&lt;LayerActivity,4&gt; {
+<span class="lineNum">     119 </span>            : public:
+<a name="120"><span class="lineNum">     120 </span>            :   // 75-100ms is a good timeout period. We use 4 generations of 25ms each.</a>
+<span class="lineNum">     121 </span>            :   enum { GENERATION_MS = 100 };
+<span class="lineNum">     122 </span><span class="lineCov">          1 :   explicit LayerActivityTracker(nsIEventTarget* aEventTarget)</span>
+<span class="lineNum">     123 </span><span class="lineCov">          1 :     : nsExpirationTracker&lt;LayerActivity,4&gt;(GENERATION_MS,</span>
+<span class="lineNum">     124 </span>            :                                            &quot;LayerActivityTracker&quot;,
+<span class="lineNum">     125 </span>            :                                            aEventTarget)
+<a name="126"><span class="lineNum">     126 </span><span class="lineCov">          1 :     , mDestroying(false)</span></a>
+<span class="lineNum">     127 </span><span class="lineCov">          1 :   {}</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :   ~LayerActivityTracker() {</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :     mDestroying = true;</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :     AgeAllGenerations();</span>
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     132 </span>            : 
+<span class="lineNum">     133 </span>            :   virtual void NotifyExpired(LayerActivity* aObject);
+<span class="lineNum">     134 </span>            : 
+<span class="lineNum">     135 </span>            : public:
+<span class="lineNum">     136 </span>            :   WeakFrame mCurrentScrollHandlerFrame;
+<span class="lineNum">     137 </span>            : 
+<span class="lineNum">     138 </span>            : private:
+<span class="lineNum">     139 </span>            :   bool mDestroying;
+<span class="lineNum">     140 </span>            : };
+<span class="lineNum">     141 </span>            : 
+<a name="142"><span class="lineNum">     142 </span>            : static LayerActivityTracker* gLayerActivityTracker = nullptr;</a>
+<span class="lineNum">     143 </span>            : 
+<span class="lineNum">     144 </span><span class="lineCov">         14 : LayerActivity::~LayerActivity()</span>
+<span class="lineNum">     145 </span>            : {
+<span class="lineNum">     146 </span><span class="lineCov">          7 :   if (mFrame || mContent) {</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :     NS_ASSERTION(gLayerActivityTracker, &quot;Should still have a tracker&quot;);</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :     gLayerActivityTracker-&gt;RemoveObject(this);</span>
+<span class="lineNum">     149 </span>            :   }
+<span class="lineNum">     150 </span><span class="lineCov">          7 : }</span>
+<a name="151"><span class="lineNum">     151 </span>            : </a>
+<span class="lineNum">     152 </span>            : // Frames with this property have NS_FRAME_HAS_LAYER_ACTIVITY_PROPERTY set
+<span class="lineNum">     153 </span><span class="lineCov">         99 : NS_DECLARE_FRAME_PROPERTY_DELETABLE(LayerActivityProperty, LayerActivity)</span>
+<a name="154"><span class="lineNum">     154 </span>            : </a>
+<span class="lineNum">     155 </span>            : void
+<span class="lineNum">     156 </span><span class="lineCov">          7 : LayerActivityTracker::NotifyExpired(LayerActivity* aObject)</span>
+<span class="lineNum">     157 </span>            : {
+<span class="lineNum">     158 </span><span class="lineCov">          7 :   if (!mDestroying &amp;&amp; aObject-&gt;mAnimatingScrollHandlerFrame.IsAlive()) {</span>
+<span class="lineNum">     159 </span>            :     // Reset the restyle counts, but let the layer activity survive.
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :     PodArrayZero(aObject-&gt;mRestyleCounts);</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :     MarkUsed(aObject);</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     163 </span>            :   }
+<span class="lineNum">     164 </span>            : 
+<span class="lineNum">     165 </span><span class="lineCov">          7 :   RemoveObject(aObject);</span>
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span><span class="lineCov">          7 :   nsIFrame* f = aObject-&gt;mFrame;</span>
+<span class="lineNum">     168 </span><span class="lineCov">          7 :   nsIContent* c = aObject-&gt;mContent;</span>
+<span class="lineNum">     169 </span><span class="lineCov">          7 :   aObject-&gt;mFrame = nullptr;</span>
+<span class="lineNum">     170 </span><span class="lineCov">          7 :   aObject-&gt;mContent = nullptr;</span>
+<span class="lineNum">     171 </span>            : 
+<span class="lineNum">     172 </span><span class="lineCov">          7 :   MOZ_ASSERT((f == nullptr) != (c == nullptr),</span>
+<span class="lineNum">     173 </span>            :              &quot;A LayerActivity object should always have a reference to either its frame or its content&quot;);
+<span class="lineNum">     174 </span>            : 
+<span class="lineNum">     175 </span><span class="lineCov">          7 :   if (f) {</span>
+<span class="lineNum">     176 </span>            :     // The pres context might have been detached during the delay -
+<span class="lineNum">     177 </span>            :     // that's fine, just skip the paint.
+<span class="lineNum">     178 </span><span class="lineCov">          7 :     if (f-&gt;PresContext()-&gt;GetContainerWeak()) {</span>
+<span class="lineNum">     179 </span><span class="lineCov">          7 :       f-&gt;SchedulePaint();</span>
+<span class="lineNum">     180 </span>            :     }
+<span class="lineNum">     181 </span><span class="lineCov">          7 :     f-&gt;RemoveStateBits(NS_FRAME_HAS_LAYER_ACTIVITY_PROPERTY);</span>
+<span class="lineNum">     182 </span><span class="lineCov">          7 :     f-&gt;DeleteProperty(LayerActivityProperty());</span>
+<span class="lineNum">     183 </span>            :   } else {
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :     c-&gt;DeleteProperty(nsGkAtoms::LayerActivity);</span>
+<span class="lineNum">     185 </span>            :   }
+<span class="lineNum">     186 </span>            : }
+<a name="187"><span class="lineNum">     187 </span>            : </a>
+<span class="lineNum">     188 </span>            : static LayerActivity*
+<span class="lineNum">     189 </span><span class="lineCov">       4510 : GetLayerActivity(nsIFrame* aFrame)</span>
+<span class="lineNum">     190 </span>            : {
+<span class="lineNum">     191 </span><span class="lineCov">       4510 :   if (!aFrame-&gt;HasAnyStateBits(NS_FRAME_HAS_LAYER_ACTIVITY_PROPERTY)) {</span>
+<span class="lineNum">     192 </span><span class="lineCov">       4427 :     return nullptr;</span>
+<span class="lineNum">     193 </span>            :   }
+<span class="lineNum">     194 </span><span class="lineCov">         83 :   return aFrame-&gt;GetProperty(LayerActivityProperty());</span>
+<span class="lineNum">     195 </span>            : }
+<a name="196"><span class="lineNum">     196 </span>            : </a>
+<span class="lineNum">     197 </span>            : static LayerActivity*
+<span class="lineNum">     198 </span><span class="lineCov">         21 : GetLayerActivityForUpdate(nsIFrame* aFrame)</span>
+<span class="lineNum">     199 </span>            : {
+<span class="lineNum">     200 </span><span class="lineCov">         21 :   LayerActivity* layerActivity = GetLayerActivity(aFrame);</span>
+<span class="lineNum">     201 </span><span class="lineCov">         21 :   if (layerActivity) {</span>
+<span class="lineNum">     202 </span><span class="lineCov">         12 :     gLayerActivityTracker-&gt;MarkUsed(layerActivity);</span>
+<span class="lineNum">     203 </span>            :   } else {
+<span class="lineNum">     204 </span><span class="lineCov">          9 :     if (!gLayerActivityTracker) {</span>
+<span class="lineNum">     205 </span><span class="lineCov">          1 :       gLayerActivityTracker = new LayerActivityTracker(</span>
+<span class="lineNum">     206 </span><span class="lineCov">          2 :         SystemGroup::EventTargetFor(TaskCategory::Other));</span>
+<span class="lineNum">     207 </span>            :     }
+<span class="lineNum">     208 </span><span class="lineCov">          9 :     layerActivity = new LayerActivity(aFrame);</span>
+<span class="lineNum">     209 </span><span class="lineCov">          9 :     gLayerActivityTracker-&gt;AddObject(layerActivity);</span>
+<span class="lineNum">     210 </span><span class="lineCov">          9 :     aFrame-&gt;AddStateBits(NS_FRAME_HAS_LAYER_ACTIVITY_PROPERTY);</span>
+<span class="lineNum">     211 </span><span class="lineCov">          9 :     aFrame-&gt;SetProperty(LayerActivityProperty(), layerActivity);</span>
+<span class="lineNum">     212 </span>            :   }
+<span class="lineNum">     213 </span><span class="lineCov">         21 :   return layerActivity;</span>
+<span class="lineNum">     214 </span>            : }
+<a name="215"><span class="lineNum">     215 </span>            : </a>
+<span class="lineNum">     216 </span>            : static void
+<span class="lineNum">     217 </span><span class="lineCov">         21 : IncrementMutationCount(uint8_t* aCount)</span>
+<span class="lineNum">     218 </span>            : {
+<span class="lineNum">     219 </span><span class="lineCov">         21 :   *aCount = uint8_t(std::min(0xFF, *aCount + 1));</span>
+<span class="lineNum">     220 </span><span class="lineCov">         21 : }</span>
+<a name="221"><span class="lineNum">     221 </span>            : </a>
+<span class="lineNum">     222 </span>            : /* static */ void
+<span class="lineNum">     223 </span><span class="lineCov">        111 : ActiveLayerTracker::TransferActivityToContent(nsIFrame* aFrame, nsIContent* aContent)</span>
+<span class="lineNum">     224 </span>            : {
+<span class="lineNum">     225 </span><span class="lineCov">        111 :   if (!aFrame-&gt;HasAnyStateBits(NS_FRAME_HAS_LAYER_ACTIVITY_PROPERTY)) {</span>
+<span class="lineNum">     226 </span><span class="lineCov">        111 :     return;</span>
+<span class="lineNum">     227 </span>            :   }
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :   LayerActivity* layerActivity = aFrame-&gt;RemoveProperty(LayerActivityProperty());</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :   aFrame-&gt;RemoveStateBits(NS_FRAME_HAS_LAYER_ACTIVITY_PROPERTY);</span>
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 :   if (!layerActivity) {</span>
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     232 </span>            :   }
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :   layerActivity-&gt;mFrame = nullptr;</span>
+<span class="lineNum">     234 </span><span class="lineNoCov">          0 :   layerActivity-&gt;mContent = aContent;</span>
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :   aContent-&gt;SetProperty(nsGkAtoms::LayerActivity, layerActivity,</span>
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :                         nsINode::DeleteProperty&lt;LayerActivity&gt;, true);</span>
+<span class="lineNum">     237 </span>            : }
+<a name="238"><span class="lineNum">     238 </span>            : </a>
+<span class="lineNum">     239 </span>            : /* static */ void
+<span class="lineNum">     240 </span><span class="lineCov">        469 : ActiveLayerTracker::TransferActivityToFrame(nsIContent* aContent, nsIFrame* aFrame)</span>
+<span class="lineNum">     241 </span>            : {
+<span class="lineNum">     242 </span>            :   LayerActivity* layerActivity = static_cast&lt;LayerActivity*&gt;(
+<span class="lineNum">     243 </span><span class="lineCov">        469 :     aContent-&gt;UnsetProperty(nsGkAtoms::LayerActivity));</span>
+<span class="lineNum">     244 </span><span class="lineCov">        469 :   if (!layerActivity) {</span>
+<span class="lineNum">     245 </span><span class="lineCov">        469 :     return;</span>
+<span class="lineNum">     246 </span>            :   }
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   layerActivity-&gt;mContent = nullptr;</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   layerActivity-&gt;mFrame = aFrame;</span>
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :   aFrame-&gt;AddStateBits(NS_FRAME_HAS_LAYER_ACTIVITY_PROPERTY);</span>
+<span class="lineNum">     250 </span><span class="lineNoCov">          0 :   aFrame-&gt;SetProperty(LayerActivityProperty(), layerActivity);</span>
+<span class="lineNum">     251 </span>            : }
+<a name="252"><span class="lineNum">     252 </span>            : </a>
+<span class="lineNum">     253 </span>            : static void
+<span class="lineNum">     254 </span><span class="lineNoCov">          0 : IncrementScaleRestyleCountIfNeeded(nsIFrame* aFrame, LayerActivity* aActivity)</span>
+<span class="lineNum">     255 </span>            : {
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   const nsStyleDisplay* display = aFrame-&gt;StyleDisplay();</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :   if (!display-&gt;mSpecifiedTransform) {</span>
+<span class="lineNum">     258 </span>            :     // The transform was removed.
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :     aActivity-&gt;mPreviousTransformScale = Nothing();</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :     IncrementMutationCount(&amp;aActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_SCALE]);</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     262 </span>            :   }
+<span class="lineNum">     263 </span>            : 
+<span class="lineNum">     264 </span>            :   // Compute the new scale due to the CSS transform property.
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :   nsPresContext* presContext = aFrame-&gt;PresContext();</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :   RuleNodeCacheConditions dummy;</span>
+<span class="lineNum">     267 </span>            :   bool dummyBool;
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :   nsStyleTransformMatrix::TransformReferenceBox refBox(aFrame);</span>
+<span class="lineNum">     269 </span>            :   Matrix4x4 transform =
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :     nsStyleTransformMatrix::ReadTransforms(display-&gt;mSpecifiedTransform-&gt;mHead,</span>
+<span class="lineNum">     271 </span>            :                                            aFrame-&gt;StyleContext(),
+<span class="lineNum">     272 </span>            :                                            presContext,
+<span class="lineNum">     273 </span>            :                                            dummy, refBox,
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :                                            presContext-&gt;AppUnitsPerCSSPixel(),</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :                                            &amp;dummyBool);</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :   Matrix transform2D;</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   if (!transform.Is2D(&amp;transform2D)) {</span>
+<span class="lineNum">     278 </span>            :     // We don't attempt to handle 3D transforms; just assume the scale changed.
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :     aActivity-&gt;mPreviousTransformScale = Nothing();</span>
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 :     IncrementMutationCount(&amp;aActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_SCALE]);</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     282 </span>            :   }
+<span class="lineNum">     283 </span>            : 
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :   gfxSize scale = ThebesMatrix(transform2D).ScaleFactors(true);</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :   if (aActivity-&gt;mPreviousTransformScale == Some(scale)) {</span>
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :     return;  // Nothing changed.</span>
+<span class="lineNum">     287 </span>            :   }
+<span class="lineNum">     288 </span>            : 
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   aActivity-&gt;mPreviousTransformScale = Some(scale);</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :   IncrementMutationCount(&amp;aActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_SCALE]);</span>
+<span class="lineNum">     291 </span>            : }
+<a name="292"><span class="lineNum">     292 </span>            : </a>
+<span class="lineNum">     293 </span>            : /* static */ void
+<span class="lineNum">     294 </span><span class="lineCov">         21 : ActiveLayerTracker::NotifyRestyle(nsIFrame* aFrame, nsCSSPropertyID aProperty)</span>
+<span class="lineNum">     295 </span>            : {
+<span class="lineNum">     296 </span><span class="lineCov">         21 :   LayerActivity* layerActivity = GetLayerActivityForUpdate(aFrame);</span>
+<span class="lineNum">     297 </span><span class="lineCov">         21 :   uint8_t&amp; mutationCount = layerActivity-&gt;RestyleCountForProperty(aProperty);</span>
+<span class="lineNum">     298 </span><span class="lineCov">         21 :   IncrementMutationCount(&amp;mutationCount);</span>
+<span class="lineNum">     299 </span>            : 
+<span class="lineNum">     300 </span><span class="lineCov">         21 :   if (aProperty == eCSSProperty_transform) {</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :     IncrementScaleRestyleCountIfNeeded(aFrame, layerActivity);</span>
+<span class="lineNum">     302 </span>            :   }
+<span class="lineNum">     303 </span><span class="lineCov">         21 : }</span>
+<a name="304"><span class="lineNum">     304 </span>            : </a>
+<span class="lineNum">     305 </span>            : /* static */ void
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 : ActiveLayerTracker::NotifyOffsetRestyle(nsIFrame* aFrame)</span>
+<span class="lineNum">     307 </span>            : {
+<span class="lineNum">     308 </span><span class="lineNoCov">          0 :   LayerActivity* layerActivity = GetLayerActivityForUpdate(aFrame);</span>
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :   IncrementMutationCount(&amp;layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_LEFT]);</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :   IncrementMutationCount(&amp;layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_TOP]);</span>
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :   IncrementMutationCount(&amp;layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_RIGHT]);</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :   IncrementMutationCount(&amp;layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_BOTTOM]);</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 : }</span>
+<a name="314"><span class="lineNum">     314 </span>            : </a>
+<span class="lineNum">     315 </span>            : /* static */ void
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 : ActiveLayerTracker::NotifyAnimated(nsIFrame* aFrame,</span>
+<span class="lineNum">     317 </span>            :                                    nsCSSPropertyID aProperty,
+<span class="lineNum">     318 </span>            :                                    const nsAString&amp; aNewValue,
+<span class="lineNum">     319 </span>            :                                    nsDOMCSSDeclaration* aDOMCSSDecl)
+<span class="lineNum">     320 </span>            : {
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :   LayerActivity* layerActivity = GetLayerActivityForUpdate(aFrame);</span>
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :   uint8_t&amp; mutationCount = layerActivity-&gt;RestyleCountForProperty(aProperty);</span>
+<span class="lineNum">     323 </span><span class="lineNoCov">          0 :   if (mutationCount != 0xFF) {</span>
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :     nsAutoString oldValue;</span>
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :     aDOMCSSDecl-&gt;GetPropertyValue(aProperty, oldValue);</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :     if (aNewValue != oldValue) {</span>
+<span class="lineNum">     327 </span>            :       // We know this is animated, so just hack the mutation count.
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :       mutationCount = 0xFF;</span>
+<span class="lineNum">     329 </span>            :     }
+<span class="lineNum">     330 </span>            :   }
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 : }</span>
+<a name="332"><span class="lineNum">     332 </span>            : </a>
+<span class="lineNum">     333 </span>            : /* static */ void
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 : ActiveLayerTracker::NotifyAnimatedFromScrollHandler(nsIFrame* aFrame, nsCSSPropertyID aProperty,</span>
+<span class="lineNum">     335 </span>            :                                                     nsIFrame* aScrollFrame)
+<span class="lineNum">     336 </span>            : {
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :   if (aFrame-&gt;PresContext() != aScrollFrame-&gt;PresContext()) {</span>
+<span class="lineNum">     338 </span>            :     // Don't allow cross-document dependencies.
+<span class="lineNum">     339 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     340 </span>            :   }
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :   LayerActivity* layerActivity = GetLayerActivityForUpdate(aFrame);</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :   LayerActivity::ActivityIndex activityIndex = LayerActivity::GetActivityIndexForProperty(aProperty);</span>
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :   if (layerActivity-&gt;mAnimatingScrollHandlerFrame.GetFrame() != aScrollFrame) {</span>
+<span class="lineNum">     345 </span>            :     // Discard any activity of a different scroll frame. We only track the
+<span class="lineNum">     346 </span>            :     // most recent scroll handler induced activity.
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :     layerActivity-&gt;mScrollHandlerInducedActivity.clear();</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :     layerActivity-&gt;mAnimatingScrollHandlerFrame = aScrollFrame;</span>
+<span class="lineNum">     349 </span>            :   }
+<span class="lineNum">     350 </span>            : 
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :   layerActivity-&gt;mScrollHandlerInducedActivity += activityIndex;</span>
+<span class="lineNum">     352 </span>            : }
+<a name="353"><span class="lineNum">     353 </span>            : </a>
+<span class="lineNum">     354 </span>            : static bool
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 : IsPresContextInScriptAnimationCallback(nsPresContext* aPresContext)</span>
+<span class="lineNum">     356 </span>            : {
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :   if (aPresContext-&gt;RefreshDriver()-&gt;IsInRefresh()) {</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     359 </span>            :   }
+<span class="lineNum">     360 </span>            :   // Treat timeouts/setintervals as scripted animation callbacks for our
+<span class="lineNum">     361 </span>            :   // purposes.
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :   nsPIDOMWindowInner* win = aPresContext-&gt;Document()-&gt;GetInnerWindow();</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :   return win &amp;&amp; win-&gt;IsRunningTimeout();</span>
+<span class="lineNum">     364 </span>            : }
+<a name="365"><span class="lineNum">     365 </span>            : </a>
+<span class="lineNum">     366 </span>            : /* static */ void
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 : ActiveLayerTracker::NotifyInlineStyleRuleModified(nsIFrame* aFrame,</span>
+<span class="lineNum">     368 </span>            :                                                   nsCSSPropertyID aProperty,
+<span class="lineNum">     369 </span>            :                                                   const nsAString&amp; aNewValue,
+<span class="lineNum">     370 </span>            :                                                   nsDOMCSSDeclaration* aDOMCSSDecl)
+<span class="lineNum">     371 </span>            : {
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :   if (IsPresContextInScriptAnimationCallback(aFrame-&gt;PresContext())) {</span>
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :     NotifyAnimated(aFrame, aProperty, aNewValue, aDOMCSSDecl);</span>
+<span class="lineNum">     374 </span>            :   }
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :   if (gLayerActivityTracker &amp;&amp;</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :       gLayerActivityTracker-&gt;mCurrentScrollHandlerFrame.IsAlive()) {</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :     NotifyAnimatedFromScrollHandler(aFrame, aProperty,</span>
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :       gLayerActivityTracker-&gt;mCurrentScrollHandlerFrame.GetFrame());</span>
+<span class="lineNum">     379 </span>            :   }
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 : }</span>
+<a name="381"><span class="lineNum">     381 </span>            : </a>
+<span class="lineNum">     382 </span>            : /* static */ bool
+<span class="lineNum">     383 </span><span class="lineCov">         24 : ActiveLayerTracker::IsStyleMaybeAnimated(nsIFrame* aFrame, nsCSSPropertyID aProperty)</span>
+<span class="lineNum">     384 </span>            : {
+<span class="lineNum">     385 </span><span class="lineCov">         24 :   return IsStyleAnimated(nullptr, aFrame, aProperty);</span>
+<span class="lineNum">     386 </span>            : }
+<a name="387"><span class="lineNum">     387 </span>            : </a>
+<span class="lineNum">     388 </span>            : /* static */ bool
+<span class="lineNum">     389 </span><span class="lineCov">        198 : ActiveLayerTracker::IsBackgroundPositionAnimated(nsDisplayListBuilder* aBuilder,</span>
+<span class="lineNum">     390 </span>            :                                                  nsIFrame* aFrame)
+<span class="lineNum">     391 </span>            : {
+<span class="lineNum">     392 </span><span class="lineCov">        396 :   return IsStyleAnimated(aBuilder, aFrame, eCSSProperty_background_position_x) ||</span>
+<span class="lineNum">     393 </span><span class="lineCov">        396 :          IsStyleAnimated(aBuilder, aFrame, eCSSProperty_background_position_y);</span>
+<span class="lineNum">     394 </span>            : }
+<a name="395"><span class="lineNum">     395 </span>            : </a>
+<span class="lineNum">     396 </span>            : static bool
+<span class="lineNum">     397 </span><span class="lineCov">          9 : CheckScrollInducedActivity(LayerActivity* aLayerActivity,</span>
+<span class="lineNum">     398 </span>            :                            LayerActivity::ActivityIndex aActivityIndex,
+<span class="lineNum">     399 </span>            :                            nsDisplayListBuilder* aBuilder)
+<span class="lineNum">     400 </span>            : {
+<span class="lineNum">     401 </span><span class="lineCov">          9 :   if (!aLayerActivity-&gt;mScrollHandlerInducedActivity.contains(aActivityIndex) ||</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :       !aLayerActivity-&gt;mAnimatingScrollHandlerFrame.IsAlive()) {</span>
+<span class="lineNum">     403 </span><span class="lineCov">          9 :     return false;</span>
+<span class="lineNum">     404 </span>            :   }
+<span class="lineNum">     405 </span>            : 
+<span class="lineNum">     406 </span>            :   nsIScrollableFrame* scrollFrame =
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :     do_QueryFrame(aLayerActivity-&gt;mAnimatingScrollHandlerFrame.GetFrame());</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :   if (scrollFrame &amp;&amp; (!aBuilder || scrollFrame-&gt;IsScrollingActive(aBuilder))) {</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     410 </span>            :   }
+<span class="lineNum">     411 </span>            : 
+<span class="lineNum">     412 </span>            :   // The scroll frame has been destroyed or has become inactive. Clear it from
+<span class="lineNum">     413 </span>            :   // the layer activity so that it can expire.
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :   aLayerActivity-&gt;mAnimatingScrollHandlerFrame = nullptr;</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :   aLayerActivity-&gt;mScrollHandlerInducedActivity.clear();</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :   return false;</span>
+<span class="lineNum">     417 </span>            : }
+<a name="418"><span class="lineNum">     418 </span>            : </a>
+<span class="lineNum">     419 </span>            : /* static */ bool
+<span class="lineNum">     420 </span><span class="lineCov">       1060 : ActiveLayerTracker::IsStyleAnimated(nsDisplayListBuilder* aBuilder,</span>
+<span class="lineNum">     421 </span>            :                                     nsIFrame* aFrame, nsCSSPropertyID aProperty)
+<span class="lineNum">     422 </span>            : {
+<span class="lineNum">     423 </span>            :   // TODO: Add some abuse restrictions
+<span class="lineNum">     424 </span><span class="lineCov">       4240 :   if ((aFrame-&gt;StyleDisplay()-&gt;mWillChangeBitField &amp; NS_STYLE_WILL_CHANGE_TRANSFORM) &amp;&amp;</span>
+<span class="lineNum">     425 </span><span class="lineCov">       2120 :       aProperty == eCSSProperty_transform &amp;&amp;</span>
+<span class="lineNum">     426 </span><span class="lineCov">       1060 :       (!aBuilder || aBuilder-&gt;IsInWillChangeBudget(aFrame, aFrame-&gt;GetSize()))) {</span>
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     428 </span>            :   }
+<span class="lineNum">     429 </span><span class="lineCov">       4240 :   if ((aFrame-&gt;StyleDisplay()-&gt;mWillChangeBitField &amp; NS_STYLE_WILL_CHANGE_OPACITY) &amp;&amp;</span>
+<span class="lineNum">     430 </span><span class="lineCov">       2120 :       aProperty == eCSSProperty_opacity &amp;&amp;</span>
+<span class="lineNum">     431 </span><span class="lineCov">       1060 :       (!aBuilder || aBuilder-&gt;IsInWillChangeBudget(aFrame, aFrame-&gt;GetSize()))) {</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     433 </span>            :   }
+<span class="lineNum">     434 </span>            : 
+<span class="lineNum">     435 </span><span class="lineCov">       1060 :   LayerActivity* layerActivity = GetLayerActivity(aFrame);</span>
+<span class="lineNum">     436 </span><span class="lineCov">       1060 :   if (layerActivity) {</span>
+<span class="lineNum">     437 </span><span class="lineCov">          9 :     LayerActivity::ActivityIndex activityIndex = LayerActivity::GetActivityIndexForProperty(aProperty);</span>
+<span class="lineNum">     438 </span><span class="lineCov">          9 :     if (layerActivity-&gt;mRestyleCounts[activityIndex] &gt;= 2) {</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :       return true;</span>
+<span class="lineNum">     440 </span>            :     }
+<span class="lineNum">     441 </span><span class="lineCov">          9 :     if (CheckScrollInducedActivity(layerActivity, activityIndex, aBuilder)) {</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :       return true;</span>
+<span class="lineNum">     443 </span>            :     }
+<span class="lineNum">     444 </span>            :   }
+<span class="lineNum">     445 </span><span class="lineCov">       1060 :   if (aProperty == eCSSProperty_transform &amp;&amp; aFrame-&gt;Combines3DTransformWithAncestors()) {</span>
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :     return IsStyleAnimated(aBuilder, aFrame-&gt;GetParent(), aProperty);</span>
+<span class="lineNum">     447 </span>            :   }
+<span class="lineNum">     448 </span><span class="lineCov">       1060 :   return nsLayoutUtils::HasEffectiveAnimation(aFrame, aProperty);</span>
+<span class="lineNum">     449 </span>            : }
+<a name="450"><span class="lineNum">     450 </span>            : </a>
+<span class="lineNum">     451 </span>            : /* static */ bool
+<span class="lineNum">     452 </span><span class="lineCov">       3429 : ActiveLayerTracker::IsOffsetOrMarginStyleAnimated(nsIFrame* aFrame)</span>
+<span class="lineNum">     453 </span>            : {
+<span class="lineNum">     454 </span><span class="lineCov">       3429 :   LayerActivity* layerActivity = GetLayerActivity(aFrame);</span>
+<span class="lineNum">     455 </span><span class="lineCov">       3429 :   if (layerActivity) {</span>
+<span class="lineNum">     456 </span><span class="lineCov">        124 :     if (layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_LEFT] &gt;= 2 ||</span>
+<span class="lineNum">     457 </span><span class="lineCov">        124 :         layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_TOP] &gt;= 2 ||</span>
+<span class="lineNum">     458 </span><span class="lineCov">        124 :         layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_RIGHT] &gt;= 2 ||</span>
+<span class="lineNum">     459 </span><span class="lineCov">        124 :         layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_BOTTOM] &gt;= 2 ||</span>
+<span class="lineNum">     460 </span><span class="lineCov">        124 :         layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_MARGIN_LEFT] &gt;= 2 ||</span>
+<span class="lineNum">     461 </span><span class="lineCov">        124 :         layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_MARGIN_TOP] &gt;= 2 ||</span>
+<span class="lineNum">     462 </span><span class="lineCov">        124 :         layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_MARGIN_RIGHT] &gt;= 2 ||</span>
+<span class="lineNum">     463 </span><span class="lineCov">         62 :         layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_MARGIN_BOTTOM] &gt;= 2) {</span>
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :       return true;</span>
+<span class="lineNum">     465 </span>            :     }
+<span class="lineNum">     466 </span>            :   }
+<span class="lineNum">     467 </span>            :   // We should also check for running CSS animations of these properties once
+<span class="lineNum">     468 </span>            :   // bug 1009693 is fixed. Until that happens, layerization isn't useful for
+<span class="lineNum">     469 </span>            :   // animations of these properties because we'll invalidate the layer contents
+<span class="lineNum">     470 </span>            :   // on every change anyway.
+<span class="lineNum">     471 </span>            :   // See bug 1151346 for a patch that adds a check for CSS animations.
+<span class="lineNum">     472 </span><span class="lineCov">       3429 :   return false;</span>
+<span class="lineNum">     473 </span>            : }
+<a name="474"><span class="lineNum">     474 </span>            : </a>
+<span class="lineNum">     475 </span>            : /* static */ bool
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 : ActiveLayerTracker::IsScaleSubjectToAnimation(nsIFrame* aFrame)</span>
+<span class="lineNum">     477 </span>            : {
+<span class="lineNum">     478 </span>            :   // Check whether JavaScript is animating this frame's scale.
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :   LayerActivity* layerActivity = GetLayerActivity(aFrame);</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :   if (layerActivity &amp;&amp; layerActivity-&gt;mRestyleCounts[LayerActivity::ACTIVITY_SCALE] &gt;= 2) {</span>
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     482 </span>            :   }
+<span class="lineNum">     483 </span>            : 
+<span class="lineNum">     484 </span>            :   // Check if any animations, transitions, etc. associated with this frame may
+<span class="lineNum">     485 </span>            :   // animate its scale.
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :   EffectSet* effects = EffectSet::GetEffectSet(aFrame);</span>
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :   if (effects &amp;&amp;</span>
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :       AnimationUtils::EffectSetContainsAnimatedScale(*effects, aFrame)) {</span>
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :     return true;</span>
+<span class="lineNum">     490 </span>            :   }
+<span class="lineNum">     491 </span>            : 
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :   return false;</span>
+<span class="lineNum">     493 </span>            : }
+<a name="494"><span class="lineNum">     494 </span>            : </a>
+<span class="lineNum">     495 </span>            : /* static */ void
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 : ActiveLayerTracker::NotifyContentChange(nsIFrame* aFrame)</span>
+<span class="lineNum">     497 </span>            : {
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :   LayerActivity* layerActivity = GetLayerActivityForUpdate(aFrame);</span>
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 :   layerActivity-&gt;mContentActive = true;</span>
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 : }</span>
+<a name="501"><span class="lineNum">     501 </span>            : </a>
+<span class="lineNum">     502 </span>            : /* static */ bool
+<span class="lineNum">     503 </span><span class="lineNoCov">          0 : ActiveLayerTracker::IsContentActive(nsIFrame* aFrame)</span>
+<span class="lineNum">     504 </span>            : {
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :   LayerActivity* layerActivity = GetLayerActivity(aFrame);</span>
+<span class="lineNum">     506 </span><span class="lineNoCov">          0 :   return layerActivity &amp;&amp; layerActivity-&gt;mContentActive;</span>
+<span class="lineNum">     507 </span>            : }
+<a name="508"><span class="lineNum">     508 </span>            : </a>
+<span class="lineNum">     509 </span>            : /* static */ void
+<span class="lineNum">     510 </span><span class="lineNoCov">          0 : ActiveLayerTracker::SetCurrentScrollHandlerFrame(nsIFrame* aFrame)</span>
+<span class="lineNum">     511 </span>            : {
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :   if (!gLayerActivityTracker) {</span>
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :     gLayerActivityTracker = new LayerActivityTracker(</span>
+<span class="lineNum">     514 </span><span class="lineNoCov">          0 :       SystemGroup::EventTargetFor(TaskCategory::Other));</span>
+<span class="lineNum">     515 </span>            :   }
+<span class="lineNum">     516 </span><span class="lineNoCov">          0 :   gLayerActivityTracker-&gt;mCurrentScrollHandlerFrame = aFrame;</span>
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 : }</span>
+<a name="518"><span class="lineNum">     518 </span>            : </a>
+<span class="lineNum">     519 </span>            : /* static */ void
+<span class="lineNum">     520 </span><span class="lineNoCov">          0 : ActiveLayerTracker::Shutdown()</span>
+<span class="lineNum">     521 </span>            : {
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :   delete gLayerActivityTracker;</span>
+<span class="lineNum">     523 </span><span class="lineNoCov">          0 :   gLayerActivityTracker = nullptr;</span>
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     525 </span>            : 
+<span class="lineNum">     526 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

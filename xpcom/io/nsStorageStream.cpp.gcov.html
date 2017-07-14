@@ -1,0 +1,732 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - xpcom/io/nsStorageStream.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">xpcom/io</a> - nsStorageStream.cpp<span style="font-size: 80%;"> (source / <a href="nsStorageStream.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">272</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">40</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : /*
+<span class="lineNum">       8 </span>            :  * The storage stream provides an internal buffer that can be filled by a
+<span class="lineNum">       9 </span>            :  * client using a single output stream.  One or more independent input streams
+<span class="lineNum">      10 </span>            :  * can be created to read the data out non-destructively.  The implementation
+<span class="lineNum">      11 </span>            :  * uses a segmented buffer internally to avoid realloc'ing of large buffers,
+<span class="lineNum">      12 </span>            :  * with the attendant performance loss and heap fragmentation.
+<span class="lineNum">      13 </span>            :  */
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #include &quot;nsAlgorithm.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;nsStorageStream.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;nsSegmentedBuffer.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;nsStreamUtils.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;nsCOMPtr.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;nsICloneableInputStream.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;nsIInputStream.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;nsIIPCSerializableInputStream.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;nsISeekableStream.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;mozilla/Logging.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;mozilla/Attributes.h&quot;
+<span class="lineNum">      26 </span>            : #include &quot;mozilla/Likely.h&quot;
+<span class="lineNum">      27 </span>            : #include &quot;mozilla/MathAlgorithms.h&quot;
+<span class="lineNum">      28 </span>            : #include &quot;mozilla/ipc/InputStreamUtils.h&quot;
+<span class="lineNum">      29 </span>            : 
+<span class="lineNum">      30 </span>            : using mozilla::ipc::InputStreamParams;
+<span class="lineNum">      31 </span>            : using mozilla::ipc::StringInputStreamParams;
+<span class="lineNum">      32 </span>            : using mozilla::Maybe;
+<span class="lineNum">      33 </span>            : using mozilla::Some;
+<span class="lineNum">      34 </span>            : 
+<span class="lineNum">      35 </span>            : //
+<span class="lineNum">      36 </span>            : // Log module for StorageStream logging...
+<span class="lineNum">      37 </span>            : //
+<span class="lineNum">      38 </span>            : // To enable logging (see prlog.h for full details):
+<span class="lineNum">      39 </span>            : //
+<span class="lineNum">      40 </span>            : //    set MOZ_LOG=StorageStreamLog:5
+<span class="lineNum">      41 </span>            : //    set MOZ_LOG_FILE=storage.log
+<span class="lineNum">      42 </span>            : //
+<span class="lineNum">      43 </span>            : // This enables LogLevel::Debug level information and places all output in
+<span class="lineNum">      44 </span>            : // the file storage.log.
+<span class="lineNum">      45 </span>            : //
+<span class="lineNum">      46 </span>            : static LazyLogModule sStorageStreamLog(&quot;nsStorageStream&quot;);
+<span class="lineNum">      47 </span>            : #ifdef LOG
+<span class="lineNum">      48 </span>            : #undef LOG
+<span class="lineNum">      49 </span>            : #endif
+<a name="50"><span class="lineNum">      50 </span>            : #define LOG(args) MOZ_LOG(sStorageStreamLog, mozilla::LogLevel::Debug, args)</a>
+<span class="lineNum">      51 </span>            : 
+<span class="lineNum">      52 </span><span class="lineNoCov">          0 : nsStorageStream::nsStorageStream()</span>
+<span class="lineNum">      53 </span>            :   : mSegmentedBuffer(0), mSegmentSize(0), mWriteInProgress(false),
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 :     mLastSegmentNum(-1), mWriteCursor(0), mSegmentEnd(0), mLogicalLength(0)</span>
+<span class="lineNum">      55 </span>            : {
+<span class="lineNum">      56 </span><span class="lineNoCov">          0 :   LOG((&quot;Creating nsStorageStream [%p].\n&quot;, this));</span>
+<a name="57"><span class="lineNum">      57 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      58 </span>            : 
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 : nsStorageStream::~nsStorageStream()</span>
+<span class="lineNum">      60 </span>            : {
+<span class="lineNum">      61 </span><span class="lineNoCov">          0 :   delete mSegmentedBuffer;</span>
+<a name="62"><span class="lineNum">      62 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">      63 </span>            : 
+<span class="lineNum">      64 </span><span class="lineNoCov">          0 : NS_IMPL_ISUPPORTS(nsStorageStream,</span>
+<span class="lineNum">      65 </span>            :                   nsIStorageStream,
+<span class="lineNum">      66 </span>            :                   nsIOutputStream)
+<a name="67"><span class="lineNum">      67 </span>            : </a>
+<span class="lineNum">      68 </span>            : NS_IMETHODIMP
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 : nsStorageStream::Init(uint32_t aSegmentSize, uint32_t aMaxSize)</span>
+<span class="lineNum">      70 </span>            : {
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :   mSegmentedBuffer = new nsSegmentedBuffer();</span>
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :   mSegmentSize = aSegmentSize;</span>
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :   mSegmentSizeLog2 = mozilla::FloorLog2(aSegmentSize);</span>
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span>            :   // Segment size must be a power of two
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :   if (mSegmentSize != ((uint32_t)1 &lt;&lt; mSegmentSizeLog2)) {</span>
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">      78 </span>            :   }
+<span class="lineNum">      79 </span>            : 
+<span class="lineNum">      80 </span><span class="lineNoCov">          0 :   return mSegmentedBuffer-&gt;Init(aSegmentSize, aMaxSize);</span>
+<span class="lineNum">      81 </span>            : }
+<a name="82"><span class="lineNum">      82 </span>            : </a>
+<span class="lineNum">      83 </span>            : NS_IMETHODIMP
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 : nsStorageStream::GetOutputStream(int32_t aStartingOffset,</span>
+<span class="lineNum">      85 </span>            :                                  nsIOutputStream** aOutputStream)
+<span class="lineNum">      86 </span>            : {
+<span class="lineNum">      87 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(!aOutputStream)) {</span>
+<span class="lineNum">      88 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">      89 </span>            :   }
+<span class="lineNum">      90 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(!mSegmentedBuffer)) {</span>
+<span class="lineNum">      91 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">      92 </span>            :   }
+<span class="lineNum">      93 </span>            : 
+<span class="lineNum">      94 </span><span class="lineNoCov">          0 :   if (mWriteInProgress) {</span>
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_AVAILABLE;</span>
+<span class="lineNum">      96 </span>            :   }
+<span class="lineNum">      97 </span>            : 
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :   nsresult rv = Seek(aStartingOffset);</span>
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     101 </span>            :   }
+<span class="lineNum">     102 </span>            : 
+<span class="lineNum">     103 </span>            :   // Enlarge the last segment in the buffer so that it is the same size as
+<span class="lineNum">     104 </span>            :   // all the other segments in the buffer.  (It may have been realloc'ed
+<span class="lineNum">     105 </span>            :   // smaller in the Close() method.)
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :   if (mLastSegmentNum &gt;= 0)</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :     if (mSegmentedBuffer-&gt;ReallocLastSegment(mSegmentSize)) {</span>
+<span class="lineNum">     108 </span>            :       // Need to re-Seek, since realloc changed segment base pointer
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :       rv = Seek(aStartingOffset);</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :       if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :         return rv;</span>
+<span class="lineNum">     112 </span>            :       }
+<span class="lineNum">     113 </span>            :     }
+<span class="lineNum">     114 </span>            : 
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :   NS_ADDREF(this);</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :   *aOutputStream = static_cast&lt;nsIOutputStream*&gt;(this);</span>
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :   mWriteInProgress = true;</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     119 </span>            : }
+<a name="120"><span class="lineNum">     120 </span>            : </a>
+<span class="lineNum">     121 </span>            : NS_IMETHODIMP
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 : nsStorageStream::Close()</span>
+<span class="lineNum">     123 </span>            : {
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(!mSegmentedBuffer)) {</span>
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">     126 </span>            :   }
+<span class="lineNum">     127 </span>            : 
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :   mWriteInProgress = false;</span>
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 :   int32_t segmentOffset = SegOffset(mLogicalLength);</span>
+<span class="lineNum">     131 </span>            : 
+<span class="lineNum">     132 </span>            :   // Shrink the final segment in the segmented buffer to the minimum size
+<span class="lineNum">     133 </span>            :   // needed to contain the data, so as to conserve memory.
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :   if (segmentOffset) {</span>
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :     mSegmentedBuffer-&gt;ReallocLastSegment(segmentOffset);</span>
+<span class="lineNum">     136 </span>            :   }
+<span class="lineNum">     137 </span>            : 
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :   mWriteCursor = 0;</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   mSegmentEnd = 0;</span>
+<span class="lineNum">     140 </span>            : 
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :   LOG((&quot;nsStorageStream [%p] Close mWriteCursor=%p mSegmentEnd=%p\n&quot;,</span>
+<span class="lineNum">     142 </span>            :        this, mWriteCursor, mSegmentEnd));
+<span class="lineNum">     143 </span>            : 
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     145 </span>            : }
+<a name="146"><span class="lineNum">     146 </span>            : </a>
+<span class="lineNum">     147 </span>            : NS_IMETHODIMP
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 : nsStorageStream::Flush()</span>
+<span class="lineNum">     149 </span>            : {
+<span class="lineNum">     150 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     151 </span>            : }
+<a name="152"><span class="lineNum">     152 </span>            : </a>
+<span class="lineNum">     153 </span>            : NS_IMETHODIMP
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 : nsStorageStream::Write(const char* aBuffer, uint32_t aCount,</span>
+<span class="lineNum">     155 </span>            :                        uint32_t* aNumWritten)
+<span class="lineNum">     156 </span>            : {
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(!aNumWritten) || NS_WARN_IF(!aBuffer)) {</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     159 </span>            :   }
+<span class="lineNum">     160 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(!mSegmentedBuffer)) {</span>
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">     162 </span>            :   }
+<span class="lineNum">     163 </span>            : 
+<span class="lineNum">     164 </span>            :   const char* readCursor;
+<span class="lineNum">     165 </span>            :   uint32_t count, availableInSegment, remaining;
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :   nsresult rv = NS_OK;</span>
+<span class="lineNum">     167 </span>            : 
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :   LOG((&quot;nsStorageStream [%p] Write mWriteCursor=%p mSegmentEnd=%p aCount=%d\n&quot;,</span>
+<span class="lineNum">     169 </span>            :        this, mWriteCursor, mSegmentEnd, aCount));
+<span class="lineNum">     170 </span>            : 
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :   remaining = aCount;</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :   readCursor = aBuffer;</span>
+<span class="lineNum">     173 </span>            :   // If no segments have been created yet, create one even if we don't have
+<span class="lineNum">     174 </span>            :   // to write any data; this enables creating an input stream which reads from
+<span class="lineNum">     175 </span>            :   // the very end of the data for any amount of data in the stream (i.e.
+<span class="lineNum">     176 </span>            :   // this stream contains N bytes of data and newInputStream(N) is called),
+<span class="lineNum">     177 </span>            :   // even for N=0 (with the caveat that we require .write(&quot;&quot;, 0) be called to
+<span class="lineNum">     178 </span>            :   // initialize internal buffers).
+<span class="lineNum">     179 </span><span class="lineNoCov">          0 :   bool firstTime = mSegmentedBuffer-&gt;GetSegmentCount() == 0;</span>
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :   while (remaining || MOZ_UNLIKELY(firstTime)) {</span>
+<span class="lineNum">     181 </span><span class="lineNoCov">          0 :     firstTime = false;</span>
+<span class="lineNum">     182 </span><span class="lineNoCov">          0 :     availableInSegment = mSegmentEnd - mWriteCursor;</span>
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :     if (!availableInSegment) {</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :       mWriteCursor = mSegmentedBuffer-&gt;AppendNewSegment();</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :       if (!mWriteCursor) {</span>
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :         mSegmentEnd = 0;</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :         rv = NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :         goto out;</span>
+<span class="lineNum">     189 </span>            :       }
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :       mLastSegmentNum++;</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :       mSegmentEnd = mWriteCursor + mSegmentSize;</span>
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :       availableInSegment = mSegmentEnd - mWriteCursor;</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :       LOG((&quot;nsStorageStream [%p] Write (new seg) mWriteCursor=%p mSegmentEnd=%p\n&quot;,</span>
+<span class="lineNum">     194 </span>            :            this, mWriteCursor, mSegmentEnd));
+<span class="lineNum">     195 </span>            :     }
+<span class="lineNum">     196 </span>            : 
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :     count = XPCOM_MIN(availableInSegment, remaining);</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :     memcpy(mWriteCursor, readCursor, count);</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :     remaining -= count;</span>
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :     readCursor += count;</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :     mWriteCursor += count;</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :     LOG((&quot;nsStorageStream [%p] Writing mWriteCursor=%p mSegmentEnd=%p count=%d\n&quot;,</span>
+<span class="lineNum">     203 </span>            :          this, mWriteCursor, mSegmentEnd, count));
+<span class="lineNum">     204 </span>            :   }
+<span class="lineNum">     205 </span>            : 
+<span class="lineNum">     206 </span>            : out:
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :   *aNumWritten = aCount - remaining;</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :   mLogicalLength += *aNumWritten;</span>
+<span class="lineNum">     209 </span>            : 
+<span class="lineNum">     210 </span><span class="lineNoCov">          0 :   LOG((&quot;nsStorageStream [%p] Wrote mWriteCursor=%p mSegmentEnd=%p numWritten=%d\n&quot;,</span>
+<span class="lineNum">     211 </span>            :        this, mWriteCursor, mSegmentEnd, *aNumWritten));
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 :   return rv;</span>
+<span class="lineNum">     213 </span>            : }
+<a name="214"><span class="lineNum">     214 </span>            : </a>
+<span class="lineNum">     215 </span>            : NS_IMETHODIMP
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 : nsStorageStream::WriteFrom(nsIInputStream* aInStr, uint32_t aCount,</span>
+<span class="lineNum">     217 </span>            :                            uint32_t* aResult)
+<span class="lineNum">     218 </span>            : {
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :   return NS_ERROR_NOT_IMPLEMENTED;</span>
+<span class="lineNum">     220 </span>            : }
+<a name="221"><span class="lineNum">     221 </span>            : </a>
+<span class="lineNum">     222 </span>            : NS_IMETHODIMP
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 : nsStorageStream::WriteSegments(nsReadSegmentFun aReader, void* aClosure,</span>
+<span class="lineNum">     224 </span>            :                                uint32_t aCount, uint32_t* aResult)
+<span class="lineNum">     225 </span>            : {
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :   return NS_ERROR_NOT_IMPLEMENTED;</span>
+<span class="lineNum">     227 </span>            : }
+<a name="228"><span class="lineNum">     228 </span>            : </a>
+<span class="lineNum">     229 </span>            : NS_IMETHODIMP
+<span class="lineNum">     230 </span><span class="lineNoCov">          0 : nsStorageStream::IsNonBlocking(bool* aNonBlocking)</span>
+<span class="lineNum">     231 </span>            : {
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   *aNonBlocking = false;</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     234 </span>            : }
+<a name="235"><span class="lineNum">     235 </span>            : </a>
+<span class="lineNum">     236 </span>            : NS_IMETHODIMP
+<span class="lineNum">     237 </span><span class="lineNoCov">          0 : nsStorageStream::GetLength(uint32_t* aLength)</span>
+<span class="lineNum">     238 </span>            : {
+<span class="lineNum">     239 </span><span class="lineNoCov">          0 :   *aLength = mLogicalLength;</span>
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     241 </span>            : }
+<span class="lineNum">     242 </span>            : 
+<a name="243"><span class="lineNum">     243 </span>            : // Truncate the buffer by deleting the end segments</a>
+<span class="lineNum">     244 </span>            : NS_IMETHODIMP
+<span class="lineNum">     245 </span><span class="lineNoCov">          0 : nsStorageStream::SetLength(uint32_t aLength)</span>
+<span class="lineNum">     246 </span>            : {
+<span class="lineNum">     247 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(!mSegmentedBuffer)) {</span>
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">     249 </span>            :   }
+<span class="lineNum">     250 </span>            : 
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :   if (mWriteInProgress) {</span>
+<span class="lineNum">     252 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_AVAILABLE;</span>
+<span class="lineNum">     253 </span>            :   }
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span><span class="lineNoCov">          0 :   if (aLength &gt; mLogicalLength) {</span>
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     257 </span>            :   }
+<span class="lineNum">     258 </span>            : 
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :   int32_t newLastSegmentNum = SegNum(aLength);</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :   int32_t segmentOffset = SegOffset(aLength);</span>
+<span class="lineNum">     261 </span><span class="lineNoCov">          0 :   if (segmentOffset == 0) {</span>
+<span class="lineNum">     262 </span><span class="lineNoCov">          0 :     newLastSegmentNum--;</span>
+<span class="lineNum">     263 </span>            :   }
+<span class="lineNum">     264 </span>            : 
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :   while (newLastSegmentNum &lt; mLastSegmentNum) {</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :     mSegmentedBuffer-&gt;DeleteLastSegment();</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :     mLastSegmentNum--;</span>
+<span class="lineNum">     268 </span>            :   }
+<span class="lineNum">     269 </span>            : 
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :   mLogicalLength = aLength;</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     272 </span>            : }
+<a name="273"><span class="lineNum">     273 </span>            : </a>
+<span class="lineNum">     274 </span>            : NS_IMETHODIMP
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 : nsStorageStream::GetWriteInProgress(bool* aWriteInProgress)</span>
+<span class="lineNum">     276 </span>            : {
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   *aWriteInProgress = mWriteInProgress;</span>
+<span class="lineNum">     278 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     279 </span>            : }
+<a name="280"><span class="lineNum">     280 </span>            : </a>
+<span class="lineNum">     281 </span>            : nsresult
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 : nsStorageStream::Seek(int32_t aPosition)</span>
+<span class="lineNum">     283 </span>            : {
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(!mSegmentedBuffer)) {</span>
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">     286 </span>            :   }
+<span class="lineNum">     287 </span>            : 
+<span class="lineNum">     288 </span>            :   // An argument of -1 means &quot;seek to end of stream&quot;
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :   if (aPosition == -1) {</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :     aPosition = mLogicalLength;</span>
+<span class="lineNum">     291 </span>            :   }
+<span class="lineNum">     292 </span>            : 
+<span class="lineNum">     293 </span>            :   // Seeking beyond the buffer end is illegal
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :   if ((uint32_t)aPosition &gt; mLogicalLength) {</span>
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     296 </span>            :   }
+<span class="lineNum">     297 </span>            : 
+<span class="lineNum">     298 </span>            :   // Seeking backwards in the write stream results in truncation
+<span class="lineNum">     299 </span><span class="lineNoCov">          0 :   SetLength(aPosition);</span>
+<span class="lineNum">     300 </span>            : 
+<span class="lineNum">     301 </span>            :   // Special handling for seek to start-of-buffer
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :   if (aPosition == 0) {</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :     mWriteCursor = 0;</span>
+<span class="lineNum">     304 </span><span class="lineNoCov">          0 :     mSegmentEnd = 0;</span>
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :     LOG((&quot;nsStorageStream [%p] Seek mWriteCursor=%p mSegmentEnd=%p\n&quot;,</span>
+<span class="lineNum">     306 </span>            :          this, mWriteCursor, mSegmentEnd));
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     308 </span>            :   }
+<span class="lineNum">     309 </span>            : 
+<span class="lineNum">     310 </span>            :   // Segment may have changed, so reset pointers
+<span class="lineNum">     311 </span><span class="lineNoCov">          0 :   mWriteCursor = mSegmentedBuffer-&gt;GetSegment(mLastSegmentNum);</span>
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :   NS_ASSERTION(mWriteCursor, &quot;null mWriteCursor&quot;);</span>
+<span class="lineNum">     313 </span><span class="lineNoCov">          0 :   mSegmentEnd = mWriteCursor + mSegmentSize;</span>
+<span class="lineNum">     314 </span>            : 
+<span class="lineNum">     315 </span>            :   // Adjust write cursor for current segment offset.  This test is necessary
+<span class="lineNum">     316 </span>            :   // because SegNum may reference the next-to-be-allocated segment, in which
+<span class="lineNum">     317 </span>            :   // case we need to be pointing at the end of the last segment.
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :   int32_t segmentOffset = SegOffset(aPosition);</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :   if (segmentOffset == 0 &amp;&amp; (SegNum(aPosition) &gt; (uint32_t) mLastSegmentNum)) {</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :     mWriteCursor = mSegmentEnd;</span>
+<span class="lineNum">     321 </span>            :   } else {
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :     mWriteCursor += segmentOffset;</span>
+<span class="lineNum">     323 </span>            :   }
+<span class="lineNum">     324 </span>            : 
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :   LOG((&quot;nsStorageStream [%p] Seek mWriteCursor=%p mSegmentEnd=%p\n&quot;,</span>
+<span class="lineNum">     326 </span>            :        this, mWriteCursor, mSegmentEnd));
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     328 </span>            : }
+<span class="lineNum">     329 </span>            : 
+<span class="lineNum">     330 </span>            : ////////////////////////////////////////////////////////////////////////////////
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span>            : // There can be many nsStorageInputStreams for a single nsStorageStream
+<span class="lineNum">     333 </span>            : class nsStorageInputStream final
+<span class="lineNum">     334 </span>            :   : public nsIInputStream
+<span class="lineNum">     335 </span>            :   , public nsISeekableStream
+<span class="lineNum">     336 </span>            :   , public nsIIPCSerializableInputStream
+<span class="lineNum">     337 </span>            :   , public nsICloneableInputStream
+<a name="338"><span class="lineNum">     338 </span>            : {</a>
+<span class="lineNum">     339 </span>            : public:
+<span class="lineNum">     340 </span><span class="lineNoCov">          0 :   nsStorageInputStream(nsStorageStream* aStorageStream, uint32_t aSegmentSize)</span>
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :     : mStorageStream(aStorageStream), mReadCursor(0),</span>
+<span class="lineNum">     342 </span>            :       mSegmentEnd(0), mSegmentNum(0),
+<span class="lineNum">     343 </span>            :       mSegmentSize(aSegmentSize), mLogicalCursor(0),
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :       mStatus(NS_OK)</span>
+<span class="lineNum">     345 </span>            :   {
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span>            :   NS_DECL_THREADSAFE_ISUPPORTS
+<span class="lineNum">     349 </span>            :   NS_DECL_NSIINPUTSTREAM
+<span class="lineNum">     350 </span>            :   NS_DECL_NSISEEKABLESTREAM
+<span class="lineNum">     351 </span>            :   NS_DECL_NSIIPCSERIALIZABLEINPUTSTREAM
+<span class="lineNum">     352 </span>            :   NS_DECL_NSICLONEABLEINPUTSTREAM
+<a name="353"><span class="lineNum">     353 </span>            : </a>
+<span class="lineNum">     354 </span>            : private:
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :   ~nsStorageInputStream()</span>
+<span class="lineNum">     356 </span><span class="lineNoCov">          0 :   {</span>
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :   }</span>
+<span class="lineNum">     358 </span>            : 
+<span class="lineNum">     359 </span>            : protected:
+<span class="lineNum">     360 </span>            :   nsresult Seek(uint32_t aPosition);
+<span class="lineNum">     361 </span>            : 
+<span class="lineNum">     362 </span>            :   friend class nsStorageStream;
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span>            : private:
+<span class="lineNum">     365 </span>            :   RefPtr&lt;nsStorageStream&gt; mStorageStream;
+<span class="lineNum">     366 </span>            :   uint32_t         mReadCursor;    // Next memory location to read byte, or 0
+<span class="lineNum">     367 </span>            :   uint32_t         mSegmentEnd;    // One byte past end of current buffer segment
+<span class="lineNum">     368 </span>            :   uint32_t         mSegmentNum;    // Segment number containing read cursor
+<span class="lineNum">     369 </span>            :   uint32_t         mSegmentSize;   // All segments, except the last, are of this size
+<span class="lineNum">     370 </span>            :   uint32_t         mLogicalCursor; // Logical offset into stream
+<a name="371"><span class="lineNum">     371 </span>            :   nsresult         mStatus;</a>
+<span class="lineNum">     372 </span>            : 
+<span class="lineNum">     373 </span><span class="lineNoCov">          0 :   uint32_t SegNum(uint32_t aPosition)</span>
+<span class="lineNum">     374 </span>            :   {
+<a name="375"><span class="lineNum">     375 </span><span class="lineNoCov">          0 :     return aPosition &gt;&gt; mStorageStream-&gt;mSegmentSizeLog2;</span></a>
+<span class="lineNum">     376 </span>            :   }
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :   uint32_t SegOffset(uint32_t aPosition)</span>
+<span class="lineNum">     378 </span>            :   {
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :     return aPosition &amp; (mSegmentSize - 1);</span>
+<span class="lineNum">     380 </span>            :   }
+<a name="381"><span class="lineNum">     381 </span>            : };</a>
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 : NS_IMPL_ISUPPORTS(nsStorageInputStream,</span>
+<span class="lineNum">     384 </span>            :                   nsIInputStream,
+<span class="lineNum">     385 </span>            :                   nsISeekableStream,
+<span class="lineNum">     386 </span>            :                   nsIIPCSerializableInputStream,
+<span class="lineNum">     387 </span>            :                   nsICloneableInputStream)
+<a name="388"><span class="lineNum">     388 </span>            : </a>
+<span class="lineNum">     389 </span>            : NS_IMETHODIMP
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 : nsStorageStream::NewInputStream(int32_t aStartingOffset,</span>
+<span class="lineNum">     391 </span>            :                                 nsIInputStream** aInputStream)
+<span class="lineNum">     392 </span>            : {
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :   if (NS_WARN_IF(!mSegmentedBuffer)) {</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :     return NS_ERROR_NOT_INITIALIZED;</span>
+<span class="lineNum">     395 </span>            :   }
+<span class="lineNum">     396 </span>            : 
+<span class="lineNum">     397 </span>            :   RefPtr&lt;nsStorageInputStream&gt; inputStream =
+<span class="lineNum">     398 </span><span class="lineNoCov">          0 :     new nsStorageInputStream(this, mSegmentSize);</span>
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :   nsresult rv = inputStream-&gt;Seek(aStartingOffset);</span>
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     403 </span>            :   }
+<span class="lineNum">     404 </span>            : 
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :   inputStream.forget(aInputStream);</span>
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     407 </span>            : }
+<a name="408"><span class="lineNum">     408 </span>            : </a>
+<span class="lineNum">     409 </span>            : NS_IMETHODIMP
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 : nsStorageInputStream::Close()</span>
+<span class="lineNum">     411 </span>            : {
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :   mStatus = NS_BASE_STREAM_CLOSED;</span>
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     414 </span>            : }
+<a name="415"><span class="lineNum">     415 </span>            : </a>
+<span class="lineNum">     416 </span>            : NS_IMETHODIMP
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 : nsStorageInputStream::Available(uint64_t* aAvailable)</span>
+<span class="lineNum">     418 </span>            : {
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :   if (NS_FAILED(mStatus)) {</span>
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :     return mStatus;</span>
+<span class="lineNum">     421 </span>            :   }
+<span class="lineNum">     422 </span>            : 
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :   *aAvailable = mStorageStream-&gt;mLogicalLength - mLogicalCursor;</span>
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     425 </span>            : }
+<a name="426"><span class="lineNum">     426 </span>            : </a>
+<span class="lineNum">     427 </span>            : NS_IMETHODIMP
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 : nsStorageInputStream::Read(char* aBuffer, uint32_t aCount, uint32_t* aNumRead)</span>
+<span class="lineNum">     429 </span>            : {
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :   return ReadSegments(NS_CopySegmentToBuffer, aBuffer, aCount, aNumRead);</span>
+<span class="lineNum">     431 </span>            : }
+<a name="432"><span class="lineNum">     432 </span>            : </a>
+<span class="lineNum">     433 </span>            : NS_IMETHODIMP
+<span class="lineNum">     434 </span><span class="lineNoCov">          0 : nsStorageInputStream::ReadSegments(nsWriteSegmentFun aWriter, void* aClosure,</span>
+<span class="lineNum">     435 </span>            :                                    uint32_t aCount, uint32_t* aNumRead)
+<span class="lineNum">     436 </span>            : {
+<span class="lineNum">     437 </span><span class="lineNoCov">          0 :   *aNumRead = 0;</span>
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :   if (mStatus == NS_BASE_STREAM_CLOSED) {</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     440 </span>            :   }
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :   if (NS_FAILED(mStatus)) {</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :     return mStatus;</span>
+<span class="lineNum">     443 </span>            :   }
+<span class="lineNum">     444 </span>            : 
+<span class="lineNum">     445 </span>            :   uint32_t count, availableInSegment, remainingCapacity, bytesConsumed;
+<span class="lineNum">     446 </span>            :   nsresult rv;
+<span class="lineNum">     447 </span>            : 
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :   remainingCapacity = aCount;</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :   while (remainingCapacity) {</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :     availableInSegment = mSegmentEnd - mReadCursor;</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 :     if (!availableInSegment) {</span>
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :       uint32_t available = mStorageStream-&gt;mLogicalLength - mLogicalCursor;</span>
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :       if (!available) {</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :         goto out;</span>
+<span class="lineNum">     455 </span>            :       }
+<span class="lineNum">     456 </span>            : 
+<span class="lineNum">     457 </span>            :       // We have data in the stream, but if mSegmentEnd is zero, then we
+<span class="lineNum">     458 </span>            :       // were likely constructed prior to any data being written into
+<span class="lineNum">     459 </span>            :       // the stream.  Therefore, if mSegmentEnd is non-zero, we should
+<span class="lineNum">     460 </span>            :       // move into the next segment; otherwise, we should stay in this
+<span class="lineNum">     461 </span>            :       // segment so our input state can be updated and we can properly
+<span class="lineNum">     462 </span>            :       // perform the initial read.
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :       if (mSegmentEnd &gt; 0) {</span>
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :         mSegmentNum++;</span>
+<span class="lineNum">     465 </span>            :       }
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :       mReadCursor = 0;</span>
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 :       mSegmentEnd = XPCOM_MIN(mSegmentSize, available);</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :       availableInSegment = mSegmentEnd;</span>
+<span class="lineNum">     469 </span>            :     }
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :     const char* cur = mStorageStream-&gt;mSegmentedBuffer-&gt;GetSegment(mSegmentNum);</span>
+<span class="lineNum">     471 </span>            : 
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :     count = XPCOM_MIN(availableInSegment, remainingCapacity);</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :     rv = aWriter(this, aClosure, cur + mReadCursor, aCount - remainingCapacity,</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :                  count, &amp;bytesConsumed);</span>
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :     if (NS_FAILED(rv) || (bytesConsumed == 0)) {</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     477 </span>            :     }
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 :     remainingCapacity -= bytesConsumed;</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :     mReadCursor += bytesConsumed;</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :     mLogicalCursor += bytesConsumed;</span>
+<span class="lineNum">     481 </span>            :   }
+<span class="lineNum">     482 </span>            : 
+<span class="lineNum">     483 </span>            : out:
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :   *aNumRead = aCount - remainingCapacity;</span>
+<span class="lineNum">     485 </span>            : 
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :   bool isWriteInProgress = false;</span>
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :   if (NS_FAILED(mStorageStream-&gt;GetWriteInProgress(&amp;isWriteInProgress))) {</span>
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :     isWriteInProgress = false;</span>
+<span class="lineNum">     489 </span>            :   }
+<span class="lineNum">     490 </span>            : 
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :   if (*aNumRead == 0 &amp;&amp; isWriteInProgress) {</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :     return NS_BASE_STREAM_WOULD_BLOCK;</span>
+<span class="lineNum">     493 </span>            :   }
+<span class="lineNum">     494 </span>            : 
+<span class="lineNum">     495 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     496 </span>            : }
+<a name="497"><span class="lineNum">     497 </span>            : </a>
+<span class="lineNum">     498 </span>            : NS_IMETHODIMP
+<span class="lineNum">     499 </span><span class="lineNoCov">          0 : nsStorageInputStream::IsNonBlocking(bool* aNonBlocking)</span>
+<span class="lineNum">     500 </span>            : {
+<span class="lineNum">     501 </span>            :   // TODO: This class should implement nsIAsyncInputStream so that callers
+<span class="lineNum">     502 </span>            :   // have some way of dealing with NS_BASE_STREAM_WOULD_BLOCK errors.
+<span class="lineNum">     503 </span>            : 
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :   *aNonBlocking = true;</span>
+<span class="lineNum">     505 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     506 </span>            : }
+<a name="507"><span class="lineNum">     507 </span>            : </a>
+<span class="lineNum">     508 </span>            : NS_IMETHODIMP
+<span class="lineNum">     509 </span><span class="lineNoCov">          0 : nsStorageInputStream::Seek(int32_t aWhence, int64_t aOffset)</span>
+<span class="lineNum">     510 </span>            : {
+<span class="lineNum">     511 </span><span class="lineNoCov">          0 :   if (NS_FAILED(mStatus)) {</span>
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :     return mStatus;</span>
+<span class="lineNum">     513 </span>            :   }
+<span class="lineNum">     514 </span>            : 
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :   int64_t pos = aOffset;</span>
+<span class="lineNum">     516 </span>            : 
+<span class="lineNum">     517 </span><span class="lineNoCov">          0 :   switch (aWhence) {</span>
+<span class="lineNum">     518 </span>            :     case NS_SEEK_SET:
+<span class="lineNum">     519 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     520 </span>            :     case NS_SEEK_CUR:
+<span class="lineNum">     521 </span><span class="lineNoCov">          0 :       pos += mLogicalCursor;</span>
+<span class="lineNum">     522 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     523 </span>            :     case NS_SEEK_END:
+<span class="lineNum">     524 </span><span class="lineNoCov">          0 :       pos += mStorageStream-&gt;mLogicalLength;</span>
+<span class="lineNum">     525 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     526 </span>            :     default:
+<span class="lineNum">     527 </span><span class="lineNoCov">          0 :       NS_NOTREACHED(&quot;unexpected whence value&quot;);</span>
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :       return NS_ERROR_UNEXPECTED;</span>
+<span class="lineNum">     529 </span>            :   }
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 :   if (pos == int64_t(mLogicalCursor)) {</span>
+<span class="lineNum">     531 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     532 </span>            :   }
+<span class="lineNum">     533 </span>            : 
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :   return Seek(pos);</span>
+<span class="lineNum">     535 </span>            : }
+<a name="536"><span class="lineNum">     536 </span>            : </a>
+<span class="lineNum">     537 </span>            : NS_IMETHODIMP
+<span class="lineNum">     538 </span><span class="lineNoCov">          0 : nsStorageInputStream::Tell(int64_t* aResult)</span>
+<span class="lineNum">     539 </span>            : {
+<span class="lineNum">     540 </span><span class="lineNoCov">          0 :   if (NS_FAILED(mStatus)) {</span>
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :     return mStatus;</span>
+<span class="lineNum">     542 </span>            :   }
+<span class="lineNum">     543 </span>            : 
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :   *aResult = mLogicalCursor;</span>
+<span class="lineNum">     545 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     546 </span>            : }
+<a name="547"><span class="lineNum">     547 </span>            : </a>
+<span class="lineNum">     548 </span>            : NS_IMETHODIMP
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 : nsStorageInputStream::SetEOF()</span>
+<span class="lineNum">     550 </span>            : {
+<span class="lineNum">     551 </span><span class="lineNoCov">          0 :   NS_NOTREACHED(&quot;nsStorageInputStream::SetEOF&quot;);</span>
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :   return NS_ERROR_NOT_IMPLEMENTED;</span>
+<span class="lineNum">     553 </span>            : }
+<a name="554"><span class="lineNum">     554 </span>            : </a>
+<span class="lineNum">     555 </span>            : nsresult
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 : nsStorageInputStream::Seek(uint32_t aPosition)</span>
+<span class="lineNum">     557 </span>            : {
+<span class="lineNum">     558 </span><span class="lineNoCov">          0 :   uint32_t length = mStorageStream-&gt;mLogicalLength;</span>
+<span class="lineNum">     559 </span><span class="lineNoCov">          0 :   if (aPosition &gt; length) {</span>
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 :     return NS_ERROR_INVALID_ARG;</span>
+<span class="lineNum">     561 </span>            :   }
+<span class="lineNum">     562 </span>            : 
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :   if (length == 0) {</span>
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :     return NS_OK;</span>
+<span class="lineNum">     565 </span>            :   }
+<span class="lineNum">     566 </span>            : 
+<span class="lineNum">     567 </span><span class="lineNoCov">          0 :   mSegmentNum = SegNum(aPosition);</span>
+<span class="lineNum">     568 </span><span class="lineNoCov">          0 :   mReadCursor = SegOffset(aPosition);</span>
+<span class="lineNum">     569 </span><span class="lineNoCov">          0 :   uint32_t available = length - aPosition;</span>
+<span class="lineNum">     570 </span><span class="lineNoCov">          0 :   mSegmentEnd = mReadCursor + XPCOM_MIN(mSegmentSize - mReadCursor, available);</span>
+<span class="lineNum">     571 </span><span class="lineNoCov">          0 :   mLogicalCursor = aPosition;</span>
+<span class="lineNum">     572 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     573 </span>            : }
+<a name="574"><span class="lineNum">     574 </span>            : </a>
+<span class="lineNum">     575 </span>            : void
+<span class="lineNum">     576 </span><span class="lineNoCov">          0 : nsStorageInputStream::Serialize(InputStreamParams&amp; aParams, FileDescriptorArray&amp;)</span>
+<span class="lineNum">     577 </span>            : {
+<span class="lineNum">     578 </span><span class="lineNoCov">          0 :   nsCString combined;</span>
+<span class="lineNum">     579 </span>            :   int64_t offset;
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :   mozilla::DebugOnly&lt;nsresult&gt; rv = Tell(&amp;offset);</span>
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(NS_SUCCEEDED(rv));</span>
+<span class="lineNum">     582 </span>            : 
+<span class="lineNum">     583 </span>            :   uint64_t remaining;
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 :   rv = Available(&amp;remaining);</span>
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(NS_SUCCEEDED(rv));</span>
+<span class="lineNum">     586 </span>            : 
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :   combined.SetCapacity(remaining);</span>
+<span class="lineNum">     588 </span><span class="lineNoCov">          0 :   uint32_t numRead = 0;</span>
+<span class="lineNum">     589 </span>            : 
+<span class="lineNum">     590 </span><span class="lineNoCov">          0 :   rv = Read(combined.BeginWriting(), remaining, &amp;numRead);</span>
+<span class="lineNum">     591 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(NS_SUCCEEDED(rv));</span>
+<span class="lineNum">     592 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(numRead == remaining);</span>
+<span class="lineNum">     593 </span><span class="lineNoCov">          0 :   combined.SetLength(numRead);</span>
+<span class="lineNum">     594 </span>            : 
+<span class="lineNum">     595 </span><span class="lineNoCov">          0 :   rv = Seek(NS_SEEK_SET, offset);</span>
+<span class="lineNum">     596 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(NS_SUCCEEDED(rv));</span>
+<span class="lineNum">     597 </span>            : 
+<span class="lineNum">     598 </span><span class="lineNoCov">          0 :   StringInputStreamParams params;</span>
+<span class="lineNum">     599 </span><span class="lineNoCov">          0 :   params.data() = combined;</span>
+<span class="lineNum">     600 </span><span class="lineNoCov">          0 :   aParams = params;</span>
+<span class="lineNum">     601 </span><span class="lineNoCov">          0 : }</span>
+<a name="602"><span class="lineNum">     602 </span>            : </a>
+<span class="lineNum">     603 </span>            : Maybe&lt;uint64_t&gt;
+<span class="lineNum">     604 </span><span class="lineNoCov">          0 : nsStorageInputStream::ExpectedSerializedLength()</span>
+<span class="lineNum">     605 </span>            : {
+<span class="lineNum">     606 </span><span class="lineNoCov">          0 :   uint64_t remaining = 0;</span>
+<span class="lineNum">     607 </span><span class="lineNoCov">          0 :   DebugOnly&lt;nsresult&gt; rv = Available(&amp;remaining);</span>
+<span class="lineNum">     608 </span><span class="lineNoCov">          0 :   MOZ_ASSERT(NS_SUCCEEDED(rv));</span>
+<span class="lineNum">     609 </span><span class="lineNoCov">          0 :   return Some(remaining);</span>
+<span class="lineNum">     610 </span>            : }
+<a name="611"><span class="lineNum">     611 </span>            : </a>
+<span class="lineNum">     612 </span>            : bool
+<span class="lineNum">     613 </span><span class="lineNoCov">          0 : nsStorageInputStream::Deserialize(const InputStreamParams&amp; aParams,</span>
+<span class="lineNum">     614 </span>            :                                   const FileDescriptorArray&amp;)
+<span class="lineNum">     615 </span>            : {
+<span class="lineNum">     616 </span><span class="lineNoCov">          0 :   NS_NOTREACHED(&quot;We should never attempt to deserialize a storage input stream.&quot;);</span>
+<span class="lineNum">     617 </span><span class="lineNoCov">          0 :   return false;</span>
+<span class="lineNum">     618 </span>            : }
+<a name="619"><span class="lineNum">     619 </span>            : </a>
+<span class="lineNum">     620 </span>            : NS_IMETHODIMP
+<span class="lineNum">     621 </span><span class="lineNoCov">          0 : nsStorageInputStream::GetCloneable(bool* aCloneableOut)</span>
+<span class="lineNum">     622 </span>            : {
+<span class="lineNum">     623 </span><span class="lineNoCov">          0 :   *aCloneableOut = true;</span>
+<span class="lineNum">     624 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     625 </span>            : }
+<a name="626"><span class="lineNum">     626 </span>            : </a>
+<span class="lineNum">     627 </span>            : NS_IMETHODIMP
+<span class="lineNum">     628 </span><span class="lineNoCov">          0 : nsStorageInputStream::Clone(nsIInputStream** aCloneOut)</span>
+<span class="lineNum">     629 </span>            : {
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 :   return mStorageStream-&gt;NewInputStream(mLogicalCursor, aCloneOut);</span>
+<span class="lineNum">     631 </span>            : }
+<a name="632"><span class="lineNum">     632 </span>            : </a>
+<span class="lineNum">     633 </span>            : nsresult
+<span class="lineNum">     634 </span><span class="lineNoCov">          0 : NS_NewStorageStream(uint32_t aSegmentSize, uint32_t aMaxSize,</span>
+<span class="lineNum">     635 </span>            :                     nsIStorageStream** aResult)
+<span class="lineNum">     636 </span>            : {
+<span class="lineNum">     637 </span><span class="lineNoCov">          0 :   RefPtr&lt;nsStorageStream&gt; storageStream = new nsStorageStream();</span>
+<span class="lineNum">     638 </span><span class="lineNoCov">          0 :   nsresult rv = storageStream-&gt;Init(aSegmentSize, aMaxSize);</span>
+<span class="lineNum">     639 </span><span class="lineNoCov">          0 :   if (NS_FAILED(rv)) {</span>
+<span class="lineNum">     640 </span><span class="lineNoCov">          0 :     return rv;</span>
+<span class="lineNum">     641 </span>            :   }
+<span class="lineNum">     642 </span><span class="lineNoCov">          0 :   storageStream.forget(aResult);</span>
+<span class="lineNum">     643 </span><span class="lineNoCov">          0 :   return NS_OK;</span>
+<span class="lineNum">     644 </span>            : }
+<span class="lineNum">     645 </span>            : 
+<span class="lineNum">     646 </span>            : // Undefine LOG, so that other .cpp files (or their includes) won't complain
+<span class="lineNum">     647 </span>            : // about it already being defined, when we build in unified mode.
+<span class="lineNum">     648 </span>            : #undef LOG
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

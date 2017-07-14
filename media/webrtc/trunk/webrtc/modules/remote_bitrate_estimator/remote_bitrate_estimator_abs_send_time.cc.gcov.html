@@ -1,0 +1,506 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - media/webrtc/trunk/webrtc/modules/remote_bitrate_estimator/remote_bitrate_estimator_abs_send_time.cc</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../../../index.html">top level</a> - <a href="index.html">media/webrtc/trunk/webrtc/modules/remote_bitrate_estimator</a> - remote_bitrate_estimator_abs_send_time.cc<span style="font-size: 80%;"> (source / <a href="remote_bitrate_estimator_abs_send_time.cc.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">227</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">19</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  *  Copyright (c) 2013 The WebRTC project authors. All Rights Reserved.
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  *  Use of this source code is governed by a BSD-style license
+<span class="lineNum">       5 </span>            :  *  that can be found in the LICENSE file in the root of the source
+<span class="lineNum">       6 </span>            :  *  tree. An additional intellectual property rights grant can be found
+<span class="lineNum">       7 </span>            :  *  in the file PATENTS.  All contributing project authors may
+<span class="lineNum">       8 </span>            :  *  be found in the AUTHORS file in the root of the source tree.
+<span class="lineNum">       9 </span>            :  */
+<span class="lineNum">      10 </span>            : 
+<span class="lineNum">      11 </span>            : #include &quot;webrtc/modules/remote_bitrate_estimator/remote_bitrate_estimator_abs_send_time.h&quot;
+<span class="lineNum">      12 </span>            : 
+<span class="lineNum">      13 </span>            : #include &lt;math.h&gt;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #include &lt;algorithm&gt;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : #include &quot;webrtc/base/checks.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;webrtc/base/constructormagic.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;webrtc/base/logging.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;webrtc/base/thread_annotations.h&quot;
+<span class="lineNum">      21 </span>            : #include &quot;webrtc/modules/pacing/paced_sender.h&quot;
+<span class="lineNum">      22 </span>            : #include &quot;webrtc/modules/remote_bitrate_estimator/include/remote_bitrate_estimator.h&quot;
+<span class="lineNum">      23 </span>            : #include &quot;webrtc/system_wrappers/include/critical_section_wrapper.h&quot;
+<span class="lineNum">      24 </span>            : #include &quot;webrtc/system_wrappers/include/metrics.h&quot;
+<span class="lineNum">      25 </span>            : #include &quot;webrtc/typedefs.h&quot;
+<span class="lineNum">      26 </span>            : 
+<span class="lineNum">      27 </span>            : namespace webrtc {
+<span class="lineNum">      28 </span>            : 
+<span class="lineNum">      29 </span>            : enum {
+<span class="lineNum">      30 </span>            :   kTimestampGroupLengthMs = 5,
+<span class="lineNum">      31 </span>            :   kAbsSendTimeFraction = 18,
+<span class="lineNum">      32 </span>            :   kAbsSendTimeInterArrivalUpshift = 8,
+<span class="lineNum">      33 </span>            :   kInterArrivalShift = kAbsSendTimeFraction + kAbsSendTimeInterArrivalUpshift,
+<span class="lineNum">      34 </span>            :   kInitialProbingIntervalMs = 2000,
+<span class="lineNum">      35 </span>            :   kMinClusterSize = 4,
+<span class="lineNum">      36 </span>            :   kMaxProbePackets = 15,
+<span class="lineNum">      37 </span>            :   kExpectedNumberOfProbes = 3
+<span class="lineNum">      38 </span>            : };
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span>            : static const double kTimestampToMs = 1000.0 /
+<span class="lineNum">      41 </span>            :     static_cast&lt;double&gt;(1 &lt;&lt; kInterArrivalShift);
+<a name="42"><span class="lineNum">      42 </span>            : </a>
+<span class="lineNum">      43 </span>            : template&lt;typename K, typename V&gt;
+<span class="lineNum">      44 </span><span class="lineNoCov">          0 : std::vector&lt;K&gt; Keys(const std::map&lt;K, V&gt;&amp; map) {</span>
+<span class="lineNum">      45 </span><span class="lineNoCov">          0 :   std::vector&lt;K&gt; keys;</span>
+<span class="lineNum">      46 </span><span class="lineNoCov">          0 :   keys.reserve(map.size());</span>
+<span class="lineNum">      47 </span><span class="lineNoCov">          0 :   for (typename std::map&lt;K, V&gt;::const_iterator it = map.begin();</span>
+<span class="lineNum">      48 </span><span class="lineNoCov">          0 :       it != map.end(); ++it) {</span>
+<span class="lineNum">      49 </span><span class="lineNoCov">          0 :     keys.push_back(it-&gt;first);</span>
+<span class="lineNum">      50 </span>            :   }
+<span class="lineNum">      51 </span><span class="lineNoCov">          0 :   return keys;</span>
+<a name="52"><span class="lineNum">      52 </span>            : }</a>
+<span class="lineNum">      53 </span>            : 
+<span class="lineNum">      54 </span><span class="lineNoCov">          0 : uint32_t ConvertMsTo24Bits(int64_t time_ms) {</span>
+<span class="lineNum">      55 </span>            :   uint32_t time_24_bits =
+<span class="lineNum">      56 </span>            :       static_cast&lt;uint32_t&gt;(
+<span class="lineNum">      57 </span><span class="lineNoCov">          0 :           ((static_cast&lt;uint64_t&gt;(time_ms) &lt;&lt; kAbsSendTimeFraction) + 500) /</span>
+<span class="lineNum">      58 </span><span class="lineNoCov">          0 :           1000) &amp;</span>
+<span class="lineNum">      59 </span><span class="lineNoCov">          0 :       0x00FFFFFF;</span>
+<span class="lineNum">      60 </span><span class="lineNoCov">          0 :   return time_24_bits;</span>
+<a name="61"><span class="lineNum">      61 </span>            : }</a>
+<span class="lineNum">      62 </span>            : 
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 : bool RemoteBitrateEstimatorAbsSendTime::IsWithinClusterBounds(</span>
+<span class="lineNum">      64 </span>            :     int send_delta_ms,
+<span class="lineNum">      65 </span>            :     const Cluster&amp; cluster_aggregate) {
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 :     if (cluster_aggregate.count == 0)</span>
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :       return true;</span>
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :     float cluster_mean = cluster_aggregate.send_mean_ms /</span>
+<span class="lineNum">      69 </span><span class="lineNoCov">          0 :                          static_cast&lt;float&gt;(cluster_aggregate.count);</span>
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :     return fabs(static_cast&lt;float&gt;(send_delta_ms) - cluster_mean) &lt; 2.5f;</span>
+<a name="71"><span class="lineNum">      71 </span>            :   }</a>
+<span class="lineNum">      72 </span>            : 
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :   void RemoteBitrateEstimatorAbsSendTime::AddCluster(</span>
+<span class="lineNum">      74 </span>            :       std::list&lt;Cluster&gt;* clusters,
+<span class="lineNum">      75 </span>            :       Cluster* cluster) {
+<span class="lineNum">      76 </span><span class="lineNoCov">          0 :     cluster-&gt;send_mean_ms /= static_cast&lt;float&gt;(cluster-&gt;count);</span>
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :     cluster-&gt;recv_mean_ms /= static_cast&lt;float&gt;(cluster-&gt;count);</span>
+<span class="lineNum">      78 </span><span class="lineNoCov">          0 :     cluster-&gt;mean_size /= cluster-&gt;count;</span>
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :     clusters-&gt;push_back(*cluster);</span>
+<a name="80"><span class="lineNum">      80 </span><span class="lineNoCov">          0 :   }</span></a>
+<span class="lineNum">      81 </span>            : 
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 :   RemoteBitrateEstimatorAbsSendTime::RemoteBitrateEstimatorAbsSendTime(</span>
+<span class="lineNum">      83 </span>            :       RemoteBitrateObserver* observer,
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :       Clock* clock)</span>
+<span class="lineNum">      85 </span>            :       : clock_(clock),
+<span class="lineNum">      86 </span>            :         observer_(observer),
+<span class="lineNum">      87 </span>            :         inter_arrival_(),
+<span class="lineNum">      88 </span>            :         estimator_(),
+<span class="lineNum">      89 </span>            :         detector_(),
+<span class="lineNum">      90 </span>            :         incoming_bitrate_(kBitrateWindowMs, 8000),
+<span class="lineNum">      91 </span>            :         incoming_bitrate_initialized_(false),
+<span class="lineNum">      92 </span>            :         total_probes_received_(0),
+<span class="lineNum">      93 </span>            :         first_packet_time_ms_(-1),
+<span class="lineNum">      94 </span>            :         last_update_ms_(-1),
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :         uma_recorded_(false) {</span>
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :     RTC_DCHECK(observer_);</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :     LOG(LS_INFO) &lt;&lt; &quot;RemoteBitrateEstimatorAbsSendTime: Instantiating.&quot;;</span>
+<span class="lineNum">      98 </span><span class="lineNoCov">          0 :     network_thread_.DetachFromThread();</span>
+<a name="99"><span class="lineNum">      99 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span><span class="lineNoCov">          0 : void RemoteBitrateEstimatorAbsSendTime::ComputeClusters(</span>
+<span class="lineNum">     102 </span>            :     std::list&lt;Cluster&gt;* clusters) const {
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :   Cluster current;</span>
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :   int64_t prev_send_time = -1;</span>
+<span class="lineNum">     105 </span><span class="lineNoCov">          0 :   int64_t prev_recv_time = -1;</span>
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :   for (std::list&lt;Probe&gt;::const_iterator it = probes_.begin();</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :        it != probes_.end();</span>
+<span class="lineNum">     108 </span>            :        ++it) {
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :     if (prev_send_time &gt;= 0) {</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :       int send_delta_ms = it-&gt;send_time_ms - prev_send_time;</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :       int recv_delta_ms = it-&gt;recv_time_ms - prev_recv_time;</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :       if (send_delta_ms &gt;= 1 &amp;&amp; recv_delta_ms &gt;= 1) {</span>
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :         ++current.num_above_min_delta;</span>
+<span class="lineNum">     114 </span>            :       }
+<span class="lineNum">     115 </span><span class="lineNoCov">          0 :       if (!IsWithinClusterBounds(send_delta_ms, current)) {</span>
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :         if (current.count &gt;= kMinClusterSize)</span>
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :           AddCluster(clusters, &amp;current);</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :         current = Cluster();</span>
+<span class="lineNum">     119 </span>            :       }
+<span class="lineNum">     120 </span><span class="lineNoCov">          0 :       current.send_mean_ms += send_delta_ms;</span>
+<span class="lineNum">     121 </span><span class="lineNoCov">          0 :       current.recv_mean_ms += recv_delta_ms;</span>
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :       current.mean_size += it-&gt;payload_size;</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :       ++current.count;</span>
+<span class="lineNum">     124 </span>            :     }
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :     prev_send_time = it-&gt;send_time_ms;</span>
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :     prev_recv_time = it-&gt;recv_time_ms;</span>
+<span class="lineNum">     127 </span>            :   }
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :   if (current.count &gt;= kMinClusterSize)</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :     AddCluster(clusters, &amp;current);</span>
+<span class="lineNum">     130 </span><span class="lineNoCov">          0 : }</span>
+<a name="131"><span class="lineNum">     131 </span>            : </a>
+<span class="lineNum">     132 </span>            : std::list&lt;Cluster&gt;::const_iterator
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 : RemoteBitrateEstimatorAbsSendTime::FindBestProbe(</span>
+<span class="lineNum">     134 </span>            :     const std::list&lt;Cluster&gt;&amp; clusters) const {
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :   int highest_probe_bitrate_bps = 0;</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :   std::list&lt;Cluster&gt;::const_iterator best_it = clusters.end();</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :   for (std::list&lt;Cluster&gt;::const_iterator it = clusters.begin();</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :        it != clusters.end();</span>
+<span class="lineNum">     139 </span>            :        ++it) {
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     if (it-&gt;send_mean_ms == 0 || it-&gt;recv_mean_ms == 0)</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :       continue;</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :     if (it-&gt;num_above_min_delta &gt; it-&gt;count / 2 &amp;&amp;</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :         (it-&gt;recv_mean_ms - it-&gt;send_mean_ms &lt;= 2.0f &amp;&amp;</span>
+<span class="lineNum">     144 </span><span class="lineNoCov">          0 :          it-&gt;send_mean_ms - it-&gt;recv_mean_ms &lt;= 5.0f)) {</span>
+<span class="lineNum">     145 </span>            :       int probe_bitrate_bps =
+<span class="lineNum">     146 </span><span class="lineNoCov">          0 :           std::min(it-&gt;GetSendBitrateBps(), it-&gt;GetRecvBitrateBps());</span>
+<span class="lineNum">     147 </span><span class="lineNoCov">          0 :       if (probe_bitrate_bps &gt; highest_probe_bitrate_bps) {</span>
+<span class="lineNum">     148 </span><span class="lineNoCov">          0 :         highest_probe_bitrate_bps = probe_bitrate_bps;</span>
+<span class="lineNum">     149 </span><span class="lineNoCov">          0 :         best_it = it;</span>
+<span class="lineNum">     150 </span>            :       }
+<span class="lineNum">     151 </span>            :     } else {
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 :       int send_bitrate_bps = it-&gt;mean_size * 8 * 1000 / it-&gt;send_mean_ms;</span>
+<span class="lineNum">     153 </span><span class="lineNoCov">          0 :       int recv_bitrate_bps = it-&gt;mean_size * 8 * 1000 / it-&gt;recv_mean_ms;</span>
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :       LOG(LS_INFO) &lt;&lt; &quot;Probe failed, sent at &quot; &lt;&lt; send_bitrate_bps</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; bps, received at &quot; &lt;&lt; recv_bitrate_bps</span>
+<span class="lineNum">     156 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; bps. Mean send delta: &quot; &lt;&lt; it-&gt;send_mean_ms</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; ms, mean recv delta: &quot; &lt;&lt; it-&gt;recv_mean_ms</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; ms, num probes: &quot; &lt;&lt; it-&gt;count;</span>
+<span class="lineNum">     159 </span><span class="lineNoCov">          0 :       break;</span>
+<span class="lineNum">     160 </span>            :     }
+<span class="lineNum">     161 </span>            :   }
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   return best_it;</span>
+<span class="lineNum">     163 </span>            : }
+<a name="164"><span class="lineNum">     164 </span>            : </a>
+<span class="lineNum">     165 </span>            : RemoteBitrateEstimatorAbsSendTime::ProbeResult
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 : RemoteBitrateEstimatorAbsSendTime::ProcessClusters(int64_t now_ms) {</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :   std::list&lt;Cluster&gt; clusters;</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :   ComputeClusters(&amp;clusters);</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :   if (clusters.empty()) {</span>
+<span class="lineNum">     170 </span>            :     // If we reach the max number of probe packets and still have no clusters,
+<span class="lineNum">     171 </span>            :     // we will remove the oldest one.
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :     if (probes_.size() &gt;= kMaxProbePackets)</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :       probes_.pop_front();</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :     return ProbeResult::kNoUpdate;</span>
+<span class="lineNum">     175 </span>            :   }
+<span class="lineNum">     176 </span>            : 
+<span class="lineNum">     177 </span><span class="lineNoCov">          0 :   std::list&lt;Cluster&gt;::const_iterator best_it = FindBestProbe(clusters);</span>
+<span class="lineNum">     178 </span><span class="lineNoCov">          0 :   if (best_it != clusters.end()) {</span>
+<span class="lineNum">     179 </span>            :     int probe_bitrate_bps =
+<span class="lineNum">     180 </span><span class="lineNoCov">          0 :         std::min(best_it-&gt;GetSendBitrateBps(), best_it-&gt;GetRecvBitrateBps());</span>
+<span class="lineNum">     181 </span>            :     // Make sure that a probe sent on a lower bitrate than our estimate can't
+<span class="lineNum">     182 </span>            :     // reduce the estimate.
+<span class="lineNum">     183 </span><span class="lineNoCov">          0 :     if (IsBitrateImproving(probe_bitrate_bps)) {</span>
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 :       LOG(LS_INFO) &lt;&lt; &quot;Probe successful, sent at &quot;</span>
+<span class="lineNum">     185 </span><span class="lineNoCov">          0 :                    &lt;&lt; best_it-&gt;GetSendBitrateBps() &lt;&lt; &quot; bps, received at &quot;</span>
+<span class="lineNum">     186 </span>            :                    &lt;&lt; best_it-&gt;GetRecvBitrateBps()
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; bps. Mean send delta: &quot; &lt;&lt; best_it-&gt;send_mean_ms</span>
+<span class="lineNum">     188 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; ms, mean recv delta: &quot; &lt;&lt; best_it-&gt;recv_mean_ms</span>
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :                    &lt;&lt; &quot; ms, num probes: &quot; &lt;&lt; best_it-&gt;count;</span>
+<span class="lineNum">     190 </span><span class="lineNoCov">          0 :       remote_rate_.SetEstimate(probe_bitrate_bps, now_ms);</span>
+<span class="lineNum">     191 </span><span class="lineNoCov">          0 :       return ProbeResult::kBitrateUpdated;</span>
+<span class="lineNum">     192 </span>            :     }
+<span class="lineNum">     193 </span>            :   }
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span>            :   // Not probing and received non-probe packet, or finished with current set
+<span class="lineNum">     196 </span>            :   // of probes.
+<span class="lineNum">     197 </span><span class="lineNoCov">          0 :   if (clusters.size() &gt;= kExpectedNumberOfProbes)</span>
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :     probes_.clear();</span>
+<span class="lineNum">     199 </span><span class="lineNoCov">          0 :   return ProbeResult::kNoUpdate;</span>
+<a name="200"><span class="lineNum">     200 </span>            : }</a>
+<span class="lineNum">     201 </span>            : 
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 : bool RemoteBitrateEstimatorAbsSendTime::IsBitrateImproving(</span>
+<span class="lineNum">     203 </span>            :     int new_bitrate_bps) const {
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :   bool initial_probe = !remote_rate_.ValidEstimate() &amp;&amp; new_bitrate_bps &gt; 0;</span>
+<span class="lineNum">     205 </span>            :   bool bitrate_above_estimate =
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :       remote_rate_.ValidEstimate() &amp;&amp;</span>
+<span class="lineNum">     207 </span><span class="lineNoCov">          0 :       new_bitrate_bps &gt; static_cast&lt;int&gt;(remote_rate_.LatestEstimate());</span>
+<span class="lineNum">     208 </span><span class="lineNoCov">          0 :   return initial_probe || bitrate_above_estimate;</span>
+<a name="209"><span class="lineNum">     209 </span>            : }</a>
+<span class="lineNum">     210 </span>            : 
+<span class="lineNum">     211 </span><span class="lineNoCov">          0 : void RemoteBitrateEstimatorAbsSendTime::IncomingPacketFeedbackVector(</span>
+<span class="lineNum">     212 </span>            :     const std::vector&lt;PacketInfo&gt;&amp; packet_feedback_vector) {
+<span class="lineNum">     213 </span><span class="lineNoCov">          0 :   RTC_DCHECK(network_thread_.CalledOnValidThread());</span>
+<span class="lineNum">     214 </span><span class="lineNoCov">          0 :   for (const auto&amp; packet_info : packet_feedback_vector) {</span>
+<span class="lineNum">     215 </span><span class="lineNoCov">          0 :     IncomingPacketInfo(packet_info.arrival_time_ms,</span>
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :                        ConvertMsTo24Bits(packet_info.send_time_ms),</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :                        packet_info.payload_size, 0);</span>
+<span class="lineNum">     218 </span>            :   }
+<a name="219"><span class="lineNum">     219 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     220 </span>            : 
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 : void RemoteBitrateEstimatorAbsSendTime::IncomingPacket(</span>
+<span class="lineNum">     222 </span>            :     int64_t arrival_time_ms,
+<span class="lineNum">     223 </span>            :     size_t payload_size,
+<span class="lineNum">     224 </span>            :     const RTPHeader&amp; header) {
+<span class="lineNum">     225 </span><span class="lineNoCov">          0 :   RTC_DCHECK(network_thread_.CalledOnValidThread());</span>
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :   if (!header.extension.hasAbsoluteSendTime) {</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :     LOG(LS_WARNING) &lt;&lt; &quot;RemoteBitrateEstimatorAbsSendTimeImpl: Incoming packet &quot;</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :                        &quot;is missing absolute send time extension!&quot;;</span>
+<span class="lineNum">     229 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     230 </span>            :   }
+<span class="lineNum">     231 </span><span class="lineNoCov">          0 :   IncomingPacketInfo(arrival_time_ms, header.extension.absoluteSendTime,</span>
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :                      payload_size, header.ssrc);</span>
+<a name="233"><span class="lineNum">     233 </span>            : }</a>
+<span class="lineNum">     234 </span>            : 
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 : void RemoteBitrateEstimatorAbsSendTime::IncomingPacketInfo(</span>
+<span class="lineNum">     236 </span>            :     int64_t arrival_time_ms,
+<span class="lineNum">     237 </span>            :     uint32_t send_time_24bits,
+<span class="lineNum">     238 </span>            :     size_t payload_size,
+<span class="lineNum">     239 </span>            :     uint32_t ssrc) {
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :   RTC_CHECK(send_time_24bits &lt; (1ul &lt;&lt; 24));</span>
+<span class="lineNum">     241 </span><span class="lineNoCov">          0 :   if (!uma_recorded_) {</span>
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :     RTC_HISTOGRAM_ENUMERATION(kBweTypeHistogram, BweNames::kReceiverAbsSendTime,</span>
+<span class="lineNum">     243 </span>            :                               BweNames::kBweNamesMax);
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :     uma_recorded_ = true;</span>
+<span class="lineNum">     245 </span>            :   }
+<span class="lineNum">     246 </span>            :   // Shift up send time to use the full 32 bits that inter_arrival works with,
+<span class="lineNum">     247 </span>            :   // so wrapping works properly.
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :   uint32_t timestamp = send_time_24bits &lt;&lt; kAbsSendTimeInterArrivalUpshift;</span>
+<span class="lineNum">     249 </span><span class="lineNoCov">          0 :   int64_t send_time_ms = static_cast&lt;int64_t&gt;(timestamp) * kTimestampToMs;</span>
+<span class="lineNum">     250 </span>            : 
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :   int64_t now_ms = clock_-&gt;TimeInMilliseconds();</span>
+<span class="lineNum">     252 </span>            :   // TODO(holmer): SSRCs are only needed for REMB, should be broken out from
+<span class="lineNum">     253 </span>            :   // here.
+<span class="lineNum">     254 </span>            : 
+<span class="lineNum">     255 </span>            :   // Check if incoming bitrate estimate is valid, and if it needs to be reset.
+<span class="lineNum">     256 </span>            :   rtc::Optional&lt;uint32_t&gt; incoming_bitrate =
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :       incoming_bitrate_.Rate(arrival_time_ms);</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :   if (incoming_bitrate) {</span>
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :     incoming_bitrate_initialized_ = true;</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :   } else if (incoming_bitrate_initialized_) {</span>
+<span class="lineNum">     261 </span>            :     // Incoming bitrate had a previous valid value, but now not enough data
+<span class="lineNum">     262 </span>            :     // point are left within the current window. Reset incoming bitrate
+<span class="lineNum">     263 </span>            :     // estimator so that the window size will only contain new data points.
+<span class="lineNum">     264 </span><span class="lineNoCov">          0 :     incoming_bitrate_.Reset();</span>
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :     incoming_bitrate_initialized_ = false;</span>
+<span class="lineNum">     266 </span>            :   }
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :   incoming_bitrate_.Update(payload_size, arrival_time_ms);</span>
+<span class="lineNum">     268 </span>            : 
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :   if (first_packet_time_ms_ == -1)</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :     first_packet_time_ms_ = now_ms;</span>
+<span class="lineNum">     271 </span>            : 
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :   uint32_t ts_delta = 0;</span>
+<span class="lineNum">     273 </span><span class="lineNoCov">          0 :   int64_t t_delta = 0;</span>
+<span class="lineNum">     274 </span><span class="lineNoCov">          0 :   int size_delta = 0;</span>
+<span class="lineNum">     275 </span><span class="lineNoCov">          0 :   bool update_estimate = false;</span>
+<span class="lineNum">     276 </span><span class="lineNoCov">          0 :   uint32_t target_bitrate_bps = 0;</span>
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 :   std::vector&lt;uint32_t&gt; ssrcs;</span>
+<span class="lineNum">     278 </span>            :   {
+<span class="lineNum">     279 </span><span class="lineNoCov">          0 :     rtc::CritScope lock(&amp;crit_);</span>
+<span class="lineNum">     280 </span>            : 
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :     TimeoutStreams(now_ms);</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :     RTC_DCHECK(inter_arrival_.get());</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :     RTC_DCHECK(estimator_.get());</span>
+<span class="lineNum">     284 </span><span class="lineNoCov">          0 :     ssrcs_[ssrc] = now_ms;</span>
+<span class="lineNum">     285 </span>            : 
+<span class="lineNum">     286 </span>            :     // For now only try to detect probes while we don't have a valid estimate.
+<span class="lineNum">     287 </span>            :     // We currently assume that only packets larger than 200 bytes are paced by
+<span class="lineNum">     288 </span>            :     // the sender.
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :     if (payload_size &gt; PacedSender::kMinProbePacketSize &amp;&amp;</span>
+<span class="lineNum">     290 </span><span class="lineNoCov">          0 :         (!remote_rate_.ValidEstimate() ||</span>
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :          now_ms - first_packet_time_ms_ &lt; kInitialProbingIntervalMs)) {</span>
+<span class="lineNum">     292 </span>            :       // TODO(holmer): Use a map instead to get correct order?
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :       if (total_probes_received_ &lt; kMaxProbePackets) {</span>
+<span class="lineNum">     294 </span><span class="lineNoCov">          0 :         int send_delta_ms = -1;</span>
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :         int recv_delta_ms = -1;</span>
+<span class="lineNum">     296 </span><span class="lineNoCov">          0 :         if (!probes_.empty()) {</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :           send_delta_ms = send_time_ms - probes_.back().send_time_ms;</span>
+<span class="lineNum">     298 </span><span class="lineNoCov">          0 :           recv_delta_ms = arrival_time_ms - probes_.back().recv_time_ms;</span>
+<span class="lineNum">     299 </span>            :         }
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 :         LOG(LS_INFO) &lt;&lt; &quot;Probe packet received: send time=&quot; &lt;&lt; send_time_ms</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :                      &lt;&lt; &quot; ms, recv time=&quot; &lt;&lt; arrival_time_ms</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :                      &lt;&lt; &quot; ms, send delta=&quot; &lt;&lt; send_delta_ms</span>
+<span class="lineNum">     303 </span><span class="lineNoCov">          0 :                      &lt;&lt; &quot; ms, recv delta=&quot; &lt;&lt; recv_delta_ms &lt;&lt; &quot; ms.&quot;;</span>
+<span class="lineNum">     304 </span>            :       }
+<span class="lineNum">     305 </span><span class="lineNoCov">          0 :       probes_.push_back(Probe(send_time_ms, arrival_time_ms, payload_size));</span>
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :       ++total_probes_received_;</span>
+<span class="lineNum">     307 </span>            :       // Make sure that a probe which updated the bitrate immediately has an
+<span class="lineNum">     308 </span>            :       // effect by calling the OnReceiveBitrateChanged callback.
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :       if (ProcessClusters(now_ms) == ProbeResult::kBitrateUpdated)</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 :         update_estimate = true;</span>
+<span class="lineNum">     311 </span>            :     }
+<span class="lineNum">     312 </span><span class="lineNoCov">          0 :     if (inter_arrival_-&gt;ComputeDeltas(timestamp, arrival_time_ms, now_ms,</span>
+<span class="lineNum">     313 </span>            :                                       payload_size, &amp;ts_delta, &amp;t_delta,
+<span class="lineNum">     314 </span>            :                                       &amp;size_delta)) {
+<span class="lineNum">     315 </span><span class="lineNoCov">          0 :       double ts_delta_ms = (1000.0 * ts_delta) / (1 &lt;&lt; kInterArrivalShift);</span>
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 :       estimator_-&gt;Update(t_delta, ts_delta_ms, size_delta, detector_.State(),</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :                          arrival_time_ms);</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :       detector_.Detect(estimator_-&gt;offset(), ts_delta_ms,</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :                        estimator_-&gt;num_of_deltas(), arrival_time_ms);</span>
+<span class="lineNum">     320 </span>            :     }
+<span class="lineNum">     321 </span>            : 
+<span class="lineNum">     322 </span><span class="lineNoCov">          0 :     if (!update_estimate) {</span>
+<span class="lineNum">     323 </span>            :       // Check if it's time for a periodic update or if we should update because
+<span class="lineNum">     324 </span>            :       // of an over-use.
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :       if (last_update_ms_ == -1 ||</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :           now_ms - last_update_ms_ &gt; remote_rate_.GetFeedbackInterval()) {</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :         update_estimate = true;</span>
+<span class="lineNum">     328 </span><span class="lineNoCov">          0 :       } else if (detector_.State() == kBwOverusing) {</span>
+<span class="lineNum">     329 </span>            :         rtc::Optional&lt;uint32_t&gt; incoming_rate =
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :             incoming_bitrate_.Rate(arrival_time_ms);</span>
+<span class="lineNum">     331 </span><span class="lineNoCov">          0 :         if (incoming_rate &amp;&amp;</span>
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :             remote_rate_.TimeToReduceFurther(now_ms, *incoming_rate)) {</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :           update_estimate = true;</span>
+<span class="lineNum">     334 </span>            :         }
+<span class="lineNum">     335 </span>            :       }
+<span class="lineNum">     336 </span>            :     }
+<span class="lineNum">     337 </span>            : 
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :     if (update_estimate) {</span>
+<span class="lineNum">     339 </span>            :       // The first overuse should immediately trigger a new estimate.
+<span class="lineNum">     340 </span>            :       // We also have to update the estimate immediately if we are overusing
+<span class="lineNum">     341 </span>            :       // and the target bitrate is too high compared to what we are receiving.
+<span class="lineNum">     342 </span>            :       const RateControlInput input(detector_.State(),
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :                                    incoming_bitrate_.Rate(arrival_time_ms),</span>
+<span class="lineNum">     344 </span><span class="lineNoCov">          0 :                                    estimator_-&gt;var_noise());</span>
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :       remote_rate_.Update(&amp;input, now_ms);</span>
+<span class="lineNum">     346 </span><span class="lineNoCov">          0 :       target_bitrate_bps = remote_rate_.UpdateBandwidthEstimate(now_ms);</span>
+<span class="lineNum">     347 </span><span class="lineNoCov">          0 :       update_estimate = remote_rate_.ValidEstimate();</span>
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :       ssrcs = Keys(ssrcs_);</span>
+<span class="lineNum">     349 </span>            :     }
+<span class="lineNum">     350 </span>            :   }
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :   if (update_estimate) {</span>
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :     last_update_ms_ = now_ms;</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     observer_-&gt;OnReceiveBitrateChanged(ssrcs, target_bitrate_bps);</span>
+<span class="lineNum">     354 </span>            :   }
+<a name="355"><span class="lineNum">     355 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     356 </span>            : 
+<a name="357"><span class="lineNum">     357 </span><span class="lineNoCov">          0 : void RemoteBitrateEstimatorAbsSendTime::Process() {}</span></a>
+<span class="lineNum">     358 </span>            : 
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 : int64_t RemoteBitrateEstimatorAbsSendTime::TimeUntilNextProcess() {</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :   const int64_t kDisabledModuleTime = 1000;</span>
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :   return kDisabledModuleTime;</span>
+<a name="362"><span class="lineNum">     362 </span>            : }</a>
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 : void RemoteBitrateEstimatorAbsSendTime::TimeoutStreams(int64_t now_ms) {</span>
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :   for (Ssrcs::iterator it = ssrcs_.begin(); it != ssrcs_.end();) {</span>
+<span class="lineNum">     366 </span><span class="lineNoCov">          0 :     if ((now_ms - it-&gt;second) &gt; kStreamTimeOutMs) {</span>
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :       ssrcs_.erase(it++);</span>
+<span class="lineNum">     368 </span>            :     } else {
+<span class="lineNum">     369 </span><span class="lineNoCov">          0 :       ++it;</span>
+<span class="lineNum">     370 </span>            :     }
+<span class="lineNum">     371 </span>            :   }
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 :   if (ssrcs_.empty()) {</span>
+<span class="lineNum">     373 </span>            :     // We can't update the estimate if we don't have any active streams.
+<span class="lineNum">     374 </span><span class="lineNoCov">          0 :     inter_arrival_.reset(</span>
+<span class="lineNum">     375 </span>            :         new InterArrival((kTimestampGroupLengthMs &lt;&lt; kInterArrivalShift) / 1000,
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :                          kTimestampToMs, true));</span>
+<span class="lineNum">     377 </span><span class="lineNoCov">          0 :     estimator_.reset(new OveruseEstimator(OverUseDetectorOptions()));</span>
+<span class="lineNum">     378 </span>            :     // We deliberately don't reset the first_packet_time_ms_ here for now since
+<span class="lineNum">     379 </span>            :     // we only probe for bandwidth in the beginning of a call right now.
+<span class="lineNum">     380 </span>            :   }
+<a name="381"><span class="lineNum">     381 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     382 </span>            : 
+<span class="lineNum">     383 </span><span class="lineNoCov">          0 : void RemoteBitrateEstimatorAbsSendTime::OnRttUpdate(int64_t avg_rtt_ms,</span>
+<span class="lineNum">     384 </span>            :                                                     int64_t max_rtt_ms) {
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :   rtc::CritScope lock(&amp;crit_);</span>
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :   remote_rate_.SetRtt(avg_rtt_ms);</span>
+<a name="387"><span class="lineNum">     387 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     388 </span>            : 
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 : void RemoteBitrateEstimatorAbsSendTime::RemoveStream(uint32_t ssrc) {</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :   rtc::CritScope lock(&amp;crit_);</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :   ssrcs_.erase(ssrc);</span>
+<a name="392"><span class="lineNum">     392 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     393 </span>            : 
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 : bool RemoteBitrateEstimatorAbsSendTime::LatestEstimate(</span>
+<span class="lineNum">     395 </span>            :     std::vector&lt;uint32_t&gt;* ssrcs,
+<span class="lineNum">     396 </span>            :     uint32_t* bitrate_bps) const {
+<span class="lineNum">     397 </span>            :   // Currently accessed from both the process thread (see
+<span class="lineNum">     398 </span>            :   // ModuleRtpRtcpImpl::Process()) and the configuration thread (see
+<span class="lineNum">     399 </span>            :   // Call::GetStats()). Should in the future only be accessed from a single
+<span class="lineNum">     400 </span>            :   // thread.
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :   RTC_DCHECK(ssrcs);</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :   RTC_DCHECK(bitrate_bps);</span>
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :   rtc::CritScope lock(&amp;crit_);</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :   if (!remote_rate_.ValidEstimate()) {</span>
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :     return false;</span>
+<span class="lineNum">     406 </span>            :   }
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :   *ssrcs = Keys(ssrcs_);</span>
+<span class="lineNum">     408 </span><span class="lineNoCov">          0 :   if (ssrcs_.empty()) {</span>
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :     *bitrate_bps = 0;</span>
+<span class="lineNum">     410 </span>            :   } else {
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :     *bitrate_bps = remote_rate_.LatestEstimate();</span>
+<span class="lineNum">     412 </span>            :   }
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :   return true;</span>
+<a name="414"><span class="lineNum">     414 </span>            : }</a>
+<span class="lineNum">     415 </span>            : 
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 : void RemoteBitrateEstimatorAbsSendTime::SetMinBitrate(int min_bitrate_bps) {</span>
+<span class="lineNum">     417 </span>            :   // Called from both the configuration thread and the network thread. Shouldn't
+<span class="lineNum">     418 </span>            :   // be called from the network thread in the future.
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :   rtc::CritScope lock(&amp;crit_);</span>
+<span class="lineNum">     420 </span><span class="lineNoCov">          0 :   remote_rate_.SetMinBitrate(min_bitrate_bps);</span>
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     422 </span>            : }  // namespace webrtc
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

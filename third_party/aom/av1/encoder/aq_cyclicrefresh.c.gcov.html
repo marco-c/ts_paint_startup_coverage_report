@@ -1,0 +1,650 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - third_party/aom/av1/encoder/aq_cyclicrefresh.c</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">third_party/aom/av1/encoder</a> - aq_cyclicrefresh.c<span style="font-size: 80%;"> (source / <a href="aq_cyclicrefresh.c.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">278</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">16</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /*</a>
+<span class="lineNum">       2 </span>            :  * Copyright (c) 2016, Alliance for Open Media. All rights reserved
+<span class="lineNum">       3 </span>            :  *
+<span class="lineNum">       4 </span>            :  * This source code is subject to the terms of the BSD 2 Clause License and
+<span class="lineNum">       5 </span>            :  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
+<span class="lineNum">       6 </span>            :  * was not distributed with this source code in the LICENSE file, you can
+<span class="lineNum">       7 </span>            :  * obtain it at www.aomedia.org/license/software. If the Alliance for Open
+<span class="lineNum">       8 </span>            :  * Media Patent License 1.0 was not distributed with this source code in the
+<span class="lineNum">       9 </span>            :  * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
+<span class="lineNum">      10 </span>            :  */
+<span class="lineNum">      11 </span>            : 
+<span class="lineNum">      12 </span>            : #include &lt;limits.h&gt;
+<span class="lineNum">      13 </span>            : #include &lt;math.h&gt;
+<span class="lineNum">      14 </span>            : 
+<span class="lineNum">      15 </span>            : #include &quot;av1/common/seg_common.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;av1/encoder/aq_cyclicrefresh.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;av1/encoder/ratectrl.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;av1/encoder/segmentation.h&quot;
+<span class="lineNum">      19 </span>            : #include &quot;aom_dsp/aom_dsp_common.h&quot;
+<span class="lineNum">      20 </span>            : #include &quot;aom_ports/system_state.h&quot;
+<span class="lineNum">      21 </span>            : 
+<span class="lineNum">      22 </span>            : struct CYCLIC_REFRESH {
+<span class="lineNum">      23 </span>            :   // Percentage of blocks per frame that are targeted as candidates
+<span class="lineNum">      24 </span>            :   // for cyclic refresh.
+<span class="lineNum">      25 </span>            :   int percent_refresh;
+<span class="lineNum">      26 </span>            :   // Maximum q-delta as percentage of base q.
+<span class="lineNum">      27 </span>            :   int max_qdelta_perc;
+<span class="lineNum">      28 </span>            :   // Superblock starting index for cycling through the frame.
+<span class="lineNum">      29 </span>            :   int sb_index;
+<span class="lineNum">      30 </span>            :   // Controls how long block will need to wait to be refreshed again, in
+<span class="lineNum">      31 </span>            :   // excess of the cycle time, i.e., in the case of all zero motion, block
+<span class="lineNum">      32 </span>            :   // will be refreshed every (100/percent_refresh + time_for_refresh) frames.
+<span class="lineNum">      33 </span>            :   int time_for_refresh;
+<span class="lineNum">      34 </span>            :   // Target number of (8x8) blocks that are set for delta-q.
+<span class="lineNum">      35 </span>            :   int target_num_seg_blocks;
+<span class="lineNum">      36 </span>            :   // Actual number of (8x8) blocks that were applied delta-q.
+<span class="lineNum">      37 </span>            :   int actual_num_seg1_blocks;
+<span class="lineNum">      38 </span>            :   int actual_num_seg2_blocks;
+<span class="lineNum">      39 </span>            :   // RD mult. parameters for segment 1.
+<span class="lineNum">      40 </span>            :   int rdmult;
+<span class="lineNum">      41 </span>            :   // Cyclic refresh map.
+<span class="lineNum">      42 </span>            :   signed char *map;
+<span class="lineNum">      43 </span>            :   // Map of the last q a block was coded at.
+<span class="lineNum">      44 </span>            :   uint8_t *last_coded_q_map;
+<span class="lineNum">      45 </span>            :   // Thresholds applied to the projected rate/distortion of the coding block,
+<span class="lineNum">      46 </span>            :   // when deciding whether block should be refreshed.
+<span class="lineNum">      47 </span>            :   int64_t thresh_rate_sb;
+<span class="lineNum">      48 </span>            :   int64_t thresh_dist_sb;
+<span class="lineNum">      49 </span>            :   // Threshold applied to the motion vector (in units of 1/8 pel) of the
+<span class="lineNum">      50 </span>            :   // coding block, when deciding whether block should be refreshed.
+<span class="lineNum">      51 </span>            :   int16_t motion_thresh;
+<span class="lineNum">      52 </span>            :   // Rate target ratio to set q delta.
+<span class="lineNum">      53 </span>            :   double rate_ratio_qdelta;
+<span class="lineNum">      54 </span>            :   // Boost factor for rate target ratio, for segment CR_SEGMENT_ID_BOOST2.
+<span class="lineNum">      55 </span>            :   int rate_boost_fac;
+<span class="lineNum">      56 </span>            :   double low_content_avg;
+<span class="lineNum">      57 </span>            :   int qindex_delta[3];
+<a name="58"><span class="lineNum">      58 </span>            : };</a>
+<span class="lineNum">      59 </span>            : 
+<span class="lineNum">      60 </span><span class="lineNoCov">          0 : CYCLIC_REFRESH *av1_cyclic_refresh_alloc(int mi_rows, int mi_cols) {</span>
+<span class="lineNum">      61 </span>            :   size_t last_coded_q_map_size;
+<span class="lineNum">      62 </span><span class="lineNoCov">          0 :   CYCLIC_REFRESH *const cr = aom_calloc(1, sizeof(*cr));</span>
+<span class="lineNum">      63 </span><span class="lineNoCov">          0 :   if (cr == NULL) return NULL;</span>
+<span class="lineNum">      64 </span>            : 
+<span class="lineNum">      65 </span><span class="lineNoCov">          0 :   cr-&gt;map = aom_calloc(mi_rows * mi_cols, sizeof(*cr-&gt;map));</span>
+<span class="lineNum">      66 </span><span class="lineNoCov">          0 :   if (cr-&gt;map == NULL) {</span>
+<span class="lineNum">      67 </span><span class="lineNoCov">          0 :     av1_cyclic_refresh_free(cr);</span>
+<span class="lineNum">      68 </span><span class="lineNoCov">          0 :     return NULL;</span>
+<span class="lineNum">      69 </span>            :   }
+<span class="lineNum">      70 </span><span class="lineNoCov">          0 :   last_coded_q_map_size = mi_rows * mi_cols * sizeof(*cr-&gt;last_coded_q_map);</span>
+<span class="lineNum">      71 </span><span class="lineNoCov">          0 :   cr-&gt;last_coded_q_map = aom_malloc(last_coded_q_map_size);</span>
+<span class="lineNum">      72 </span><span class="lineNoCov">          0 :   if (cr-&gt;last_coded_q_map == NULL) {</span>
+<span class="lineNum">      73 </span><span class="lineNoCov">          0 :     av1_cyclic_refresh_free(cr);</span>
+<span class="lineNum">      74 </span><span class="lineNoCov">          0 :     return NULL;</span>
+<span class="lineNum">      75 </span>            :   }
+<span class="lineNum">      76 </span>            :   assert(MAXQ &lt;= 255);
+<span class="lineNum">      77 </span><span class="lineNoCov">          0 :   memset(cr-&gt;last_coded_q_map, MAXQ, last_coded_q_map_size);</span>
+<span class="lineNum">      78 </span>            : 
+<span class="lineNum">      79 </span><span class="lineNoCov">          0 :   return cr;</span>
+<a name="80"><span class="lineNum">      80 </span>            : }</a>
+<span class="lineNum">      81 </span>            : 
+<span class="lineNum">      82 </span><span class="lineNoCov">          0 : void av1_cyclic_refresh_free(CYCLIC_REFRESH *cr) {</span>
+<span class="lineNum">      83 </span><span class="lineNoCov">          0 :   aom_free(cr-&gt;map);</span>
+<span class="lineNum">      84 </span><span class="lineNoCov">          0 :   aom_free(cr-&gt;last_coded_q_map);</span>
+<span class="lineNum">      85 </span><span class="lineNoCov">          0 :   aom_free(cr);</span>
+<span class="lineNum">      86 </span><span class="lineNoCov">          0 : }</span>
+<a name="87"><span class="lineNum">      87 </span>            : </a>
+<span class="lineNum">      88 </span>            : // Check if we should turn off cyclic refresh based on bitrate condition.
+<span class="lineNum">      89 </span><span class="lineNoCov">          0 : static int apply_cyclic_refresh_bitrate(const AV1_COMMON *cm,</span>
+<span class="lineNum">      90 </span>            :                                         const RATE_CONTROL *rc) {
+<span class="lineNum">      91 </span>            :   // Turn off cyclic refresh if bits available per frame is not sufficiently
+<span class="lineNum">      92 </span>            :   // larger than bit cost of segmentation. Segment map bit cost should scale
+<span class="lineNum">      93 </span>            :   // with number of seg blocks, so compare available bits to number of blocks.
+<span class="lineNum">      94 </span>            :   // Average bits available per frame = avg_frame_bandwidth
+<span class="lineNum">      95 </span>            :   // Number of (8x8) blocks in frame = mi_rows * mi_cols;
+<span class="lineNum">      96 </span><span class="lineNoCov">          0 :   const float factor = 0.25;</span>
+<span class="lineNum">      97 </span><span class="lineNoCov">          0 :   const int number_blocks = cm-&gt;mi_rows * cm-&gt;mi_cols;</span>
+<span class="lineNum">      98 </span>            :   // The condition below corresponds to turning off at target bitrates:
+<span class="lineNum">      99 </span>            :   // (at 30fps), ~12kbps for CIF, 36kbps for VGA, 100kps for HD/720p.
+<span class="lineNum">     100 </span>            :   // Also turn off at very small frame sizes, to avoid too large fraction of
+<span class="lineNum">     101 </span>            :   // superblocks to be refreshed per frame. Threshold below is less than QCIF.
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :   if (rc-&gt;avg_frame_bandwidth &lt; factor * number_blocks ||</span>
+<span class="lineNum">     103 </span>            :       number_blocks / 64 &lt; 5)
+<span class="lineNum">     104 </span><span class="lineNoCov">          0 :     return 0;</span>
+<span class="lineNum">     105 </span>            :   else
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :     return 1;</span>
+<span class="lineNum">     107 </span>            : }
+<span class="lineNum">     108 </span>            : 
+<span class="lineNum">     109 </span>            : // Check if this coding block, of size bsize, should be considered for refresh
+<span class="lineNum">     110 </span>            : // (lower-qp coding). Decision can be based on various factors, such as
+<a name="111"><span class="lineNum">     111 </span>            : // size of the coding block (i.e., below min_block size rejected), coding</a>
+<span class="lineNum">     112 </span>            : // mode, and rate/distortion.
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 : static int candidate_refresh_aq(const CYCLIC_REFRESH *cr,</span>
+<span class="lineNum">     114 </span>            :                                 const MB_MODE_INFO *mbmi, int64_t rate,
+<span class="lineNum">     115 </span>            :                                 int64_t dist, int bsize) {
+<span class="lineNum">     116 </span><span class="lineNoCov">          0 :   MV mv = mbmi-&gt;mv[0].as_mv;</span>
+<span class="lineNum">     117 </span>            :   // Reject the block for lower-qp coding if projected distortion
+<span class="lineNum">     118 </span>            :   // is above the threshold, and any of the following is true:
+<span class="lineNum">     119 </span>            :   // 1) mode uses large mv
+<span class="lineNum">     120 </span>            :   // 2) mode is an intra-mode
+<span class="lineNum">     121 </span>            :   // Otherwise accept for refresh.
+<span class="lineNum">     122 </span><span class="lineNoCov">          0 :   if (dist &gt; cr-&gt;thresh_dist_sb &amp;&amp;</span>
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :       (mv.row &gt; cr-&gt;motion_thresh || mv.row &lt; -cr-&gt;motion_thresh ||</span>
+<span class="lineNum">     124 </span><span class="lineNoCov">          0 :        mv.col &gt; cr-&gt;motion_thresh || mv.col &lt; -cr-&gt;motion_thresh ||</span>
+<span class="lineNum">     125 </span><span class="lineNoCov">          0 :        !is_inter_block(mbmi)))</span>
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :     return CR_SEGMENT_ID_BASE;</span>
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :   else if (bsize &gt;= BLOCK_16X16 &amp;&amp; rate &lt; cr-&gt;thresh_rate_sb &amp;&amp;</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :            is_inter_block(mbmi) &amp;&amp; mbmi-&gt;mv[0].as_int == 0 &amp;&amp;</span>
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 :            cr-&gt;rate_boost_fac &gt; 10)</span>
+<span class="lineNum">     130 </span>            :     // More aggressive delta-q for bigger blocks with zero motion.
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :     return CR_SEGMENT_ID_BOOST2;</span>
+<span class="lineNum">     132 </span>            :   else
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :     return CR_SEGMENT_ID_BOOST1;</span>
+<span class="lineNum">     134 </span>            : }
+<a name="135"><span class="lineNum">     135 </span>            : </a>
+<span class="lineNum">     136 </span>            : // Compute delta-q for the segment.
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 : static int compute_deltaq(const AV1_COMP *cpi, int q, double rate_factor) {</span>
+<span class="lineNum">     138 </span><span class="lineNoCov">          0 :   const CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   const RATE_CONTROL *const rc = &amp;cpi-&gt;rc;</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :   int deltaq = av1_compute_qdelta_by_rate(rc, cpi-&gt;common.frame_type, q,</span>
+<span class="lineNum">     141 </span>            :                                           rate_factor, cpi-&gt;common.bit_depth);
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 :   if ((-deltaq) &gt; cr-&gt;max_qdelta_perc * q / 100) {</span>
+<span class="lineNum">     143 </span><span class="lineNoCov">          0 :     deltaq = -cr-&gt;max_qdelta_perc * q / 100;</span>
+<span class="lineNum">     144 </span>            :   }
+<span class="lineNum">     145 </span><span class="lineNoCov">          0 :   return deltaq;</span>
+<span class="lineNum">     146 </span>            : }
+<span class="lineNum">     147 </span>            : 
+<span class="lineNum">     148 </span>            : // For the just encoded frame, estimate the bits, incorporating the delta-q
+<span class="lineNum">     149 </span>            : // from non-base segment. For now ignore effect of multiple segments
+<a name="150"><span class="lineNum">     150 </span>            : // (with different delta-q). Note this function is called in the postencode</a>
+<span class="lineNum">     151 </span>            : // (called from rc_update_rate_correction_factors()).
+<span class="lineNum">     152 </span><span class="lineNoCov">          0 : int av1_cyclic_refresh_estimate_bits_at_q(const AV1_COMP *cpi,</span>
+<span class="lineNum">     153 </span>            :                                           double correction_factor) {
+<span class="lineNum">     154 </span><span class="lineNoCov">          0 :   const AV1_COMMON *const cm = &amp;cpi-&gt;common;</span>
+<span class="lineNum">     155 </span><span class="lineNoCov">          0 :   const CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     156 </span>            :   int estimated_bits;
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :   int mbs = cm-&gt;MBs;</span>
+<span class="lineNum">     158 </span><span class="lineNoCov">          0 :   int num8x8bl = mbs &lt;&lt; 2;</span>
+<span class="lineNum">     159 </span>            :   // Weight for non-base segments: use actual number of blocks refreshed in
+<span class="lineNum">     160 </span>            :   // previous/just encoded frame. Note number of blocks here is in 8x8 units.
+<span class="lineNum">     161 </span><span class="lineNoCov">          0 :   double weight_segment1 = (double)cr-&gt;actual_num_seg1_blocks / num8x8bl;</span>
+<span class="lineNum">     162 </span><span class="lineNoCov">          0 :   double weight_segment2 = (double)cr-&gt;actual_num_seg2_blocks / num8x8bl;</span>
+<span class="lineNum">     163 </span>            :   // Take segment weighted average for estimated bits.
+<span class="lineNum">     164 </span><span class="lineNoCov">          0 :   estimated_bits =</span>
+<span class="lineNum">     165 </span><span class="lineNoCov">          0 :       (int)((1.0 - weight_segment1 - weight_segment2) *</span>
+<span class="lineNum">     166 </span><span class="lineNoCov">          0 :                 av1_estimate_bits_at_q(cm-&gt;frame_type, cm-&gt;base_qindex, mbs,</span>
+<span class="lineNum">     167 </span><span class="lineNoCov">          0 :                                        correction_factor, cm-&gt;bit_depth) +</span>
+<span class="lineNum">     168 </span><span class="lineNoCov">          0 :             weight_segment1 *</span>
+<span class="lineNum">     169 </span><span class="lineNoCov">          0 :                 av1_estimate_bits_at_q(cm-&gt;frame_type,</span>
+<span class="lineNum">     170 </span><span class="lineNoCov">          0 :                                        cm-&gt;base_qindex + cr-&gt;qindex_delta[1],</span>
+<span class="lineNum">     171 </span><span class="lineNoCov">          0 :                                        mbs, correction_factor, cm-&gt;bit_depth) +</span>
+<span class="lineNum">     172 </span><span class="lineNoCov">          0 :             weight_segment2 *</span>
+<span class="lineNum">     173 </span><span class="lineNoCov">          0 :                 av1_estimate_bits_at_q(cm-&gt;frame_type,</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :                                        cm-&gt;base_qindex + cr-&gt;qindex_delta[2],</span>
+<span class="lineNum">     175 </span>            :                                        mbs, correction_factor, cm-&gt;bit_depth));
+<span class="lineNum">     176 </span><span class="lineNoCov">          0 :   return estimated_bits;</span>
+<span class="lineNum">     177 </span>            : }
+<span class="lineNum">     178 </span>            : 
+<span class="lineNum">     179 </span>            : // Prior to encoding the frame, estimate the bits per mb, for a given q = i and
+<span class="lineNum">     180 </span>            : // a corresponding delta-q (for segment 1). This function is called in the
+<span class="lineNum">     181 </span>            : // rc_regulate_q() to set the base qp index.
+<a name="182"><span class="lineNum">     182 </span>            : // Note: the segment map is set to either 0/CR_SEGMENT_ID_BASE (no refresh) or</a>
+<span class="lineNum">     183 </span>            : // to 1/CR_SEGMENT_ID_BOOST1 (refresh) for each superblock, prior to encoding.
+<span class="lineNum">     184 </span><span class="lineNoCov">          0 : int av1_cyclic_refresh_rc_bits_per_mb(const AV1_COMP *cpi, int i,</span>
+<span class="lineNum">     185 </span>            :                                       double correction_factor) {
+<span class="lineNum">     186 </span><span class="lineNoCov">          0 :   const AV1_COMMON *const cm = &amp;cpi-&gt;common;</span>
+<span class="lineNum">     187 </span><span class="lineNoCov">          0 :   CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     188 </span>            :   int bits_per_mb;
+<span class="lineNum">     189 </span><span class="lineNoCov">          0 :   int num8x8bl = cm-&gt;MBs &lt;&lt; 2;</span>
+<span class="lineNum">     190 </span>            :   // Weight for segment prior to encoding: take the average of the target
+<span class="lineNum">     191 </span>            :   // number for the frame to be encoded and the actual from the previous frame.
+<span class="lineNum">     192 </span><span class="lineNoCov">          0 :   double weight_segment =</span>
+<span class="lineNum">     193 </span><span class="lineNoCov">          0 :       (double)((cr-&gt;target_num_seg_blocks + cr-&gt;actual_num_seg1_blocks +</span>
+<span class="lineNum">     194 </span><span class="lineNoCov">          0 :                 cr-&gt;actual_num_seg2_blocks) &gt;&gt;</span>
+<span class="lineNum">     195 </span><span class="lineNoCov">          0 :                1) /</span>
+<span class="lineNum">     196 </span>            :       num8x8bl;
+<span class="lineNum">     197 </span>            :   // Compute delta-q corresponding to qindex i.
+<span class="lineNum">     198 </span><span class="lineNoCov">          0 :   int deltaq = compute_deltaq(cpi, i, cr-&gt;rate_ratio_qdelta);</span>
+<span class="lineNum">     199 </span>            :   // Take segment weighted average for bits per mb.
+<span class="lineNum">     200 </span><span class="lineNoCov">          0 :   bits_per_mb = (int)((1.0 - weight_segment) *</span>
+<span class="lineNum">     201 </span><span class="lineNoCov">          0 :                           av1_rc_bits_per_mb(cm-&gt;frame_type, i,</span>
+<span class="lineNum">     202 </span><span class="lineNoCov">          0 :                                              correction_factor, cm-&gt;bit_depth) +</span>
+<span class="lineNum">     203 </span><span class="lineNoCov">          0 :                       weight_segment *</span>
+<span class="lineNum">     204 </span><span class="lineNoCov">          0 :                           av1_rc_bits_per_mb(cm-&gt;frame_type, i + deltaq,</span>
+<span class="lineNum">     205 </span>            :                                              correction_factor, cm-&gt;bit_depth));
+<span class="lineNum">     206 </span><span class="lineNoCov">          0 :   return bits_per_mb;</span>
+<span class="lineNum">     207 </span>            : }
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span>            : // Prior to coding a given prediction block, of size bsize at (mi_row, mi_col),
+<a name="210"><span class="lineNum">     210 </span>            : // check if we should reset the segment_id, and update the cyclic_refresh map</a>
+<span class="lineNum">     211 </span>            : // and segmentation map.
+<span class="lineNum">     212 </span><span class="lineNoCov">          0 : void av1_cyclic_refresh_update_segment(const AV1_COMP *cpi,</span>
+<span class="lineNum">     213 </span>            :                                        MB_MODE_INFO *const mbmi, int mi_row,
+<span class="lineNum">     214 </span>            :                                        int mi_col, BLOCK_SIZE bsize,
+<span class="lineNum">     215 </span>            :                                        int64_t rate, int64_t dist, int skip) {
+<span class="lineNum">     216 </span><span class="lineNoCov">          0 :   const AV1_COMMON *const cm = &amp;cpi-&gt;common;</span>
+<span class="lineNum">     217 </span><span class="lineNoCov">          0 :   CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     218 </span><span class="lineNoCov">          0 :   const int bw = mi_size_wide[bsize];</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :   const int bh = mi_size_high[bsize];</span>
+<span class="lineNum">     220 </span><span class="lineNoCov">          0 :   const int xmis = AOMMIN(cm-&gt;mi_cols - mi_col, bw);</span>
+<span class="lineNum">     221 </span><span class="lineNoCov">          0 :   const int ymis = AOMMIN(cm-&gt;mi_rows - mi_row, bh);</span>
+<span class="lineNum">     222 </span><span class="lineNoCov">          0 :   const int block_index = mi_row * cm-&gt;mi_cols + mi_col;</span>
+<span class="lineNum">     223 </span><span class="lineNoCov">          0 :   const int refresh_this_block =</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :       candidate_refresh_aq(cr, mbmi, rate, dist, bsize);</span>
+<span class="lineNum">     225 </span>            :   // Default is to not update the refresh map.
+<span class="lineNum">     226 </span><span class="lineNoCov">          0 :   int new_map_value = cr-&gt;map[block_index];</span>
+<span class="lineNum">     227 </span><span class="lineNoCov">          0 :   int x = 0;</span>
+<span class="lineNum">     228 </span><span class="lineNoCov">          0 :   int y = 0;</span>
+<span class="lineNum">     229 </span>            : 
+<span class="lineNum">     230 </span>            :   // If this block is labeled for refresh, check if we should reset the
+<span class="lineNum">     231 </span>            :   // segment_id.
+<span class="lineNum">     232 </span><span class="lineNoCov">          0 :   if (cyclic_refresh_segment_id_boosted(mbmi-&gt;segment_id)) {</span>
+<span class="lineNum">     233 </span><span class="lineNoCov">          0 :     mbmi-&gt;segment_id = refresh_this_block;</span>
+<span class="lineNum">     234 </span>            :     // Reset segment_id if will be skipped.
+<span class="lineNum">     235 </span><span class="lineNoCov">          0 :     if (skip) mbmi-&gt;segment_id = CR_SEGMENT_ID_BASE;</span>
+<span class="lineNum">     236 </span>            :   }
+<span class="lineNum">     237 </span>            : 
+<span class="lineNum">     238 </span>            :   // Update the cyclic refresh map, to be used for setting segmentation map
+<span class="lineNum">     239 </span>            :   // for the next frame. If the block  will be refreshed this frame, mark it
+<span class="lineNum">     240 </span>            :   // as clean. The magnitude of the -ve influences how long before we consider
+<span class="lineNum">     241 </span>            :   // it for refresh again.
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :   if (cyclic_refresh_segment_id_boosted(mbmi-&gt;segment_id)) {</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :     new_map_value = -cr-&gt;time_for_refresh;</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :   } else if (refresh_this_block) {</span>
+<span class="lineNum">     245 </span>            :     // Else if it is accepted as candidate for refresh, and has not already
+<span class="lineNum">     246 </span>            :     // been refreshed (marked as 1) then mark it as a candidate for cleanup
+<span class="lineNum">     247 </span>            :     // for future time (marked as 0), otherwise don't update it.
+<span class="lineNum">     248 </span><span class="lineNoCov">          0 :     if (cr-&gt;map[block_index] == 1) new_map_value = 0;</span>
+<span class="lineNum">     249 </span>            :   } else {
+<span class="lineNum">     250 </span>            :     // Leave it marked as block that is not candidate for refresh.
+<span class="lineNum">     251 </span><span class="lineNoCov">          0 :     new_map_value = 1;</span>
+<span class="lineNum">     252 </span>            :   }
+<span class="lineNum">     253 </span>            : 
+<span class="lineNum">     254 </span>            :   // Update entries in the cyclic refresh map with new_map_value, and
+<span class="lineNum">     255 </span>            :   // copy mbmi-&gt;segment_id into global segmentation map.
+<span class="lineNum">     256 </span><span class="lineNoCov">          0 :   for (y = 0; y &lt; ymis; y++)</span>
+<span class="lineNum">     257 </span><span class="lineNoCov">          0 :     for (x = 0; x &lt; xmis; x++) {</span>
+<span class="lineNum">     258 </span><span class="lineNoCov">          0 :       int map_offset = block_index + y * cm-&gt;mi_cols + x;</span>
+<span class="lineNum">     259 </span><span class="lineNoCov">          0 :       cr-&gt;map[map_offset] = new_map_value;</span>
+<span class="lineNum">     260 </span><span class="lineNoCov">          0 :       cpi-&gt;segmentation_map[map_offset] = mbmi-&gt;segment_id;</span>
+<span class="lineNum">     261 </span>            :       // Inter skip blocks were clearly not coded at the current qindex, so
+<span class="lineNum">     262 </span>            :       // don't update the map for them. For cases where motion is non-zero or
+<span class="lineNum">     263 </span>            :       // the reference frame isn't the previous frame, the previous value in
+<span class="lineNum">     264 </span>            :       // the map for this spatial location is not entirely correct.
+<span class="lineNum">     265 </span><span class="lineNoCov">          0 :       if ((!is_inter_block(mbmi) || !skip) &amp;&amp;</span>
+<span class="lineNum">     266 </span><span class="lineNoCov">          0 :           mbmi-&gt;segment_id &lt;= CR_SEGMENT_ID_BOOST2) {</span>
+<span class="lineNum">     267 </span><span class="lineNoCov">          0 :         cr-&gt;last_coded_q_map[map_offset] = clamp(</span>
+<span class="lineNum">     268 </span><span class="lineNoCov">          0 :             cm-&gt;base_qindex + cr-&gt;qindex_delta[mbmi-&gt;segment_id], 0, MAXQ);</span>
+<span class="lineNum">     269 </span><span class="lineNoCov">          0 :       } else if (is_inter_block(mbmi) &amp;&amp; skip &amp;&amp;</span>
+<span class="lineNum">     270 </span><span class="lineNoCov">          0 :                  mbmi-&gt;segment_id &lt;= CR_SEGMENT_ID_BOOST2) {</span>
+<span class="lineNum">     271 </span><span class="lineNoCov">          0 :         cr-&gt;last_coded_q_map[map_offset] =</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :             AOMMIN(clamp(cm-&gt;base_qindex + cr-&gt;qindex_delta[mbmi-&gt;segment_id],</span>
+<span class="lineNum">     273 </span>            :                          0, MAXQ),
+<span class="lineNum">     274 </span>            :                    cr-&gt;last_coded_q_map[map_offset]);
+<span class="lineNum">     275 </span>            :       }
+<span class="lineNum">     276 </span>            :     }
+<span class="lineNum">     277 </span><span class="lineNoCov">          0 : }</span>
+<a name="278"><span class="lineNum">     278 </span>            : </a>
+<span class="lineNum">     279 </span>            : // Update the actual number of blocks that were applied the segment delta q.
+<span class="lineNum">     280 </span><span class="lineNoCov">          0 : void av1_cyclic_refresh_postencode(AV1_COMP *const cpi) {</span>
+<span class="lineNum">     281 </span><span class="lineNoCov">          0 :   AV1_COMMON *const cm = &amp;cpi-&gt;common;</span>
+<span class="lineNum">     282 </span><span class="lineNoCov">          0 :   CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     283 </span><span class="lineNoCov">          0 :   unsigned char *const seg_map = cpi-&gt;segmentation_map;</span>
+<span class="lineNum">     284 </span>            :   int mi_row, mi_col;
+<span class="lineNum">     285 </span><span class="lineNoCov">          0 :   cr-&gt;actual_num_seg1_blocks = 0;</span>
+<span class="lineNum">     286 </span><span class="lineNoCov">          0 :   cr-&gt;actual_num_seg2_blocks = 0;</span>
+<span class="lineNum">     287 </span><span class="lineNoCov">          0 :   for (mi_row = 0; mi_row &lt; cm-&gt;mi_rows; mi_row++)</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :     for (mi_col = 0; mi_col &lt; cm-&gt;mi_cols; mi_col++) {</span>
+<span class="lineNum">     289 </span><span class="lineNoCov">          0 :       if (cyclic_refresh_segment_id(seg_map[mi_row * cm-&gt;mi_cols + mi_col]) ==</span>
+<span class="lineNum">     290 </span>            :           CR_SEGMENT_ID_BOOST1)
+<span class="lineNum">     291 </span><span class="lineNoCov">          0 :         cr-&gt;actual_num_seg1_blocks++;</span>
+<span class="lineNum">     292 </span><span class="lineNoCov">          0 :       else if (cyclic_refresh_segment_id(</span>
+<span class="lineNum">     293 </span><span class="lineNoCov">          0 :                    seg_map[mi_row * cm-&gt;mi_cols + mi_col]) ==</span>
+<span class="lineNum">     294 </span>            :                CR_SEGMENT_ID_BOOST2)
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :         cr-&gt;actual_num_seg2_blocks++;</span>
+<span class="lineNum">     296 </span>            :     }
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 : }</span>
+<a name="298"><span class="lineNum">     298 </span>            : </a>
+<span class="lineNum">     299 </span>            : // Set golden frame update interval, for 1 pass CBR mode.
+<span class="lineNum">     300 </span><span class="lineNoCov">          0 : void av1_cyclic_refresh_set_golden_update(AV1_COMP *const cpi) {</span>
+<span class="lineNum">     301 </span><span class="lineNoCov">          0 :   RATE_CONTROL *const rc = &amp;cpi-&gt;rc;</span>
+<span class="lineNum">     302 </span><span class="lineNoCov">          0 :   CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     303 </span>            :   // Set minimum gf_interval for GF update to a multiple (== 2) of refresh
+<span class="lineNum">     304 </span>            :   // period. Depending on past encoding stats, GF flag may be reset and update
+<span class="lineNum">     305 </span>            :   // may not occur until next baseline_gf_interval.
+<span class="lineNum">     306 </span><span class="lineNoCov">          0 :   if (cr-&gt;percent_refresh &gt; 0)</span>
+<span class="lineNum">     307 </span><span class="lineNoCov">          0 :     rc-&gt;baseline_gf_interval = 4 * (100 / cr-&gt;percent_refresh);</span>
+<span class="lineNum">     308 </span>            :   else
+<span class="lineNum">     309 </span><span class="lineNoCov">          0 :     rc-&gt;baseline_gf_interval = 40;</span>
+<span class="lineNum">     310 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     311 </span>            : 
+<span class="lineNum">     312 </span>            : // Update some encoding stats (from the just encoded frame). If this frame's
+<span class="lineNum">     313 </span>            : // background has high motion, refresh the golden frame. Otherwise, if the
+<a name="314"><span class="lineNum">     314 </span>            : // golden reference is to be updated check if we should NOT update the golden</a>
+<span class="lineNum">     315 </span>            : // ref.
+<span class="lineNum">     316 </span><span class="lineNoCov">          0 : void av1_cyclic_refresh_check_golden_update(AV1_COMP *const cpi) {</span>
+<span class="lineNum">     317 </span><span class="lineNoCov">          0 :   AV1_COMMON *const cm = &amp;cpi-&gt;common;</span>
+<span class="lineNum">     318 </span><span class="lineNoCov">          0 :   CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     319 </span>            :   int mi_row, mi_col;
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :   double fraction_low = 0.0;</span>
+<span class="lineNum">     321 </span><span class="lineNoCov">          0 :   int low_content_frame = 0;</span>
+<span class="lineNum">     322 </span>            : 
+<span class="lineNum">     323 </span>            :   MODE_INFO **mi;
+<span class="lineNum">     324 </span><span class="lineNoCov">          0 :   RATE_CONTROL *const rc = &amp;cpi-&gt;rc;</span>
+<span class="lineNum">     325 </span><span class="lineNoCov">          0 :   const int rows = cm-&gt;mi_rows, cols = cm-&gt;mi_cols;</span>
+<span class="lineNum">     326 </span><span class="lineNoCov">          0 :   int cnt1 = 0, cnt2 = 0;</span>
+<span class="lineNum">     327 </span><span class="lineNoCov">          0 :   int force_gf_refresh = 0;</span>
+<span class="lineNum">     328 </span>            : 
+<span class="lineNum">     329 </span><span class="lineNoCov">          0 :   for (mi_row = 0; mi_row &lt; rows; mi_row++) {</span>
+<span class="lineNum">     330 </span><span class="lineNoCov">          0 :     mi = cm-&gt;mi_grid_visible + mi_row * cm-&gt;mi_stride;</span>
+<span class="lineNum">     331 </span>            : 
+<span class="lineNum">     332 </span><span class="lineNoCov">          0 :     for (mi_col = 0; mi_col &lt; cols; mi_col++) {</span>
+<span class="lineNum">     333 </span><span class="lineNoCov">          0 :       int16_t abs_mvr = mi[0]-&gt;mbmi.mv[0].as_mv.row &gt;= 0</span>
+<span class="lineNum">     334 </span><span class="lineNoCov">          0 :                             ? mi[0]-&gt;mbmi.mv[0].as_mv.row</span>
+<span class="lineNum">     335 </span><span class="lineNoCov">          0 :                             : -1 * mi[0]-&gt;mbmi.mv[0].as_mv.row;</span>
+<span class="lineNum">     336 </span><span class="lineNoCov">          0 :       int16_t abs_mvc = mi[0]-&gt;mbmi.mv[0].as_mv.col &gt;= 0</span>
+<span class="lineNum">     337 </span><span class="lineNoCov">          0 :                             ? mi[0]-&gt;mbmi.mv[0].as_mv.col</span>
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 :                             : -1 * mi[0]-&gt;mbmi.mv[0].as_mv.col;</span>
+<span class="lineNum">     339 </span>            : 
+<span class="lineNum">     340 </span>            :       // Calculate the motion of the background.
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :       if (abs_mvr &lt;= 16 &amp;&amp; abs_mvc &lt;= 16) {</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :         cnt1++;</span>
+<span class="lineNum">     343 </span><span class="lineNoCov">          0 :         if (abs_mvr == 0 &amp;&amp; abs_mvc == 0) cnt2++;</span>
+<span class="lineNum">     344 </span>            :       }
+<span class="lineNum">     345 </span><span class="lineNoCov">          0 :       mi++;</span>
+<span class="lineNum">     346 </span>            : 
+<span class="lineNum">     347 </span>            :       // Accumulate low_content_frame.
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :       if (cr-&gt;map[mi_row * cols + mi_col] &lt; 1) low_content_frame++;</span>
+<span class="lineNum">     349 </span>            :     }
+<span class="lineNum">     350 </span>            :   }
+<span class="lineNum">     351 </span>            : 
+<span class="lineNum">     352 </span>            :   // For video conference clips, if the background has high motion in current
+<span class="lineNum">     353 </span>            :   // frame because of the camera movement, set this frame as the golden frame.
+<span class="lineNum">     354 </span>            :   // Use 70% and 5% as the thresholds for golden frame refreshing.
+<span class="lineNum">     355 </span>            :   // Also, force this frame as a golden update frame if this frame will change
+<span class="lineNum">     356 </span>            :   // the resolution (av1_resize_pending != 0).
+<span class="lineNum">     357 </span><span class="lineNoCov">          0 :   if (av1_resize_pending(cpi) ||</span>
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 :       (cnt1 * 10 &gt; (70 * rows * cols) &amp;&amp; cnt2 * 20 &lt; cnt1)) {</span>
+<span class="lineNum">     359 </span><span class="lineNoCov">          0 :     av1_cyclic_refresh_set_golden_update(cpi);</span>
+<span class="lineNum">     360 </span><span class="lineNoCov">          0 :     rc-&gt;frames_till_gf_update_due = rc-&gt;baseline_gf_interval;</span>
+<span class="lineNum">     361 </span>            : 
+<span class="lineNum">     362 </span><span class="lineNoCov">          0 :     if (rc-&gt;frames_till_gf_update_due &gt; rc-&gt;frames_to_key)</span>
+<span class="lineNum">     363 </span><span class="lineNoCov">          0 :       rc-&gt;frames_till_gf_update_due = rc-&gt;frames_to_key;</span>
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 :     cpi-&gt;refresh_golden_frame = 1;</span>
+<span class="lineNum">     365 </span><span class="lineNoCov">          0 :     force_gf_refresh = 1;</span>
+<span class="lineNum">     366 </span>            :   }
+<span class="lineNum">     367 </span>            : 
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 :   fraction_low = (double)low_content_frame / (rows * cols);</span>
+<span class="lineNum">     369 </span>            :   // Update average.
+<span class="lineNum">     370 </span><span class="lineNoCov">          0 :   cr-&gt;low_content_avg = (fraction_low + 3 * cr-&gt;low_content_avg) / 4;</span>
+<span class="lineNum">     371 </span><span class="lineNoCov">          0 :   if (!force_gf_refresh &amp;&amp; cpi-&gt;refresh_golden_frame == 1) {</span>
+<span class="lineNum">     372 </span>            :     // Don't update golden reference if the amount of low_content for the
+<span class="lineNum">     373 </span>            :     // current encoded frame is small, or if the recursive average of the
+<span class="lineNum">     374 </span>            :     // low_content over the update interval window falls below threshold.
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :     if (fraction_low &lt; 0.8 || cr-&gt;low_content_avg &lt; 0.7)</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :       cpi-&gt;refresh_golden_frame = 0;</span>
+<span class="lineNum">     377 </span>            :     // Reset for next internal.
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :     cr-&gt;low_content_avg = fraction_low;</span>
+<span class="lineNum">     379 </span>            :   }
+<span class="lineNum">     380 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     381 </span>            : 
+<span class="lineNum">     382 </span>            : // Update the segmentation map, and related quantities: cyclic refresh map,
+<span class="lineNum">     383 </span>            : // refresh sb_index, and target number of blocks to be refreshed.
+<span class="lineNum">     384 </span>            : // The map is set to either 0/CR_SEGMENT_ID_BASE (no refresh) or to
+<span class="lineNum">     385 </span>            : // 1/CR_SEGMENT_ID_BOOST1 (refresh) for each superblock.
+<a name="386"><span class="lineNum">     386 </span>            : // Blocks labeled as BOOST1 may later get set to BOOST2 (during the</a>
+<span class="lineNum">     387 </span>            : // encoding of the superblock).
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 : static void cyclic_refresh_update_map(AV1_COMP *const cpi) {</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :   AV1_COMMON *const cm = &amp;cpi-&gt;common;</span>
+<span class="lineNum">     390 </span><span class="lineNoCov">          0 :   CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :   unsigned char *const seg_map = cpi-&gt;segmentation_map;</span>
+<span class="lineNum">     392 </span>            :   int i, block_count, bl_index, sb_rows, sb_cols, sbs_in_frame;
+<span class="lineNum">     393 </span>            :   int xmis, ymis, x, y;
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :   memset(seg_map, CR_SEGMENT_ID_BASE, cm-&gt;mi_rows * cm-&gt;mi_cols);</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :   sb_cols = (cm-&gt;mi_cols + cm-&gt;mib_size - 1) / cm-&gt;mib_size;</span>
+<span class="lineNum">     396 </span><span class="lineNoCov">          0 :   sb_rows = (cm-&gt;mi_rows + cm-&gt;mib_size - 1) / cm-&gt;mib_size;</span>
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :   sbs_in_frame = sb_cols * sb_rows;</span>
+<span class="lineNum">     398 </span>            :   // Number of target blocks to get the q delta (segment 1).
+<span class="lineNum">     399 </span><span class="lineNoCov">          0 :   block_count = cr-&gt;percent_refresh * cm-&gt;mi_rows * cm-&gt;mi_cols / 100;</span>
+<span class="lineNum">     400 </span>            :   // Set the segmentation map: cycle through the superblocks, starting at
+<span class="lineNum">     401 </span>            :   // cr-&gt;mb_index, and stopping when either block_count blocks have been found
+<span class="lineNum">     402 </span>            :   // to be refreshed, or we have passed through whole frame.
+<span class="lineNum">     403 </span><span class="lineNoCov">          0 :   assert(cr-&gt;sb_index &lt; sbs_in_frame);</span>
+<span class="lineNum">     404 </span><span class="lineNoCov">          0 :   i = cr-&gt;sb_index;</span>
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :   cr-&gt;target_num_seg_blocks = 0;</span>
+<span class="lineNum">     406 </span>            :   do {
+<span class="lineNum">     407 </span><span class="lineNoCov">          0 :     int sum_map = 0;</span>
+<span class="lineNum">     408 </span>            :     // Get the mi_row/mi_col corresponding to superblock index i.
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :     int sb_row_index = (i / sb_cols);</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :     int sb_col_index = i - sb_row_index * sb_cols;</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :     int mi_row = sb_row_index * cm-&gt;mib_size;</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :     int mi_col = sb_col_index * cm-&gt;mib_size;</span>
+<span class="lineNum">     413 </span><span class="lineNoCov">          0 :     int qindex_thresh =</span>
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :         cpi-&gt;oxcf.content == AOM_CONTENT_SCREEN</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :             ? av1_get_qindex(&amp;cm-&gt;seg, CR_SEGMENT_ID_BOOST2, cm-&gt;base_qindex)</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :             : 0;</span>
+<span class="lineNum">     417 </span><span class="lineNoCov">          0 :     assert(mi_row &gt;= 0 &amp;&amp; mi_row &lt; cm-&gt;mi_rows);</span>
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :     assert(mi_col &gt;= 0 &amp;&amp; mi_col &lt; cm-&gt;mi_cols);</span>
+<span class="lineNum">     419 </span><span class="lineNoCov">          0 :     bl_index = mi_row * cm-&gt;mi_cols + mi_col;</span>
+<span class="lineNum">     420 </span>            :     // Loop through all MI blocks in superblock and update map.
+<span class="lineNum">     421 </span><span class="lineNoCov">          0 :     xmis = AOMMIN(cm-&gt;mi_cols - mi_col, cm-&gt;mib_size);</span>
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :     ymis = AOMMIN(cm-&gt;mi_rows - mi_row, cm-&gt;mib_size);</span>
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :     for (y = 0; y &lt; ymis; y++) {</span>
+<span class="lineNum">     424 </span><span class="lineNoCov">          0 :       for (x = 0; x &lt; xmis; x++) {</span>
+<span class="lineNum">     425 </span><span class="lineNoCov">          0 :         const int bl_index2 = bl_index + y * cm-&gt;mi_cols + x;</span>
+<span class="lineNum">     426 </span>            :         // If the block is as a candidate for clean up then mark it
+<span class="lineNum">     427 </span>            :         // for possible boost/refresh (segment 1). The segment id may get
+<span class="lineNum">     428 </span>            :         // reset to 0 later if block gets coded anything other than ZEROMV.
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :         if (cr-&gt;map[bl_index2] == 0) {</span>
+<span class="lineNum">     430 </span><span class="lineNoCov">          0 :           if (cr-&gt;last_coded_q_map[bl_index2] &gt; qindex_thresh) sum_map++;</span>
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :         } else if (cr-&gt;map[bl_index2] &lt; 0) {</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :           cr-&gt;map[bl_index2]++;</span>
+<span class="lineNum">     433 </span>            :         }
+<span class="lineNum">     434 </span>            :       }
+<span class="lineNum">     435 </span>            :     }
+<span class="lineNum">     436 </span>            :     // Enforce constant segment over superblock.
+<span class="lineNum">     437 </span>            :     // If segment is at least half of superblock, set to 1.
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 :     if (sum_map &gt;= xmis * ymis / 2) {</span>
+<span class="lineNum">     439 </span><span class="lineNoCov">          0 :       for (y = 0; y &lt; ymis; y++)</span>
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :         for (x = 0; x &lt; xmis; x++) {</span>
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :           seg_map[bl_index + y * cm-&gt;mi_cols + x] = CR_SEGMENT_ID_BOOST1;</span>
+<span class="lineNum">     442 </span>            :         }
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :       cr-&gt;target_num_seg_blocks += xmis * ymis;</span>
+<span class="lineNum">     444 </span>            :     }
+<span class="lineNum">     445 </span><span class="lineNoCov">          0 :     i++;</span>
+<span class="lineNum">     446 </span><span class="lineNoCov">          0 :     if (i == sbs_in_frame) {</span>
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :       i = 0;</span>
+<span class="lineNum">     448 </span>            :     }
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :   } while (cr-&gt;target_num_seg_blocks &lt; block_count &amp;&amp; i != cr-&gt;sb_index);</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :   cr-&gt;sb_index = i;</span>
+<span class="lineNum">     451 </span><span class="lineNoCov">          0 : }</span>
+<a name="452"><span class="lineNum">     452 </span>            : </a>
+<span class="lineNum">     453 </span>            : // Set cyclic refresh parameters.
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 : void av1_cyclic_refresh_update_parameters(AV1_COMP *const cpi) {</span>
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :   const RATE_CONTROL *const rc = &amp;cpi-&gt;rc;</span>
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 :   const AV1_COMMON *const cm = &amp;cpi-&gt;common;</span>
+<span class="lineNum">     457 </span><span class="lineNoCov">          0 :   CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :   cr-&gt;percent_refresh = 10;</span>
+<span class="lineNum">     459 </span><span class="lineNoCov">          0 :   cr-&gt;max_qdelta_perc = 50;</span>
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :   cr-&gt;time_for_refresh = 0;</span>
+<span class="lineNum">     461 </span>            :   // Use larger delta-qp (increase rate_ratio_qdelta) for first few (~4)
+<span class="lineNum">     462 </span>            :   // periods of the refresh cycle, after a key frame.
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :   if (rc-&gt;frames_since_key &lt; 4 * cr-&gt;percent_refresh)</span>
+<span class="lineNum">     464 </span><span class="lineNoCov">          0 :     cr-&gt;rate_ratio_qdelta = 3.0;</span>
+<span class="lineNum">     465 </span>            :   else
+<span class="lineNum">     466 </span><span class="lineNoCov">          0 :     cr-&gt;rate_ratio_qdelta = 2.0;</span>
+<span class="lineNum">     467 </span>            :   // Adjust some parameters for low resolutions at low bitrates.
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :   if (cm-&gt;width &lt;= 352 &amp;&amp; cm-&gt;height &lt;= 288 &amp;&amp; rc-&gt;avg_frame_bandwidth &lt; 3400) {</span>
+<span class="lineNum">     469 </span><span class="lineNoCov">          0 :     cr-&gt;motion_thresh = 4;</span>
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :     cr-&gt;rate_boost_fac = 10;</span>
+<span class="lineNum">     471 </span>            :   } else {
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :     cr-&gt;motion_thresh = 32;</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :     cr-&gt;rate_boost_fac = 17;</span>
+<span class="lineNum">     474 </span>            :   }
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 : }</span>
+<a name="476"><span class="lineNum">     476 </span>            : </a>
+<span class="lineNum">     477 </span>            : // Setup cyclic background refresh: set delta q and segmentation map.
+<span class="lineNum">     478 </span><span class="lineNoCov">          0 : void av1_cyclic_refresh_setup(AV1_COMP *const cpi) {</span>
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :   AV1_COMMON *const cm = &amp;cpi-&gt;common;</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :   const RATE_CONTROL *const rc = &amp;cpi-&gt;rc;</span>
+<span class="lineNum">     481 </span><span class="lineNoCov">          0 :   CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :   struct segmentation *const seg = &amp;cm-&gt;seg;</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :   const int apply_cyclic_refresh = apply_cyclic_refresh_bitrate(cm, rc);</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :   if (cm-&gt;current_video_frame == 0) cr-&gt;low_content_avg = 0.0;</span>
+<span class="lineNum">     485 </span>            :   // Don't apply refresh on key frame or enhancement layer frames.
+<span class="lineNum">     486 </span><span class="lineNoCov">          0 :   if (!apply_cyclic_refresh || cm-&gt;frame_type == KEY_FRAME) {</span>
+<span class="lineNum">     487 </span>            :     // Set segmentation map to 0 and disable.
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :     unsigned char *const seg_map = cpi-&gt;segmentation_map;</span>
+<span class="lineNum">     489 </span><span class="lineNoCov">          0 :     memset(seg_map, 0, cm-&gt;mi_rows * cm-&gt;mi_cols);</span>
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 :     av1_disable_segmentation(&amp;cm-&gt;seg);</span>
+<span class="lineNum">     491 </span><span class="lineNoCov">          0 :     if (cm-&gt;frame_type == KEY_FRAME) {</span>
+<span class="lineNum">     492 </span><span class="lineNoCov">          0 :       memset(cr-&gt;last_coded_q_map, MAXQ,</span>
+<span class="lineNum">     493 </span><span class="lineNoCov">          0 :              cm-&gt;mi_rows * cm-&gt;mi_cols * sizeof(*cr-&gt;last_coded_q_map));</span>
+<span class="lineNum">     494 </span><span class="lineNoCov">          0 :       cr-&gt;sb_index = 0;</span>
+<span class="lineNum">     495 </span>            :     }
+<span class="lineNum">     496 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     497 </span>            :   } else {
+<span class="lineNum">     498 </span><span class="lineNoCov">          0 :     int qindex_delta = 0;</span>
+<span class="lineNum">     499 </span>            :     int qindex2;
+<span class="lineNum">     500 </span><span class="lineNoCov">          0 :     const double q = av1_convert_qindex_to_q(cm-&gt;base_qindex, cm-&gt;bit_depth);</span>
+<span class="lineNum">     501 </span><span class="lineNoCov">          0 :     aom_clear_system_state();</span>
+<span class="lineNum">     502 </span>            :     // Set rate threshold to some multiple (set to 2 for now) of the target
+<span class="lineNum">     503 </span>            :     // rate (target is given by sb64_target_rate and scaled by 256).
+<span class="lineNum">     504 </span><span class="lineNoCov">          0 :     cr-&gt;thresh_rate_sb = ((int64_t)(rc-&gt;sb64_target_rate) &lt;&lt; 8) &lt;&lt; 2;</span>
+<span class="lineNum">     505 </span>            :     // Distortion threshold, quadratic in Q, scale factor to be adjusted.
+<span class="lineNum">     506 </span>            :     // q will not exceed 457, so (q * q) is within 32bit; see:
+<span class="lineNum">     507 </span>            :     // av1_convert_qindex_to_q(), av1_ac_quant(), ac_qlookup*[].
+<span class="lineNum">     508 </span><span class="lineNoCov">          0 :     cr-&gt;thresh_dist_sb = ((int64_t)(q * q)) &lt;&lt; 2;</span>
+<span class="lineNum">     509 </span>            : 
+<span class="lineNum">     510 </span>            :     // Set up segmentation.
+<span class="lineNum">     511 </span>            :     // Clear down the segment map.
+<span class="lineNum">     512 </span><span class="lineNoCov">          0 :     av1_enable_segmentation(&amp;cm-&gt;seg);</span>
+<span class="lineNum">     513 </span><span class="lineNoCov">          0 :     av1_clearall_segfeatures(seg);</span>
+<span class="lineNum">     514 </span>            :     // Select delta coding method.
+<span class="lineNum">     515 </span><span class="lineNoCov">          0 :     seg-&gt;abs_delta = SEGMENT_DELTADATA;</span>
+<span class="lineNum">     516 </span>            : 
+<span class="lineNum">     517 </span>            :     // Note: setting temporal_update has no effect, as the seg-map coding method
+<span class="lineNum">     518 </span>            :     // (temporal or spatial) is determined in
+<span class="lineNum">     519 </span>            :     // av1_choose_segmap_coding_method(),
+<span class="lineNum">     520 </span>            :     // based on the coding cost of each method. For error_resilient mode on the
+<span class="lineNum">     521 </span>            :     // last_frame_seg_map is set to 0, so if temporal coding is used, it is
+<span class="lineNum">     522 </span>            :     // relative to 0 previous map.
+<span class="lineNum">     523 </span>            :     // seg-&gt;temporal_update = 0;
+<span class="lineNum">     524 </span>            : 
+<span class="lineNum">     525 </span>            :     // Segment BASE &quot;Q&quot; feature is disabled so it defaults to the baseline Q.
+<span class="lineNum">     526 </span><span class="lineNoCov">          0 :     av1_disable_segfeature(seg, CR_SEGMENT_ID_BASE, SEG_LVL_ALT_Q);</span>
+<span class="lineNum">     527 </span>            :     // Use segment BOOST1 for in-frame Q adjustment.
+<span class="lineNum">     528 </span><span class="lineNoCov">          0 :     av1_enable_segfeature(seg, CR_SEGMENT_ID_BOOST1, SEG_LVL_ALT_Q);</span>
+<span class="lineNum">     529 </span>            :     // Use segment BOOST2 for more aggressive in-frame Q adjustment.
+<span class="lineNum">     530 </span><span class="lineNoCov">          0 :     av1_enable_segfeature(seg, CR_SEGMENT_ID_BOOST2, SEG_LVL_ALT_Q);</span>
+<span class="lineNum">     531 </span>            : 
+<span class="lineNum">     532 </span>            :     // Set the q delta for segment BOOST1.
+<span class="lineNum">     533 </span><span class="lineNoCov">          0 :     qindex_delta = compute_deltaq(cpi, cm-&gt;base_qindex, cr-&gt;rate_ratio_qdelta);</span>
+<span class="lineNum">     534 </span><span class="lineNoCov">          0 :     cr-&gt;qindex_delta[1] = qindex_delta;</span>
+<span class="lineNum">     535 </span>            : 
+<span class="lineNum">     536 </span>            :     // Compute rd-mult for segment BOOST1.
+<span class="lineNum">     537 </span><span class="lineNoCov">          0 :     qindex2 = clamp(cm-&gt;base_qindex + cm-&gt;y_dc_delta_q + qindex_delta, 0, MAXQ);</span>
+<span class="lineNum">     538 </span>            : 
+<span class="lineNum">     539 </span><span class="lineNoCov">          0 :     cr-&gt;rdmult = av1_compute_rd_mult(cpi, qindex2);</span>
+<span class="lineNum">     540 </span>            : 
+<span class="lineNum">     541 </span><span class="lineNoCov">          0 :     av1_set_segdata(seg, CR_SEGMENT_ID_BOOST1, SEG_LVL_ALT_Q, qindex_delta);</span>
+<span class="lineNum">     542 </span>            : 
+<span class="lineNum">     543 </span>            :     // Set a more aggressive (higher) q delta for segment BOOST2.
+<span class="lineNum">     544 </span><span class="lineNoCov">          0 :     qindex_delta = compute_deltaq(</span>
+<span class="lineNum">     545 </span>            :         cpi, cm-&gt;base_qindex,
+<span class="lineNum">     546 </span><span class="lineNoCov">          0 :         AOMMIN(CR_MAX_RATE_TARGET_RATIO,</span>
+<span class="lineNum">     547 </span>            :                0.1 * cr-&gt;rate_boost_fac * cr-&gt;rate_ratio_qdelta));
+<span class="lineNum">     548 </span><span class="lineNoCov">          0 :     cr-&gt;qindex_delta[2] = qindex_delta;</span>
+<span class="lineNum">     549 </span><span class="lineNoCov">          0 :     av1_set_segdata(seg, CR_SEGMENT_ID_BOOST2, SEG_LVL_ALT_Q, qindex_delta);</span>
+<span class="lineNum">     550 </span>            : 
+<span class="lineNum">     551 </span>            :     // Update the segmentation and refresh map.
+<span class="lineNum">     552 </span><span class="lineNoCov">          0 :     cyclic_refresh_update_map(cpi);</span>
+<span class="lineNum">     553 </span>            :   }
+<a name="554"><span class="lineNum">     554 </span>            : }</a>
+<span class="lineNum">     555 </span>            : 
+<span class="lineNum">     556 </span><span class="lineNoCov">          0 : int av1_cyclic_refresh_get_rdmult(const CYCLIC_REFRESH *cr) {</span>
+<span class="lineNum">     557 </span><span class="lineNoCov">          0 :   return cr-&gt;rdmult;</span>
+<a name="558"><span class="lineNum">     558 </span>            : }</a>
+<span class="lineNum">     559 </span>            : 
+<span class="lineNum">     560 </span><span class="lineNoCov">          0 : void av1_cyclic_refresh_reset_resize(AV1_COMP *const cpi) {</span>
+<span class="lineNum">     561 </span><span class="lineNoCov">          0 :   const AV1_COMMON *const cm = &amp;cpi-&gt;common;</span>
+<span class="lineNum">     562 </span><span class="lineNoCov">          0 :   CYCLIC_REFRESH *const cr = cpi-&gt;cyclic_refresh;</span>
+<span class="lineNum">     563 </span><span class="lineNoCov">          0 :   memset(cr-&gt;map, 0, cm-&gt;mi_rows * cm-&gt;mi_cols);</span>
+<span class="lineNum">     564 </span><span class="lineNoCov">          0 :   cr-&gt;sb_index = 0;</span>
+<span class="lineNum">     565 </span><span class="lineNoCov">          0 :   cpi-&gt;refresh_golden_frame = 1;</span>
+<span class="lineNum">     566 </span><span class="lineNoCov">          0 : }</span>
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

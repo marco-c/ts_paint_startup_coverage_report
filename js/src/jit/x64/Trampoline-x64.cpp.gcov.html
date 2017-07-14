@@ -1,0 +1,1419 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - js/src/jit/x64/Trampoline-x64.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../../index.html">top level</a> - <a href="index.html">js/src/jit/x64</a> - Trampoline-x64.cpp<span style="font-size: 80%;"> (source / <a href="Trampoline-x64.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">468</td>
+            <td class="headerCovTableEntry">527</td>
+            <td class="headerCovTableEntryMed">88.8 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">11</td>
+            <td class="headerCovTableEntry">13</td>
+            <td class="headerCovTableEntryMed">84.6 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-</a>
+<span class="lineNum">       2 </span>            :  * vim: set ts=8 sts=4 et sw=4 tw=99:
+<span class="lineNum">       3 </span>            :  * This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #include &quot;jit/Bailouts.h&quot;
+<span class="lineNum">       8 </span>            : #include &quot;jit/JitCompartment.h&quot;
+<span class="lineNum">       9 </span>            : #include &quot;jit/JitFrames.h&quot;
+<span class="lineNum">      10 </span>            : #include &quot;jit/Linker.h&quot;
+<span class="lineNum">      11 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">      12 </span>            : # include &quot;jit/PerfSpewer.h&quot;
+<span class="lineNum">      13 </span>            : #endif
+<span class="lineNum">      14 </span>            : #include &quot;jit/VMFunctions.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;jit/x64/SharedICHelpers-x64.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;vtune/VTuneWrapper.h&quot;
+<span class="lineNum">      17 </span>            : 
+<span class="lineNum">      18 </span>            : #include &quot;jit/MacroAssembler-inl.h&quot;
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : using namespace js;
+<span class="lineNum">      21 </span>            : using namespace js::jit;
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : using mozilla::IsPowerOfTwo;
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : // All registers to save and restore. This includes the stack pointer, since we
+<span class="lineNum">      26 </span>            : // use the ability to reference register values on the stack by index.
+<span class="lineNum">      27 </span>            : static const LiveRegisterSet AllRegs =
+<span class="lineNum">      28 </span>            :     LiveRegisterSet(GeneralRegisterSet(Registers::AllMask),
+<span class="lineNum">      29 </span>            :                          FloatRegisterSet(FloatRegisters::AllMask));
+<span class="lineNum">      30 </span>            : 
+<span class="lineNum">      31 </span>            : // Generates a trampoline for calling Jit compiled code from a C++ function.
+<span class="lineNum">      32 </span>            : // The trampoline use the EnterJitCode signature, with the standard x64 fastcall
+<a name="33"><span class="lineNum">      33 </span>            : // calling convention.</a>
+<span class="lineNum">      34 </span>            : JitCode*
+<span class="lineNum">      35 </span><span class="lineCov">          8 : JitRuntime::generateEnterJIT(JSContext* cx, EnterJitType type)</span>
+<span class="lineNum">      36 </span>            : {
+<span class="lineNum">      37 </span><span class="lineCov">         16 :     MacroAssembler masm(cx);</span>
+<span class="lineNum">      38 </span><span class="lineCov">          8 :     masm.assertStackAlignment(ABIStackAlignment, -int32_t(sizeof(uintptr_t)) /* return address */);</span>
+<span class="lineNum">      39 </span>            : 
+<span class="lineNum">      40 </span><span class="lineCov">          8 :     const Register reg_code  = IntArgReg0;</span>
+<span class="lineNum">      41 </span><span class="lineCov">          8 :     const Register reg_argc  = IntArgReg1;</span>
+<span class="lineNum">      42 </span><span class="lineCov">          8 :     const Register reg_argv  = IntArgReg2;</span>
+<span class="lineNum">      43 </span><span class="lineCov">          8 :     MOZ_ASSERT(OsrFrameReg == IntArgReg3);</span>
+<span class="lineNum">      44 </span>            : 
+<span class="lineNum">      45 </span>            : #if defined(_WIN64)
+<span class="lineNum">      46 </span>            :     const Address token  = Address(rbp, 16 + ShadowStackSpace);
+<span class="lineNum">      47 </span>            :     const Operand scopeChain = Operand(rbp, 24 + ShadowStackSpace);
+<span class="lineNum">      48 </span>            :     const Operand numStackValuesAddr = Operand(rbp, 32 + ShadowStackSpace);
+<span class="lineNum">      49 </span>            :     const Operand result = Operand(rbp, 40 + ShadowStackSpace);
+<span class="lineNum">      50 </span>            : #else
+<span class="lineNum">      51 </span><span class="lineCov">          8 :     const Register token = IntArgReg4;</span>
+<span class="lineNum">      52 </span><span class="lineCov">          8 :     const Register scopeChain = IntArgReg5;</span>
+<span class="lineNum">      53 </span><span class="lineCov">          8 :     const Operand numStackValuesAddr = Operand(rbp, 16 + ShadowStackSpace);</span>
+<span class="lineNum">      54 </span><span class="lineCov">          8 :     const Operand result = Operand(rbp, 24 + ShadowStackSpace);</span>
+<span class="lineNum">      55 </span>            : #endif
+<span class="lineNum">      56 </span>            : 
+<span class="lineNum">      57 </span>            :     // Save old stack frame pointer, set new stack frame pointer.
+<span class="lineNum">      58 </span><span class="lineCov">          8 :     masm.push(rbp);</span>
+<span class="lineNum">      59 </span><span class="lineCov">          8 :     masm.mov(rsp, rbp);</span>
+<span class="lineNum">      60 </span>            : 
+<span class="lineNum">      61 </span>            :     // Save non-volatile registers. These must be saved by the trampoline, rather
+<span class="lineNum">      62 </span>            :     // than by the JIT'd code, because they are scanned by the conservative scanner.
+<span class="lineNum">      63 </span><span class="lineCov">          8 :     masm.push(rbx);</span>
+<span class="lineNum">      64 </span><span class="lineCov">          8 :     masm.push(r12);</span>
+<span class="lineNum">      65 </span><span class="lineCov">          8 :     masm.push(r13);</span>
+<span class="lineNum">      66 </span><span class="lineCov">          8 :     masm.push(r14);</span>
+<span class="lineNum">      67 </span><span class="lineCov">          8 :     masm.push(r15);</span>
+<span class="lineNum">      68 </span>            : #if defined(_WIN64)
+<span class="lineNum">      69 </span>            :     masm.push(rdi);
+<span class="lineNum">      70 </span>            :     masm.push(rsi);
+<span class="lineNum">      71 </span>            : 
+<span class="lineNum">      72 </span>            :     // 16-byte aligment for vmovdqa
+<span class="lineNum">      73 </span>            :     masm.subq(Imm32(16 * 10 + 8), rsp);
+<span class="lineNum">      74 </span>            : 
+<span class="lineNum">      75 </span>            :     masm.vmovdqa(xmm6, Operand(rsp, 16 * 0));
+<span class="lineNum">      76 </span>            :     masm.vmovdqa(xmm7, Operand(rsp, 16 * 1));
+<span class="lineNum">      77 </span>            :     masm.vmovdqa(xmm8, Operand(rsp, 16 * 2));
+<span class="lineNum">      78 </span>            :     masm.vmovdqa(xmm9, Operand(rsp, 16 * 3));
+<span class="lineNum">      79 </span>            :     masm.vmovdqa(xmm10, Operand(rsp, 16 * 4));
+<span class="lineNum">      80 </span>            :     masm.vmovdqa(xmm11, Operand(rsp, 16 * 5));
+<span class="lineNum">      81 </span>            :     masm.vmovdqa(xmm12, Operand(rsp, 16 * 6));
+<span class="lineNum">      82 </span>            :     masm.vmovdqa(xmm13, Operand(rsp, 16 * 7));
+<span class="lineNum">      83 </span>            :     masm.vmovdqa(xmm14, Operand(rsp, 16 * 8));
+<span class="lineNum">      84 </span>            :     masm.vmovdqa(xmm15, Operand(rsp, 16 * 9));
+<span class="lineNum">      85 </span>            : #endif
+<span class="lineNum">      86 </span>            : 
+<span class="lineNum">      87 </span>            :     // Save arguments passed in registers needed after function call.
+<span class="lineNum">      88 </span><span class="lineCov">          8 :     masm.push(result);</span>
+<span class="lineNum">      89 </span>            : 
+<span class="lineNum">      90 </span>            :     // Remember stack depth without padding and arguments.
+<span class="lineNum">      91 </span><span class="lineCov">          8 :     masm.mov(rsp, r14);</span>
+<span class="lineNum">      92 </span>            : 
+<span class="lineNum">      93 </span>            :     // Remember number of bytes occupied by argument vector
+<span class="lineNum">      94 </span><span class="lineCov">          8 :     masm.mov(reg_argc, r13);</span>
+<span class="lineNum">      95 </span>            : 
+<span class="lineNum">      96 </span>            :     // if we are constructing, that also needs to include newTarget
+<span class="lineNum">      97 </span>            :     {
+<span class="lineNum">      98 </span><span class="lineCov">         16 :         Label noNewTarget;</span>
+<span class="lineNum">      99 </span><span class="lineCov">         16 :         masm.branchTest32(Assembler::Zero, token, Imm32(CalleeToken_FunctionConstructing),</span>
+<span class="lineNum">     100 </span><span class="lineCov">          8 :                           &amp;noNewTarget);</span>
+<span class="lineNum">     101 </span>            : 
+<span class="lineNum">     102 </span><span class="lineCov">          8 :         masm.addq(Imm32(1), r13);</span>
+<span class="lineNum">     103 </span>            : 
+<span class="lineNum">     104 </span><span class="lineCov">          8 :         masm.bind(&amp;noNewTarget);</span>
+<span class="lineNum">     105 </span>            :     }
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span><span class="lineCov">          8 :     masm.shll(Imm32(3), r13);   // r13 = argc * sizeof(Value)</span>
+<span class="lineNum">     108 </span>            :     static_assert(sizeof(Value) == 1 &lt;&lt; 3, &quot;Constant is baked in assembly code&quot;);
+<span class="lineNum">     109 </span>            : 
+<span class="lineNum">     110 </span>            :     // Guarantee stack alignment of Jit frames.
+<span class="lineNum">     111 </span>            :     //
+<span class="lineNum">     112 </span>            :     // This code compensates for the offset created by the copy of the vector of
+<span class="lineNum">     113 </span>            :     // arguments, such that the jit frame will be aligned once the return
+<span class="lineNum">     114 </span>            :     // address is pushed on the stack.
+<span class="lineNum">     115 </span>            :     //
+<span class="lineNum">     116 </span>            :     // In the computation of the offset, we omit the size of the JitFrameLayout
+<span class="lineNum">     117 </span>            :     // which is pushed on the stack, as the JitFrameLayout size is a multiple of
+<span class="lineNum">     118 </span>            :     // the JitStackAlignment.
+<span class="lineNum">     119 </span><span class="lineCov">          8 :     masm.mov(rsp, r12);</span>
+<span class="lineNum">     120 </span><span class="lineCov">          8 :     masm.subq(r13, r12);</span>
+<span class="lineNum">     121 </span>            :     static_assert(sizeof(JitFrameLayout) % JitStackAlignment == 0,
+<span class="lineNum">     122 </span>            :       &quot;No need to consider the JitFrameLayout for aligning the stack&quot;);
+<span class="lineNum">     123 </span><span class="lineCov">          8 :     masm.andl(Imm32(JitStackAlignment - 1), r12);</span>
+<span class="lineNum">     124 </span><span class="lineCov">          8 :     masm.subq(r12, rsp);</span>
+<span class="lineNum">     125 </span>            : 
+<span class="lineNum">     126 </span>            :     /***************************************************************
+<span class="lineNum">     127 </span>            :     Loop over argv vector, push arguments onto stack in reverse order
+<span class="lineNum">     128 </span>            :     ***************************************************************/
+<span class="lineNum">     129 </span>            : 
+<span class="lineNum">     130 </span>            :     // r13 still stores the number of bytes in the argument vector.
+<span class="lineNum">     131 </span><span class="lineCov">          8 :     masm.addq(reg_argv, r13); // r13 points above last argument or newTarget</span>
+<span class="lineNum">     132 </span>            : 
+<span class="lineNum">     133 </span>            :     // while r13 &gt; rdx, push arguments.
+<span class="lineNum">     134 </span>            :     {
+<span class="lineNum">     135 </span><span class="lineCov">         16 :         Label header, footer;</span>
+<span class="lineNum">     136 </span><span class="lineCov">          8 :         masm.bind(&amp;header);</span>
+<span class="lineNum">     137 </span>            : 
+<span class="lineNum">     138 </span><span class="lineCov">          8 :         masm.cmpPtr(r13, reg_argv);</span>
+<span class="lineNum">     139 </span><span class="lineCov">          8 :         masm.j(AssemblerX86Shared::BelowOrEqual, &amp;footer);</span>
+<span class="lineNum">     140 </span>            : 
+<span class="lineNum">     141 </span><span class="lineCov">          8 :         masm.subq(Imm32(8), r13);</span>
+<span class="lineNum">     142 </span><span class="lineCov">          8 :         masm.push(Operand(r13, 0));</span>
+<span class="lineNum">     143 </span><span class="lineCov">          8 :         masm.jmp(&amp;header);</span>
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span><span class="lineCov">          8 :         masm.bind(&amp;footer);</span>
+<span class="lineNum">     146 </span>            :     }
+<span class="lineNum">     147 </span>            : 
+<span class="lineNum">     148 </span>            :     // Push the number of actual arguments.  |result| is used to store the
+<span class="lineNum">     149 </span>            :     // actual number of arguments without adding an extra argument to the enter
+<span class="lineNum">     150 </span>            :     // JIT.
+<span class="lineNum">     151 </span><span class="lineCov">          8 :     masm.movq(result, reg_argc);</span>
+<span class="lineNum">     152 </span><span class="lineCov">          8 :     masm.unboxInt32(Operand(reg_argc, 0), reg_argc);</span>
+<span class="lineNum">     153 </span><span class="lineCov">          8 :     masm.push(reg_argc);</span>
+<span class="lineNum">     154 </span>            : 
+<span class="lineNum">     155 </span>            :     // Push the callee token.
+<span class="lineNum">     156 </span><span class="lineCov">          8 :     masm.push(token);</span>
+<span class="lineNum">     157 </span>            : 
+<span class="lineNum">     158 </span>            :     /*****************************************************************
+<span class="lineNum">     159 </span>            :     Push the number of bytes we've pushed so far on the stack and call
+<span class="lineNum">     160 </span>            :     *****************************************************************/
+<span class="lineNum">     161 </span><span class="lineCov">          8 :     masm.subq(rsp, r14);</span>
+<span class="lineNum">     162 </span>            : 
+<span class="lineNum">     163 </span>            :     // Create a frame descriptor.
+<span class="lineNum">     164 </span><span class="lineCov">          8 :     masm.makeFrameDescriptor(r14, JitFrame_Entry, JitFrameLayout::Size());</span>
+<span class="lineNum">     165 </span><span class="lineCov">          8 :     masm.push(r14);</span>
+<span class="lineNum">     166 </span>            : 
+<span class="lineNum">     167 </span><span class="lineCov">          8 :     CodeLabel returnLabel;</span>
+<span class="lineNum">     168 </span><span class="lineCov">          8 :     CodeLabel oomReturnLabel;</span>
+<span class="lineNum">     169 </span><span class="lineCov">          8 :     if (type == EnterJitBaseline) {</span>
+<span class="lineNum">     170 </span>            :         // Handle OSR.
+<span class="lineNum">     171 </span><span class="lineCov">          4 :         AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());</span>
+<span class="lineNum">     172 </span><span class="lineCov">          4 :         regs.takeUnchecked(OsrFrameReg);</span>
+<span class="lineNum">     173 </span><span class="lineCov">          4 :         regs.take(rbp);</span>
+<span class="lineNum">     174 </span><span class="lineCov">          4 :         regs.take(reg_code);</span>
+<span class="lineNum">     175 </span>            : 
+<span class="lineNum">     176 </span>            :         // Ensure that |scratch| does not end up being JSReturnOperand.
+<span class="lineNum">     177 </span>            :         // Do takeUnchecked because on Win64/x64, reg_code (IntArgReg0) and JSReturnOperand are
+<span class="lineNum">     178 </span>            :         // the same (rcx).  See bug 849398.
+<span class="lineNum">     179 </span><span class="lineCov">          4 :         regs.takeUnchecked(JSReturnOperand);</span>
+<span class="lineNum">     180 </span><span class="lineCov">          4 :         Register scratch = regs.takeAny();</span>
+<span class="lineNum">     181 </span>            : 
+<span class="lineNum">     182 </span><span class="lineCov">          8 :         Label notOsr;</span>
+<span class="lineNum">     183 </span><span class="lineCov">          4 :         masm.branchTestPtr(Assembler::Zero, OsrFrameReg, OsrFrameReg, &amp;notOsr);</span>
+<span class="lineNum">     184 </span>            : 
+<span class="lineNum">     185 </span><span class="lineCov">          4 :         Register numStackValues = regs.takeAny();</span>
+<span class="lineNum">     186 </span><span class="lineCov">          4 :         masm.movq(numStackValuesAddr, numStackValues);</span>
+<span class="lineNum">     187 </span>            : 
+<span class="lineNum">     188 </span>            :         // Push return address
+<span class="lineNum">     189 </span><span class="lineCov">          4 :         masm.mov(returnLabel.patchAt(), scratch);</span>
+<span class="lineNum">     190 </span><span class="lineCov">          4 :         masm.push(scratch);</span>
+<span class="lineNum">     191 </span>            : 
+<span class="lineNum">     192 </span>            :         // Push previous frame pointer.
+<span class="lineNum">     193 </span><span class="lineCov">          4 :         masm.push(rbp);</span>
+<span class="lineNum">     194 </span>            : 
+<span class="lineNum">     195 </span>            :         // Reserve frame.
+<span class="lineNum">     196 </span><span class="lineCov">          4 :         Register framePtr = rbp;</span>
+<span class="lineNum">     197 </span><span class="lineCov">          4 :         masm.subPtr(Imm32(BaselineFrame::Size()), rsp);</span>
+<span class="lineNum">     198 </span><span class="lineCov">          4 :         masm.mov(rsp, framePtr);</span>
+<span class="lineNum">     199 </span>            : 
+<span class="lineNum">     200 </span>            : #ifdef XP_WIN
+<span class="lineNum">     201 </span>            :         // Can't push large frames blindly on windows.  Touch frame memory incrementally.
+<span class="lineNum">     202 </span>            :         masm.mov(numStackValues, scratch);
+<span class="lineNum">     203 </span>            :         masm.lshiftPtr(Imm32(3), scratch);
+<span class="lineNum">     204 </span>            :         masm.subPtr(scratch, framePtr);
+<span class="lineNum">     205 </span>            :         {
+<span class="lineNum">     206 </span>            :             masm.movePtr(rsp, scratch);
+<span class="lineNum">     207 </span>            :             masm.subPtr(Imm32(WINDOWS_BIG_FRAME_TOUCH_INCREMENT), scratch);
+<span class="lineNum">     208 </span>            : 
+<span class="lineNum">     209 </span>            :             Label touchFrameLoop;
+<span class="lineNum">     210 </span>            :             Label touchFrameLoopEnd;
+<span class="lineNum">     211 </span>            :             masm.bind(&amp;touchFrameLoop);
+<span class="lineNum">     212 </span>            :             masm.branchPtr(Assembler::Below, scratch, framePtr, &amp;touchFrameLoopEnd);
+<span class="lineNum">     213 </span>            :             masm.store32(Imm32(0), Address(scratch, 0));
+<span class="lineNum">     214 </span>            :             masm.subPtr(Imm32(WINDOWS_BIG_FRAME_TOUCH_INCREMENT), scratch);
+<span class="lineNum">     215 </span>            :             masm.jump(&amp;touchFrameLoop);
+<span class="lineNum">     216 </span>            :             masm.bind(&amp;touchFrameLoopEnd);
+<span class="lineNum">     217 </span>            :         }
+<span class="lineNum">     218 </span>            :         masm.mov(rsp, framePtr);
+<span class="lineNum">     219 </span>            : #endif
+<span class="lineNum">     220 </span>            : 
+<span class="lineNum">     221 </span>            :         // Reserve space for locals and stack values.
+<span class="lineNum">     222 </span><span class="lineCov">          4 :         Register valuesSize = regs.takeAny();</span>
+<span class="lineNum">     223 </span><span class="lineCov">          4 :         masm.mov(numStackValues, valuesSize);</span>
+<span class="lineNum">     224 </span><span class="lineCov">          4 :         masm.shll(Imm32(3), valuesSize);</span>
+<span class="lineNum">     225 </span><span class="lineCov">          4 :         masm.subPtr(valuesSize, rsp);</span>
+<span class="lineNum">     226 </span>            : 
+<span class="lineNum">     227 </span>            :         // Enter exit frame.
+<span class="lineNum">     228 </span><span class="lineCov">          4 :         masm.addPtr(Imm32(BaselineFrame::Size() + BaselineFrame::FramePointerOffset), valuesSize);</span>
+<span class="lineNum">     229 </span><span class="lineCov">          4 :         masm.makeFrameDescriptor(valuesSize, JitFrame_BaselineJS, ExitFrameLayout::Size());</span>
+<span class="lineNum">     230 </span><span class="lineCov">          4 :         masm.push(valuesSize);</span>
+<span class="lineNum">     231 </span><span class="lineCov">          4 :         masm.push(Imm32(0)); // Fake return address.</span>
+<span class="lineNum">     232 </span>            :         // No GC things to mark, push a bare token.
+<span class="lineNum">     233 </span><span class="lineCov">          4 :         masm.loadJSContext(scratch);</span>
+<span class="lineNum">     234 </span><span class="lineCov">          4 :         masm.enterFakeExitFrame(scratch, scratch, ExitFrameLayoutBareToken);</span>
+<span class="lineNum">     235 </span>            : 
+<span class="lineNum">     236 </span><span class="lineCov">          4 :         regs.add(valuesSize);</span>
+<span class="lineNum">     237 </span>            : 
+<span class="lineNum">     238 </span><span class="lineCov">          4 :         masm.push(framePtr);</span>
+<span class="lineNum">     239 </span><span class="lineCov">          4 :         masm.push(reg_code);</span>
+<span class="lineNum">     240 </span>            : 
+<span class="lineNum">     241 </span><span class="lineCov">          4 :         masm.setupUnalignedABICall(scratch);</span>
+<span class="lineNum">     242 </span><span class="lineCov">          4 :         masm.passABIArg(framePtr); // BaselineFrame</span>
+<span class="lineNum">     243 </span><span class="lineCov">          4 :         masm.passABIArg(OsrFrameReg); // InterpreterFrame</span>
+<span class="lineNum">     244 </span><span class="lineCov">          4 :         masm.passABIArg(numStackValues);</span>
+<span class="lineNum">     245 </span><span class="lineCov">          4 :         masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, jit::InitBaselineFrameForOsr));</span>
+<span class="lineNum">     246 </span>            : 
+<span class="lineNum">     247 </span><span class="lineCov">          4 :         masm.pop(reg_code);</span>
+<span class="lineNum">     248 </span><span class="lineCov">          4 :         masm.pop(framePtr);</span>
+<span class="lineNum">     249 </span>            : 
+<span class="lineNum">     250 </span><span class="lineCov">          4 :         MOZ_ASSERT(reg_code != ReturnReg);</span>
+<span class="lineNum">     251 </span>            : 
+<span class="lineNum">     252 </span><span class="lineCov">          8 :         Label error;</span>
+<span class="lineNum">     253 </span><span class="lineCov">          4 :         masm.addPtr(Imm32(ExitFrameLayout::SizeWithFooter()), rsp);</span>
+<span class="lineNum">     254 </span><span class="lineCov">          4 :         masm.addPtr(Imm32(BaselineFrame::Size()), framePtr);</span>
+<span class="lineNum">     255 </span><span class="lineCov">          4 :         masm.branchIfFalseBool(ReturnReg, &amp;error);</span>
+<span class="lineNum">     256 </span>            : 
+<span class="lineNum">     257 </span>            :         // If OSR-ing, then emit instrumentation for setting lastProfilerFrame
+<span class="lineNum">     258 </span>            :         // if profiler instrumentation is enabled.
+<span class="lineNum">     259 </span>            :         {
+<span class="lineNum">     260 </span><span class="lineCov">          8 :             Label skipProfilingInstrumentation;</span>
+<span class="lineNum">     261 </span><span class="lineCov">          4 :             Register realFramePtr = numStackValues;</span>
+<span class="lineNum">     262 </span><span class="lineCov">          4 :             AbsoluteAddress addressOfEnabled(cx-&gt;runtime()-&gt;geckoProfiler().addressOfEnabled());</span>
+<span class="lineNum">     263 </span><span class="lineCov">          8 :             masm.branch32(Assembler::Equal, addressOfEnabled, Imm32(0),</span>
+<span class="lineNum">     264 </span><span class="lineCov">          4 :                           &amp;skipProfilingInstrumentation);</span>
+<span class="lineNum">     265 </span><span class="lineCov">          4 :             masm.lea(Operand(framePtr, sizeof(void*)), realFramePtr);</span>
+<span class="lineNum">     266 </span><span class="lineCov">          4 :             masm.profilerEnterFrame(realFramePtr, scratch);</span>
+<span class="lineNum">     267 </span><span class="lineCov">          4 :             masm.bind(&amp;skipProfilingInstrumentation);</span>
+<span class="lineNum">     268 </span>            :         }
+<span class="lineNum">     269 </span>            : 
+<span class="lineNum">     270 </span><span class="lineCov">          4 :         masm.jump(reg_code);</span>
+<span class="lineNum">     271 </span>            : 
+<span class="lineNum">     272 </span>            :         // OOM: load error value, discard return address and previous frame
+<span class="lineNum">     273 </span>            :         // pointer and return.
+<span class="lineNum">     274 </span><span class="lineCov">          4 :         masm.bind(&amp;error);</span>
+<span class="lineNum">     275 </span><span class="lineCov">          4 :         masm.mov(framePtr, rsp);</span>
+<span class="lineNum">     276 </span><span class="lineCov">          4 :         masm.addPtr(Imm32(2 * sizeof(uintptr_t)), rsp);</span>
+<span class="lineNum">     277 </span><span class="lineCov">          4 :         masm.moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);</span>
+<span class="lineNum">     278 </span><span class="lineCov">          4 :         masm.mov(oomReturnLabel.patchAt(), scratch);</span>
+<span class="lineNum">     279 </span><span class="lineCov">          4 :         masm.jump(scratch);</span>
+<span class="lineNum">     280 </span>            : 
+<span class="lineNum">     281 </span><span class="lineCov">          4 :         masm.bind(&amp;notOsr);</span>
+<span class="lineNum">     282 </span><span class="lineCov">          4 :         masm.movq(scopeChain, R1.scratchReg());</span>
+<span class="lineNum">     283 </span>            :     }
+<span class="lineNum">     284 </span>            : 
+<span class="lineNum">     285 </span>            :     // The call will push the return address on the stack, thus we check that
+<span class="lineNum">     286 </span>            :     // the stack would be aligned once the call is complete.
+<span class="lineNum">     287 </span><span class="lineCov">          8 :     masm.assertStackAlignment(JitStackAlignment, sizeof(uintptr_t));</span>
+<span class="lineNum">     288 </span>            : 
+<span class="lineNum">     289 </span>            :     // Call function.
+<span class="lineNum">     290 </span><span class="lineCov">          8 :     masm.callJitNoProfiler(reg_code);</span>
+<span class="lineNum">     291 </span>            : 
+<span class="lineNum">     292 </span><span class="lineCov">          8 :     if (type == EnterJitBaseline) {</span>
+<span class="lineNum">     293 </span>            :         // Baseline OSR will return here.
+<span class="lineNum">     294 </span><span class="lineCov">          4 :         masm.use(returnLabel.target());</span>
+<span class="lineNum">     295 </span><span class="lineCov">          4 :         masm.addCodeLabel(returnLabel);</span>
+<span class="lineNum">     296 </span><span class="lineCov">          4 :         masm.use(oomReturnLabel.target());</span>
+<span class="lineNum">     297 </span><span class="lineCov">          4 :         masm.addCodeLabel(oomReturnLabel);</span>
+<span class="lineNum">     298 </span>            :     }
+<span class="lineNum">     299 </span>            : 
+<span class="lineNum">     300 </span>            :     // Pop arguments and padding from stack.
+<span class="lineNum">     301 </span><span class="lineCov">          8 :     masm.pop(r14);              // Pop and decode descriptor.</span>
+<span class="lineNum">     302 </span><span class="lineCov">          8 :     masm.shrq(Imm32(FRAMESIZE_SHIFT), r14);</span>
+<span class="lineNum">     303 </span><span class="lineCov">          8 :     masm.addq(r14, rsp);        // Remove arguments.</span>
+<span class="lineNum">     304 </span>            : 
+<span class="lineNum">     305 </span>            :     /*****************************************************************
+<span class="lineNum">     306 </span>            :     Place return value where it belongs, pop all saved registers
+<span class="lineNum">     307 </span>            :     *****************************************************************/
+<span class="lineNum">     308 </span><span class="lineCov">          8 :     masm.pop(r12); // vp</span>
+<span class="lineNum">     309 </span><span class="lineCov">          8 :     masm.storeValue(JSReturnOperand, Operand(r12, 0));</span>
+<span class="lineNum">     310 </span>            : 
+<span class="lineNum">     311 </span>            :     // Restore non-volatile registers.
+<span class="lineNum">     312 </span>            : #if defined(_WIN64)
+<span class="lineNum">     313 </span>            :     masm.vmovdqa(Operand(rsp, 16 * 0), xmm6);
+<span class="lineNum">     314 </span>            :     masm.vmovdqa(Operand(rsp, 16 * 1), xmm7);
+<span class="lineNum">     315 </span>            :     masm.vmovdqa(Operand(rsp, 16 * 2), xmm8);
+<span class="lineNum">     316 </span>            :     masm.vmovdqa(Operand(rsp, 16 * 3), xmm9);
+<span class="lineNum">     317 </span>            :     masm.vmovdqa(Operand(rsp, 16 * 4), xmm10);
+<span class="lineNum">     318 </span>            :     masm.vmovdqa(Operand(rsp, 16 * 5), xmm11);
+<span class="lineNum">     319 </span>            :     masm.vmovdqa(Operand(rsp, 16 * 6), xmm12);
+<span class="lineNum">     320 </span>            :     masm.vmovdqa(Operand(rsp, 16 * 7), xmm13);
+<span class="lineNum">     321 </span>            :     masm.vmovdqa(Operand(rsp, 16 * 8), xmm14);
+<span class="lineNum">     322 </span>            :     masm.vmovdqa(Operand(rsp, 16 * 9), xmm15);
+<span class="lineNum">     323 </span>            : 
+<span class="lineNum">     324 </span>            :     masm.addq(Imm32(16 * 10 + 8), rsp);
+<span class="lineNum">     325 </span>            : 
+<span class="lineNum">     326 </span>            :     masm.pop(rsi);
+<span class="lineNum">     327 </span>            :     masm.pop(rdi);
+<span class="lineNum">     328 </span>            : #endif
+<span class="lineNum">     329 </span><span class="lineCov">          8 :     masm.pop(r15);</span>
+<span class="lineNum">     330 </span><span class="lineCov">          8 :     masm.pop(r14);</span>
+<span class="lineNum">     331 </span><span class="lineCov">          8 :     masm.pop(r13);</span>
+<span class="lineNum">     332 </span><span class="lineCov">          8 :     masm.pop(r12);</span>
+<span class="lineNum">     333 </span><span class="lineCov">          8 :     masm.pop(rbx);</span>
+<span class="lineNum">     334 </span>            : 
+<span class="lineNum">     335 </span>            :     // Restore frame pointer and return.
+<span class="lineNum">     336 </span><span class="lineCov">          8 :     masm.pop(rbp);</span>
+<span class="lineNum">     337 </span><span class="lineCov">          8 :     masm.ret();</span>
+<span class="lineNum">     338 </span>            : 
+<span class="lineNum">     339 </span><span class="lineCov">         16 :     Linker linker(masm);</span>
+<span class="lineNum">     340 </span><span class="lineCov">          8 :     JitCode* code = linker.newCode&lt;NoGC&gt;(cx, OTHER_CODE);</span>
+<span class="lineNum">     341 </span>            : 
+<span class="lineNum">     342 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">     343 </span>            :     writePerfSpewerJitCodeProfile(code, &quot;EnterJIT&quot;);
+<span class="lineNum">     344 </span>            : #endif
+<span class="lineNum">     345 </span>            : #ifdef MOZ_VTUNE
+<span class="lineNum">     346 </span><span class="lineCov">          8 :     vtune::MarkStub(code, &quot;EnterJIT&quot;);</span>
+<span class="lineNum">     347 </span>            : #endif
+<span class="lineNum">     348 </span>            : 
+<span class="lineNum">     349 </span><span class="lineCov">         16 :     return code;</span>
+<span class="lineNum">     350 </span>            : }
+<a name="351"><span class="lineNum">     351 </span>            : </a>
+<span class="lineNum">     352 </span>            : JitCode*
+<span class="lineNum">     353 </span><span class="lineCov">          4 : JitRuntime::generateInvalidator(JSContext* cx)</span>
+<span class="lineNum">     354 </span>            : {
+<span class="lineNum">     355 </span><span class="lineCov">          8 :     AutoJitContextAlloc ajca(cx);</span>
+<span class="lineNum">     356 </span><span class="lineCov">          8 :     MacroAssembler masm(cx);</span>
+<span class="lineNum">     357 </span>            : 
+<span class="lineNum">     358 </span>            :     // See explanatory comment in x86's JitRuntime::generateInvalidator.
+<span class="lineNum">     359 </span>            : 
+<span class="lineNum">     360 </span><span class="lineCov">          4 :     masm.addq(Imm32(sizeof(uintptr_t)), rsp);</span>
+<span class="lineNum">     361 </span>            : 
+<span class="lineNum">     362 </span>            :     // Push registers such that we can access them from [base + code].
+<span class="lineNum">     363 </span><span class="lineCov">          4 :     masm.PushRegsInMask(AllRegs);</span>
+<span class="lineNum">     364 </span>            : 
+<span class="lineNum">     365 </span><span class="lineCov">          4 :     masm.movq(rsp, rax); // Argument to jit::InvalidationBailout.</span>
+<span class="lineNum">     366 </span>            : 
+<span class="lineNum">     367 </span>            :     // Make space for InvalidationBailout's frameSize outparam.
+<span class="lineNum">     368 </span><span class="lineCov">          4 :     masm.reserveStack(sizeof(size_t));</span>
+<span class="lineNum">     369 </span><span class="lineCov">          4 :     masm.movq(rsp, rbx);</span>
+<span class="lineNum">     370 </span>            : 
+<span class="lineNum">     371 </span>            :     // Make space for InvalidationBailout's bailoutInfo outparam.
+<span class="lineNum">     372 </span><span class="lineCov">          4 :     masm.reserveStack(sizeof(void*));</span>
+<span class="lineNum">     373 </span><span class="lineCov">          4 :     masm.movq(rsp, r9);</span>
+<span class="lineNum">     374 </span>            : 
+<span class="lineNum">     375 </span><span class="lineCov">          4 :     masm.setupUnalignedABICall(rdx);</span>
+<span class="lineNum">     376 </span><span class="lineCov">          4 :     masm.passABIArg(rax);</span>
+<span class="lineNum">     377 </span><span class="lineCov">          4 :     masm.passABIArg(rbx);</span>
+<span class="lineNum">     378 </span><span class="lineCov">          4 :     masm.passABIArg(r9);</span>
+<span class="lineNum">     379 </span><span class="lineCov">          4 :     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, InvalidationBailout));</span>
+<span class="lineNum">     380 </span>            : 
+<span class="lineNum">     381 </span><span class="lineCov">          4 :     masm.pop(r9); // Get the bailoutInfo outparam.</span>
+<span class="lineNum">     382 </span><span class="lineCov">          4 :     masm.pop(rbx); // Get the frameSize outparam.</span>
+<span class="lineNum">     383 </span>            : 
+<span class="lineNum">     384 </span>            :     // Pop the machine state and the dead frame.
+<span class="lineNum">     385 </span><span class="lineCov">          4 :     masm.lea(Operand(rsp, rbx, TimesOne, sizeof(InvalidationBailoutStack)), rsp);</span>
+<span class="lineNum">     386 </span>            : 
+<span class="lineNum">     387 </span>            :     // Jump to shared bailout tail. The BailoutInfo pointer has to be in r9.
+<span class="lineNum">     388 </span><span class="lineCov">          4 :     JitCode* bailoutTail = cx-&gt;runtime()-&gt;jitRuntime()-&gt;getBailoutTail();</span>
+<span class="lineNum">     389 </span><span class="lineCov">          4 :     masm.jmp(bailoutTail);</span>
+<span class="lineNum">     390 </span>            : 
+<span class="lineNum">     391 </span><span class="lineCov">          8 :     Linker linker(masm);</span>
+<span class="lineNum">     392 </span><span class="lineCov">          4 :     JitCode* code = linker.newCode&lt;NoGC&gt;(cx, OTHER_CODE);</span>
+<span class="lineNum">     393 </span>            : 
+<span class="lineNum">     394 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">     395 </span>            :     writePerfSpewerJitCodeProfile(code, &quot;Invalidator&quot;);
+<span class="lineNum">     396 </span>            : #endif
+<span class="lineNum">     397 </span>            : #ifdef MOZ_VTUNE
+<span class="lineNum">     398 </span><span class="lineCov">          4 :     vtune::MarkStub(code, &quot;Invalidator&quot;);</span>
+<span class="lineNum">     399 </span>            : #endif
+<span class="lineNum">     400 </span>            : 
+<span class="lineNum">     401 </span><span class="lineCov">          8 :     return code;</span>
+<span class="lineNum">     402 </span>            : }
+<a name="403"><span class="lineNum">     403 </span>            : </a>
+<span class="lineNum">     404 </span>            : JitCode*
+<span class="lineNum">     405 </span><span class="lineCov">          4 : JitRuntime::generateArgumentsRectifier(JSContext* cx, void** returnAddrOut)</span>
+<span class="lineNum">     406 </span>            : {
+<span class="lineNum">     407 </span>            :     // Do not erase the frame pointer in this function.
+<span class="lineNum">     408 </span>            : 
+<span class="lineNum">     409 </span><span class="lineCov">          8 :     MacroAssembler masm(cx);</span>
+<span class="lineNum">     410 </span>            :     // Caller:
+<span class="lineNum">     411 </span>            :     // [arg2] [arg1] [this] [[argc] [callee] [descr] [raddr]] &lt;- rsp
+<span class="lineNum">     412 </span>            :     // '--- #r8 ---'
+<span class="lineNum">     413 </span>            : 
+<span class="lineNum">     414 </span>            :     // ArgumentsRectifierReg contains the |nargs| pushed onto the current frame.
+<span class="lineNum">     415 </span>            :     // Including |this|, there are (|nargs| + 1) arguments to copy.
+<span class="lineNum">     416 </span><span class="lineCov">          4 :     MOZ_ASSERT(ArgumentsRectifierReg == r8);</span>
+<span class="lineNum">     417 </span>            : 
+<span class="lineNum">     418 </span>            :     // Add |this|, in the counter of known arguments.
+<span class="lineNum">     419 </span><span class="lineCov">          4 :     masm.addl(Imm32(1), r8);</span>
+<span class="lineNum">     420 </span>            : 
+<span class="lineNum">     421 </span>            :     // Load |nformals| into %rcx.
+<span class="lineNum">     422 </span><span class="lineCov">          4 :     masm.loadPtr(Address(rsp, RectifierFrameLayout::offsetOfCalleeToken()), rax);</span>
+<span class="lineNum">     423 </span><span class="lineCov">          4 :     masm.mov(rax, rcx);</span>
+<span class="lineNum">     424 </span><span class="lineCov">          4 :     masm.andq(Imm32(uint32_t(CalleeTokenMask)), rcx);</span>
+<span class="lineNum">     425 </span><span class="lineCov">          4 :     masm.movzwl(Operand(rcx, JSFunction::offsetOfNargs()), rcx);</span>
+<span class="lineNum">     426 </span>            : 
+<span class="lineNum">     427 </span>            :     // Stash another copy in r11, since we are going to do destructive operations
+<span class="lineNum">     428 </span>            :     // on rcx
+<span class="lineNum">     429 </span><span class="lineCov">          4 :     masm.mov(rcx, r11);</span>
+<span class="lineNum">     430 </span>            : 
+<span class="lineNum">     431 </span>            :     static_assert(CalleeToken_FunctionConstructing == 1,
+<span class="lineNum">     432 </span>            :       &quot;Ensure that we can use the constructing bit to count the value&quot;);
+<span class="lineNum">     433 </span><span class="lineCov">          4 :     masm.mov(rax, rdx);</span>
+<span class="lineNum">     434 </span><span class="lineCov">          4 :     masm.andq(Imm32(uint32_t(CalleeToken_FunctionConstructing)), rdx);</span>
+<span class="lineNum">     435 </span>            : 
+<span class="lineNum">     436 </span>            :     // Including |this|, and |new.target|, there are (|nformals| + 1 + isConstructing)
+<span class="lineNum">     437 </span>            :     // arguments to push to the stack.  Then we push a JitFrameLayout.  We
+<span class="lineNum">     438 </span>            :     // compute the padding expressed in the number of extra |undefined| values
+<span class="lineNum">     439 </span>            :     // to push on the stack.
+<span class="lineNum">     440 </span>            :     static_assert(sizeof(JitFrameLayout) % JitStackAlignment == 0,
+<span class="lineNum">     441 </span>            :       &quot;No need to consider the JitFrameLayout for aligning the stack&quot;);
+<span class="lineNum">     442 </span>            :     static_assert(JitStackAlignment % sizeof(Value) == 0,
+<span class="lineNum">     443 </span>            :       &quot;Ensure that we can pad the stack by pushing extra UndefinedValue&quot;);
+<span class="lineNum">     444 </span>            :     static_assert(IsPowerOfTwo(JitStackValueAlignment),
+<span class="lineNum">     445 </span>            :                   &quot;must have power of two for masm.andl to do its job&quot;);
+<span class="lineNum">     446 </span>            : 
+<span class="lineNum">     447 </span><span class="lineCov">          4 :     masm.addl(Imm32(JitStackValueAlignment - 1 /* for padding */ + 1 /* for |this| */), rcx);</span>
+<span class="lineNum">     448 </span><span class="lineCov">          4 :     masm.addl(rdx, rcx);</span>
+<span class="lineNum">     449 </span><span class="lineCov">          4 :     masm.andl(Imm32(~(JitStackValueAlignment - 1)), rcx);</span>
+<span class="lineNum">     450 </span>            : 
+<span class="lineNum">     451 </span>            :     // Load the number of |undefined|s to push into %rcx.
+<span class="lineNum">     452 </span><span class="lineCov">          4 :     masm.subq(r8, rcx);</span>
+<span class="lineNum">     453 </span>            : 
+<span class="lineNum">     454 </span>            :     // Caller:
+<span class="lineNum">     455 </span>            :     // [arg2] [arg1] [this] [[argc] [callee] [descr] [raddr]] &lt;- rsp &lt;- r9
+<span class="lineNum">     456 </span>            :     // '------ #r8 -------'
+<span class="lineNum">     457 </span>            :     //
+<span class="lineNum">     458 </span>            :     // Rectifier frame:
+<span class="lineNum">     459 </span>            :     // [undef] [undef] [undef] [arg2] [arg1] [this] [[argc] [callee] [descr] [raddr]]
+<span class="lineNum">     460 </span>            :     // '------- #rcx --------' '------ #r8 -------'
+<span class="lineNum">     461 </span>            : 
+<span class="lineNum">     462 </span>            :     // Copy the number of actual arguments
+<span class="lineNum">     463 </span><span class="lineCov">          4 :     masm.loadPtr(Address(rsp, RectifierFrameLayout::offsetOfNumActualArgs()), rdx);</span>
+<span class="lineNum">     464 </span>            : 
+<span class="lineNum">     465 </span><span class="lineCov">          4 :     masm.moveValue(UndefinedValue(), r10);</span>
+<span class="lineNum">     466 </span>            : 
+<span class="lineNum">     467 </span><span class="lineCov">          4 :     masm.movq(rsp, r9); // Save %rsp.</span>
+<span class="lineNum">     468 </span>            : 
+<span class="lineNum">     469 </span>            :     // Push undefined. (including the padding)
+<span class="lineNum">     470 </span>            :     {
+<span class="lineNum">     471 </span><span class="lineCov">          8 :         Label undefLoopTop;</span>
+<span class="lineNum">     472 </span><span class="lineCov">          4 :         masm.bind(&amp;undefLoopTop);</span>
+<span class="lineNum">     473 </span>            : 
+<span class="lineNum">     474 </span><span class="lineCov">          4 :         masm.push(r10);</span>
+<span class="lineNum">     475 </span><span class="lineCov">          4 :         masm.subl(Imm32(1), rcx);</span>
+<span class="lineNum">     476 </span><span class="lineCov">          4 :         masm.j(Assembler::NonZero, &amp;undefLoopTop);</span>
+<span class="lineNum">     477 </span>            :     }
+<span class="lineNum">     478 </span>            : 
+<span class="lineNum">     479 </span>            :     // Get the topmost argument.
+<span class="lineNum">     480 </span>            :     static_assert(sizeof(Value) == 8, &quot;TimesEight is used to skip arguments&quot;);
+<span class="lineNum">     481 </span>            : 
+<span class="lineNum">     482 </span>            :     // | - sizeof(Value)| is used to put rcx such that we can read the last
+<span class="lineNum">     483 </span>            :     // argument, and not the value which is after.
+<span class="lineNum">     484 </span><span class="lineCov">          4 :     BaseIndex b = BaseIndex(r9, r8, TimesEight, sizeof(RectifierFrameLayout) - sizeof(Value));</span>
+<span class="lineNum">     485 </span><span class="lineCov">          4 :     masm.lea(Operand(b), rcx);</span>
+<span class="lineNum">     486 </span>            : 
+<span class="lineNum">     487 </span>            :     // Copy &amp; Push arguments, |nargs| + 1 times (to include |this|).
+<span class="lineNum">     488 </span>            :     {
+<span class="lineNum">     489 </span><span class="lineCov">          8 :         Label copyLoopTop;</span>
+<span class="lineNum">     490 </span>            : 
+<span class="lineNum">     491 </span><span class="lineCov">          4 :         masm.bind(&amp;copyLoopTop);</span>
+<span class="lineNum">     492 </span><span class="lineCov">          4 :         masm.push(Operand(rcx, 0x0));</span>
+<span class="lineNum">     493 </span><span class="lineCov">          4 :         masm.subq(Imm32(sizeof(Value)), rcx);</span>
+<span class="lineNum">     494 </span><span class="lineCov">          4 :         masm.subl(Imm32(1), r8);</span>
+<span class="lineNum">     495 </span><span class="lineCov">          4 :         masm.j(Assembler::NonZero, &amp;copyLoopTop);</span>
+<span class="lineNum">     496 </span>            :     }
+<span class="lineNum">     497 </span>            : 
+<span class="lineNum">     498 </span>            :     // if constructing, copy newTarget
+<span class="lineNum">     499 </span>            :     {
+<span class="lineNum">     500 </span><span class="lineCov">          8 :         Label notConstructing;</span>
+<span class="lineNum">     501 </span>            : 
+<span class="lineNum">     502 </span><span class="lineCov">          8 :         masm.branchTest32(Assembler::Zero, rax, Imm32(CalleeToken_FunctionConstructing),</span>
+<span class="lineNum">     503 </span><span class="lineCov">          4 :                           &amp;notConstructing);</span>
+<span class="lineNum">     504 </span>            : 
+<span class="lineNum">     505 </span>            :         // thisFrame[numFormals] = prevFrame[argc]
+<span class="lineNum">     506 </span><span class="lineCov">          4 :         ValueOperand newTarget(r10);</span>
+<span class="lineNum">     507 </span>            : 
+<span class="lineNum">     508 </span>            :         // +1 for |this|. We want vp[argc], so don't subtract 1
+<span class="lineNum">     509 </span><span class="lineCov">          4 :         BaseIndex newTargetSrc(r9, rdx, TimesEight, sizeof(RectifierFrameLayout) + sizeof(Value));</span>
+<span class="lineNum">     510 </span><span class="lineCov">          4 :         masm.loadValue(newTargetSrc, newTarget);</span>
+<span class="lineNum">     511 </span>            : 
+<span class="lineNum">     512 </span>            :         // Again, 1 for |this|
+<span class="lineNum">     513 </span><span class="lineCov">          4 :         BaseIndex newTargetDest(rsp, r11, TimesEight, sizeof(Value));</span>
+<span class="lineNum">     514 </span><span class="lineCov">          4 :         masm.storeValue(newTarget, newTargetDest);</span>
+<span class="lineNum">     515 </span>            : 
+<span class="lineNum">     516 </span><span class="lineCov">          4 :         masm.bind(&amp;notConstructing);</span>
+<span class="lineNum">     517 </span>            :     }
+<span class="lineNum">     518 </span>            : 
+<span class="lineNum">     519 </span>            : 
+<span class="lineNum">     520 </span>            :     // Caller:
+<span class="lineNum">     521 </span>            :     // [arg2] [arg1] [this] [[argc] [callee] [descr] [raddr]] &lt;- r9
+<span class="lineNum">     522 </span>            :     //
+<span class="lineNum">     523 </span>            :     //
+<span class="lineNum">     524 </span>            :     // Rectifier frame:
+<span class="lineNum">     525 </span>            :     // [undef] [undef] [undef] [arg2] [arg1] [this] &lt;- rsp [[argc] [callee] [descr] [raddr]]
+<span class="lineNum">     526 </span>            :     //
+<span class="lineNum">     527 </span>            : 
+<span class="lineNum">     528 </span>            :     // Construct descriptor.
+<span class="lineNum">     529 </span><span class="lineCov">          4 :     masm.subq(rsp, r9);</span>
+<span class="lineNum">     530 </span><span class="lineCov">          4 :     masm.makeFrameDescriptor(r9, JitFrame_Rectifier, JitFrameLayout::Size());</span>
+<span class="lineNum">     531 </span>            : 
+<span class="lineNum">     532 </span>            :     // Construct JitFrameLayout.
+<span class="lineNum">     533 </span><span class="lineCov">          4 :     masm.push(rdx); // numActualArgs</span>
+<span class="lineNum">     534 </span><span class="lineCov">          4 :     masm.push(rax); // callee token</span>
+<span class="lineNum">     535 </span><span class="lineCov">          4 :     masm.push(r9); // descriptor</span>
+<span class="lineNum">     536 </span>            : 
+<span class="lineNum">     537 </span>            :     // Call the target function.
+<span class="lineNum">     538 </span>            :     // Note that this code assumes the function is JITted.
+<span class="lineNum">     539 </span><span class="lineCov">          4 :     masm.andq(Imm32(uint32_t(CalleeTokenMask)), rax);</span>
+<span class="lineNum">     540 </span><span class="lineCov">          4 :     masm.loadPtr(Address(rax, JSFunction::offsetOfNativeOrScript()), rax);</span>
+<span class="lineNum">     541 </span><span class="lineCov">          4 :     masm.loadBaselineOrIonRaw(rax, rax, nullptr);</span>
+<span class="lineNum">     542 </span><span class="lineCov">          4 :     uint32_t returnOffset = masm.callJitNoProfiler(rax);</span>
+<span class="lineNum">     543 </span>            : 
+<span class="lineNum">     544 </span>            :     // Remove the rectifier frame.
+<span class="lineNum">     545 </span><span class="lineCov">          4 :     masm.pop(r9);             // r9 &lt;- descriptor with FrameType.</span>
+<span class="lineNum">     546 </span><span class="lineCov">          4 :     masm.shrq(Imm32(FRAMESIZE_SHIFT), r9);</span>
+<span class="lineNum">     547 </span><span class="lineCov">          4 :     masm.pop(r11);            // Discard calleeToken.</span>
+<span class="lineNum">     548 </span><span class="lineCov">          4 :     masm.pop(r11);            // Discard numActualArgs.</span>
+<span class="lineNum">     549 </span><span class="lineCov">          4 :     masm.addq(r9, rsp);       // Discard pushed arguments.</span>
+<span class="lineNum">     550 </span>            : 
+<span class="lineNum">     551 </span><span class="lineCov">          4 :     masm.ret();</span>
+<span class="lineNum">     552 </span>            : 
+<span class="lineNum">     553 </span><span class="lineCov">          8 :     Linker linker(masm);</span>
+<span class="lineNum">     554 </span><span class="lineCov">          4 :     JitCode* code = linker.newCode&lt;NoGC&gt;(cx, OTHER_CODE);</span>
+<span class="lineNum">     555 </span>            : 
+<span class="lineNum">     556 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">     557 </span>            :     writePerfSpewerJitCodeProfile(code, &quot;ArgumentsRectifier&quot;);
+<span class="lineNum">     558 </span>            : #endif
+<span class="lineNum">     559 </span>            : #ifdef MOZ_VTUNE
+<span class="lineNum">     560 </span><span class="lineCov">          4 :     vtune::MarkStub(code, &quot;ArgumentsRectifier&quot;);</span>
+<span class="lineNum">     561 </span>            : #endif
+<span class="lineNum">     562 </span>            : 
+<span class="lineNum">     563 </span><span class="lineCov">          4 :     if (returnAddrOut)</span>
+<span class="lineNum">     564 </span><span class="lineCov">          4 :         *returnAddrOut = (void*)(code-&gt;raw() + returnOffset);</span>
+<span class="lineNum">     565 </span><span class="lineCov">          8 :     return code;</span>
+<span class="lineNum">     566 </span>            : }
+<a name="567"><span class="lineNum">     567 </span>            : </a>
+<span class="lineNum">     568 </span>            : static void
+<span class="lineNum">     569 </span><span class="lineCov">          4 : PushBailoutFrame(MacroAssembler&amp; masm, Register spArg)</span>
+<span class="lineNum">     570 </span>            : {
+<span class="lineNum">     571 </span>            :     // Push registers such that we can access them from [base + code].
+<span class="lineNum">     572 </span><span class="lineCov">          4 :     if (JitSupportsSimd()) {</span>
+<span class="lineNum">     573 </span><span class="lineCov">          4 :         masm.PushRegsInMask(AllRegs);</span>
+<span class="lineNum">     574 </span>            :     } else {
+<span class="lineNum">     575 </span>            :         // When SIMD isn't supported, PushRegsInMask reduces the set of float
+<span class="lineNum">     576 </span>            :         // registers to be double-sized, while the RegisterDump expects each of
+<span class="lineNum">     577 </span>            :         // the float registers to have the maximal possible size
+<span class="lineNum">     578 </span>            :         // (Simd128DataSize). To work around this, we just spill the double
+<span class="lineNum">     579 </span>            :         // registers by hand here, using the register dump offset directly.
+<span class="lineNum">     580 </span><span class="lineNoCov">          0 :         for (GeneralRegisterBackwardIterator iter(AllRegs.gprs()); iter.more(); ++iter)</span>
+<span class="lineNum">     581 </span><span class="lineNoCov">          0 :             masm.Push(*iter);</span>
+<span class="lineNum">     582 </span>            : 
+<span class="lineNum">     583 </span><span class="lineNoCov">          0 :         masm.reserveStack(sizeof(RegisterDump::FPUArray));</span>
+<span class="lineNum">     584 </span><span class="lineNoCov">          0 :         for (FloatRegisterBackwardIterator iter(AllRegs.fpus()); iter.more(); ++iter) {</span>
+<span class="lineNum">     585 </span><span class="lineNoCov">          0 :             FloatRegister reg = *iter;</span>
+<span class="lineNum">     586 </span><span class="lineNoCov">          0 :             Address spillAddress(StackPointer, reg.getRegisterDumpOffsetInBytes());</span>
+<span class="lineNum">     587 </span><span class="lineNoCov">          0 :             masm.storeDouble(reg, spillAddress);</span>
+<span class="lineNum">     588 </span>            :         }
+<span class="lineNum">     589 </span>            :     }
+<span class="lineNum">     590 </span>            : 
+<span class="lineNum">     591 </span>            :     // Get the stack pointer into a register, pre-alignment.
+<span class="lineNum">     592 </span><span class="lineCov">          4 :     masm.movq(rsp, spArg);</span>
+<span class="lineNum">     593 </span><span class="lineCov">          4 : }</span>
+<a name="594"><span class="lineNum">     594 </span>            : </a>
+<span class="lineNum">     595 </span>            : static void
+<span class="lineNum">     596 </span><span class="lineCov">          4 : GenerateBailoutThunk(JSContext* cx, MacroAssembler&amp; masm, uint32_t frameClass)</span>
+<span class="lineNum">     597 </span>            : {
+<span class="lineNum">     598 </span><span class="lineCov">          4 :     PushBailoutFrame(masm, r8);</span>
+<span class="lineNum">     599 </span>            : 
+<span class="lineNum">     600 </span>            :     // Make space for Bailout's bailoutInfo outparam.
+<span class="lineNum">     601 </span><span class="lineCov">          4 :     masm.reserveStack(sizeof(void*));</span>
+<span class="lineNum">     602 </span><span class="lineCov">          4 :     masm.movq(rsp, r9);</span>
+<span class="lineNum">     603 </span>            : 
+<span class="lineNum">     604 </span>            :     // Call the bailout function.
+<span class="lineNum">     605 </span><span class="lineCov">          4 :     masm.setupUnalignedABICall(rax);</span>
+<span class="lineNum">     606 </span><span class="lineCov">          4 :     masm.passABIArg(r8);</span>
+<span class="lineNum">     607 </span><span class="lineCov">          4 :     masm.passABIArg(r9);</span>
+<span class="lineNum">     608 </span><span class="lineCov">          4 :     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, Bailout));</span>
+<span class="lineNum">     609 </span>            : 
+<span class="lineNum">     610 </span><span class="lineCov">          4 :     masm.pop(r9); // Get the bailoutInfo outparam.</span>
+<span class="lineNum">     611 </span>            : 
+<span class="lineNum">     612 </span>            :     // Stack is:
+<span class="lineNum">     613 </span>            :     //     [frame]
+<span class="lineNum">     614 </span>            :     //     snapshotOffset
+<span class="lineNum">     615 </span>            :     //     frameSize
+<span class="lineNum">     616 </span>            :     //     [bailoutFrame]
+<span class="lineNum">     617 </span>            :     //
+<span class="lineNum">     618 </span>            :     // Remove both the bailout frame and the topmost Ion frame's stack.
+<span class="lineNum">     619 </span>            :     static const uint32_t BailoutDataSize = sizeof(RegisterDump);
+<span class="lineNum">     620 </span><span class="lineCov">          4 :     masm.addq(Imm32(BailoutDataSize), rsp);</span>
+<span class="lineNum">     621 </span><span class="lineCov">          4 :     masm.pop(rcx);</span>
+<span class="lineNum">     622 </span><span class="lineCov">          4 :     masm.lea(Operand(rsp, rcx, TimesOne, sizeof(void*)), rsp);</span>
+<span class="lineNum">     623 </span>            : 
+<span class="lineNum">     624 </span>            :     // Jump to shared bailout tail. The BailoutInfo pointer has to be in r9.
+<span class="lineNum">     625 </span><span class="lineCov">          4 :     JitCode* bailoutTail = cx-&gt;runtime()-&gt;jitRuntime()-&gt;getBailoutTail();</span>
+<span class="lineNum">     626 </span><span class="lineCov">          4 :     masm.jmp(bailoutTail);</span>
+<span class="lineNum">     627 </span><span class="lineCov">          4 : }</span>
+<a name="628"><span class="lineNum">     628 </span>            : </a>
+<span class="lineNum">     629 </span>            : JitCode*
+<span class="lineNum">     630 </span><span class="lineNoCov">          0 : JitRuntime::generateBailoutTable(JSContext* cx, uint32_t frameClass)</span>
+<span class="lineNum">     631 </span>            : {
+<span class="lineNum">     632 </span><span class="lineNoCov">          0 :     MOZ_CRASH(&quot;x64 does not use bailout tables&quot;);</span>
+<span class="lineNum">     633 </span>            : }
+<a name="634"><span class="lineNum">     634 </span>            : </a>
+<span class="lineNum">     635 </span>            : JitCode*
+<span class="lineNum">     636 </span><span class="lineCov">          4 : JitRuntime::generateBailoutHandler(JSContext* cx)</span>
+<span class="lineNum">     637 </span>            : {
+<span class="lineNum">     638 </span><span class="lineCov">          8 :     MacroAssembler masm;</span>
+<span class="lineNum">     639 </span><span class="lineCov">          4 :     GenerateBailoutThunk(cx, masm, NO_FRAME_SIZE_CLASS_ID);</span>
+<span class="lineNum">     640 </span>            : 
+<span class="lineNum">     641 </span><span class="lineCov">          8 :     Linker linker(masm);</span>
+<span class="lineNum">     642 </span><span class="lineCov">          4 :     JitCode* code = linker.newCode&lt;NoGC&gt;(cx, OTHER_CODE);</span>
+<span class="lineNum">     643 </span>            : 
+<span class="lineNum">     644 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">     645 </span>            :     writePerfSpewerJitCodeProfile(code, &quot;BailoutHandler&quot;);
+<span class="lineNum">     646 </span>            : #endif
+<span class="lineNum">     647 </span>            : #ifdef MOZ_VTUNE
+<span class="lineNum">     648 </span><span class="lineCov">          4 :     vtune::MarkStub(code, &quot;BailoutHandler&quot;);</span>
+<span class="lineNum">     649 </span>            : #endif
+<span class="lineNum">     650 </span>            : 
+<span class="lineNum">     651 </span><span class="lineCov">          8 :     return code;</span>
+<span class="lineNum">     652 </span>            : }
+<a name="653"><span class="lineNum">     653 </span>            : </a>
+<span class="lineNum">     654 </span>            : JitCode*
+<span class="lineNum">     655 </span><span class="lineCov">       1036 : JitRuntime::generateVMWrapper(JSContext* cx, const VMFunction&amp; f)</span>
+<span class="lineNum">     656 </span>            : {
+<span class="lineNum">     657 </span><span class="lineCov">       1036 :     MOZ_ASSERT(functionWrappers_);</span>
+<span class="lineNum">     658 </span><span class="lineCov">       1036 :     MOZ_ASSERT(functionWrappers_-&gt;initialized());</span>
+<span class="lineNum">     659 </span><span class="lineCov">       1036 :     VMWrapperMap::AddPtr p = functionWrappers_-&gt;lookupForAdd(&amp;f);</span>
+<span class="lineNum">     660 </span><span class="lineCov">       1036 :     if (p)</span>
+<span class="lineNum">     661 </span><span class="lineNoCov">          0 :         return p-&gt;value();</span>
+<span class="lineNum">     662 </span>            : 
+<span class="lineNum">     663 </span>            :     // Generate a separated code for the wrapper.
+<span class="lineNum">     664 </span><span class="lineCov">       2072 :     MacroAssembler masm;</span>
+<span class="lineNum">     665 </span>            : 
+<span class="lineNum">     666 </span>            :     // Avoid conflicts with argument registers while discarding the result after
+<span class="lineNum">     667 </span>            :     // the function call.
+<span class="lineNum">     668 </span><span class="lineCov">       1036 :     AllocatableGeneralRegisterSet regs(Register::Codes::WrapperMask);</span>
+<span class="lineNum">     669 </span>            : 
+<span class="lineNum">     670 </span>            :     static_assert((Register::Codes::VolatileMask &amp; ~Register::Codes::WrapperMask) == 0,
+<span class="lineNum">     671 </span>            :                    &quot;Wrapper register set must be a superset of Volatile register set&quot;);
+<span class="lineNum">     672 </span>            : 
+<span class="lineNum">     673 </span>            :     // The context is the first argument.
+<span class="lineNum">     674 </span><span class="lineCov">       1036 :     Register cxreg = IntArgReg0;</span>
+<span class="lineNum">     675 </span><span class="lineCov">       1036 :     regs.take(cxreg);</span>
+<span class="lineNum">     676 </span>            : 
+<span class="lineNum">     677 </span>            :     // Stack is:
+<span class="lineNum">     678 </span>            :     //    ... frame ...
+<span class="lineNum">     679 </span>            :     //  +12 [args]
+<span class="lineNum">     680 </span>            :     //  +8  descriptor
+<span class="lineNum">     681 </span>            :     //  +0  returnAddress
+<span class="lineNum">     682 </span>            :     //
+<span class="lineNum">     683 </span>            :     // We're aligned to an exit frame, so link it up.
+<span class="lineNum">     684 </span><span class="lineCov">       1036 :     masm.loadJSContext(cxreg);</span>
+<span class="lineNum">     685 </span><span class="lineCov">       1036 :     masm.enterExitFrame(cxreg, regs.getAny(), &amp;f);</span>
+<span class="lineNum">     686 </span>            : 
+<span class="lineNum">     687 </span>            :     // Save the current stack pointer as the base for copying arguments.
+<span class="lineNum">     688 </span><span class="lineCov">       1036 :     Register argsBase = InvalidReg;</span>
+<span class="lineNum">     689 </span><span class="lineCov">       1036 :     if (f.explicitArgs) {</span>
+<span class="lineNum">     690 </span><span class="lineCov">       1012 :         argsBase = r10;</span>
+<span class="lineNum">     691 </span><span class="lineCov">       1012 :         regs.take(argsBase);</span>
+<span class="lineNum">     692 </span><span class="lineCov">       1012 :         masm.lea(Operand(rsp, ExitFrameLayout::SizeWithFooter()), argsBase);</span>
+<span class="lineNum">     693 </span>            :     }
+<span class="lineNum">     694 </span>            : 
+<span class="lineNum">     695 </span>            :     // Reserve space for the outparameter.
+<span class="lineNum">     696 </span><span class="lineCov">       1036 :     Register outReg = InvalidReg;</span>
+<span class="lineNum">     697 </span><span class="lineCov">       1036 :     switch (f.outParam) {</span>
+<span class="lineNum">     698 </span>            :       case Type_Value:
+<span class="lineNum">     699 </span><span class="lineNoCov">          0 :         outReg = regs.takeAny();</span>
+<span class="lineNum">     700 </span><span class="lineNoCov">          0 :         masm.reserveStack(sizeof(Value));</span>
+<span class="lineNum">     701 </span><span class="lineNoCov">          0 :         masm.movq(esp, outReg);</span>
+<span class="lineNum">     702 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     703 </span>            : 
+<span class="lineNum">     704 </span>            :       case Type_Handle:
+<span class="lineNum">     705 </span><span class="lineCov">        268 :         outReg = regs.takeAny();</span>
+<span class="lineNum">     706 </span><span class="lineCov">        268 :         masm.PushEmptyRooted(f.outParamRootType);</span>
+<span class="lineNum">     707 </span><span class="lineCov">        268 :         masm.movq(esp, outReg);</span>
+<span class="lineNum">     708 </span><span class="lineCov">        268 :         break;</span>
+<span class="lineNum">     709 </span>            : 
+<span class="lineNum">     710 </span>            :       case Type_Int32:
+<span class="lineNum">     711 </span>            :       case Type_Bool:
+<span class="lineNum">     712 </span><span class="lineCov">        156 :         outReg = regs.takeAny();</span>
+<span class="lineNum">     713 </span><span class="lineCov">        156 :         masm.reserveStack(sizeof(int32_t));</span>
+<span class="lineNum">     714 </span><span class="lineCov">        156 :         masm.movq(esp, outReg);</span>
+<span class="lineNum">     715 </span><span class="lineCov">        156 :         break;</span>
+<span class="lineNum">     716 </span>            : 
+<span class="lineNum">     717 </span>            :       case Type_Double:
+<span class="lineNum">     718 </span><span class="lineCov">          4 :         outReg = regs.takeAny();</span>
+<span class="lineNum">     719 </span><span class="lineCov">          4 :         masm.reserveStack(sizeof(double));</span>
+<span class="lineNum">     720 </span><span class="lineCov">          4 :         masm.movq(esp, outReg);</span>
+<span class="lineNum">     721 </span><span class="lineCov">          4 :         break;</span>
+<span class="lineNum">     722 </span>            : 
+<span class="lineNum">     723 </span>            :       case Type_Pointer:
+<span class="lineNum">     724 </span><span class="lineCov">          4 :         outReg = regs.takeAny();</span>
+<span class="lineNum">     725 </span><span class="lineCov">          4 :         masm.reserveStack(sizeof(uintptr_t));</span>
+<span class="lineNum">     726 </span><span class="lineCov">          4 :         masm.movq(esp, outReg);</span>
+<span class="lineNum">     727 </span><span class="lineCov">          4 :         break;</span>
+<span class="lineNum">     728 </span>            : 
+<span class="lineNum">     729 </span>            :       default:
+<span class="lineNum">     730 </span><span class="lineCov">        604 :         MOZ_ASSERT(f.outParam == Type_Void);</span>
+<span class="lineNum">     731 </span><span class="lineCov">        604 :         break;</span>
+<span class="lineNum">     732 </span>            :     }
+<span class="lineNum">     733 </span>            : 
+<span class="lineNum">     734 </span><span class="lineCov">       1036 :     if (!generateTLEnterVM(cx, masm, f))</span>
+<span class="lineNum">     735 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     736 </span>            : 
+<span class="lineNum">     737 </span><span class="lineCov">       1036 :     masm.setupUnalignedABICall(regs.getAny());</span>
+<span class="lineNum">     738 </span><span class="lineCov">       1036 :     masm.passABIArg(cxreg);</span>
+<span class="lineNum">     739 </span>            : 
+<span class="lineNum">     740 </span><span class="lineCov">       1036 :     size_t argDisp = 0;</span>
+<span class="lineNum">     741 </span>            : 
+<span class="lineNum">     742 </span>            :     // Copy arguments.
+<span class="lineNum">     743 </span><span class="lineCov">       3352 :     for (uint32_t explicitArg = 0; explicitArg &lt; f.explicitArgs; explicitArg++) {</span>
+<span class="lineNum">     744 </span><span class="lineCov">       2316 :         MoveOperand from;</span>
+<span class="lineNum">     745 </span><span class="lineCov">       2316 :         switch (f.argProperties(explicitArg)) {</span>
+<span class="lineNum">     746 </span>            :           case VMFunction::WordByValue:
+<span class="lineNum">     747 </span><span class="lineCov">        844 :             if (f.argPassedInFloatReg(explicitArg))</span>
+<span class="lineNum">     748 </span><span class="lineCov">          4 :                 masm.passABIArg(MoveOperand(argsBase, argDisp), MoveOp::DOUBLE);</span>
+<span class="lineNum">     749 </span>            :             else
+<span class="lineNum">     750 </span><span class="lineCov">        840 :                 masm.passABIArg(MoveOperand(argsBase, argDisp), MoveOp::GENERAL);</span>
+<span class="lineNum">     751 </span><span class="lineCov">        844 :             argDisp += sizeof(void*);</span>
+<span class="lineNum">     752 </span><span class="lineCov">        844 :             break;</span>
+<span class="lineNum">     753 </span>            :           case VMFunction::WordByRef:
+<span class="lineNum">     754 </span><span class="lineCov">       2944 :             masm.passABIArg(MoveOperand(argsBase, argDisp, MoveOperand::EFFECTIVE_ADDRESS),</span>
+<span class="lineNum">     755 </span><span class="lineCov">       1472 :                             MoveOp::GENERAL);</span>
+<span class="lineNum">     756 </span><span class="lineCov">       1472 :             argDisp += sizeof(void*);</span>
+<span class="lineNum">     757 </span><span class="lineCov">       1472 :             break;</span>
+<span class="lineNum">     758 </span>            :           case VMFunction::DoubleByValue:
+<span class="lineNum">     759 </span>            :           case VMFunction::DoubleByRef:
+<span class="lineNum">     760 </span><span class="lineNoCov">          0 :             MOZ_CRASH(&quot;NYI: x64 callVM should not be used with 128bits values.&quot;);</span>
+<span class="lineNum">     761 </span>            :         }
+<span class="lineNum">     762 </span>            :     }
+<span class="lineNum">     763 </span>            : 
+<span class="lineNum">     764 </span>            :     // Copy the implicit outparam, if any.
+<span class="lineNum">     765 </span><span class="lineCov">       1036 :     if (outReg != InvalidReg)</span>
+<span class="lineNum">     766 </span><span class="lineCov">        432 :         masm.passABIArg(outReg);</span>
+<span class="lineNum">     767 </span>            : 
+<span class="lineNum">     768 </span><span class="lineCov">       1036 :     masm.callWithABI(f.wrapped);</span>
+<span class="lineNum">     769 </span>            : 
+<span class="lineNum">     770 </span><span class="lineCov">       1036 :     if (!generateTLExitVM(cx, masm, f))</span>
+<span class="lineNum">     771 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     772 </span>            : 
+<span class="lineNum">     773 </span>            :     // Test for failure.
+<span class="lineNum">     774 </span><span class="lineCov">       1036 :     switch (f.failType()) {</span>
+<span class="lineNum">     775 </span>            :       case Type_Object:
+<span class="lineNum">     776 </span><span class="lineCov">        240 :         masm.branchTestPtr(Assembler::Zero, rax, rax, masm.failureLabel());</span>
+<span class="lineNum">     777 </span><span class="lineCov">        240 :         break;</span>
+<span class="lineNum">     778 </span>            :       case Type_Bool:
+<span class="lineNum">     779 </span><span class="lineCov">        796 :         masm.testb(rax, rax);</span>
+<span class="lineNum">     780 </span><span class="lineCov">        796 :         masm.j(Assembler::Zero, masm.failureLabel());</span>
+<span class="lineNum">     781 </span><span class="lineCov">        796 :         break;</span>
+<span class="lineNum">     782 </span>            :       default:
+<span class="lineNum">     783 </span><span class="lineNoCov">          0 :         MOZ_CRASH(&quot;unknown failure kind&quot;);</span>
+<span class="lineNum">     784 </span>            :     }
+<span class="lineNum">     785 </span>            : 
+<span class="lineNum">     786 </span>            :     // Load the outparam and free any allocated stack.
+<span class="lineNum">     787 </span><span class="lineCov">       1036 :     switch (f.outParam) {</span>
+<span class="lineNum">     788 </span>            :       case Type_Handle:
+<span class="lineNum">     789 </span><span class="lineCov">        268 :         masm.popRooted(f.outParamRootType, ReturnReg, JSReturnOperand);</span>
+<span class="lineNum">     790 </span><span class="lineCov">        268 :         break;</span>
+<span class="lineNum">     791 </span>            : 
+<span class="lineNum">     792 </span>            :       case Type_Value:
+<span class="lineNum">     793 </span><span class="lineNoCov">          0 :         masm.loadValue(Address(esp, 0), JSReturnOperand);</span>
+<span class="lineNum">     794 </span><span class="lineNoCov">          0 :         masm.freeStack(sizeof(Value));</span>
+<span class="lineNum">     795 </span><span class="lineNoCov">          0 :         break;</span>
+<span class="lineNum">     796 </span>            : 
+<span class="lineNum">     797 </span>            :       case Type_Int32:
+<span class="lineNum">     798 </span><span class="lineCov">         48 :         masm.load32(Address(esp, 0), ReturnReg);</span>
+<span class="lineNum">     799 </span><span class="lineCov">         48 :         masm.freeStack(sizeof(int32_t));</span>
+<span class="lineNum">     800 </span><span class="lineCov">         48 :         break;</span>
+<span class="lineNum">     801 </span>            : 
+<span class="lineNum">     802 </span>            :       case Type_Bool:
+<span class="lineNum">     803 </span><span class="lineCov">        108 :         masm.load8ZeroExtend(Address(esp, 0), ReturnReg);</span>
+<span class="lineNum">     804 </span><span class="lineCov">        108 :         masm.freeStack(sizeof(int32_t));</span>
+<span class="lineNum">     805 </span><span class="lineCov">        108 :         break;</span>
+<span class="lineNum">     806 </span>            : 
+<span class="lineNum">     807 </span>            :       case Type_Double:
+<span class="lineNum">     808 </span><span class="lineCov">          4 :         MOZ_ASSERT(cx-&gt;runtime()-&gt;jitSupportsFloatingPoint);</span>
+<span class="lineNum">     809 </span><span class="lineCov">          4 :         masm.loadDouble(Address(esp, 0), ReturnDoubleReg);</span>
+<span class="lineNum">     810 </span><span class="lineCov">          4 :         masm.freeStack(sizeof(double));</span>
+<span class="lineNum">     811 </span><span class="lineCov">          4 :         break;</span>
+<span class="lineNum">     812 </span>            : 
+<span class="lineNum">     813 </span>            :       case Type_Pointer:
+<span class="lineNum">     814 </span><span class="lineCov">          4 :         masm.loadPtr(Address(esp, 0), ReturnReg);</span>
+<span class="lineNum">     815 </span><span class="lineCov">          4 :         masm.freeStack(sizeof(uintptr_t));</span>
+<span class="lineNum">     816 </span><span class="lineCov">          4 :         break;</span>
+<span class="lineNum">     817 </span>            : 
+<span class="lineNum">     818 </span>            :       default:
+<span class="lineNum">     819 </span><span class="lineCov">        604 :         MOZ_ASSERT(f.outParam == Type_Void);</span>
+<span class="lineNum">     820 </span><span class="lineCov">        604 :         break;</span>
+<span class="lineNum">     821 </span>            :     }
+<span class="lineNum">     822 </span><span class="lineCov">       1036 :     masm.leaveExitFrame();</span>
+<span class="lineNum">     823 </span><span class="lineCov">       2072 :     masm.retn(Imm32(sizeof(ExitFrameLayout) +</span>
+<span class="lineNum">     824 </span><span class="lineCov">       2072 :                     f.explicitStackSlots() * sizeof(void*) +</span>
+<span class="lineNum">     825 </span><span class="lineCov">       2072 :                     f.extraValuesToPop * sizeof(Value)));</span>
+<span class="lineNum">     826 </span>            : 
+<span class="lineNum">     827 </span><span class="lineCov">       2072 :     Linker linker(masm);</span>
+<span class="lineNum">     828 </span><span class="lineCov">       1036 :     JitCode* wrapper = linker.newCode&lt;NoGC&gt;(cx, OTHER_CODE);</span>
+<span class="lineNum">     829 </span><span class="lineCov">       1036 :     if (!wrapper)</span>
+<span class="lineNum">     830 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     831 </span>            : 
+<span class="lineNum">     832 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">     833 </span>            :     writePerfSpewerJitCodeProfile(wrapper, &quot;VMWrapper&quot;);
+<span class="lineNum">     834 </span>            : #endif
+<span class="lineNum">     835 </span>            : #ifdef MOZ_VTUNE
+<span class="lineNum">     836 </span><span class="lineCov">       1036 :     vtune::MarkStub(wrapper, &quot;VMWrapper&quot;);</span>
+<span class="lineNum">     837 </span>            : #endif
+<span class="lineNum">     838 </span>            : 
+<span class="lineNum">     839 </span>            :     // linker.newCode may trigger a GC and sweep functionWrappers_ so we have to
+<span class="lineNum">     840 </span>            :     // use relookupOrAdd instead of add.
+<span class="lineNum">     841 </span><span class="lineCov">       1036 :     if (!functionWrappers_-&gt;relookupOrAdd(p, &amp;f, wrapper))</span>
+<span class="lineNum">     842 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     843 </span>            : 
+<span class="lineNum">     844 </span><span class="lineCov">       1036 :     return wrapper;</span>
+<span class="lineNum">     845 </span>            : }
+<a name="846"><span class="lineNum">     846 </span>            : </a>
+<span class="lineNum">     847 </span>            : JitCode*
+<span class="lineNum">     848 </span><span class="lineCov">         20 : JitRuntime::generatePreBarrier(JSContext* cx, MIRType type)</span>
+<span class="lineNum">     849 </span>            : {
+<span class="lineNum">     850 </span><span class="lineCov">         40 :     MacroAssembler masm;</span>
+<span class="lineNum">     851 </span>            : 
+<span class="lineNum">     852 </span>            :     LiveRegisterSet regs =
+<span class="lineNum">     853 </span><span class="lineCov">         20 :         LiveRegisterSet(GeneralRegisterSet(Registers::VolatileMask),</span>
+<span class="lineNum">     854 </span><span class="lineCov">         40 :                              FloatRegisterSet(FloatRegisters::VolatileMask));</span>
+<span class="lineNum">     855 </span><span class="lineCov">         20 :     masm.PushRegsInMask(regs);</span>
+<span class="lineNum">     856 </span>            : 
+<span class="lineNum">     857 </span><span class="lineCov">         20 :     MOZ_ASSERT(PreBarrierReg == rdx);</span>
+<span class="lineNum">     858 </span><span class="lineCov">         20 :     masm.mov(ImmPtr(cx-&gt;runtime()), rcx);</span>
+<span class="lineNum">     859 </span>            : 
+<span class="lineNum">     860 </span><span class="lineCov">         20 :     masm.setupUnalignedABICall(rax);</span>
+<span class="lineNum">     861 </span><span class="lineCov">         20 :     masm.passABIArg(rcx);</span>
+<span class="lineNum">     862 </span><span class="lineCov">         20 :     masm.passABIArg(rdx);</span>
+<span class="lineNum">     863 </span><span class="lineCov">         20 :     masm.callWithABI(IonMarkFunction(type));</span>
+<span class="lineNum">     864 </span>            : 
+<span class="lineNum">     865 </span><span class="lineCov">         20 :     masm.PopRegsInMask(regs);</span>
+<span class="lineNum">     866 </span><span class="lineCov">         20 :     masm.ret();</span>
+<span class="lineNum">     867 </span>            : 
+<span class="lineNum">     868 </span><span class="lineCov">         40 :     Linker linker(masm);</span>
+<span class="lineNum">     869 </span><span class="lineCov">         20 :     JitCode* code = linker.newCode&lt;NoGC&gt;(cx, OTHER_CODE);</span>
+<span class="lineNum">     870 </span>            : 
+<span class="lineNum">     871 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">     872 </span>            :     writePerfSpewerJitCodeProfile(code, &quot;PreBarrier&quot;);
+<span class="lineNum">     873 </span>            : #endif
+<span class="lineNum">     874 </span>            : #ifdef MOZ_VTUNE
+<span class="lineNum">     875 </span><span class="lineCov">         20 :     vtune::MarkStub(code, &quot;PreBarrier&quot;);</span>
+<span class="lineNum">     876 </span>            : #endif
+<span class="lineNum">     877 </span>            : 
+<span class="lineNum">     878 </span><span class="lineCov">         40 :     return code;</span>
+<span class="lineNum">     879 </span>            : }
+<span class="lineNum">     880 </span>            : 
+<span class="lineNum">     881 </span>            : typedef bool (*HandleDebugTrapFn)(JSContext*, BaselineFrame*, uint8_t*, bool*);
+<span class="lineNum">     882 </span><span class="lineCov">          3 : static const VMFunction HandleDebugTrapInfo =</span>
+<span class="lineNum">     883 </span><span class="lineCov">          6 :     FunctionInfo&lt;HandleDebugTrapFn&gt;(HandleDebugTrap, &quot;HandleDebugTrap&quot;);</span>
+<a name="884"><span class="lineNum">     884 </span>            : </a>
+<span class="lineNum">     885 </span>            : JitCode*
+<span class="lineNum">     886 </span><span class="lineNoCov">          0 : JitRuntime::generateDebugTrapHandler(JSContext* cx)</span>
+<span class="lineNum">     887 </span>            : {
+<span class="lineNum">     888 </span><span class="lineNoCov">          0 :     MacroAssembler masm;</span>
+<span class="lineNum">     889 </span>            : #ifndef JS_USE_LINK_REGISTER
+<span class="lineNum">     890 </span>            :     // The first value contains the return addres,
+<span class="lineNum">     891 </span>            :     // which we pull into ICTailCallReg for tail calls.
+<span class="lineNum">     892 </span><span class="lineNoCov">          0 :     masm.setFramePushed(sizeof(intptr_t));</span>
+<span class="lineNum">     893 </span>            : #endif
+<span class="lineNum">     894 </span>            : 
+<span class="lineNum">     895 </span><span class="lineNoCov">          0 :     Register scratch1 = rax;</span>
+<span class="lineNum">     896 </span><span class="lineNoCov">          0 :     Register scratch2 = rcx;</span>
+<span class="lineNum">     897 </span><span class="lineNoCov">          0 :     Register scratch3 = rdx;</span>
+<span class="lineNum">     898 </span>            : 
+<span class="lineNum">     899 </span>            :     // Load the return address in scratch1.
+<span class="lineNum">     900 </span><span class="lineNoCov">          0 :     masm.loadPtr(Address(rsp, 0), scratch1);</span>
+<span class="lineNum">     901 </span>            : 
+<span class="lineNum">     902 </span>            :     // Load BaselineFrame pointer in scratch2.
+<span class="lineNum">     903 </span><span class="lineNoCov">          0 :     masm.mov(rbp, scratch2);</span>
+<span class="lineNum">     904 </span><span class="lineNoCov">          0 :     masm.subPtr(Imm32(BaselineFrame::Size()), scratch2);</span>
+<span class="lineNum">     905 </span>            : 
+<span class="lineNum">     906 </span>            :     // Enter a stub frame and call the HandleDebugTrap VM function. Ensure
+<span class="lineNum">     907 </span>            :     // the stub frame has a nullptr ICStub pointer, since this pointer is marked
+<span class="lineNum">     908 </span>            :     // during GC.
+<span class="lineNum">     909 </span><span class="lineNoCov">          0 :     masm.movePtr(ImmPtr(nullptr), ICStubReg);</span>
+<span class="lineNum">     910 </span><span class="lineNoCov">          0 :     EmitBaselineEnterStubFrame(masm, scratch3);</span>
+<span class="lineNum">     911 </span>            : 
+<span class="lineNum">     912 </span><span class="lineNoCov">          0 :     JitCode* code = cx-&gt;runtime()-&gt;jitRuntime()-&gt;getVMWrapper(HandleDebugTrapInfo);</span>
+<span class="lineNum">     913 </span><span class="lineNoCov">          0 :     if (!code)</span>
+<span class="lineNum">     914 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     915 </span>            : 
+<span class="lineNum">     916 </span><span class="lineNoCov">          0 :     masm.push(scratch1);</span>
+<span class="lineNum">     917 </span><span class="lineNoCov">          0 :     masm.push(scratch2);</span>
+<span class="lineNum">     918 </span><span class="lineNoCov">          0 :     EmitBaselineCallVM(code, masm);</span>
+<span class="lineNum">     919 </span>            : 
+<span class="lineNum">     920 </span><span class="lineNoCov">          0 :     EmitBaselineLeaveStubFrame(masm);</span>
+<span class="lineNum">     921 </span>            : 
+<span class="lineNum">     922 </span>            :     // If the stub returns |true|, we have to perform a forced return
+<span class="lineNum">     923 </span>            :     // (return from the JS frame). If the stub returns |false|, just return
+<span class="lineNum">     924 </span>            :     // from the trap stub so that execution continues at the current pc.
+<span class="lineNum">     925 </span><span class="lineNoCov">          0 :     Label forcedReturn;</span>
+<span class="lineNum">     926 </span><span class="lineNoCov">          0 :     masm.branchTest32(Assembler::NonZero, ReturnReg, ReturnReg, &amp;forcedReturn);</span>
+<span class="lineNum">     927 </span><span class="lineNoCov">          0 :     masm.ret();</span>
+<span class="lineNum">     928 </span>            : 
+<span class="lineNum">     929 </span><span class="lineNoCov">          0 :     masm.bind(&amp;forcedReturn);</span>
+<span class="lineNum">     930 </span><span class="lineNoCov">          0 :     masm.loadValue(Address(ebp, BaselineFrame::reverseOffsetOfReturnValue()),</span>
+<span class="lineNum">     931 </span><span class="lineNoCov">          0 :                    JSReturnOperand);</span>
+<span class="lineNum">     932 </span><span class="lineNoCov">          0 :     masm.mov(rbp, rsp);</span>
+<span class="lineNum">     933 </span><span class="lineNoCov">          0 :     masm.pop(rbp);</span>
+<span class="lineNum">     934 </span>            : 
+<span class="lineNum">     935 </span>            :     // Before returning, if profiling is turned on, make sure that lastProfilingFrame
+<span class="lineNum">     936 </span>            :     // is set to the correct caller frame.
+<span class="lineNum">     937 </span>            :     {
+<span class="lineNum">     938 </span><span class="lineNoCov">          0 :         Label skipProfilingInstrumentation;</span>
+<span class="lineNum">     939 </span><span class="lineNoCov">          0 :         AbsoluteAddress addressOfEnabled(cx-&gt;runtime()-&gt;geckoProfiler().addressOfEnabled());</span>
+<span class="lineNum">     940 </span><span class="lineNoCov">          0 :         masm.branch32(Assembler::Equal, addressOfEnabled, Imm32(0), &amp;skipProfilingInstrumentation);</span>
+<span class="lineNum">     941 </span><span class="lineNoCov">          0 :         masm.profilerExitFrame();</span>
+<span class="lineNum">     942 </span><span class="lineNoCov">          0 :         masm.bind(&amp;skipProfilingInstrumentation);</span>
+<span class="lineNum">     943 </span>            :     }
+<span class="lineNum">     944 </span>            : 
+<span class="lineNum">     945 </span><span class="lineNoCov">          0 :     masm.ret();</span>
+<span class="lineNum">     946 </span>            : 
+<span class="lineNum">     947 </span><span class="lineNoCov">          0 :     Linker linker(masm);</span>
+<span class="lineNum">     948 </span><span class="lineNoCov">          0 :     JitCode* codeDbg = linker.newCode&lt;NoGC&gt;(cx, OTHER_CODE);</span>
+<span class="lineNum">     949 </span>            : 
+<span class="lineNum">     950 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">     951 </span>            :     writePerfSpewerJitCodeProfile(codeDbg, &quot;DebugTrapHandler&quot;);
+<span class="lineNum">     952 </span>            : #endif
+<span class="lineNum">     953 </span>            : #ifdef MOZ_VTUNE
+<span class="lineNum">     954 </span><span class="lineNoCov">          0 :     vtune::MarkStub(codeDbg, &quot;DebugTrapHandler&quot;);</span>
+<span class="lineNum">     955 </span>            : #endif
+<span class="lineNum">     956 </span>            : 
+<span class="lineNum">     957 </span><span class="lineNoCov">          0 :     return codeDbg;</span>
+<span class="lineNum">     958 </span>            : }
+<a name="959"><span class="lineNum">     959 </span>            : </a>
+<span class="lineNum">     960 </span>            : JitCode*
+<span class="lineNum">     961 </span><span class="lineCov">          4 : JitRuntime::generateExceptionTailStub(JSContext* cx, void* handler)</span>
+<span class="lineNum">     962 </span>            : {
+<span class="lineNum">     963 </span><span class="lineCov">          8 :     MacroAssembler masm;</span>
+<span class="lineNum">     964 </span>            : 
+<span class="lineNum">     965 </span><span class="lineCov">          4 :     masm.handleFailureWithHandlerTail(handler);</span>
+<span class="lineNum">     966 </span>            : 
+<span class="lineNum">     967 </span><span class="lineCov">          8 :     Linker linker(masm);</span>
+<span class="lineNum">     968 </span><span class="lineCov">          4 :     JitCode* code = linker.newCode&lt;NoGC&gt;(cx, OTHER_CODE);</span>
+<span class="lineNum">     969 </span>            : 
+<span class="lineNum">     970 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">     971 </span>            :     writePerfSpewerJitCodeProfile(code, &quot;ExceptionTailStub&quot;);
+<span class="lineNum">     972 </span>            : #endif
+<span class="lineNum">     973 </span>            : #ifdef MOZ_VTUNE
+<span class="lineNum">     974 </span><span class="lineCov">          4 :     vtune::MarkStub(code, &quot;ExceptionTailStub&quot;);</span>
+<span class="lineNum">     975 </span>            : #endif
+<span class="lineNum">     976 </span>            : 
+<span class="lineNum">     977 </span><span class="lineCov">          8 :     return code;</span>
+<span class="lineNum">     978 </span>            : }
+<a name="979"><span class="lineNum">     979 </span>            : </a>
+<span class="lineNum">     980 </span>            : JitCode*
+<span class="lineNum">     981 </span><span class="lineCov">          4 : JitRuntime::generateBailoutTailStub(JSContext* cx)</span>
+<span class="lineNum">     982 </span>            : {
+<span class="lineNum">     983 </span><span class="lineCov">          8 :     MacroAssembler masm;</span>
+<span class="lineNum">     984 </span>            : 
+<span class="lineNum">     985 </span><span class="lineCov">          4 :     masm.generateBailoutTail(rdx, r9);</span>
+<span class="lineNum">     986 </span>            : 
+<span class="lineNum">     987 </span><span class="lineCov">          8 :     Linker linker(masm);</span>
+<span class="lineNum">     988 </span><span class="lineCov">          4 :     JitCode* code = linker.newCode&lt;NoGC&gt;(cx, OTHER_CODE);</span>
+<span class="lineNum">     989 </span>            : 
+<span class="lineNum">     990 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">     991 </span>            :     writePerfSpewerJitCodeProfile(code, &quot;BailoutTailStub&quot;);
+<span class="lineNum">     992 </span>            : #endif
+<span class="lineNum">     993 </span>            : #ifdef MOZ_VTUNE
+<span class="lineNum">     994 </span><span class="lineCov">          4 :     vtune::MarkStub(code, &quot;BailoutTailStub&quot;);</span>
+<span class="lineNum">     995 </span>            : #endif
+<span class="lineNum">     996 </span>            : 
+<span class="lineNum">     997 </span><span class="lineCov">          8 :     return code;</span>
+<span class="lineNum">     998 </span>            : }
+<a name="999"><span class="lineNum">     999 </span>            : </a>
+<span class="lineNum">    1000 </span>            : JitCode*
+<span class="lineNum">    1001 </span><span class="lineCov">          4 : JitRuntime::generateProfilerExitFrameTailStub(JSContext* cx)</span>
+<span class="lineNum">    1002 </span>            : {
+<span class="lineNum">    1003 </span><span class="lineCov">          8 :     MacroAssembler masm;</span>
+<span class="lineNum">    1004 </span>            : 
+<span class="lineNum">    1005 </span><span class="lineCov">          4 :     Register scratch1 = r8;</span>
+<span class="lineNum">    1006 </span><span class="lineCov">          4 :     Register scratch2 = r9;</span>
+<span class="lineNum">    1007 </span><span class="lineCov">          4 :     Register scratch3 = r10;</span>
+<span class="lineNum">    1008 </span><span class="lineCov">          4 :     Register scratch4 = r11;</span>
+<span class="lineNum">    1009 </span>            : 
+<span class="lineNum">    1010 </span>            :     //
+<span class="lineNum">    1011 </span>            :     // The code generated below expects that the current stack pointer points
+<span class="lineNum">    1012 </span>            :     // to an Ion or Baseline frame, at the state it would be immediately
+<span class="lineNum">    1013 </span>            :     // before a ret().  Thus, after this stub's business is done, it executes
+<span class="lineNum">    1014 </span>            :     // a ret() and returns directly to the caller script, on behalf of the
+<span class="lineNum">    1015 </span>            :     // callee script that jumped to this code.
+<span class="lineNum">    1016 </span>            :     //
+<span class="lineNum">    1017 </span>            :     // Thus the expected stack is:
+<span class="lineNum">    1018 </span>            :     //
+<span class="lineNum">    1019 </span>            :     //                                   StackPointer ----+
+<span class="lineNum">    1020 </span>            :     //                                                    v
+<span class="lineNum">    1021 </span>            :     // ..., ActualArgc, CalleeToken, Descriptor, ReturnAddr
+<span class="lineNum">    1022 </span>            :     // MEM-HI                                       MEM-LOW
+<span class="lineNum">    1023 </span>            :     //
+<span class="lineNum">    1024 </span>            :     //
+<span class="lineNum">    1025 </span>            :     // The generated jitcode is responsible for overwriting the
+<span class="lineNum">    1026 </span>            :     // jitActivation-&gt;lastProfilingFrame field with a pointer to the previous
+<span class="lineNum">    1027 </span>            :     // Ion or Baseline jit-frame that was pushed before this one. It is also
+<span class="lineNum">    1028 </span>            :     // responsible for overwriting jitActivation-&gt;lastProfilingCallSite with
+<span class="lineNum">    1029 </span>            :     // the return address into that frame.  The frame could either be an
+<span class="lineNum">    1030 </span>            :     // immediate &quot;caller&quot; frame, or it could be a frame in a previous
+<span class="lineNum">    1031 </span>            :     // JitActivation (if the current frame was entered from C++, and the C++
+<span class="lineNum">    1032 </span>            :     // was entered by some caller jit-frame further down the stack).
+<span class="lineNum">    1033 </span>            :     //
+<span class="lineNum">    1034 </span>            :     // So this jitcode is responsible for &quot;walking up&quot; the jit stack, finding
+<span class="lineNum">    1035 </span>            :     // the previous Ion or Baseline JS frame, and storing its address and the
+<span class="lineNum">    1036 </span>            :     // return address into the appropriate fields on the current jitActivation.
+<span class="lineNum">    1037 </span>            :     //
+<span class="lineNum">    1038 </span>            :     // There are a fixed number of different path types that can lead to the
+<span class="lineNum">    1039 </span>            :     // current frame, which is either a baseline or ion frame:
+<span class="lineNum">    1040 </span>            :     //
+<span class="lineNum">    1041 </span>            :     // &lt;Baseline-Or-Ion&gt;
+<span class="lineNum">    1042 </span>            :     // ^
+<span class="lineNum">    1043 </span>            :     // |
+<span class="lineNum">    1044 </span>            :     // ^--- Ion
+<span class="lineNum">    1045 </span>            :     // |
+<span class="lineNum">    1046 </span>            :     // ^--- Baseline Stub &lt;---- Baseline
+<span class="lineNum">    1047 </span>            :     // |
+<span class="lineNum">    1048 </span>            :     // ^--- Argument Rectifier
+<span class="lineNum">    1049 </span>            :     // |    ^
+<span class="lineNum">    1050 </span>            :     // |    |
+<span class="lineNum">    1051 </span>            :     // |    ^--- Ion
+<span class="lineNum">    1052 </span>            :     // |    |
+<span class="lineNum">    1053 </span>            :     // |    ^--- Baseline Stub &lt;---- Baseline
+<span class="lineNum">    1054 </span>            :     // |
+<span class="lineNum">    1055 </span>            :     // ^--- Entry Frame (From C++)
+<span class="lineNum">    1056 </span>            :     //
+<span class="lineNum">    1057 </span><span class="lineCov">          4 :     Register actReg = scratch4;</span>
+<span class="lineNum">    1058 </span><span class="lineCov">          4 :     masm.loadJSContext(actReg);</span>
+<span class="lineNum">    1059 </span><span class="lineCov">          4 :     masm.loadPtr(Address(actReg, offsetof(JSContext, profilingActivation_)), actReg);</span>
+<span class="lineNum">    1060 </span>            : 
+<span class="lineNum">    1061 </span><span class="lineCov">          4 :     Address lastProfilingFrame(actReg, JitActivation::offsetOfLastProfilingFrame());</span>
+<span class="lineNum">    1062 </span><span class="lineCov">          4 :     Address lastProfilingCallSite(actReg, JitActivation::offsetOfLastProfilingCallSite());</span>
+<span class="lineNum">    1063 </span>            : 
+<span class="lineNum">    1064 </span>            : #ifdef DEBUG
+<span class="lineNum">    1065 </span>            :     // Ensure that frame we are exiting is current lastProfilingFrame
+<span class="lineNum">    1066 </span>            :     {
+<span class="lineNum">    1067 </span><span class="lineCov">          4 :         masm.loadPtr(lastProfilingFrame, scratch1);</span>
+<span class="lineNum">    1068 </span><span class="lineCov">          8 :         Label checkOk;</span>
+<span class="lineNum">    1069 </span><span class="lineCov">          4 :         masm.branchPtr(Assembler::Equal, scratch1, ImmWord(0), &amp;checkOk);</span>
+<span class="lineNum">    1070 </span><span class="lineCov">          4 :         masm.branchPtr(Assembler::Equal, StackPointer, scratch1, &amp;checkOk);</span>
+<span class="lineNum">    1071 </span>            :         masm.assumeUnreachable(
+<span class="lineNum">    1072 </span><span class="lineCov">          4 :             &quot;Mismatch between stored lastProfilingFrame and current stack pointer.&quot;);</span>
+<span class="lineNum">    1073 </span><span class="lineCov">          4 :         masm.bind(&amp;checkOk);</span>
+<span class="lineNum">    1074 </span>            :     }
+<span class="lineNum">    1075 </span>            : #endif
+<span class="lineNum">    1076 </span>            : 
+<span class="lineNum">    1077 </span>            :     // Load the frame descriptor into |scratch1|, figure out what to do depending on its type.
+<span class="lineNum">    1078 </span><span class="lineCov">          4 :     masm.loadPtr(Address(StackPointer, JitFrameLayout::offsetOfDescriptor()), scratch1);</span>
+<span class="lineNum">    1079 </span>            : 
+<span class="lineNum">    1080 </span>            :     // Going into the conditionals, we will have:
+<span class="lineNum">    1081 </span>            :     //      FrameDescriptor.size in scratch1
+<span class="lineNum">    1082 </span>            :     //      FrameDescriptor.type in scratch2
+<span class="lineNum">    1083 </span><span class="lineCov">          4 :     masm.movePtr(scratch1, scratch2);</span>
+<span class="lineNum">    1084 </span><span class="lineCov">          4 :     masm.rshiftPtr(Imm32(FRAMESIZE_SHIFT), scratch1);</span>
+<span class="lineNum">    1085 </span><span class="lineCov">          4 :     masm.and32(Imm32((1 &lt;&lt; FRAMETYPE_BITS) - 1), scratch2);</span>
+<span class="lineNum">    1086 </span>            : 
+<span class="lineNum">    1087 </span>            :     // Handling of each case is dependent on FrameDescriptor.type
+<span class="lineNum">    1088 </span><span class="lineCov">          8 :     Label handle_IonJS;</span>
+<span class="lineNum">    1089 </span><span class="lineCov">          8 :     Label handle_BaselineStub;</span>
+<span class="lineNum">    1090 </span><span class="lineCov">          8 :     Label handle_Rectifier;</span>
+<span class="lineNum">    1091 </span><span class="lineCov">          8 :     Label handle_IonICCall;</span>
+<span class="lineNum">    1092 </span><span class="lineCov">          8 :     Label handle_Entry;</span>
+<span class="lineNum">    1093 </span><span class="lineCov">          8 :     Label end;</span>
+<span class="lineNum">    1094 </span>            : 
+<span class="lineNum">    1095 </span><span class="lineCov">          4 :     masm.branch32(Assembler::Equal, scratch2, Imm32(JitFrame_IonJS), &amp;handle_IonJS);</span>
+<span class="lineNum">    1096 </span><span class="lineCov">          4 :     masm.branch32(Assembler::Equal, scratch2, Imm32(JitFrame_BaselineJS), &amp;handle_IonJS);</span>
+<span class="lineNum">    1097 </span><span class="lineCov">          4 :     masm.branch32(Assembler::Equal, scratch2, Imm32(JitFrame_BaselineStub), &amp;handle_BaselineStub);</span>
+<span class="lineNum">    1098 </span><span class="lineCov">          4 :     masm.branch32(Assembler::Equal, scratch2, Imm32(JitFrame_Rectifier), &amp;handle_Rectifier);</span>
+<span class="lineNum">    1099 </span><span class="lineCov">          4 :     masm.branch32(Assembler::Equal, scratch2, Imm32(JitFrame_IonICCall), &amp;handle_IonICCall);</span>
+<span class="lineNum">    1100 </span><span class="lineCov">          4 :     masm.branch32(Assembler::Equal, scratch2, Imm32(JitFrame_Entry), &amp;handle_Entry);</span>
+<span class="lineNum">    1101 </span>            : 
+<span class="lineNum">    1102 </span><span class="lineCov">          4 :     masm.assumeUnreachable(&quot;Invalid caller frame type when exiting from Ion frame.&quot;);</span>
+<span class="lineNum">    1103 </span>            : 
+<span class="lineNum">    1104 </span>            :     //
+<span class="lineNum">    1105 </span>            :     // JitFrame_IonJS
+<span class="lineNum">    1106 </span>            :     //
+<span class="lineNum">    1107 </span>            :     // Stack layout:
+<span class="lineNum">    1108 </span>            :     //                  ...
+<span class="lineNum">    1109 </span>            :     //                  Ion-Descriptor
+<span class="lineNum">    1110 </span>            :     //     Prev-FP ---&gt; Ion-ReturnAddr
+<span class="lineNum">    1111 </span>            :     //                  ... previous frame data ... |- Descriptor.Size
+<span class="lineNum">    1112 </span>            :     //                  ... arguments ...           |
+<span class="lineNum">    1113 </span>            :     //                  ActualArgc          |
+<span class="lineNum">    1114 </span>            :     //                  CalleeToken         |- JitFrameLayout::Size()
+<span class="lineNum">    1115 </span>            :     //                  Descriptor          |
+<span class="lineNum">    1116 </span>            :     //        FP -----&gt; ReturnAddr          |
+<span class="lineNum">    1117 </span>            :     //
+<span class="lineNum">    1118 </span><span class="lineCov">          4 :     masm.bind(&amp;handle_IonJS);</span>
+<span class="lineNum">    1119 </span>            :     {
+<span class="lineNum">    1120 </span>            :         // returning directly to an IonJS frame.  Store return addr to frame
+<span class="lineNum">    1121 </span>            :         // in lastProfilingCallSite.
+<span class="lineNum">    1122 </span><span class="lineCov">          4 :         masm.loadPtr(Address(StackPointer, JitFrameLayout::offsetOfReturnAddress()), scratch2);</span>
+<span class="lineNum">    1123 </span><span class="lineCov">          4 :         masm.storePtr(scratch2, lastProfilingCallSite);</span>
+<span class="lineNum">    1124 </span>            : 
+<span class="lineNum">    1125 </span>            :         // Store return frame in lastProfilingFrame.
+<span class="lineNum">    1126 </span>            :         // scratch2 := StackPointer + Descriptor.size*1 + JitFrameLayout::Size();
+<span class="lineNum">    1127 </span><span class="lineCov">          4 :         masm.lea(Operand(StackPointer, scratch1, TimesOne, JitFrameLayout::Size()), scratch2);</span>
+<span class="lineNum">    1128 </span><span class="lineCov">          4 :         masm.storePtr(scratch2, lastProfilingFrame);</span>
+<span class="lineNum">    1129 </span><span class="lineCov">          4 :         masm.ret();</span>
+<span class="lineNum">    1130 </span>            :     }
+<span class="lineNum">    1131 </span>            : 
+<span class="lineNum">    1132 </span>            :     //
+<span class="lineNum">    1133 </span>            :     // JitFrame_BaselineStub
+<span class="lineNum">    1134 </span>            :     //
+<span class="lineNum">    1135 </span>            :     // Look past the stub and store the frame pointer to
+<span class="lineNum">    1136 </span>            :     // the baselineJS frame prior to it.
+<span class="lineNum">    1137 </span>            :     //
+<span class="lineNum">    1138 </span>            :     // Stack layout:
+<span class="lineNum">    1139 </span>            :     //              ...
+<span class="lineNum">    1140 </span>            :     //              BL-Descriptor
+<span class="lineNum">    1141 </span>            :     // Prev-FP ---&gt; BL-ReturnAddr
+<span class="lineNum">    1142 </span>            :     //      +-----&gt; BL-PrevFramePointer
+<span class="lineNum">    1143 </span>            :     //      |       ... BL-FrameData ...
+<span class="lineNum">    1144 </span>            :     //      |       BLStub-Descriptor
+<span class="lineNum">    1145 </span>            :     //      |       BLStub-ReturnAddr
+<span class="lineNum">    1146 </span>            :     //      |       BLStub-StubPointer          |
+<span class="lineNum">    1147 </span>            :     //      +------ BLStub-SavedFramePointer    |- Descriptor.Size
+<span class="lineNum">    1148 </span>            :     //              ... arguments ...           |
+<span class="lineNum">    1149 </span>            :     //              ActualArgc          |
+<span class="lineNum">    1150 </span>            :     //              CalleeToken         |- JitFrameLayout::Size()
+<span class="lineNum">    1151 </span>            :     //              Descriptor          |
+<span class="lineNum">    1152 </span>            :     //    FP -----&gt; ReturnAddr          |
+<span class="lineNum">    1153 </span>            :     //
+<span class="lineNum">    1154 </span>            :     // We take advantage of the fact that the stub frame saves the frame
+<span class="lineNum">    1155 </span>            :     // pointer pointing to the baseline frame, so a bunch of calculation can
+<span class="lineNum">    1156 </span>            :     // be avoided.
+<span class="lineNum">    1157 </span>            :     //
+<span class="lineNum">    1158 </span><span class="lineCov">          4 :     masm.bind(&amp;handle_BaselineStub);</span>
+<span class="lineNum">    1159 </span>            :     {
+<span class="lineNum">    1160 </span>            :         BaseIndex stubFrameReturnAddr(StackPointer, scratch1, TimesOne,
+<span class="lineNum">    1161 </span><span class="lineCov">          8 :                                       JitFrameLayout::Size() +</span>
+<span class="lineNum">    1162 </span><span class="lineCov">          8 :                                       BaselineStubFrameLayout::offsetOfReturnAddress());</span>
+<span class="lineNum">    1163 </span><span class="lineCov">          4 :         masm.loadPtr(stubFrameReturnAddr, scratch2);</span>
+<span class="lineNum">    1164 </span><span class="lineCov">          4 :         masm.storePtr(scratch2, lastProfilingCallSite);</span>
+<span class="lineNum">    1165 </span>            : 
+<span class="lineNum">    1166 </span>            :         BaseIndex stubFrameSavedFramePtr(StackPointer, scratch1, TimesOne,
+<span class="lineNum">    1167 </span><span class="lineCov">          4 :                                          JitFrameLayout::Size() - (2 * sizeof(void*)));</span>
+<span class="lineNum">    1168 </span><span class="lineCov">          4 :         masm.loadPtr(stubFrameSavedFramePtr, scratch2);</span>
+<span class="lineNum">    1169 </span><span class="lineCov">          4 :         masm.addPtr(Imm32(sizeof(void*)), scratch2); // Skip past BL-PrevFramePtr</span>
+<span class="lineNum">    1170 </span><span class="lineCov">          4 :         masm.storePtr(scratch2, lastProfilingFrame);</span>
+<span class="lineNum">    1171 </span><span class="lineCov">          4 :         masm.ret();</span>
+<span class="lineNum">    1172 </span>            :     }
+<span class="lineNum">    1173 </span>            : 
+<span class="lineNum">    1174 </span>            : 
+<span class="lineNum">    1175 </span>            :     //
+<span class="lineNum">    1176 </span>            :     // JitFrame_Rectifier
+<span class="lineNum">    1177 </span>            :     //
+<span class="lineNum">    1178 </span>            :     // The rectifier frame can be preceded by either an IonJS or a
+<span class="lineNum">    1179 </span>            :     // BaselineStub frame.
+<span class="lineNum">    1180 </span>            :     //
+<span class="lineNum">    1181 </span>            :     // Stack layout if caller of rectifier was Ion:
+<span class="lineNum">    1182 </span>            :     //
+<span class="lineNum">    1183 </span>            :     //              Ion-Descriptor
+<span class="lineNum">    1184 </span>            :     //              Ion-ReturnAddr
+<span class="lineNum">    1185 </span>            :     //              ... ion frame data ... |- Rect-Descriptor.Size
+<span class="lineNum">    1186 </span>            :     //              &lt; COMMON LAYOUT &gt;
+<span class="lineNum">    1187 </span>            :     //
+<span class="lineNum">    1188 </span>            :     // Stack layout if caller of rectifier was Baseline:
+<span class="lineNum">    1189 </span>            :     //
+<span class="lineNum">    1190 </span>            :     //              BL-Descriptor
+<span class="lineNum">    1191 </span>            :     // Prev-FP ---&gt; BL-ReturnAddr
+<span class="lineNum">    1192 </span>            :     //      +-----&gt; BL-SavedFramePointer
+<span class="lineNum">    1193 </span>            :     //      |       ... baseline frame data ...
+<span class="lineNum">    1194 </span>            :     //      |       BLStub-Descriptor
+<span class="lineNum">    1195 </span>            :     //      |       BLStub-ReturnAddr
+<span class="lineNum">    1196 </span>            :     //      |       BLStub-StubPointer          |
+<span class="lineNum">    1197 </span>            :     //      +------ BLStub-SavedFramePointer    |- Rect-Descriptor.Size
+<span class="lineNum">    1198 </span>            :     //              ... args to rectifier ...   |
+<span class="lineNum">    1199 </span>            :     //              &lt; COMMON LAYOUT &gt;
+<span class="lineNum">    1200 </span>            :     //
+<span class="lineNum">    1201 </span>            :     // Common stack layout:
+<span class="lineNum">    1202 </span>            :     //
+<span class="lineNum">    1203 </span>            :     //              ActualArgc          |
+<span class="lineNum">    1204 </span>            :     //              CalleeToken         |- IonRectitiferFrameLayout::Size()
+<span class="lineNum">    1205 </span>            :     //              Rect-Descriptor     |
+<span class="lineNum">    1206 </span>            :     //              Rect-ReturnAddr     |
+<span class="lineNum">    1207 </span>            :     //              ... rectifier data &amp; args ... |- Descriptor.Size
+<span class="lineNum">    1208 </span>            :     //              ActualArgc      |
+<span class="lineNum">    1209 </span>            :     //              CalleeToken     |- JitFrameLayout::Size()
+<span class="lineNum">    1210 </span>            :     //              Descriptor      |
+<span class="lineNum">    1211 </span>            :     //    FP -----&gt; ReturnAddr      |
+<span class="lineNum">    1212 </span>            :     //
+<span class="lineNum">    1213 </span><span class="lineCov">          4 :     masm.bind(&amp;handle_Rectifier);</span>
+<span class="lineNum">    1214 </span>            :     {
+<span class="lineNum">    1215 </span>            :         // scratch2 := StackPointer + Descriptor.size + JitFrameLayout::Size()
+<span class="lineNum">    1216 </span><span class="lineCov">          4 :         masm.lea(Operand(StackPointer, scratch1, TimesOne, JitFrameLayout::Size()), scratch2);</span>
+<span class="lineNum">    1217 </span><span class="lineCov">          4 :         masm.loadPtr(Address(scratch2, RectifierFrameLayout::offsetOfDescriptor()), scratch3);</span>
+<span class="lineNum">    1218 </span><span class="lineCov">          4 :         masm.movePtr(scratch3, scratch1);</span>
+<span class="lineNum">    1219 </span><span class="lineCov">          4 :         masm.and32(Imm32((1 &lt;&lt; FRAMETYPE_BITS) - 1), scratch3);</span>
+<span class="lineNum">    1220 </span><span class="lineCov">          4 :         masm.rshiftPtr(Imm32(FRAMESIZE_SHIFT), scratch1);</span>
+<span class="lineNum">    1221 </span>            : 
+<span class="lineNum">    1222 </span>            :         // Now |scratch1| contains Rect-Descriptor.Size
+<span class="lineNum">    1223 </span>            :         // and |scratch2| points to Rectifier frame
+<span class="lineNum">    1224 </span>            :         // and |scratch3| contains Rect-Descriptor.Type
+<span class="lineNum">    1225 </span>            : 
+<span class="lineNum">    1226 </span>            :         // Check for either Ion or BaselineStub frame.
+<span class="lineNum">    1227 </span><span class="lineCov">          8 :         Label handle_Rectifier_BaselineStub;</span>
+<span class="lineNum">    1228 </span><span class="lineCov">          8 :         masm.branch32(Assembler::NotEqual, scratch3, Imm32(JitFrame_IonJS),</span>
+<span class="lineNum">    1229 </span><span class="lineCov">          4 :                       &amp;handle_Rectifier_BaselineStub);</span>
+<span class="lineNum">    1230 </span>            : 
+<span class="lineNum">    1231 </span>            :         // Handle Rectifier &lt;- IonJS
+<span class="lineNum">    1232 </span>            :         // scratch3 := RectFrame[ReturnAddr]
+<span class="lineNum">    1233 </span><span class="lineCov">          4 :         masm.loadPtr(Address(scratch2, RectifierFrameLayout::offsetOfReturnAddress()), scratch3);</span>
+<span class="lineNum">    1234 </span><span class="lineCov">          4 :         masm.storePtr(scratch3, lastProfilingCallSite);</span>
+<span class="lineNum">    1235 </span>            : 
+<span class="lineNum">    1236 </span>            :         // scratch3 := RectFrame + Rect-Descriptor.Size + RectifierFrameLayout::Size()
+<span class="lineNum">    1237 </span><span class="lineCov">          4 :         masm.lea(Operand(scratch2, scratch1, TimesOne, RectifierFrameLayout::Size()), scratch3);</span>
+<span class="lineNum">    1238 </span><span class="lineCov">          4 :         masm.storePtr(scratch3, lastProfilingFrame);</span>
+<span class="lineNum">    1239 </span><span class="lineCov">          4 :         masm.ret();</span>
+<span class="lineNum">    1240 </span>            : 
+<span class="lineNum">    1241 </span>            :         // Handle Rectifier &lt;- BaselineStub &lt;- BaselineJS
+<span class="lineNum">    1242 </span><span class="lineCov">          4 :         masm.bind(&amp;handle_Rectifier_BaselineStub);</span>
+<span class="lineNum">    1243 </span>            : #ifdef DEBUG
+<span class="lineNum">    1244 </span>            :         {
+<span class="lineNum">    1245 </span><span class="lineCov">          8 :             Label checkOk;</span>
+<span class="lineNum">    1246 </span><span class="lineCov">          4 :             masm.branch32(Assembler::Equal, scratch3, Imm32(JitFrame_BaselineStub), &amp;checkOk);</span>
+<span class="lineNum">    1247 </span><span class="lineCov">          4 :             masm.assumeUnreachable(&quot;Unrecognized frame preceding baselineStub.&quot;);</span>
+<span class="lineNum">    1248 </span><span class="lineCov">          4 :             masm.bind(&amp;checkOk);</span>
+<span class="lineNum">    1249 </span>            :         }
+<span class="lineNum">    1250 </span>            : #endif
+<span class="lineNum">    1251 </span>            :         BaseIndex stubFrameReturnAddr(scratch2, scratch1, TimesOne,
+<span class="lineNum">    1252 </span><span class="lineCov">          8 :                                          RectifierFrameLayout::Size() +</span>
+<span class="lineNum">    1253 </span><span class="lineCov">          8 :                                          BaselineStubFrameLayout::offsetOfReturnAddress());</span>
+<span class="lineNum">    1254 </span><span class="lineCov">          4 :         masm.loadPtr(stubFrameReturnAddr, scratch3);</span>
+<span class="lineNum">    1255 </span><span class="lineCov">          4 :         masm.storePtr(scratch3, lastProfilingCallSite);</span>
+<span class="lineNum">    1256 </span>            : 
+<span class="lineNum">    1257 </span>            :         BaseIndex stubFrameSavedFramePtr(scratch2, scratch1, TimesOne,
+<span class="lineNum">    1258 </span><span class="lineCov">          4 :                                          RectifierFrameLayout::Size() - (2 * sizeof(void*)));</span>
+<span class="lineNum">    1259 </span><span class="lineCov">          4 :         masm.loadPtr(stubFrameSavedFramePtr, scratch3);</span>
+<span class="lineNum">    1260 </span><span class="lineCov">          4 :         masm.addPtr(Imm32(sizeof(void*)), scratch3);</span>
+<span class="lineNum">    1261 </span><span class="lineCov">          4 :         masm.storePtr(scratch3, lastProfilingFrame);</span>
+<span class="lineNum">    1262 </span><span class="lineCov">          4 :         masm.ret();</span>
+<span class="lineNum">    1263 </span>            :     }
+<span class="lineNum">    1264 </span>            : 
+<span class="lineNum">    1265 </span>            :     // JitFrame_IonICCall
+<span class="lineNum">    1266 </span>            :     //
+<span class="lineNum">    1267 </span>            :     // The caller is always an IonJS frame.
+<span class="lineNum">    1268 </span>            :     //
+<span class="lineNum">    1269 </span>            :     //              Ion-Descriptor
+<span class="lineNum">    1270 </span>            :     //              Ion-ReturnAddr
+<span class="lineNum">    1271 </span>            :     //              ... ion frame data ... |- CallFrame-Descriptor.Size
+<span class="lineNum">    1272 </span>            :     //              StubCode               |
+<span class="lineNum">    1273 </span>            :     //              ICCallFrame-Descriptor |- IonICCallFrameLayout::Size()
+<span class="lineNum">    1274 </span>            :     //              ICCallFrame-ReturnAddr |
+<span class="lineNum">    1275 </span>            :     //              ... call frame data &amp; args ... |- Descriptor.Size
+<span class="lineNum">    1276 </span>            :     //              ActualArgc      |
+<span class="lineNum">    1277 </span>            :     //              CalleeToken     |- JitFrameLayout::Size()
+<span class="lineNum">    1278 </span>            :     //              Descriptor      |
+<span class="lineNum">    1279 </span>            :     //    FP -----&gt; ReturnAddr      |
+<span class="lineNum">    1280 </span><span class="lineCov">          4 :     masm.bind(&amp;handle_IonICCall);</span>
+<span class="lineNum">    1281 </span>            :     {
+<span class="lineNum">    1282 </span>            :         // scratch2 := StackPointer + Descriptor.size + JitFrameLayout::Size()
+<span class="lineNum">    1283 </span><span class="lineCov">          4 :         masm.lea(Operand(StackPointer, scratch1, TimesOne, JitFrameLayout::Size()), scratch2);</span>
+<span class="lineNum">    1284 </span>            : 
+<span class="lineNum">    1285 </span>            :         // scratch3 := ICCallFrame-Descriptor.Size
+<span class="lineNum">    1286 </span><span class="lineCov">          4 :         masm.loadPtr(Address(scratch2, IonICCallFrameLayout::offsetOfDescriptor()), scratch3);</span>
+<span class="lineNum">    1287 </span>            : #ifdef DEBUG
+<span class="lineNum">    1288 </span>            :         // Assert previous frame is an IonJS frame.
+<span class="lineNum">    1289 </span><span class="lineCov">          4 :         masm.movePtr(scratch3, scratch1);</span>
+<span class="lineNum">    1290 </span><span class="lineCov">          4 :         masm.and32(Imm32((1 &lt;&lt; FRAMETYPE_BITS) - 1), scratch1);</span>
+<span class="lineNum">    1291 </span>            :         {
+<span class="lineNum">    1292 </span><span class="lineCov">          8 :             Label checkOk;</span>
+<span class="lineNum">    1293 </span><span class="lineCov">          4 :             masm.branch32(Assembler::Equal, scratch1, Imm32(JitFrame_IonJS), &amp;checkOk);</span>
+<span class="lineNum">    1294 </span><span class="lineCov">          4 :             masm.assumeUnreachable(&quot;IonICCall frame must be preceded by IonJS frame&quot;);</span>
+<span class="lineNum">    1295 </span><span class="lineCov">          4 :             masm.bind(&amp;checkOk);</span>
+<span class="lineNum">    1296 </span>            :         }
+<span class="lineNum">    1297 </span>            : #endif
+<span class="lineNum">    1298 </span><span class="lineCov">          4 :         masm.rshiftPtr(Imm32(FRAMESIZE_SHIFT), scratch3);</span>
+<span class="lineNum">    1299 </span>            : 
+<span class="lineNum">    1300 </span>            :         // lastProfilingCallSite := ICCallFrame-ReturnAddr
+<span class="lineNum">    1301 </span><span class="lineCov">          4 :         masm.loadPtr(Address(scratch2, IonICCallFrameLayout::offsetOfReturnAddress()), scratch1);</span>
+<span class="lineNum">    1302 </span><span class="lineCov">          4 :         masm.storePtr(scratch1, lastProfilingCallSite);</span>
+<span class="lineNum">    1303 </span>            : 
+<span class="lineNum">    1304 </span>            :         // lastProfilingFrame := ICCallFrame + ICCallFrame-Descriptor.Size +
+<span class="lineNum">    1305 </span>            :         //                       IonICCallFrameLayout::Size()
+<span class="lineNum">    1306 </span><span class="lineCov">          4 :         masm.lea(Operand(scratch2, scratch3, TimesOne, IonICCallFrameLayout::Size()), scratch1);</span>
+<span class="lineNum">    1307 </span><span class="lineCov">          4 :         masm.storePtr(scratch1, lastProfilingFrame);</span>
+<span class="lineNum">    1308 </span><span class="lineCov">          4 :         masm.ret();</span>
+<span class="lineNum">    1309 </span>            :     }
+<span class="lineNum">    1310 </span>            : 
+<span class="lineNum">    1311 </span>            :     //
+<span class="lineNum">    1312 </span>            :     // JitFrame_Entry
+<span class="lineNum">    1313 </span>            :     //
+<span class="lineNum">    1314 </span>            :     // If at an entry frame, store null into both fields.
+<span class="lineNum">    1315 </span>            :     //
+<span class="lineNum">    1316 </span><span class="lineCov">          4 :     masm.bind(&amp;handle_Entry);</span>
+<span class="lineNum">    1317 </span>            :     {
+<span class="lineNum">    1318 </span><span class="lineCov">          4 :         masm.movePtr(ImmPtr(nullptr), scratch1);</span>
+<span class="lineNum">    1319 </span><span class="lineCov">          4 :         masm.storePtr(scratch1, lastProfilingCallSite);</span>
+<span class="lineNum">    1320 </span><span class="lineCov">          4 :         masm.storePtr(scratch1, lastProfilingFrame);</span>
+<span class="lineNum">    1321 </span><span class="lineCov">          4 :         masm.ret();</span>
+<span class="lineNum">    1322 </span>            :     }
+<span class="lineNum">    1323 </span>            : 
+<span class="lineNum">    1324 </span><span class="lineCov">          8 :     Linker linker(masm);</span>
+<span class="lineNum">    1325 </span><span class="lineCov">          4 :     JitCode* code = linker.newCode&lt;NoGC&gt;(cx, OTHER_CODE);</span>
+<span class="lineNum">    1326 </span>            : 
+<span class="lineNum">    1327 </span>            : #ifdef JS_ION_PERF
+<span class="lineNum">    1328 </span>            :     writePerfSpewerJitCodeProfile(code, &quot;ProfilerExitFrameStub&quot;);
+<span class="lineNum">    1329 </span>            : #endif
+<span class="lineNum">    1330 </span>            : #ifdef MOZ_VTUNE
+<span class="lineNum">    1331 </span><span class="lineCov">          4 :     vtune::MarkStub(code, &quot;ProfilerExitFrameStub&quot;);</span>
+<span class="lineNum">    1332 </span>            : #endif
+<span class="lineNum">    1333 </span>            : 
+<span class="lineNum">    1334 </span><span class="lineCov">          8 :     return code;</span>
+<span class="lineNum">    1335 </span>            : }
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

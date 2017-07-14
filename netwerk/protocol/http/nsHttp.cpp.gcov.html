@@ -1,0 +1,577 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - netwerk/protocol/http/nsHttp.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../../index.html">top level</a> - <a href="index.html">netwerk/protocol/http</a> - nsHttp.cpp<span style="font-size: 80%;"> (source / <a href="nsHttp.cpp.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">91</td>
+            <td class="headerCovTableEntry">210</td>
+            <td class="headerCovTableEntryLo">43.3 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">13</td>
+            <td class="headerCovTableEntry">21</td>
+            <td class="headerCovTableEntryLo">61.9 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim:set ts=4 sw=4 sts=4 et cin: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this
+<span class="lineNum">       5 </span>            :  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : // HttpLog.h should generally be included first
+<span class="lineNum">       8 </span>            : #include &quot;HttpLog.h&quot;
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &quot;nsHttp.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;PLDHashTable.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/Mutex.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/HashFunctions.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;nsCRT.h&quot;
+<span class="lineNum">      15 </span>            : #include &lt;errno.h&gt;
+<span class="lineNum">      16 </span>            : 
+<span class="lineNum">      17 </span>            : namespace mozilla {
+<span class="lineNum">      18 </span>            : namespace net {
+<span class="lineNum">      19 </span>            : 
+<span class="lineNum">      20 </span>            : // define storage for all atoms
+<span class="lineNum">      21 </span>            : #define HTTP_ATOM(_name, _value) nsHttpAtom nsHttp::_name = { _value };
+<span class="lineNum">      22 </span>            : #include &quot;nsHttpAtomList.h&quot;
+<span class="lineNum">      23 </span>            : #undef HTTP_ATOM
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : // find out how many atoms we have
+<span class="lineNum">      26 </span>            : #define HTTP_ATOM(_name, _value) Unused_ ## _name,
+<span class="lineNum">      27 </span>            : enum {
+<span class="lineNum">      28 </span>            : #include &quot;nsHttpAtomList.h&quot;
+<span class="lineNum">      29 </span>            :     NUM_HTTP_ATOMS
+<span class="lineNum">      30 </span>            : };
+<span class="lineNum">      31 </span>            : #undef HTTP_ATOM
+<span class="lineNum">      32 </span>            : 
+<span class="lineNum">      33 </span>            : // we keep a linked list of atoms allocated on the heap for easy clean up when
+<span class="lineNum">      34 </span>            : // the atom table is destroyed.  The structure and value string are allocated
+<span class="lineNum">      35 </span>            : // as one contiguous block.
+<span class="lineNum">      36 </span>            : 
+<span class="lineNum">      37 </span>            : struct HttpHeapAtom {
+<span class="lineNum">      38 </span>            :     struct HttpHeapAtom *next;
+<span class="lineNum">      39 </span>            :     char                 value[1];
+<span class="lineNum">      40 </span>            : };
+<span class="lineNum">      41 </span>            : 
+<span class="lineNum">      42 </span>            : static PLDHashTable        *sAtomTable;
+<span class="lineNum">      43 </span>            : static struct HttpHeapAtom *sHeapAtoms = nullptr;
+<span class="lineNum">      44 </span>            : static Mutex               *sLock = nullptr;
+<a name="45"><span class="lineNum">      45 </span>            : </a>
+<span class="lineNum">      46 </span>            : HttpHeapAtom *
+<span class="lineNum">      47 </span><span class="lineCov">         14 : NewHeapAtom(const char *value) {</span>
+<span class="lineNum">      48 </span><span class="lineCov">         14 :     int len = strlen(value);</span>
+<span class="lineNum">      49 </span>            : 
+<span class="lineNum">      50 </span>            :     HttpHeapAtom *a =
+<span class="lineNum">      51 </span><span class="lineCov">         14 :         reinterpret_cast&lt;HttpHeapAtom *&gt;(malloc(sizeof(*a) + len));</span>
+<span class="lineNum">      52 </span><span class="lineCov">         14 :     if (!a)</span>
+<span class="lineNum">      53 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">      54 </span><span class="lineCov">         14 :     memcpy(a-&gt;value, value, len + 1);</span>
+<span class="lineNum">      55 </span>            : 
+<span class="lineNum">      56 </span>            :     // add this heap atom to the list of all heap atoms
+<span class="lineNum">      57 </span><span class="lineCov">         14 :     a-&gt;next = sHeapAtoms;</span>
+<span class="lineNum">      58 </span><span class="lineCov">         14 :     sHeapAtoms = a;</span>
+<span class="lineNum">      59 </span>            : 
+<span class="lineNum">      60 </span><span class="lineCov">         14 :     return a;</span>
+<span class="lineNum">      61 </span>            : }
+<span class="lineNum">      62 </span>            : 
+<a name="63"><span class="lineNum">      63 </span>            : // Hash string ignore case, based on PL_HashString</a>
+<span class="lineNum">      64 </span>            : static PLDHashNumber
+<span class="lineNum">      65 </span><span class="lineCov">        302 : StringHash(const void *key)</span>
+<span class="lineNum">      66 </span>            : {
+<span class="lineNum">      67 </span><span class="lineCov">        302 :     PLDHashNumber h = 0;</span>
+<span class="lineNum">      68 </span><span class="lineCov">       3543 :     for (const char *s = reinterpret_cast&lt;const char*&gt;(key); *s; ++s)</span>
+<span class="lineNum">      69 </span><span class="lineCov">       3241 :         h = AddToHash(h, nsCRT::ToLower(*s));</span>
+<span class="lineNum">      70 </span><span class="lineCov">        302 :     return h;</span>
+<span class="lineNum">      71 </span>            : }
+<a name="72"><span class="lineNum">      72 </span>            : </a>
+<span class="lineNum">      73 </span>            : static bool
+<span class="lineNum">      74 </span><span class="lineCov">        132 : StringCompare(const PLDHashEntryHdr *entry, const void *testKey)</span>
+<span class="lineNum">      75 </span>            : {
+<span class="lineNum">      76 </span>            :     const void *entryKey =
+<span class="lineNum">      77 </span><span class="lineCov">        132 :             reinterpret_cast&lt;const PLDHashEntryStub *&gt;(entry)-&gt;key;</span>
+<span class="lineNum">      78 </span>            : 
+<span class="lineNum">      79 </span><span class="lineCov">        132 :     return PL_strcasecmp(reinterpret_cast&lt;const char *&gt;(entryKey),</span>
+<span class="lineNum">      80 </span><span class="lineCov">        132 :                          reinterpret_cast&lt;const char *&gt;(testKey)) == 0;</span>
+<span class="lineNum">      81 </span>            : }
+<span class="lineNum">      82 </span>            : 
+<span class="lineNum">      83 </span>            : static const PLDHashTableOps ops = {
+<span class="lineNum">      84 </span>            :     StringHash,
+<span class="lineNum">      85 </span>            :     StringCompare,
+<span class="lineNum">      86 </span>            :     PLDHashTable::MoveEntryStub,
+<span class="lineNum">      87 </span>            :     PLDHashTable::ClearEntryStub,
+<span class="lineNum">      88 </span>            :     nullptr
+<span class="lineNum">      89 </span>            : };
+<span class="lineNum">      90 </span>            : 
+<a name="91"><span class="lineNum">      91 </span>            : // We put the atoms in a hash table for speedy lookup.. see ResolveAtom.</a>
+<span class="lineNum">      92 </span>            : nsresult
+<span class="lineNum">      93 </span><span class="lineCov">          2 : nsHttp::CreateAtomTable()</span>
+<span class="lineNum">      94 </span>            : {
+<span class="lineNum">      95 </span><span class="lineCov">          2 :     MOZ_ASSERT(!sAtomTable, &quot;atom table already initialized&quot;);</span>
+<span class="lineNum">      96 </span>            : 
+<span class="lineNum">      97 </span><span class="lineCov">          2 :     if (!sLock) {</span>
+<span class="lineNum">      98 </span><span class="lineCov">          2 :         sLock = new Mutex(&quot;nsHttp.sLock&quot;);</span>
+<span class="lineNum">      99 </span>            :     }
+<span class="lineNum">     100 </span>            : 
+<span class="lineNum">     101 </span>            :     // The initial length for this table is a value greater than the number of
+<span class="lineNum">     102 </span>            :     // known atoms (NUM_HTTP_ATOMS) because we expect to encounter a few random
+<span class="lineNum">     103 </span>            :     // headers right off the bat.
+<span class="lineNum">     104 </span><span class="lineCov">          2 :     sAtomTable = new PLDHashTable(&amp;ops, sizeof(PLDHashEntryStub),</span>
+<span class="lineNum">     105 </span><span class="lineCov">          2 :                                   NUM_HTTP_ATOMS + 10);</span>
+<span class="lineNum">     106 </span>            : 
+<span class="lineNum">     107 </span>            :     // fill the table with our known atoms
+<span class="lineNum">     108 </span>            :     const char *const atoms[] = {
+<span class="lineNum">     109 </span>            : #define HTTP_ATOM(_name, _value) nsHttp::_name._val,
+<span class="lineNum">     110 </span>            : #include &quot;nsHttpAtomList.h&quot;
+<span class="lineNum">     111 </span>            : #undef HTTP_ATOM
+<span class="lineNum">     112 </span>            :         nullptr
+<span class="lineNum">     113 </span><span class="lineCov">        158 :     };</span>
+<span class="lineNum">     114 </span>            : 
+<span class="lineNum">     115 </span><span class="lineCov">        158 :     for (int i = 0; atoms[i]; ++i) {</span>
+<span class="lineNum">     116 </span>            :         auto stub = static_cast&lt;PLDHashEntryStub*&gt;
+<span class="lineNum">     117 </span><span class="lineCov">        156 :                                (sAtomTable-&gt;Add(atoms[i], fallible));</span>
+<span class="lineNum">     118 </span><span class="lineCov">        156 :         if (!stub)</span>
+<span class="lineNum">     119 </span><span class="lineNoCov">          0 :             return NS_ERROR_OUT_OF_MEMORY;</span>
+<span class="lineNum">     120 </span>            : 
+<span class="lineNum">     121 </span><span class="lineCov">        156 :         MOZ_ASSERT(!stub-&gt;key, &quot;duplicate static atom&quot;);</span>
+<span class="lineNum">     122 </span><span class="lineCov">        156 :         stub-&gt;key = atoms[i];</span>
+<span class="lineNum">     123 </span>            :     }
+<span class="lineNum">     124 </span>            : 
+<span class="lineNum">     125 </span><span class="lineCov">          2 :     return NS_OK;</span>
+<span class="lineNum">     126 </span>            : }
+<a name="127"><span class="lineNum">     127 </span>            : </a>
+<span class="lineNum">     128 </span>            : void
+<span class="lineNum">     129 </span><span class="lineNoCov">          0 : nsHttp::DestroyAtomTable()</span>
+<span class="lineNum">     130 </span>            : {
+<span class="lineNum">     131 </span><span class="lineNoCov">          0 :     delete sAtomTable;</span>
+<span class="lineNum">     132 </span><span class="lineNoCov">          0 :     sAtomTable = nullptr;</span>
+<span class="lineNum">     133 </span>            : 
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :     while (sHeapAtoms) {</span>
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :         HttpHeapAtom *next = sHeapAtoms-&gt;next;</span>
+<span class="lineNum">     136 </span><span class="lineNoCov">          0 :         free(sHeapAtoms);</span>
+<span class="lineNum">     137 </span><span class="lineNoCov">          0 :         sHeapAtoms = next;</span>
+<span class="lineNum">     138 </span>            :     }
+<span class="lineNum">     139 </span>            : 
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     delete sLock;</span>
+<span class="lineNum">     141 </span><span class="lineNoCov">          0 :     sLock = nullptr;</span>
+<span class="lineNum">     142 </span><span class="lineNoCov">          0 : }</span>
+<a name="143"><span class="lineNum">     143 </span>            : </a>
+<span class="lineNum">     144 </span>            : Mutex *
+<span class="lineNum">     145 </span><span class="lineCov">          3 : nsHttp::GetLock()</span>
+<span class="lineNum">     146 </span>            : {
+<span class="lineNum">     147 </span><span class="lineCov">          3 :     return sLock;</span>
+<span class="lineNum">     148 </span>            : }
+<span class="lineNum">     149 </span>            : 
+<a name="150"><span class="lineNum">     150 </span>            : // this function may be called from multiple threads</a>
+<span class="lineNum">     151 </span>            : nsHttpAtom
+<span class="lineNum">     152 </span><span class="lineCov">        146 : nsHttp::ResolveAtom(const char *str)</span>
+<span class="lineNum">     153 </span>            : {
+<span class="lineNum">     154 </span><span class="lineCov">        146 :     nsHttpAtom atom = { nullptr };</span>
+<span class="lineNum">     155 </span>            : 
+<span class="lineNum">     156 </span><span class="lineCov">        146 :     if (!str || !sAtomTable)</span>
+<span class="lineNum">     157 </span><span class="lineNoCov">          0 :         return atom;</span>
+<span class="lineNum">     158 </span>            : 
+<span class="lineNum">     159 </span><span class="lineCov">        292 :     MutexAutoLock lock(*sLock);</span>
+<span class="lineNum">     160 </span>            : 
+<span class="lineNum">     161 </span><span class="lineCov">        146 :     auto stub = static_cast&lt;PLDHashEntryStub*&gt;(sAtomTable-&gt;Add(str, fallible));</span>
+<span class="lineNum">     162 </span><span class="lineCov">        146 :     if (!stub)</span>
+<span class="lineNum">     163 </span><span class="lineNoCov">          0 :         return atom;  // out of memory</span>
+<span class="lineNum">     164 </span>            : 
+<span class="lineNum">     165 </span><span class="lineCov">        146 :     if (stub-&gt;key) {</span>
+<span class="lineNum">     166 </span><span class="lineCov">        132 :         atom._val = reinterpret_cast&lt;const char *&gt;(stub-&gt;key);</span>
+<span class="lineNum">     167 </span><span class="lineCov">        132 :         return atom;</span>
+<span class="lineNum">     168 </span>            :     }
+<span class="lineNum">     169 </span>            : 
+<span class="lineNum">     170 </span>            :     // if the atom could not be found in the atom table, then we'll go
+<span class="lineNum">     171 </span>            :     // and allocate a new atom on the heap.
+<span class="lineNum">     172 </span><span class="lineCov">         14 :     HttpHeapAtom *heapAtom = NewHeapAtom(str);</span>
+<span class="lineNum">     173 </span><span class="lineCov">         14 :     if (!heapAtom)</span>
+<span class="lineNum">     174 </span><span class="lineNoCov">          0 :         return atom;  // out of memory</span>
+<span class="lineNum">     175 </span>            : 
+<span class="lineNum">     176 </span><span class="lineCov">         14 :     stub-&gt;key = atom._val = heapAtom-&gt;value;</span>
+<span class="lineNum">     177 </span><span class="lineCov">         14 :     return atom;</span>
+<span class="lineNum">     178 </span>            : }
+<span class="lineNum">     179 </span>            : 
+<span class="lineNum">     180 </span>            : //
+<span class="lineNum">     181 </span>            : // From section 2.2 of RFC 2616, a token is defined as:
+<span class="lineNum">     182 </span>            : //
+<span class="lineNum">     183 </span>            : //   token          = 1*&lt;any CHAR except CTLs or separators&gt;
+<span class="lineNum">     184 </span>            : //   CHAR           = &lt;any US-ASCII character (octets 0 - 127)&gt;
+<span class="lineNum">     185 </span>            : //   separators     = &quot;(&quot; | &quot;)&quot; | &quot;&lt;&quot; | &quot;&gt;&quot; | &quot;@&quot;
+<span class="lineNum">     186 </span>            : //                  | &quot;,&quot; | &quot;;&quot; | &quot;:&quot; | &quot;\&quot; | &lt;&quot;&gt;
+<span class="lineNum">     187 </span>            : //                  | &quot;/&quot; | &quot;[&quot; | &quot;]&quot; | &quot;?&quot; | &quot;=&quot;
+<span class="lineNum">     188 </span>            : //                  | &quot;{&quot; | &quot;}&quot; | SP | HT
+<span class="lineNum">     189 </span>            : //   CTL            = &lt;any US-ASCII control character
+<span class="lineNum">     190 </span>            : //                    (octets 0 - 31) and DEL (127)&gt;
+<span class="lineNum">     191 </span>            : //   SP             = &lt;US-ASCII SP, space (32)&gt;
+<span class="lineNum">     192 </span>            : //   HT             = &lt;US-ASCII HT, horizontal-tab (9)&gt;
+<span class="lineNum">     193 </span>            : //
+<span class="lineNum">     194 </span>            : static const char kValidTokenMap[128] = {
+<span class="lineNum">     195 </span>            :     0, 0, 0, 0, 0, 0, 0, 0, //   0
+<span class="lineNum">     196 </span>            :     0, 0, 0, 0, 0, 0, 0, 0, //   8
+<span class="lineNum">     197 </span>            :     0, 0, 0, 0, 0, 0, 0, 0, //  16
+<span class="lineNum">     198 </span>            :     0, 0, 0, 0, 0, 0, 0, 0, //  24
+<span class="lineNum">     199 </span>            : 
+<span class="lineNum">     200 </span>            :     0, 1, 0, 1, 1, 1, 1, 1, //  32
+<span class="lineNum">     201 </span>            :     0, 0, 1, 1, 0, 1, 1, 0, //  40
+<span class="lineNum">     202 </span>            :     1, 1, 1, 1, 1, 1, 1, 1, //  48
+<span class="lineNum">     203 </span>            :     1, 1, 0, 0, 0, 0, 0, 0, //  56
+<span class="lineNum">     204 </span>            : 
+<span class="lineNum">     205 </span>            :     0, 1, 1, 1, 1, 1, 1, 1, //  64
+<span class="lineNum">     206 </span>            :     1, 1, 1, 1, 1, 1, 1, 1, //  72
+<span class="lineNum">     207 </span>            :     1, 1, 1, 1, 1, 1, 1, 1, //  80
+<span class="lineNum">     208 </span>            :     1, 1, 1, 0, 0, 0, 1, 1, //  88
+<span class="lineNum">     209 </span>            : 
+<span class="lineNum">     210 </span>            :     1, 1, 1, 1, 1, 1, 1, 1, //  96
+<span class="lineNum">     211 </span>            :     1, 1, 1, 1, 1, 1, 1, 1, // 104
+<span class="lineNum">     212 </span>            :     1, 1, 1, 1, 1, 1, 1, 1, // 112
+<span class="lineNum">     213 </span>            :     1, 1, 1, 0, 1, 0, 1, 0  // 120
+<a name="214"><span class="lineNum">     214 </span>            : };</a>
+<span class="lineNum">     215 </span>            : bool
+<span class="lineNum">     216 </span><span class="lineCov">         95 : nsHttp::IsValidToken(const char *start, const char *end)</span>
+<span class="lineNum">     217 </span>            : {
+<span class="lineNum">     218 </span><span class="lineCov">         95 :     if (start == end)</span>
+<span class="lineNum">     219 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     220 </span>            : 
+<span class="lineNum">     221 </span><span class="lineCov">       1811 :     for (; start != end; ++start) {</span>
+<span class="lineNum">     222 </span><span class="lineCov">        858 :         const unsigned char idx = *start;</span>
+<span class="lineNum">     223 </span><span class="lineCov">        858 :         if (idx &gt; 127 || !kValidTokenMap[idx])</span>
+<span class="lineNum">     224 </span><span class="lineNoCov">          0 :             return false;</span>
+<span class="lineNum">     225 </span>            :     }
+<span class="lineNum">     226 </span>            : 
+<span class="lineNum">     227 </span><span class="lineCov">         95 :     return true;</span>
+<span class="lineNum">     228 </span>            : }
+<a name="229"><span class="lineNum">     229 </span>            : </a>
+<span class="lineNum">     230 </span>            : const char*
+<span class="lineNum">     231 </span><span class="lineCov">          3 : nsHttp::GetProtocolVersion(uint32_t pv)</span>
+<span class="lineNum">     232 </span>            : {
+<span class="lineNum">     233 </span><span class="lineCov">          3 :     switch (pv) {</span>
+<span class="lineNum">     234 </span>            :     case HTTP_VERSION_2:
+<span class="lineNum">     235 </span>            :     case NS_HTTP_VERSION_2_0:
+<span class="lineNum">     236 </span><span class="lineNoCov">          0 :         return &quot;h2&quot;;</span>
+<span class="lineNum">     237 </span>            :     case NS_HTTP_VERSION_1_0:
+<span class="lineNum">     238 </span><span class="lineCov">          3 :         return &quot;http/1.0&quot;;</span>
+<span class="lineNum">     239 </span>            :     case NS_HTTP_VERSION_1_1:
+<span class="lineNum">     240 </span><span class="lineNoCov">          0 :         return &quot;http/1.1&quot;;</span>
+<span class="lineNum">     241 </span>            :     default:
+<span class="lineNum">     242 </span><span class="lineNoCov">          0 :         NS_WARNING(nsPrintfCString(&quot;Unkown protocol version: 0x%X. &quot;</span>
+<span class="lineNum">     243 </span><span class="lineNoCov">          0 :                                    &quot;Please file a bug&quot;, pv).get());</span>
+<span class="lineNum">     244 </span><span class="lineNoCov">          0 :         return &quot;http/1.1&quot;;</span>
+<span class="lineNum">     245 </span>            :     }
+<span class="lineNum">     246 </span>            : }
+<span class="lineNum">     247 </span>            : 
+<a name="248"><span class="lineNum">     248 </span>            : // static</a>
+<span class="lineNum">     249 </span>            : void
+<span class="lineNum">     250 </span><span class="lineCov">          4 : nsHttp::TrimHTTPWhitespace(const nsACString&amp; aSource, nsACString&amp; aDest)</span>
+<span class="lineNum">     251 </span>            : {
+<span class="lineNum">     252 </span><span class="lineCov">          8 :   nsAutoCString str(aSource);</span>
+<span class="lineNum">     253 </span>            : 
+<span class="lineNum">     254 </span>            :   // HTTP whitespace 0x09: '\t', 0x0A: '\n', 0x0D: '\r', 0x20: ' '
+<span class="lineNum">     255 </span>            :   static const char kHTTPWhitespace[] = &quot;\t\n\r &quot;;
+<span class="lineNum">     256 </span><span class="lineCov">          4 :   str.Trim(kHTTPWhitespace);</span>
+<span class="lineNum">     257 </span><span class="lineCov">          4 :   aDest.Assign(str);</span>
+<span class="lineNum">     258 </span><span class="lineCov">          4 : }</span>
+<span class="lineNum">     259 </span>            : 
+<a name="260"><span class="lineNum">     260 </span>            : // static</a>
+<span class="lineNum">     261 </span>            : bool
+<span class="lineNum">     262 </span><span class="lineCov">         31 : nsHttp::IsReasonableHeaderValue(const nsACString &amp;s)</span>
+<span class="lineNum">     263 </span>            : {
+<span class="lineNum">     264 </span>            :   // Header values MUST NOT contain line-breaks.  RFC 2616 technically
+<span class="lineNum">     265 </span>            :   // permits CTL characters, including CR and LF, in header values provided
+<span class="lineNum">     266 </span>            :   // they are quoted.  However, this can lead to problems if servers do not
+<span class="lineNum">     267 </span>            :   // interpret quoted strings properly.  Disallowing CR and LF here seems
+<span class="lineNum">     268 </span>            :   // reasonable and keeps things simple.  We also disallow a null byte.
+<span class="lineNum">     269 </span><span class="lineCov">         31 :   const nsACString::char_type* end = s.EndReading();</span>
+<span class="lineNum">     270 </span><span class="lineCov">        343 :   for (const nsACString::char_type* i = s.BeginReading(); i != end; ++i) {</span>
+<span class="lineNum">     271 </span><span class="lineCov">        312 :     if (*i == '\r' || *i == '\n' || *i == '\0') {</span>
+<span class="lineNum">     272 </span><span class="lineNoCov">          0 :       return false;</span>
+<span class="lineNum">     273 </span>            :     }
+<span class="lineNum">     274 </span>            :   }
+<span class="lineNum">     275 </span><span class="lineCov">         31 :   return true;</span>
+<span class="lineNum">     276 </span>            : }
+<a name="277"><span class="lineNum">     277 </span>            : </a>
+<span class="lineNum">     278 </span>            : const char *
+<span class="lineNum">     279 </span><span class="lineCov">         25 : nsHttp::FindToken(const char *input, const char *token, const char *seps)</span>
+<span class="lineNum">     280 </span>            : {
+<span class="lineNum">     281 </span><span class="lineCov">         25 :     if (!input)</span>
+<span class="lineNum">     282 </span><span class="lineCov">         16 :         return nullptr;</span>
+<span class="lineNum">     283 </span>            : 
+<span class="lineNum">     284 </span><span class="lineCov">          9 :     int inputLen = strlen(input);</span>
+<span class="lineNum">     285 </span><span class="lineCov">          9 :     int tokenLen = strlen(token);</span>
+<span class="lineNum">     286 </span>            : 
+<span class="lineNum">     287 </span><span class="lineCov">          9 :     if (inputLen &lt; tokenLen)</span>
+<span class="lineNum">     288 </span><span class="lineNoCov">          0 :         return nullptr;</span>
+<span class="lineNum">     289 </span>            : 
+<span class="lineNum">     290 </span><span class="lineCov">          9 :     const char *inputTop = input;</span>
+<span class="lineNum">     291 </span><span class="lineCov">          9 :     const char *inputEnd = input + inputLen - tokenLen;</span>
+<span class="lineNum">     292 </span><span class="lineCov">         93 :     for (; input &lt;= inputEnd; ++input) {</span>
+<span class="lineNum">     293 </span><span class="lineCov">         44 :         if (PL_strncasecmp(input, token, tokenLen) == 0) {</span>
+<span class="lineNum">     294 </span><span class="lineCov">          2 :             if (input &gt; inputTop &amp;&amp; !strchr(seps, *(input - 1)))</span>
+<span class="lineNum">     295 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     296 </span><span class="lineCov">          2 :             if (input &lt; inputEnd &amp;&amp; !strchr(seps, *(input + tokenLen)))</span>
+<span class="lineNum">     297 </span><span class="lineNoCov">          0 :                 continue;</span>
+<span class="lineNum">     298 </span><span class="lineCov">          2 :             return input;</span>
+<span class="lineNum">     299 </span>            :         }
+<span class="lineNum">     300 </span>            :     }
+<span class="lineNum">     301 </span>            : 
+<span class="lineNum">     302 </span><span class="lineCov">          7 :     return nullptr;</span>
+<span class="lineNum">     303 </span>            : }
+<a name="304"><span class="lineNum">     304 </span>            : </a>
+<span class="lineNum">     305 </span>            : bool
+<span class="lineNum">     306 </span><span class="lineCov">          4 : nsHttp::ParseInt64(const char *input, const char **next, int64_t *r)</span>
+<span class="lineNum">     307 </span>            : {
+<span class="lineNum">     308 </span><span class="lineCov">          4 :     MOZ_ASSERT(input);</span>
+<span class="lineNum">     309 </span><span class="lineCov">          4 :     MOZ_ASSERT(r);</span>
+<span class="lineNum">     310 </span>            : 
+<span class="lineNum">     311 </span><span class="lineCov">          4 :     char *end = nullptr;</span>
+<span class="lineNum">     312 </span><span class="lineCov">          4 :     errno = 0; // Clear errno to make sure its value is set by strtoll</span>
+<span class="lineNum">     313 </span><span class="lineCov">          4 :     int64_t value = strtoll(input, &amp;end, /* base */ 10);</span>
+<span class="lineNum">     314 </span>            : 
+<span class="lineNum">     315 </span>            :     // Fail if: - the parsed number overflows.
+<span class="lineNum">     316 </span>            :     //          - the end points to the start of the input string.
+<span class="lineNum">     317 </span>            :     //          - we parsed a negative value. Consumers don't expect that.
+<span class="lineNum">     318 </span><span class="lineCov">          4 :     if (errno != 0 || end == input || value &lt; 0) {</span>
+<span class="lineNum">     319 </span><span class="lineNoCov">          0 :         LOG((&quot;nsHttp::ParseInt64 value=%&quot; PRId64 &quot; errno=%d&quot;, value, errno));</span>
+<span class="lineNum">     320 </span><span class="lineNoCov">          0 :         return false;</span>
+<span class="lineNum">     321 </span>            :     }
+<span class="lineNum">     322 </span>            : 
+<span class="lineNum">     323 </span><span class="lineCov">          4 :     if (next) {</span>
+<span class="lineNum">     324 </span><span class="lineCov">          4 :         *next = end;</span>
+<span class="lineNum">     325 </span>            :     }
+<span class="lineNum">     326 </span><span class="lineCov">          4 :     *r = value;</span>
+<span class="lineNum">     327 </span><span class="lineCov">          4 :     return true;</span>
+<span class="lineNum">     328 </span>            : }
+<a name="329"><span class="lineNum">     329 </span>            : </a>
+<span class="lineNum">     330 </span>            : bool
+<span class="lineNum">     331 </span><span class="lineCov">          3 : nsHttp::IsPermanentRedirect(uint32_t httpStatus)</span>
+<span class="lineNum">     332 </span>            : {
+<span class="lineNum">     333 </span><span class="lineCov">          3 :   return httpStatus == 301 || httpStatus == 308;</span>
+<span class="lineNum">     334 </span>            : }
+<span class="lineNum">     335 </span>            : 
+<a name="336"><span class="lineNum">     336 </span>            : </a>
+<span class="lineNum">     337 </span>            : template&lt;typename T&gt; void
+<span class="lineNum">     338 </span><span class="lineNoCov">          0 : localEnsureBuffer(UniquePtr&lt;T[]&gt; &amp;buf, uint32_t newSize,</span>
+<span class="lineNum">     339 </span>            :              uint32_t preserve, uint32_t &amp;objSize)
+<span class="lineNum">     340 </span>            : {
+<span class="lineNum">     341 </span><span class="lineNoCov">          0 :   if (objSize &gt;= newSize)</span>
+<span class="lineNum">     342 </span><span class="lineNoCov">          0 :     return;</span>
+<span class="lineNum">     343 </span>            : 
+<span class="lineNum">     344 </span>            :   // Leave a little slop on the new allocation - add 2KB to
+<span class="lineNum">     345 </span>            :   // what we need and then round the result up to a 4KB (page)
+<span class="lineNum">     346 </span>            :   // boundary.
+<span class="lineNum">     347 </span>            : 
+<span class="lineNum">     348 </span><span class="lineNoCov">          0 :   objSize = (newSize + 2048 + 4095) &amp; ~4095;</span>
+<span class="lineNum">     349 </span>            : 
+<span class="lineNum">     350 </span>            :   static_assert(sizeof(T) == 1, &quot;sizeof(T) must be 1&quot;);
+<span class="lineNum">     351 </span><span class="lineNoCov">          0 :   auto tmp = MakeUnique&lt;T[]&gt;(objSize);</span>
+<span class="lineNum">     352 </span><span class="lineNoCov">          0 :   if (preserve) {</span>
+<span class="lineNum">     353 </span><span class="lineNoCov">          0 :     memcpy(tmp.get(), buf.get(), preserve);</span>
+<span class="lineNum">     354 </span>            :   }
+<span class="lineNum">     355 </span><span class="lineNoCov">          0 :   buf = Move(tmp);</span>
+<a name="356"><span class="lineNum">     356 </span>            : }</a>
+<span class="lineNum">     357 </span>            : 
+<span class="lineNum">     358 </span><span class="lineNoCov">          0 : void EnsureBuffer(UniquePtr&lt;char[]&gt; &amp;buf, uint32_t newSize,</span>
+<span class="lineNum">     359 </span>            :                   uint32_t preserve, uint32_t &amp;objSize)
+<span class="lineNum">     360 </span>            : {
+<span class="lineNum">     361 </span><span class="lineNoCov">          0 :     localEnsureBuffer&lt;char&gt; (buf, newSize, preserve, objSize);</span>
+<a name="362"><span class="lineNum">     362 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     363 </span>            : 
+<span class="lineNum">     364 </span><span class="lineNoCov">          0 : void EnsureBuffer(UniquePtr&lt;uint8_t[]&gt; &amp;buf, uint32_t newSize,</span>
+<span class="lineNum">     365 </span>            :                   uint32_t preserve, uint32_t &amp;objSize)
+<span class="lineNum">     366 </span>            : {
+<span class="lineNum">     367 </span><span class="lineNoCov">          0 :     localEnsureBuffer&lt;uint8_t&gt; (buf, newSize, preserve, objSize);</span>
+<span class="lineNum">     368 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     369 </span>            : ///
+<a name="370"><span class="lineNum">     370 </span>            : </a>
+<span class="lineNum">     371 </span>            : void
+<span class="lineNum">     372 </span><span class="lineNoCov">          0 : ParsedHeaderValueList::Tokenize(char *input, uint32_t inputLen, char **token,</span>
+<span class="lineNum">     373 </span>            :                                 uint32_t *tokenLen, bool *foundEquals, char **next)
+<span class="lineNum">     374 </span>            : {
+<span class="lineNum">     375 </span><span class="lineNoCov">          0 :     if (foundEquals) {</span>
+<span class="lineNum">     376 </span><span class="lineNoCov">          0 :         *foundEquals = false;</span>
+<span class="lineNum">     377 </span>            :     }
+<span class="lineNum">     378 </span><span class="lineNoCov">          0 :     if (next) {</span>
+<span class="lineNum">     379 </span><span class="lineNoCov">          0 :         *next = nullptr;</span>
+<span class="lineNum">     380 </span>            :     }
+<span class="lineNum">     381 </span><span class="lineNoCov">          0 :     if (inputLen &lt; 1 || !input || !token) {</span>
+<span class="lineNum">     382 </span><span class="lineNoCov">          0 :         return;</span>
+<span class="lineNum">     383 </span>            :     }
+<span class="lineNum">     384 </span>            : 
+<span class="lineNum">     385 </span><span class="lineNoCov">          0 :     bool foundFirst = false;</span>
+<span class="lineNum">     386 </span><span class="lineNoCov">          0 :     bool inQuote = false;</span>
+<span class="lineNum">     387 </span><span class="lineNoCov">          0 :     bool foundToken = false;</span>
+<span class="lineNum">     388 </span><span class="lineNoCov">          0 :     *token = input;</span>
+<span class="lineNum">     389 </span><span class="lineNoCov">          0 :     *tokenLen = inputLen;</span>
+<span class="lineNum">     390 </span>            : 
+<span class="lineNum">     391 </span><span class="lineNoCov">          0 :     for (uint32_t index = 0; !foundToken &amp;&amp; index &lt; inputLen; ++index) {</span>
+<span class="lineNum">     392 </span>            :         // strip leading cruft
+<span class="lineNum">     393 </span><span class="lineNoCov">          0 :         if (!foundFirst &amp;&amp;</span>
+<span class="lineNum">     394 </span><span class="lineNoCov">          0 :             (input[index] == ' ' || input[index] == '&quot;' || input[index] == '\t')) {</span>
+<span class="lineNum">     395 </span><span class="lineNoCov">          0 :             (*token)++;</span>
+<span class="lineNum">     396 </span>            :         } else {
+<span class="lineNum">     397 </span><span class="lineNoCov">          0 :             foundFirst = true;</span>
+<span class="lineNum">     398 </span>            :         }
+<span class="lineNum">     399 </span>            : 
+<span class="lineNum">     400 </span><span class="lineNoCov">          0 :         if (input[index] == '&quot;') {</span>
+<span class="lineNum">     401 </span><span class="lineNoCov">          0 :             inQuote = !inQuote;</span>
+<span class="lineNum">     402 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     403 </span>            :         }
+<span class="lineNum">     404 </span>            : 
+<span class="lineNum">     405 </span><span class="lineNoCov">          0 :         if (inQuote) {</span>
+<span class="lineNum">     406 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     407 </span>            :         }
+<span class="lineNum">     408 </span>            : 
+<span class="lineNum">     409 </span><span class="lineNoCov">          0 :         if (input[index] == '=' || input[index] == ';') {</span>
+<span class="lineNum">     410 </span><span class="lineNoCov">          0 :             *tokenLen = (input + index) - *token;</span>
+<span class="lineNum">     411 </span><span class="lineNoCov">          0 :             if (next &amp;&amp; ((index + 1) &lt; inputLen)) {</span>
+<span class="lineNum">     412 </span><span class="lineNoCov">          0 :                 *next = input + index + 1;</span>
+<span class="lineNum">     413 </span>            :             }
+<span class="lineNum">     414 </span><span class="lineNoCov">          0 :             foundToken = true;</span>
+<span class="lineNum">     415 </span><span class="lineNoCov">          0 :             if (foundEquals &amp;&amp; input[index] == '=') {</span>
+<span class="lineNum">     416 </span><span class="lineNoCov">          0 :                 *foundEquals = true;</span>
+<span class="lineNum">     417 </span>            :             }
+<span class="lineNum">     418 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     419 </span>            :         }
+<span class="lineNum">     420 </span>            :     }
+<span class="lineNum">     421 </span>            : 
+<span class="lineNum">     422 </span><span class="lineNoCov">          0 :     if (!foundToken) {</span>
+<span class="lineNum">     423 </span><span class="lineNoCov">          0 :         *tokenLen = (input + inputLen) - *token;</span>
+<span class="lineNum">     424 </span>            :     }
+<span class="lineNum">     425 </span>            : 
+<span class="lineNum">     426 </span>            :     // strip trailing cruft
+<span class="lineNum">     427 </span><span class="lineNoCov">          0 :     for (char *index = *token + *tokenLen - 1; index &gt;= *token; --index) {</span>
+<span class="lineNum">     428 </span><span class="lineNoCov">          0 :         if (*index != ' ' &amp;&amp; *index != '\t' &amp;&amp; *index != '&quot;') {</span>
+<span class="lineNum">     429 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     430 </span>            :         }
+<span class="lineNum">     431 </span><span class="lineNoCov">          0 :         --(*tokenLen);</span>
+<span class="lineNum">     432 </span><span class="lineNoCov">          0 :         if (*index == '&quot;') {</span>
+<span class="lineNum">     433 </span><span class="lineNoCov">          0 :             break;</span>
+<span class="lineNum">     434 </span>            :         }
+<span class="lineNum">     435 </span>            :     }
+<a name="436"><span class="lineNum">     436 </span>            : }</a>
+<span class="lineNum">     437 </span>            : 
+<span class="lineNum">     438 </span><span class="lineNoCov">          0 : ParsedHeaderValueList::ParsedHeaderValueList(char *t, uint32_t len)</span>
+<span class="lineNum">     439 </span>            : {
+<span class="lineNum">     440 </span><span class="lineNoCov">          0 :     char *name = nullptr;</span>
+<span class="lineNum">     441 </span><span class="lineNoCov">          0 :     uint32_t nameLen = 0;</span>
+<span class="lineNum">     442 </span><span class="lineNoCov">          0 :     char *value = nullptr;</span>
+<span class="lineNum">     443 </span><span class="lineNoCov">          0 :     uint32_t valueLen = 0;</span>
+<span class="lineNum">     444 </span><span class="lineNoCov">          0 :     char *next = nullptr;</span>
+<span class="lineNum">     445 </span>            :     bool foundEquals;
+<span class="lineNum">     446 </span>            : 
+<span class="lineNum">     447 </span><span class="lineNoCov">          0 :     while (t) {</span>
+<span class="lineNum">     448 </span><span class="lineNoCov">          0 :         Tokenize(t, len, &amp;name, &amp;nameLen, &amp;foundEquals, &amp;next);</span>
+<span class="lineNum">     449 </span><span class="lineNoCov">          0 :         if (next) {</span>
+<span class="lineNum">     450 </span><span class="lineNoCov">          0 :             len -= next - t;</span>
+<span class="lineNum">     451 </span>            :         }
+<span class="lineNum">     452 </span><span class="lineNoCov">          0 :         t = next;</span>
+<span class="lineNum">     453 </span><span class="lineNoCov">          0 :         if (foundEquals &amp;&amp; t) {</span>
+<span class="lineNum">     454 </span><span class="lineNoCov">          0 :             Tokenize(t, len, &amp;value, &amp;valueLen, nullptr, &amp;next);</span>
+<span class="lineNum">     455 </span><span class="lineNoCov">          0 :             if (next) {</span>
+<span class="lineNum">     456 </span><span class="lineNoCov">          0 :                 len -= next - t;</span>
+<span class="lineNum">     457 </span>            :             }
+<span class="lineNum">     458 </span><span class="lineNoCov">          0 :             t = next;</span>
+<span class="lineNum">     459 </span>            :         }
+<span class="lineNum">     460 </span><span class="lineNoCov">          0 :         mValues.AppendElement(ParsedHeaderPair(name, nameLen, value, valueLen));</span>
+<span class="lineNum">     461 </span><span class="lineNoCov">          0 :         value = name = nullptr;</span>
+<span class="lineNum">     462 </span><span class="lineNoCov">          0 :         valueLen = nameLen = 0;</span>
+<span class="lineNum">     463 </span><span class="lineNoCov">          0 :         next = nullptr;</span>
+<span class="lineNum">     464 </span>            :     }
+<a name="465"><span class="lineNum">     465 </span><span class="lineNoCov">          0 : }</span></a>
+<span class="lineNum">     466 </span>            : 
+<span class="lineNum">     467 </span><span class="lineNoCov">          0 : ParsedHeaderValueListList::ParsedHeaderValueListList(const nsCString &amp;fullHeader)</span>
+<span class="lineNum">     468 </span><span class="lineNoCov">          0 :     : mFull(fullHeader)</span>
+<span class="lineNum">     469 </span>            : {
+<span class="lineNum">     470 </span><span class="lineNoCov">          0 :     char *t = mFull.BeginWriting();</span>
+<span class="lineNum">     471 </span><span class="lineNoCov">          0 :     uint32_t len = mFull.Length();</span>
+<span class="lineNum">     472 </span><span class="lineNoCov">          0 :     char *last = t;</span>
+<span class="lineNum">     473 </span><span class="lineNoCov">          0 :     bool inQuote = false;</span>
+<span class="lineNum">     474 </span><span class="lineNoCov">          0 :     for (uint32_t index = 0; index &lt; len; ++index) {</span>
+<span class="lineNum">     475 </span><span class="lineNoCov">          0 :         if (t[index] == '&quot;') {</span>
+<span class="lineNum">     476 </span><span class="lineNoCov">          0 :             inQuote = !inQuote;</span>
+<span class="lineNum">     477 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     478 </span>            :         }
+<span class="lineNum">     479 </span><span class="lineNoCov">          0 :         if (inQuote) {</span>
+<span class="lineNum">     480 </span><span class="lineNoCov">          0 :             continue;</span>
+<span class="lineNum">     481 </span>            :         }
+<span class="lineNum">     482 </span><span class="lineNoCov">          0 :         if (t[index] == ',') {</span>
+<span class="lineNum">     483 </span><span class="lineNoCov">          0 :             mValues.AppendElement(ParsedHeaderValueList(last, (t + index) - last));</span>
+<span class="lineNum">     484 </span><span class="lineNoCov">          0 :             last = t + index + 1;</span>
+<span class="lineNum">     485 </span>            :         }
+<span class="lineNum">     486 </span>            :     }
+<span class="lineNum">     487 </span><span class="lineNoCov">          0 :     if (!inQuote) {</span>
+<span class="lineNum">     488 </span><span class="lineNoCov">          0 :         mValues.AppendElement(ParsedHeaderValueList(last, (t + len) - last));</span>
+<span class="lineNum">     489 </span>            :     }
+<span class="lineNum">     490 </span><span class="lineNoCov">          0 : }</span>
+<span class="lineNum">     491 </span>            : 
+<span class="lineNum">     492 </span>            : } // namespace net
+<span class="lineNum">     493 </span>            : } // namespace mozilla
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>

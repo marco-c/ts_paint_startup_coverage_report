@@ -1,0 +1,292 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - output.info - dom/media/FileBlockCache.h</title>
+  <link rel="stylesheet" type="text/css" href="../../gcov.css">
+</head>
+
+<body>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="title">LCOV - code coverage report</td></tr>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+
+    <tr>
+      <td width="100%">
+        <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="35%" class="headerValue"><a href="../../index.html">top level</a> - <a href="index.html">dom/media</a> - FileBlockCache.h<span style="font-size: 80%;"> (source / <a href="FileBlockCache.h.func-sort-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="15%"></td>
+            <td width="10%" class="headerCovTableHead">Hit</td>
+            <td width="10%" class="headerCovTableHead">Total</td>
+            <td width="15%" class="headerCovTableHead">Coverage</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">output.info</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">25</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Date:</td>
+            <td class="headerValue">2017-07-14 16:53:18</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">9</td>
+            <td class="headerCovTableEntryLo">0.0 %</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+          <tr><td><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+  </table>
+
+  <table cellpadding=0 cellspacing=0 border=0>
+    <tr>
+      <td><br></td>
+    </tr>
+    <tr>
+      <td>
+<pre class="sourceHeading">          Line data    Source code</pre>
+<pre class="source">
+<a name="1"><span class="lineNum">       1 </span>            : /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */</a>
+<span class="lineNum">       2 </span>            : /* vim:set ts=2 sw=2 sts=2 et cindent: */
+<span class="lineNum">       3 </span>            : /* This Source Code Form is subject to the terms of the Mozilla Public
+<span class="lineNum">       4 </span>            :  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+<span class="lineNum">       5 </span>            :  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+<span class="lineNum">       6 </span>            : 
+<span class="lineNum">       7 </span>            : #ifndef FILE_BLOCK_CACHE_H_
+<span class="lineNum">       8 </span>            : #define FILE_BLOCK_CACHE_H_
+<span class="lineNum">       9 </span>            : 
+<span class="lineNum">      10 </span>            : #include &quot;mozilla/Attributes.h&quot;
+<span class="lineNum">      11 </span>            : #include &quot;mozilla/MozPromise.h&quot;
+<span class="lineNum">      12 </span>            : #include &quot;mozilla/Mutex.h&quot;
+<span class="lineNum">      13 </span>            : #include &quot;mozilla/UniquePtr.h&quot;
+<span class="lineNum">      14 </span>            : #include &quot;mozilla/AbstractThread.h&quot;
+<span class="lineNum">      15 </span>            : #include &quot;nsTArray.h&quot;
+<span class="lineNum">      16 </span>            : #include &quot;MediaBlockCacheBase.h&quot;
+<span class="lineNum">      17 </span>            : #include &quot;nsDeque.h&quot;
+<span class="lineNum">      18 </span>            : #include &quot;nsThreadUtils.h&quot;
+<span class="lineNum">      19 </span>            : #include &lt;deque&gt;
+<span class="lineNum">      20 </span>            : 
+<span class="lineNum">      21 </span>            : struct PRFileDesc;
+<span class="lineNum">      22 </span>            : 
+<span class="lineNum">      23 </span>            : namespace mozilla {
+<span class="lineNum">      24 </span>            : 
+<span class="lineNum">      25 </span>            : // Manages file I/O for the media cache. Data comes in over the network
+<span class="lineNum">      26 </span>            : // via callbacks on the main thread, however we don't want to write the
+<span class="lineNum">      27 </span>            : // incoming data to the media cache on the main thread, as this could block
+<span class="lineNum">      28 </span>            : // causing UI jank.
+<span class="lineNum">      29 </span>            : //
+<span class="lineNum">      30 </span>            : // So FileBlockCache provides an abstraction for a temporary file accessible
+<span class="lineNum">      31 </span>            : // as an array of blocks, which supports a block move operation, and
+<span class="lineNum">      32 </span>            : // allows synchronous reading and writing from any thread, with writes being
+<span class="lineNum">      33 </span>            : // buffered so as not to block.
+<span class="lineNum">      34 </span>            : //
+<span class="lineNum">      35 </span>            : // Writes and cache block moves (which require reading) are deferred to
+<span class="lineNum">      36 </span>            : // their own non-main thread. This object also ensures that data which has
+<span class="lineNum">      37 </span>            : // been scheduled to be written, but hasn't actually *been* written, is read
+<span class="lineNum">      38 </span>            : // as if it had, i.e. pending writes are cached in readable memory until
+<span class="lineNum">      39 </span>            : // they're flushed to file.
+<span class="lineNum">      40 </span>            : //
+<span class="lineNum">      41 </span>            : // To improve efficiency, writes can only be done at block granularity,
+<span class="lineNum">      42 </span>            : // whereas reads can be done with byte granularity.
+<span class="lineNum">      43 </span>            : //
+<span class="lineNum">      44 </span>            : // Note it's also recommended not to read from the media cache from the main
+<span class="lineNum">      45 </span>            : // thread to prevent jank.
+<span class="lineNum">      46 </span>            : //
+<span class="lineNum">      47 </span>            : // When WriteBlock() or MoveBlock() are called, data about how to complete
+<span class="lineNum">      48 </span>            : // the block change is added to mBlockChanges, indexed by block index, and
+<span class="lineNum">      49 </span>            : // the block index is appended to the mChangeIndexList. This enables
+<span class="lineNum">      50 </span>            : // us to quickly tell if a block has been changed, and ensures we can perform
+<span class="lineNum">      51 </span>            : // the changes in the correct order. An event is dispatched to perform the
+<span class="lineNum">      52 </span>            : // changes listed in mBlockChanges to file. Read() checks mBlockChanges and
+<span class="lineNum">      53 </span>            : // determines the current data to return, reading from file or from
+<span class="lineNum">      54 </span>            : // mBlockChanges as necessary.
+<span class="lineNum">      55 </span>            : class FileBlockCache : public MediaBlockCacheBase
+<span class="lineNum">      56 </span>            : {
+<span class="lineNum">      57 </span>            : public:
+<span class="lineNum">      58 </span>            :   FileBlockCache();
+<span class="lineNum">      59 </span>            : 
+<span class="lineNum">      60 </span>            : protected:
+<span class="lineNum">      61 </span>            :   virtual ~FileBlockCache();
+<span class="lineNum">      62 </span>            : 
+<span class="lineNum">      63 </span>            : public:
+<span class="lineNum">      64 </span>            :   // Launch thread and open temporary file.
+<span class="lineNum">      65 </span>            :   // If re-initializing, just discard pending writes if any.
+<span class="lineNum">      66 </span>            :   nsresult Init() override;
+<span class="lineNum">      67 </span>            : 
+<span class="lineNum">      68 </span>            :   // Maximum number of blocks allowed in this block cache.
+<span class="lineNum">      69 </span>            :   // Calculated from &quot;media.cache_size&quot; pref.
+<span class="lineNum">      70 </span>            :   int32_t GetMaxBlocks() const override;
+<span class="lineNum">      71 </span>            : 
+<span class="lineNum">      72 </span>            :   // Can be called on any thread. This defers to a non-main thread.
+<span class="lineNum">      73 </span>            :   nsresult WriteBlock(uint32_t aBlockIndex,
+<span class="lineNum">      74 </span>            :                       Span&lt;const uint8_t&gt; aData1,
+<span class="lineNum">      75 </span>            :                       Span&lt;const uint8_t&gt; aData2) override;
+<span class="lineNum">      76 </span>            : 
+<span class="lineNum">      77 </span>            :   // Synchronously reads data from file. May read from file or memory
+<span class="lineNum">      78 </span>            :   // depending on whether written blocks have been flushed to file yet.
+<span class="lineNum">      79 </span>            :   // Not recommended to be called from the main thread, as can cause jank.
+<span class="lineNum">      80 </span>            :   nsresult Read(int64_t aOffset,
+<span class="lineNum">      81 </span>            :                 uint8_t* aData,
+<span class="lineNum">      82 </span>            :                 int32_t aLength,
+<span class="lineNum">      83 </span>            :                 int32_t* aBytes) override;
+<span class="lineNum">      84 </span>            : 
+<span class="lineNum">      85 </span>            :   // Moves a block asynchronously. Can be called on any thread.
+<span class="lineNum">      86 </span>            :   // This defers file I/O to a non-main thread.
+<span class="lineNum">      87 </span>            :   nsresult MoveBlock(int32_t aSourceBlockIndex,
+<span class="lineNum">      88 </span>            :                      int32_t aDestBlockIndex) override;
+<span class="lineNum">      89 </span>            : 
+<span class="lineNum">      90 </span>            :   // Represents a change yet to be made to a block in the file. The change
+<span class="lineNum">      91 </span>            :   // is either a write (and the data to be written is stored in this struct)
+<span class="lineNum">      92 </span>            :   // or a move (and the index of the source block is stored instead).
+<a name="93"><span class="lineNum">      93 </span>            :   struct BlockChange final {</a>
+<span class="lineNum">      94 </span>            : 
+<span class="lineNum">      95 </span><span class="lineNoCov">          0 :     NS_INLINE_DECL_THREADSAFE_REFCOUNTING(BlockChange)</span>
+<span class="lineNum">      96 </span>            : 
+<a name="97"><span class="lineNum">      97 </span>            :     // This block is waiting in memory to be written.</a>
+<span class="lineNum">      98 </span>            :     // Stores a copy of the block, so we can write it asynchronously.
+<span class="lineNum">      99 </span><span class="lineNoCov">          0 :     explicit BlockChange(const uint8_t* aData)</span>
+<span class="lineNum">     100 </span><span class="lineNoCov">          0 :       : mSourceBlockIndex(-1)</span>
+<span class="lineNum">     101 </span>            :     {
+<span class="lineNum">     102 </span><span class="lineNoCov">          0 :       mData = MakeUnique&lt;uint8_t[]&gt;(BLOCK_SIZE);</span>
+<span class="lineNum">     103 </span><span class="lineNoCov">          0 :       memcpy(mData.get(), aData, BLOCK_SIZE);</span>
+<a name="104"><span class="lineNum">     104 </span><span class="lineNoCov">          0 :     }</span></a>
+<span class="lineNum">     105 </span>            : 
+<span class="lineNum">     106 </span><span class="lineNoCov">          0 :     BlockChange(Span&lt;const uint8_t&gt; aData1, Span&lt;const uint8_t&gt; aData2)</span>
+<span class="lineNum">     107 </span><span class="lineNoCov">          0 :       : mSourceBlockIndex(-1)</span>
+<span class="lineNum">     108 </span>            :     {
+<span class="lineNum">     109 </span><span class="lineNoCov">          0 :       MOZ_ASSERT(aData1.Length() + aData2.Length() == BLOCK_SIZE);</span>
+<span class="lineNum">     110 </span><span class="lineNoCov">          0 :       mData = MakeUnique&lt;uint8_t[]&gt;(BLOCK_SIZE);</span>
+<span class="lineNum">     111 </span><span class="lineNoCov">          0 :       memcpy(mData.get(), aData1.Elements(), aData1.Length());</span>
+<span class="lineNum">     112 </span><span class="lineNoCov">          0 :       memcpy(mData.get() + aData1.Length(), aData2.Elements(), aData2.Length());</span>
+<span class="lineNum">     113 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     114 </span>            : 
+<a name="115"><span class="lineNum">     115 </span>            :     // This block's contents are located in another file</a>
+<span class="lineNum">     116 </span>            :     // block, i.e. this block has been moved.
+<span class="lineNum">     117 </span><span class="lineNoCov">          0 :     explicit BlockChange(int32_t aSourceBlockIndex)</span>
+<span class="lineNum">     118 </span><span class="lineNoCov">          0 :       : mSourceBlockIndex(aSourceBlockIndex) {}</span>
+<span class="lineNum">     119 </span>            : 
+<span class="lineNum">     120 </span>            :     UniquePtr&lt;uint8_t[]&gt; mData;
+<a name="121"><span class="lineNum">     121 </span>            :     const int32_t mSourceBlockIndex;</a>
+<span class="lineNum">     122 </span>            : 
+<span class="lineNum">     123 </span><span class="lineNoCov">          0 :     bool IsMove() const {</span>
+<a name="124"><span class="lineNum">     124 </span><span class="lineNoCov">          0 :       return mSourceBlockIndex != -1;</span></a>
+<span class="lineNum">     125 </span>            :     }
+<span class="lineNum">     126 </span><span class="lineNoCov">          0 :     bool IsWrite() const {</span>
+<span class="lineNum">     127 </span><span class="lineNoCov">          0 :       return mSourceBlockIndex == -1 &amp;&amp;</span>
+<span class="lineNum">     128 </span><span class="lineNoCov">          0 :              mData.get() != nullptr;</span>
+<span class="lineNum">     129 </span>            :     }
+<span class="lineNum">     130 </span>            : 
+<a name="131"><span class="lineNum">     131 </span>            :   private:</a>
+<span class="lineNum">     132 </span>            :     // Private destructor, to discourage deletion outside of Release():
+<span class="lineNum">     133 </span><span class="lineNoCov">          0 :     ~BlockChange()</span>
+<span class="lineNum">     134 </span><span class="lineNoCov">          0 :     {</span>
+<span class="lineNum">     135 </span><span class="lineNoCov">          0 :     }</span>
+<span class="lineNum">     136 </span>            :   };
+<a name="137"><span class="lineNum">     137 </span>            : </a>
+<span class="lineNum">     138 </span>            : private:
+<span class="lineNum">     139 </span><span class="lineNoCov">          0 :   int64_t BlockIndexToOffset(int32_t aBlockIndex) {</span>
+<span class="lineNum">     140 </span><span class="lineNoCov">          0 :     return static_cast&lt;int64_t&gt;(aBlockIndex) * BLOCK_SIZE;</span>
+<span class="lineNum">     141 </span>            :   }
+<span class="lineNum">     142 </span>            : 
+<span class="lineNum">     143 </span>            :   void SetCacheFile(PRFileDesc* aFD);
+<span class="lineNum">     144 </span>            : 
+<span class="lineNum">     145 </span>            :   // Close file in thread and terminate thread.
+<span class="lineNum">     146 </span>            :   void Close();
+<span class="lineNum">     147 </span>            : 
+<span class="lineNum">     148 </span>            :   // Performs block writes and block moves on its own thread.
+<span class="lineNum">     149 </span>            :   void PerformBlockIOs();
+<span class="lineNum">     150 </span>            : 
+<span class="lineNum">     151 </span>            :   // Mutex which controls access to mFD and mFDCurrentPos. Don't hold
+<span class="lineNum">     152 </span>            :   // mDataMutex while holding mFileMutex! mFileMutex must be owned
+<span class="lineNum">     153 </span>            :   // while accessing any of the following data fields or methods.
+<span class="lineNum">     154 </span>            :   Mutex mFileMutex;
+<span class="lineNum">     155 </span>            :   // Moves a block already committed to file.
+<span class="lineNum">     156 </span>            :   nsresult MoveBlockInFile(int32_t aSourceBlockIndex,
+<span class="lineNum">     157 </span>            :                            int32_t aDestBlockIndex);
+<span class="lineNum">     158 </span>            :   // Seeks file pointer.
+<span class="lineNum">     159 </span>            :   nsresult Seek(int64_t aOffset);
+<span class="lineNum">     160 </span>            :   // Reads data from file offset.
+<span class="lineNum">     161 </span>            :   nsresult ReadFromFile(int64_t aOffset,
+<span class="lineNum">     162 </span>            :                         uint8_t* aDest,
+<span class="lineNum">     163 </span>            :                         int32_t aBytesToRead,
+<span class="lineNum">     164 </span>            :                         int32_t&amp; aBytesRead);
+<span class="lineNum">     165 </span>            :   nsresult WriteBlockToFile(int32_t aBlockIndex, const uint8_t* aBlockData);
+<span class="lineNum">     166 </span>            :   // File descriptor we're writing to. This is created externally, but
+<span class="lineNum">     167 </span>            :   // shutdown by us.
+<span class="lineNum">     168 </span>            :   PRFileDesc* mFD;
+<span class="lineNum">     169 </span>            :   // The current file offset in the file.
+<span class="lineNum">     170 </span>            :   int64_t mFDCurrentPos;
+<span class="lineNum">     171 </span>            : 
+<span class="lineNum">     172 </span>            :   // Mutex which controls access to all data in this class, except mFD
+<span class="lineNum">     173 </span>            :   // and mFDCurrentPos. Don't hold mDataMutex while holding mFileMutex!
+<span class="lineNum">     174 </span>            :   // mDataMutex must be owned while accessing any of the following data
+<span class="lineNum">     175 </span>            :   // fields or methods.
+<span class="lineNum">     176 </span>            :   Mutex mDataMutex;
+<span class="lineNum">     177 </span>            :   // Ensures we either are running the event to preform IO, or an event
+<span class="lineNum">     178 </span>            :   // has been dispatched to preform the IO.
+<span class="lineNum">     179 </span>            :   // mDataMutex must be owned while calling this.
+<span class="lineNum">     180 </span>            :   void EnsureWriteScheduled();
+<span class="lineNum">     181 </span>            : 
+<span class="lineNum">     182 </span>            :   // Array of block changes to made. If mBlockChanges[offset/BLOCK_SIZE] == nullptr,
+<span class="lineNum">     183 </span>            :   // then the block has no pending changes to be written, but if
+<span class="lineNum">     184 </span>            :   // mBlockChanges[offset/BLOCK_SIZE] != nullptr, then either there's a block
+<span class="lineNum">     185 </span>            :   // cached in memory waiting to be written, or this block is the target of a
+<span class="lineNum">     186 </span>            :   // block move.
+<span class="lineNum">     187 </span>            :   nsTArray&lt; RefPtr&lt;BlockChange&gt; &gt; mBlockChanges;
+<span class="lineNum">     188 </span>            :   // Thread upon which block writes and block moves are performed. This is
+<span class="lineNum">     189 </span>            :   // created upon open, and shutdown (asynchronously) upon close (on the
+<span class="lineNum">     190 </span>            :   // main thread).
+<span class="lineNum">     191 </span>            :   nsCOMPtr&lt;nsIThread&gt; mThread;
+<span class="lineNum">     192 </span>            :   // Queue of pending block indexes that need to be written or moved.
+<span class="lineNum">     193 </span>            :   std::deque&lt;int32_t&gt; mChangeIndexList;
+<span class="lineNum">     194 </span>            :   // True if we've dispatched an event to commit all pending block changes
+<span class="lineNum">     195 </span>            :   // to file on mThread.
+<span class="lineNum">     196 </span>            :   bool mIsWriteScheduled;
+<span class="lineNum">     197 </span>            :   // True when a read is happening. Pending writes may be postponed, to give
+<span class="lineNum">     198 </span>            :   // higher priority to reads (which may be blocking the caller).
+<span class="lineNum">     199 </span>            :   bool mIsReading;
+<span class="lineNum">     200 </span>            :   // True if we've got a temporary file descriptor. Note: we don't use mFD
+<span class="lineNum">     201 </span>            :   // directly as that's synchronized via mFileMutex and we need to make
+<span class="lineNum">     202 </span>            :   // decisions about whether we can write while holding mDataMutex.
+<span class="lineNum">     203 </span>            :   bool mInitialized = false;
+<span class="lineNum">     204 </span>            : };
+<span class="lineNum">     205 </span>            : 
+<span class="lineNum">     206 </span>            : } // End namespace mozilla.
+<span class="lineNum">     207 </span>            : 
+<span class="lineNum">     208 </span>            : #endif /* FILE_BLOCK_CACHE_H_ */
+</pre>
+      </td>
+    </tr>
+  </table>
+  <br>
+
+  <table width="100%" border=0 cellspacing=0 cellpadding=0>
+    <tr><td class="ruler"><img src="../../glass.png" width=3 height=3 alt=""></td></tr>
+    <tr><td class="versionInfo">Generated by: <a href="http://ltp.sourceforge.net/coverage/lcov.php" target="_parent">LCOV version 1.13</a></td></tr>
+  </table>
+  <br>
+
+</body>
+</html>
